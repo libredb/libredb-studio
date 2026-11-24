@@ -30,8 +30,6 @@ const STATEMENT_MEMBERS: ReadonlySet<string> = new Set([
 
 /** The routes whose statements still run on the provider, each until its own part moves it. */
 const STILL_ON_THE_PROVIDER = [
-  // The transaction route's script of several statements.
-  path.join("src", "app", "api", "db", "transaction", "route.ts"),
   // The data profile's reads.
   path.join("src", "app", "api", "db", "profile", "route.ts"),
 ].sort();
@@ -136,7 +134,7 @@ describe("the routes' statement calls", () => {
     ]);
   });
 
-  test("no route calls a provider statement member except the transaction route's script and the profile, whose statements still run on the provider", () => {
+  test("no route calls a provider statement member except the profile, whose statements still run on the provider", () => {
     const callers = trackedRoutes()
       .filter((file) => statementCalls(file, readFileSync(path.join(ROOT, file), "utf8")).length > 0)
       .sort();

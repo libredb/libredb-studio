@@ -23,10 +23,17 @@ import {
   type ResultSource,
 } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeViews } from "@/lib/api/editor-query";
-import { type EditorScriptRun, openEditorScript, type ScriptUnitOutcome } from "@/lib/api/editor-script";
+import {
+  type EditorScriptRun,
+  openEditorScript,
+  openTransactionScript,
+  type ScriptUnitOutcome,
+  type TransactionScriptRun,
+  type TransactionUnitOutcome,
+} from "@/lib/api/editor-script";
 import { errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioByteBudgetRefusal, StudioTimeoutRefusal } from "@/lib/db/errors";
-import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider } from "@/lib/db/types";
+import { DEFAULT_QUERY_TIMEOUT, type DatabaseProvider, type TransactionProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { ConsoleSession, ExecuteRecord } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
@@ -179,6 +186,58 @@ const startFor = (provider: DatabaseProvider, ms: number): number =>
 
 /** A turn of the event loop, so a settled call's handlers have run. */
 const turn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
+/**
+ * Holds the installed core's large-page slot with a page run of its own, its second batch held, until `release` lets the
+ * run end and releases its page.
+ */
+async function holdLargePageSlot(): Promise<{ readonly release: () => Promise<void> }> {
+  // A page run on the installed core holds the slot: its second batch is held by the test.
+  const secondPull = Promise.withResolvers<void>();
+  const secondBatch = Promise.withResolvers<void>();
+  let pulls = 0;
+  const holderSource: ResultSource = {
+    columns: [{ name: "v" }],
+    next: async () => {
+      pulls += 1;
+      if (pulls === 2) {
+        secondPull.resolve();
+        await secondBatch.promise;
+      }
+      return { rows: [[pulls]], done: pulls >= 2 };
+    },
+    close: async () => {},
+  };
+  const holder = hostCore().executeCall(
+    {
+      calls: {
+        console: {
+          execute: { honours: [] },
+          cancel: "not-offered",
+          endScope: "not-offered",
+          transaction: "not-offered",
+        },
+        objects: { tree: "not-offered" },
+        maintenance: { run: "not-offered", preview: "not-offered" },
+        monitoring: { panel: "not-offered", poolStats: "not-offered" },
+      },
+      readOnlyStatements: false,
+      execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
+    },
+    { statement: "SELECT 1", page: { limit: 10, offset: 0 } },
+    { deadline: Date.now() + 60_000, signal: new AbortController().signal, env: envReader([], () => undefined) },
+    () => ({ maxRows: 10, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES }),
+    { late: () => {}, cancelFailed: () => {} },
+  );
+  await secondPull.promise;
+  return {
+    release: async () => {
+      secondBatch.resolve();
+      const held: ExecuteRecord = await holder;
+      if (held.kind === "page") held.release();
+    },
+  };
+}
 
 describe("openEditorScript", () => {
   test("each unit is one host core execute call on a script unit session of its own, on a fresh request and a context of deadline, signal and env alone", async () => {
@@ -460,53 +519,14 @@ describe("a script unit's wait", () => {
   });
 
   test("a unit whose page waits for the large-page slot past its deadline answers the slot's sentence", async () => {
-    // A page run on the installed core holds the slot: its second batch is held by the test.
-    const secondPull = Promise.withResolvers<void>();
-    const secondBatch = Promise.withResolvers<void>();
-    let pulls = 0;
-    const holderSource: ResultSource = {
-      columns: [{ name: "v" }],
-      next: async () => {
-        pulls += 1;
-        if (pulls === 2) {
-          secondPull.resolve();
-          await secondBatch.promise;
-        }
-        return { rows: [[pulls]], done: pulls >= 2 };
-      },
-      close: async () => {},
-    };
-    const holder = hostCore().executeCall(
-      {
-        calls: {
-          console: {
-            execute: { honours: [] },
-            cancel: "not-offered",
-            endScope: "not-offered",
-            transaction: "not-offered",
-          },
-          objects: { tree: "not-offered" },
-          maintenance: { run: "not-offered", preview: "not-offered" },
-          monitoring: { panel: "not-offered", poolStats: "not-offered" },
-        },
-        readOnlyStatements: false,
-        execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
-      },
-      { statement: "SELECT 1", page: { limit: 10, offset: 0 } },
-      { deadline: Date.now() + 60_000, signal: new AbortController().signal, env: envReader([], () => undefined) },
-      () => ({ maxRows: 10, maxBytes: PAGE_MAX_BYTES, batchMaxBytes: BATCH_MAX_BYTES }),
-      { late: () => {}, cancelFailed: () => {} },
-    );
-    await secondPull.promise;
+    const slot = await holdLargePageSlot();
     const mebibyte = "x".repeat(MIB);
     const provider = providerOf(async () => resultOf([{ n: mebibyte }, { n: mebibyte }, { n: mebibyte }]));
     const script = scriptOf("SELECT n FROM t; SELECT 1");
 
     // A deadline about 300 ms out, which the page spends waiting for the slot.
     const outcome = await openEditorScript(provider, script).runUnit(0, asIs, startFor(provider, 300));
-    secondBatch.resolve();
-    const held: ExecuteRecord = await holder;
-    if (held.kind === "page") held.release();
+    await slot.release();
     const stopped = failedWith(outcome);
 
     expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
@@ -642,5 +662,375 @@ describe("a script's scope", () => {
       ],
     ]);
     expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+});
+
+const TRANSACTION_ROUTE = "api/db/transaction";
+
+/** A postgres transaction provider standing in a transaction, whose queryInTransaction answers what `answer` gives. */
+function transactionProviderOf(
+  answer: (sql: string) => Promise<QueryResult>,
+  extra: Record<string, unknown> = {},
+): DatabaseProvider &
+  TransactionProvider & {
+    query: ReturnType<typeof mock>;
+    prepareQuery: ReturnType<typeof mock>;
+    queryInTransaction: ReturnType<typeof mock>;
+    isInTransaction: ReturnType<typeof mock>;
+  } {
+  return Object.assign(
+    providerOf(async () => {
+      throw new Error("A statement inside the transaction reached the provider's plain query.");
+    }),
+    {
+      beginTransaction: mock(async () => {}),
+      commitTransaction: mock(async () => {}),
+      rollbackTransaction: mock(async () => {}),
+      isInTransaction: mock(() => true),
+      queryInTransaction: mock<(sql: string) => Promise<QueryResult>>((sql) => answer(sql)),
+    },
+    extra,
+  ) as never;
+}
+
+/** A script inside a transaction of `sql` as the transaction route opens it, each member overridable. */
+function transactionScriptOf(sql: string, over: Partial<TransactionScriptRun> = {}): TransactionScriptRun {
+  return {
+    units: splitExecutionUnits(sql, resolveSqlGrammar("postgres")),
+    options: { limit: 50 },
+    signal: new AbortController().signal,
+    route: TRANSACTION_ROUTE,
+    ...over,
+  };
+}
+
+/** Runs every unit of `run` on `provider` in order, stopping at the first that did not answer. */
+async function runAllInTransaction(
+  provider: DatabaseProvider & TransactionProvider,
+  run: TransactionScriptRun,
+): Promise<TransactionUnitOutcome<QueryResult>[]> {
+  const opened = openTransactionScript(provider, run);
+  const outcomes: TransactionUnitOutcome<QueryResult>[] = [];
+  for (let index = 0; index < run.units.length; index++) {
+    // oxlint-disable-next-line no-await-in-loop -- the units run in order, as the route runs them.
+    const outcome = await opened.runUnit(index, asIs);
+    outcomes.push(outcome);
+    if (outcome.kind !== "answered") break;
+  }
+  return outcomes;
+}
+
+/** The error of an unanswered outcome, beside its `settled`; any other outcome fails the case. */
+function unansweredWith<T>(outcome: TransactionUnitOutcome<T>): { error: Error; settled: Promise<void> } {
+  if (outcome.kind !== "unanswered")
+    throw new Error(`The unit was expected to be unanswered, and it was ${outcome.kind}.`);
+  return { error: outcome.error, settled: outcome.settled };
+}
+
+/** The error of a failed outcome; any other outcome fails the case. */
+function failedInTransaction<T>(outcome: TransactionUnitOutcome<T>): unknown {
+  if (outcome.kind !== "failed") throw new Error(`The unit was expected to fail, and it was ${outcome.kind}.`);
+  return outcome.error;
+}
+
+/** A core around the real one whose page records count their releases in `releases`. */
+function releaseCountingCore(releases: { count: number }) {
+  return (real: HostCore): HostCore => ({
+    ...real,
+    executeCall: async (...args) => {
+      const record = await real.executeCall(...args);
+      if (record.kind !== "page") return record;
+      return {
+        ...record,
+        release: () => {
+          releases.count += 1;
+          record.release();
+        },
+      };
+    },
+  });
+}
+
+describe("openTransactionScript", () => {
+  test("each unit of a script inside a transaction is one host core execute sent with transaction, on a session of its own, a fresh request and a context of deadline, signal and env alone", async () => {
+    const provider = transactionProviderOf(async () => resultOf([{ n: 1 }]));
+    const seen: SeenCall[] = [];
+
+    const outcomes = await withCore(countingCore(seen), () =>
+      runAllInTransaction(provider, transactionScriptOf("SELECT 1; SELECT 2; SELECT 3")),
+    );
+
+    expect(outcomes.map((outcome) => outcome.kind)).toEqual(["answered", "answered", "answered"]);
+    expect(seen).toHaveLength(3);
+    expect(new Set(seen.map((call) => call.session)).size).toBe(3);
+    expect(new Set(seen.map((call) => call.request)).size).toBe(3);
+    expect(new Set(seen.map((call) => call.ctx)).size).toBe(3);
+    for (const call of seen) {
+      expect(call.session.calls.console.transaction).toBe("offered");
+      expect(call.request.transaction).toBe(true);
+      expect(Object.isFrozen(call.request)).toBe(true);
+      expect(Object.isFrozen(call.ctx)).toBe(true);
+      expect(Reflect.ownKeys(call.ctx).sort()).toEqual(["deadline", "env", "signal"]);
+      expect(call.ctx.signal.aborted).toBe(false);
+    }
+    expect(provider.queryInTransaction.mock.calls).toEqual([["SELECT 1"], ["SELECT 2"], ["SELECT 3 LIMIT 50"]]);
+    expect(provider.query).not.toHaveBeenCalled();
+
+    const opened = openTransactionScript(provider, transactionScriptOf("SELECT 1"));
+    expect(() => opened.runUnit(1, asIs)).toThrow(
+      "The editor's script inside a transaction was asked for its unit at index 1, and it holds 1, a defect of the caller.",
+    );
+  });
+
+  test("every unit of a script inside a transaction but the last asks every row and the last the request's page, with no run id and no scope", async () => {
+    const seen: SeenCall[] = [];
+    const provider = transactionProviderOf(async () => resultOf([{ n: 1 }]));
+
+    await withCore(countingCore(seen), () =>
+      runAllInTransaction(
+        provider,
+        transactionScriptOf("SELECT 1; SELECT 2; SELECT 3", { options: { limit: 50, offset: 100 } }),
+      ),
+    );
+
+    expect(seen.map((call) => call.request)).toEqual([
+      { statement: "SELECT 1", page: { unlimited: true }, transaction: true },
+      { statement: "SELECT 2", page: { unlimited: true }, transaction: true },
+      { statement: "SELECT 3", page: { limit: 50, offset: 100 }, transaction: true },
+    ]);
+    for (const call of seen) expect(Object.keys(call.request).sort()).toEqual(["page", "statement", "transaction"]);
+    expect(provider.prepareQuery.mock.calls).toEqual([["SELECT 3", { limit: 50, offset: 100 }]]);
+  });
+
+  test("a transaction script unit's answer is built from the provider's result by reference before its page record is released exactly once, even when building it throws", async () => {
+    const result = resultOf([{ n: 1 }, { n: 2 }]);
+    const provider = transactionProviderOf(async () => result);
+    const releases = { count: 0 };
+    let releasedAtBuild: number | undefined;
+    const thrown = new Error(marker());
+
+    const [answered, failed] = await withCore(releaseCountingCore(releases), async () => {
+      const opened = openTransactionScript(provider, transactionScriptOf("SELECT n FROM t; SELECT n FROM t"));
+      const first = await opened.runUnit(0, (built) => {
+        releasedAtBuild = releases.count;
+        return built;
+      });
+      const second = await opened.runUnit(1, () => {
+        throw thrown;
+      });
+      return [first, second] as const;
+    });
+
+    expect(answered).toEqual({ kind: "answered", value: result });
+    expect(answered.kind === "answered" && answered.value).toBe(result);
+    expect(releasedAtBuild).toBe(0);
+    expect(failedInTransaction(failed)).toBe(thrown);
+    expect(releases.count).toBe(2);
+  });
+
+  test("a transaction script unit's answer keeps every row, however many pages its rows would fill", async () => {
+    const mebibyte = "x".repeat(MIB);
+    const result = resultOf(Array.from({ length: 40 }, () => ({ n: mebibyte })));
+    const provider = transactionProviderOf(async () => result);
+
+    const outcome = await openTransactionScript(provider, transactionScriptOf("SELECT n FROM t; SELECT 1")).runUnit(
+      0,
+      asIs,
+    );
+
+    expect(outcome.kind === "answered" && outcome.value).toBe(result);
+    expect(result.rows).toHaveLength(40);
+  });
+
+  test("a transaction script unit row larger than one page is unanswered with StudioByteBudgetRefusal, its call settled", async () => {
+    const wide = "x".repeat(33 * MIB);
+    const provider = transactionProviderOf(async () => resultOf([{ wide }]));
+
+    const { error, settled } = unansweredWith(
+      await openTransactionScript(provider, transactionScriptOf("SELECT wide FROM t")).runUnit(0, asIs),
+    );
+
+    expect(error).toBeInstanceOf(StudioByteBudgetRefusal);
+    expect(error.message).toMatch(
+      /^A row of the result is \d+ bytes, over the 33554432 bytes one page of a result may hold, so Studio answers no page of it\.$/,
+    );
+    expect(errorOutcome(error)).toBe("unknown");
+    expect(await settled).toBeUndefined();
+  });
+
+  test("a value nested past the value codec's depth bound in a transaction script unit is the unit's error in the codec's sentence", async () => {
+    let deep: unknown = 1;
+    for (let depth = 0; depth < 300; depth++) deep = { d: deep };
+    const provider = transactionProviderOf(async () => resultOf([{ n: deep }]));
+
+    const refused = failedInTransaction(
+      await openTransactionScript(provider, transactionScriptOf("SELECT n FROM t")).runUnit(0, asIs),
+    );
+
+    expect((refused as Error).name).toBe("ValueCodecError");
+    expect((refused as Error).message).toStartWith(
+      "The value codec cannot encode a value nested deeper than 256 arrays and objects",
+    );
+  });
+
+  test("a script inside a transaction opened before the host core is installed throws by name and calls no provider", () => {
+    const provider = transactionProviderOf(async () => resultOf([]));
+    const real = hostCore();
+    forgetHostCore();
+    let thrown: unknown;
+    try {
+      openTransactionScript(provider, transactionScriptOf("SELECT 1"));
+    } catch (error) {
+      thrown = error;
+    } finally {
+      installHostCore(real, "test");
+    }
+
+    expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+    expect(provider.queryInTransaction).not.toHaveBeenCalled();
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+    expect(provider.isInTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("a transaction script unit's wait", () => {
+  test("a transaction script unit's deadline is its connection's statement timeout plus ten seconds from the unit's start", async () => {
+    const seen: SeenCall[] = [];
+    const configured = withTimeout(
+      transactionProviderOf(async () => resultOf([])),
+      5_000,
+    );
+    const defaulted = transactionProviderOf(async () => resultOf([]));
+    const now = Date.now();
+
+    await withCore(countingCore(seen), async () => {
+      await openTransactionScript(configured, transactionScriptOf("SELECT 1")).runUnit(0, asIs, now);
+      await openTransactionScript(defaulted, transactionScriptOf("SELECT 1")).runUnit(0, asIs, now);
+    });
+
+    expect(seen.map((call) => call.ctx.deadline)).toEqual([
+      now + 5_000 + EXECUTE_SLACK_MS,
+      now + DEFAULT_QUERY_TIMEOUT + EXECUTE_SLACK_MS,
+    ]);
+  });
+
+  test("a transaction script unit its deadline stops is unanswered with StudioTimeoutRefusal in the statement's sentence, its later failure logged by kind and code only, and nothing cancelled", async () => {
+    const secret = marker();
+    const pending = Promise.withResolvers<QueryResult>();
+    const cancelQuery = mock<(runId: string) => Promise<boolean>>(async () => true);
+    const provider = withTimeout(
+      transactionProviderOf(() => pending.promise, { cancelQuery }),
+      1,
+    );
+    const run = transactionScriptOf("SELECT 1; SELECT 2");
+    let settledAfter = false;
+
+    const warned = await warningsOf(async () => {
+      const outcome = await openTransactionScript(provider, run).runUnit(0, asIs, startFor(provider, 30));
+      const { error, settled } = unansweredWith(outcome);
+
+      expect(error).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(error.message).toBe(executeViews(provider, run.signal).view.deadlineSentence);
+      expect(errorOutcome(error)).toBe("unknown");
+      const settling = settled.then(() => {
+        settledAfter = true;
+      });
+      await turn();
+      expect(settledAfter).toBe(false);
+      pending.reject(new Error(secret));
+      await settling;
+      await turn();
+    });
+
+    expect(settledAfter).toBe(true);
+    expect(cancelQuery).not.toHaveBeenCalled();
+    expect(warned).toEqual([
+      [
+        "A statement Studio stopped waiting for failed afterwards",
+        { route: TRANSACTION_ROUTE, kind: "internal", code: "INTERNAL_ERROR" },
+      ],
+    ]);
+    expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+
+  test("a transaction script unit whose request leaves is unanswered with QueryCancelledError at once, and nothing cancelled", async () => {
+    const reached = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<QueryResult>();
+    const cancelQuery = mock<(runId: string) => Promise<boolean>>(async () => true);
+    const provider = transactionProviderOf(
+      () => {
+        reached.resolve();
+        return pending.promise;
+      },
+      { cancelQuery },
+    );
+    const controller = new AbortController();
+
+    const running = openTransactionScript(
+      provider,
+      transactionScriptOf("SELECT 1", { signal: controller.signal }),
+    ).runUnit(0, asIs);
+    await reached.promise;
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+    const { error, settled } = unansweredWith(await running);
+
+    expect(error).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(error)).toBe("unknown");
+    pending.resolve(resultOf([]));
+    await settled;
+    await turn();
+    expect(cancelQuery).not.toHaveBeenCalled();
+  });
+
+  test("a transaction script unit whose page waits for the large-page slot past its deadline answers the slot's sentence", async () => {
+    const slot = await holdLargePageSlot();
+    const mebibyte = "x".repeat(MIB);
+    const provider = transactionProviderOf(async () => resultOf([{ n: mebibyte }, { n: mebibyte }, { n: mebibyte }]));
+    const run = transactionScriptOf("SELECT n FROM t; SELECT 1");
+
+    // A deadline about 300 ms out, which the page spends waiting for the slot.
+    const outcome = await openTransactionScript(provider, run).runUnit(0, asIs, startFor(provider, 300));
+    await slot.release();
+    const { error } = unansweredWith(outcome);
+
+    expect(error).toBeInstanceOf(StudioTimeoutRefusal);
+    expect(error.message).toBe(
+      executeViews(provider, run.signal).stopView({
+        kind: "stopped",
+        reason: undefined,
+        waitingFor: "large-page-slot",
+        settled: Promise.resolve(),
+      }).deadlineSentence,
+    );
+    expect(errorOutcome(error)).toBe("unknown");
+  });
+
+  test("a transaction script unit started after its request left is refused before the call and reaches no provider", async () => {
+    const provider = transactionProviderOf(async () => resultOf([]));
+    const controller = new AbortController();
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const refused = failedInTransaction(
+      await openTransactionScript(
+        provider,
+        transactionScriptOf("SELECT 1; SELECT 2", { signal: controller.signal }),
+      ).runUnit(0, asIs),
+    );
+
+    expect(refused).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect(provider.queryInTransaction).not.toHaveBeenCalled();
+    expect(provider.isInTransaction).not.toHaveBeenCalled();
+  });
+
+  test("a transaction script unit's provider error passes as the same object", async () => {
+    const thrown = new Error(marker());
+    const provider = transactionProviderOf(async () => {
+      throw thrown;
+    });
+
+    expect(
+      failedInTransaction(await openTransactionScript(provider, transactionScriptOf("SELECT 1")).runUnit(0, asIs)),
+    ).toBe(thrown);
   });
 });

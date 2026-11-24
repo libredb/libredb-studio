@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeAll, afterAll, beforeEach, afterEach, spyOn, jest } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
@@ -29,7 +30,8 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { markNotSent, waitedSeconds } from "@/lib/db/errors";
-import { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import { EXECUTE_SLACK_MS, queryTimeoutError } from "@/lib/api/editor-query";
+import type { ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
@@ -558,6 +560,8 @@ describe("POST /api/db/transaction", () => {
       statements: { index: number; sql: string; status: string; error?: string }[];
     };
     const run = async (sql: string) => {
+      // The stand-in carries its connection's engine; the suite's beforeEach hands every later test the shared one.
+      mockGetOrCreateProvider.mockImplementation(async () => ({ ...mockTxProvider, type: "mysql" }) as never);
       const req = createMockRequest("/api/db/transaction", {
         method: "POST",
         body: { connection: { ...validConnection, type: "mysql" }, action: "query", sql },
@@ -692,6 +696,59 @@ describe("POST /api/db/transaction", () => {
       const { data } = await run("UPDATE t SET a = 1; COMMIT");
 
       expect(data.inTransaction).toBe(false);
+    });
+
+    test("every unit of a script inside a transaction runs through the host core's console execute sent with transaction, one call per unit", async () => {
+      const seen: ExecuteRequest[] = [];
+      const { res, data } = await withCore(
+        (real) => ({
+          ...real,
+          executeCall: (session, request, ctx, limits, ports) => {
+            seen.push(request);
+            return real.executeCall(session, request, ctx, limits, ports);
+          },
+        }),
+        () => run("UPDATE t SET a = 1; UPDATE t SET a = 2; SELECT * FROM t"),
+      );
+
+      expect(res.status).toBe(200);
+      expect(seen.map((request) => [request.statement, request.transaction])).toEqual([
+        ["UPDATE t SET a = 1", true],
+        ["UPDATE t SET a = 2", true],
+        ["SELECT * FROM t", true],
+      ]);
+      // The provider's statement members are reached only through those calls, each statement sent with one argument.
+      expect(mockTxProvider.queryInTransaction.mock.calls).toEqual([
+        ["UPDATE t SET a = 1"],
+        ["UPDATE t SET a = 2"],
+        ["SELECT * FROM t LIMIT 50"],
+      ] as never);
+      expect((mockTxProvider.prepareQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[0])).toEqual([
+        "SELECT * FROM t",
+      ]);
+      expect([data.statementCount, data.executedCount, data.hasError, data.inTransaction]).toEqual([3, 3, false, true]);
+      expect(data.rows).toEqual([{ id: 1, name: "Alice" }]);
+    });
+
+    test("a malformed connection queryTimeout is refused with the query route's sentence before a query action opens anything", async () => {
+      for (const queryTimeout of ["abc", 0, 1.5]) {
+        for (const sql of ["UPDATE t SET a = 1; UPDATE t SET a = 2", "UPDATE t SET a = 1"]) {
+          const req = createMockRequest("/api/db/transaction", {
+            method: "POST",
+            body: { connection: { ...validConnection, type: "mysql", queryTimeout }, action: "query", sql },
+          });
+          // oxlint-disable-next-line no-await-in-loop -- one request at a time, each read before the next.
+          const res = await POST(req as never);
+
+          expect(res.status).toBe(400);
+          // oxlint-disable-next-line no-await-in-loop -- the answer of the request just sent.
+          expect(await parseResponseJSON(res)).toEqual({ error: queryTimeoutError(queryTimeout) as string });
+        }
+      }
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockTxProvider.isInTransaction).not.toHaveBeenCalled();
+      expect(mockTxProvider.queryInTransaction).not.toHaveBeenCalled();
+      expect(recordedEvents).toEqual([]);
     });
   });
 
@@ -1804,9 +1861,11 @@ describe("POST /api/db/transaction", () => {
         ran += 1;
         return { rows: [], fields: [], rowCount: 1, executionTime: 1 };
       });
-      // The read after the script's two statements fails once, as a provider whose session cannot answer would.
+      // The read after the script's two statements fails once, as a provider whose session cannot answer would. Each
+      // statement's own state read comes first, so it is the second read once both ran.
+      let readsAfterBoth = 0;
       mockTxProvider.isInTransaction.mockImplementation(() => {
-        if (ran === 2) {
+        if (ran === 2 && ++readsAfterBoth === 2) {
           ran = 0;
           throw new DatabaseError("The session state could not be read", "postgres");
         }
@@ -1836,6 +1895,109 @@ describe("POST /api/db/transaction", () => {
       expect(await heldForAnother("k2-script-read")).toEqual({ status: 409, code: "TRANSACTION_NOT_OWNED" });
       asSession("alice");
       expect((await call("k2-script-read", { action: "rollback" })).status).toBe(200);
+    });
+
+    test("a script unit that does not answer within its deadline is that unit's error inside the 200 answer, no further unit starts, and the transaction is kept with its state unknown until that unit settles", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("g2-unit-deadline", { action: "begin" })).status).toBe(200);
+      const settled = Promise.withResolvers<void>();
+      let executes = 0;
+      const waited = `${waitedSeconds(60_000)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer`;
+
+      const res = await withCore(
+        (real) => ({
+          ...real,
+          executeCall: async (...args) => {
+            executes += 1;
+            if (executes === 2) return { kind: "stopped", reason: deadlineReason(), settled: settled.promise };
+            return real.executeCall(...args);
+          },
+        }),
+        () =>
+          call("g2-unit-deadline", {
+            action: "query",
+            sql: "UPDATE t SET n = 1; UPDATE t SET n = 2; UPDATE t SET n = 3",
+          }),
+      );
+      const data = await parseResponseJSON<{
+        executedCount: number;
+        hasError: boolean;
+        inTransaction: boolean | null;
+        statements: { status: string; error?: string }[];
+      }>(res);
+
+      expect([res.status, data.executedCount, data.hasError, data.inTransaction]).toEqual([200, 2, true, null]);
+      expect(data.statements.map((statement) => statement.status)).toEqual(["success", "error"]);
+      expect(data.statements[1]?.error).toBe(
+        `The statement did not answer within its timeout of ${waited}, so Studio stopped waiting for it.`,
+      );
+      expect(executes).toBe(2);
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(1);
+      expect(transactionOwner(transactionKey("g2-unit-deadline"))?.unresolved).toBe(true);
+
+      const refused = await call("g2-unit-deadline", { action: "rollback" });
+      expect([refused.status, (await parseResponseJSON<{ code?: string }>(refused)).code]).toEqual([
+        409,
+        "TRANSACTION_CALL_RUNNING",
+      ]);
+      expect(mockTxProvider.rollbackTransaction).not.toHaveBeenCalled();
+      expect(await parseResponseJSON(await call("g2-unit-deadline", { action: "status" }))).toMatchObject({
+        inTransaction: null,
+        ownedByYou: true,
+      });
+
+      settled.resolve();
+      await settled.promise;
+      expect((await call("g2-unit-deadline", { action: "rollback" })).status).toBe(200);
+      expect(mockTxProvider.rollbackTransaction).toHaveBeenCalledTimes(1);
+    });
+
+    test("a script whose request leaves while a unit runs answers that unit's cancellation at once and sends no further unit", async () => {
+      openableProvider();
+      asSession("alice");
+      expect((await call("g2-unit-left", { action: "begin" })).status).toBe(200);
+      const unit = heldCall<typeof statementResult>();
+      let sent = 0;
+      mockTxProvider.queryInTransaction.mockImplementation(async () => {
+        sent += 1;
+        return sent === 2 ? unit.call() : statementResult;
+      });
+      const secret = randomUUID();
+      const warn = spyOn(logger, "warn");
+      try {
+        const left = leaving("g2-unit-left", {
+          action: "query",
+          sql: "UPDATE t SET n = 1; UPDATE t SET n = 2; UPDATE t SET n = 3",
+        });
+        await unit.reached;
+        left.controller.abort();
+        const res = await left.response;
+        const data = await parseResponseJSON<{
+          executedCount: number;
+          inTransaction: boolean | null;
+          statements: { status: string; error?: string }[];
+        }>(res);
+
+        expect([res.status, data.executedCount, data.inTransaction]).toEqual([200, 2, null]);
+        expect(data.statements[1]).toMatchObject({ status: "error", error: "The query was cancelled." });
+        expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(2);
+
+        // The unit fails after the route answered: logged by kind and code, its text in no log line.
+        unit.answer.reject(new Error(secret));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(warn).toHaveBeenCalledWith("A statement Studio stopped waiting for failed afterwards", {
+          route: "api/db/transaction",
+          kind: "internal",
+          code: "INTERNAL_ERROR",
+        });
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(mockTxProvider.queryInTransaction).toHaveBeenCalledTimes(2);
+      expect((await call("g2-unit-left", { action: "rollback" })).status).toBe(200);
     });
 
     test("a request that leaves while its connection opens answers 499 not-sent and runs nothing", async () => {
@@ -2759,6 +2921,45 @@ describe("POST /api/db/transaction under governance", () => {
     expect((await send({ action: "status" })).status).toBe(200);
 
     expect(ended()).toEqual([["rolled-back", "COMMIT", "error"]]);
+  });
+
+  test("governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown", async () => {
+    const providers = providerPerOwner();
+    as("alice@example.com", "alice-subject");
+    expect((await send({ action: "begin" })).status).toBe(200);
+    const provider = providers.of("alice-subject");
+    const unit = heldCall<typeof emptyResult>();
+    let sent = 0;
+    provider?.queryInTransaction.mockImplementation(async () => {
+      sent += 1;
+      return sent === 2 ? unit.call() : emptyResult;
+    });
+    const sql = "UPDATE t SET n = 1; UPDATE t SET n = 2";
+
+    const left = sendLeaving({ action: "query", sql });
+    await unit.reached;
+    left.controller.abort();
+    expect((await left.response).status).toBe(200);
+    expect(
+      recordedEvents.map((event) => [event.transactionOutcome, event.statement, event.status, event.errorCode]),
+    ).toEqual([["open", sql, "error", "QUERY_CANCELLED"]]);
+    // Kept, its state unknown, until the unit settles.
+    expect(await parseResponseJSON(await send({ action: "status" }))).toMatchObject({
+      inTransaction: null,
+      ownedByYou: true,
+    });
+
+    // The unit settles, and the transaction ends without a call of Studio's.
+    unit.answer.resolve(emptyResult);
+    await provider?.queryInTransaction.mock.results.at(-1)?.value;
+    await provider?.rollbackTransaction();
+    expect((await send({ action: "status" })).status).toBe(200);
+    expect((await send({ action: "status" })).status).toBe(200);
+
+    expect(ended()).toEqual([
+      ["open", sql, "error"],
+      ["unknown", null, "cancelled"],
+    ]);
   });
 
   test("governance: a COMMIT whose caller leaves records an open event, and the end a later read finds is recorded unknown", async () => {
@@ -3731,15 +3932,10 @@ describe("the transaction route on the provider host", () => {
         .join("\n");
     const route = code("src", "app", "api", "db", "transaction", "route.ts");
     const ownership = code("src", "lib", "api", "transaction-ownership.ts");
-    // The script of several statements keeps its own calls until it moves with POST /api/db/multi-query.
-    const scriptStart = route.indexOf("async function runScriptInTransaction(");
-    const scriptEnd = route.indexOf("\n}\n", scriptStart);
-    expect(scriptStart).toBeGreaterThan(-1);
-    const outsideScript = route.slice(0, scriptStart) + route.slice(scriptEnd);
 
     expect(route.includes("isInTransaction")).toBe(false);
     expect(ownership.includes("isInTransaction")).toBe(false);
-    expect(outsideScript.includes("queryInTransaction")).toBe(false);
-    expect(route.slice(scriptStart, scriptEnd).includes("queryInTransaction")).toBe(true);
+    expect(route.includes("queryInTransaction")).toBe(false);
+    expect(route.includes("prepareQuery")).toBe(false);
   });
 });

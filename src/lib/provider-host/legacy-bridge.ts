@@ -967,7 +967,7 @@ export interface TransactionScriptUnitOpen {
   readonly lastUnitOptions?: QueryPrepareOptions;
 }
 
-/** A bridged transaction script unit session, the legacy result its execute answered, and the page limits read from it. */
+/** A bridged transaction script unit session, the legacy result its execute answered, and its page limits. */
 export type BridgedTransactionScriptUnit = BridgedReadOnlyStatements;
 
 /** The calls of every transaction script unit session: execute honouring `offset`, and the transaction facet. */

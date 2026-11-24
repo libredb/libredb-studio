@@ -21,10 +21,10 @@ import { readBoundParams } from "@/lib/api/bound-params";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { countCodeStatements, splitExecutionUnits, type ExecutionUnit } from "@/lib/sql/statement-splitter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import { isDatabaseError, NO_ACTIVE_TRANSACTION, NO_TRANSACTION_OPENED, QueryError } from "@/lib/db/errors";
 import { errorOutcome } from "@/lib/db/error-record";
-import { openWithinCall } from "@/lib/api/editor-query";
+import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
+import { openTransactionScript, type TransactionScript } from "@/lib/api/editor-script";
 import {
   beginInTransaction,
   type CredentialRollback,
@@ -83,6 +83,19 @@ import {
 /** The label every log line of this route is written under. */
 const ROUTE = "api/db/transaction";
 
+/** One statement's entry in a script's answer. */
+interface ScriptStatement {
+  readonly index: number;
+  readonly sql: string;
+  readonly startLine: number;
+  readonly status: "success" | "error";
+  readonly rows?: Record<string, unknown>[];
+  readonly fields?: string[];
+  readonly rowCount?: number;
+  readonly executionTime: number;
+  readonly error?: string;
+}
+
 /**
  * Run a script's statements in order on the transaction's connection, stopping at the first one
  * that fails (#1390).
@@ -93,66 +106,50 @@ const ROUTE = "api/db/transaction";
  * `/api/db/multi-query` gives a script, which the editor already reports (the executed count, the
  * statement that failed, the last successful statement's result), plus `inTransaction`.
  *
- * A failure is part of the answer, not a thrown error: the statements before it ran inside the
- * transaction and their work is still there to commit or roll back. Only the last statement is
- * bounded, as on the script route, and only when it is a single statement and not a batch. A
- * statement that ends the transaction ends the run as well, because the next one is refused by the
- * provider ("No active transaction") rather than autocommitted. A statement's error answers the message of what
- * core's scrub answers for it, so one whose text holds a credential of the connection answers the withheld sentence.
+ * Each statement runs through the host core's console execute sent with `transaction`, under its own deadline and the
+ * request's signal (`openTransactionScript`, src/lib/api/editor-script.ts; docs/providers/CONTRACT.md, clause C-84),
+ * which sends its text as this route always sent it: only the last statement is bounded, and only when it is a single
+ * statement and not a batch. A failure is part of the answer, not a thrown error: the statements before it ran inside
+ * the transaction and their work is still there to commit or roll back. A statement that ends the transaction ends the
+ * run as well, because the next one is refused by the provider ("No active transaction") rather than autocommitted. A
+ * statement Studio stopped waiting for is its error too, and is answered as `stopped`: its outcome is unknown, and it
+ * goes on in the database. A statement's error answers the message of what core's scrub answers for it, so one whose
+ * text holds a credential of the connection answers the withheld sentence.
  */
-async function runScriptInTransaction(
-  provider: TransactionProvider & Pick<DatabaseProvider, "prepareQuery">,
-  units: ExecutionUnit[],
-  options: Record<string, unknown>,
-  scrub: ProviderTextScrub,
-) {
-  const statements: {
-    index: number;
-    sql: string;
-    startLine: number;
-    status: "success" | "error";
-    rows?: Record<string, unknown>[];
-    fields?: string[];
-    rowCount?: number;
-    executionTime: number;
-    error?: string;
-  }[] = [];
+async function runScriptInTransaction(script: TransactionScript, units: ExecutionUnit[], scrub: ProviderTextScrub) {
+  const statements: ScriptStatement[] = [];
   let totalExecutionTime = 0;
+  let stopped: UnansweredCall | undefined;
   for (const [index, unit] of units.entries()) {
-    const isLast = index === units.length - 1;
-    const sql = isLast && unit.statements.length === 1 ? provider.prepareQuery(unit.sql, options).query : unit.sql;
     const startTime = performance.now();
     const identity = { index, sql: unit.sql, startLine: unit.startLine };
-    try {
-      const result = await provider.queryInTransaction(sql);
-      const executionTime = Math.round(performance.now() - startTime);
-      totalExecutionTime += executionTime;
-      statements.push({
-        ...identity,
-        status: "success",
-        rows: rowsWithNonFiniteWords(result.rows),
-        fields: result.fields,
-        rowCount: result.rowCount,
-        executionTime,
-      });
-    } catch (error) {
-      noteAppendedBound(error, unit.sql, sql);
-      const executionTime = Math.round(performance.now() - startTime);
-      totalExecutionTime += executionTime;
-      const answered = withholdProviderError(scrub, error);
-      statements.push({
-        ...identity,
-        status: "error",
-        executionTime,
-        error: answered instanceof Error ? answered.message : "Unknown error",
-      });
-      break;
+    // Each unit runs after the one before it settled.
+    // oxlint-disable-next-line no-await-in-loop -- a script's order is its meaning.
+    const outcome = await script.runUnit(index, (result) => ({
+      rows: rowsWithNonFiniteWords(result.rows),
+      fields: result.fields,
+      rowCount: result.rowCount,
+    }));
+    const executionTime = Math.round(performance.now() - startTime);
+    totalExecutionTime += executionTime;
+    if (outcome.kind === "answered") {
+      statements.push({ ...identity, status: "success", ...outcome.value, executionTime });
+      continue;
     }
+    const answered = withholdProviderError(scrub, outcome.error);
+    statements.push({
+      ...identity,
+      status: "error",
+      executionTime,
+      error: answered instanceof Error ? answered.message : "Unknown error",
+    });
+    if (outcome.kind === "unanswered") stopped = outcome;
+    break;
   }
   // The last successful statement is the script's own outcome (#2271): a write or an empty
   // SELECT is shown as itself, not by the last result that happened to carry rows.
   const shown = [...statements].reverse().find((r) => r.status === "success");
-  return {
+  const answer = {
     rows: shown?.rows ?? [],
     fields: shown?.fields ?? [],
     rowCount: shown?.rowCount ?? 0,
@@ -163,6 +160,7 @@ async function runScriptInTransaction(
     hasError: statements.some((r) => r.status === "error"),
     statements,
   };
+  return { answer, stopped };
 }
 
 // One string literal each, never a concatenation across lines: bun's line coverage under-counts the continuation lines
@@ -319,6 +317,57 @@ function failedCommitEnd(error: unknown): TransactionEnd {
   return errorOutcome(error) === "not-sent" ? "rolled-back" : "unknown";
 }
 
+/** What a script of the owner's inside the transaction runs with, and what its answer and its event are read from. */
+interface ScriptCall {
+  readonly provider: DatabaseProvider & TransactionProvider;
+  readonly units: ExecutionUnit[];
+  readonly options: QueryPrepareOptions;
+  readonly caller: TransactionCaller;
+  readonly scrub: ProviderTextScrub;
+  readonly owned: string;
+  readonly ownCall: OwnerCall;
+  readonly owner: TransactionOwner | null;
+  /** The script's one `open` event as the query action records it, the text the user submitted. */
+  readonly event: Pick<TransactionEventDetail, "statement" | "started">;
+  readonly confirmation: { readonly confirmation?: "unconfirmed" };
+}
+
+/**
+ * Runs a script of several statements inside the owner's transaction (`runScriptInTransaction`), settles the record by
+ * the state it left and records its one `open` event, and answers it (docs/providers/CONTRACT.md, clauses C-58 and
+ * C-84). After a statement Studio stopped waiting for, the state is unknown and nothing is read: the record is marked
+ * unresolved and the script's call counts as stopped until that statement settles (`settleFailure`), the event carries
+ * the stop's code, and the answer `inTransaction: null`. Otherwise the state after the script is read once through the
+ * host, and the statements ran, so a read that fails answers `unknown`, logged, as after a failure: the record stays,
+ * unresolved, and the answer still reports their results.
+ */
+async function answerScriptInTransaction(call: ScriptCall): Promise<NextResponse> {
+  const script = openTransactionScript(call.provider, {
+    units: call.units,
+    options: call.options,
+    signal: call.caller.signal,
+    route: ROUTE,
+  });
+  const { answer, stopped } = await runScriptInTransaction(script, call.units, call.scrub);
+  if (stopped !== undefined) {
+    settleFailure(
+      call.owned,
+      call.ownCall,
+      call.owner,
+      stopped,
+      { ...call.event, status: "error", ...eventError(call.scrub, stopped.error) },
+      "unknown",
+    );
+    return NextResponse.json({ ...answer, inTransaction: null, ...call.confirmation });
+  }
+  if (call.owner !== null) {
+    recordTransactionStatement(call.owner, { ...call.event, status: answer.hasError ? "error" : "success" });
+  }
+  const stillOpen = await readTransactionStateOrUnknown(call.provider, call.caller);
+  recordEndFound(settleTransaction(call.owned, stillOpen, call.ownCall.mark));
+  return NextResponse.json({ ...answer, inTransaction: inTransactionAnswer(stillOpen), ...call.confirmation });
+}
+
 export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/transaction", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
@@ -383,6 +432,12 @@ export async function POST(req: NextRequest) {
       const optionError = pageOptionError(options);
       if (optionError !== null) {
         return NextResponse.json({ error: optionError }, { status: 400 });
+      }
+      // The connection's statement timeout, which each statement's deadline is computed from, held to the query route's
+      // rule before anything is gated or opened (docs/providers/CONTRACT.md, clause C-84).
+      const timeoutError = queryTimeoutError(connection.queryTimeout);
+      if (timeoutError !== null) {
+        return NextResponse.json({ error: timeoutError }, { status: 400 });
       }
       const gate = await gateRun({
         route: "transaction",
@@ -659,15 +714,20 @@ export async function POST(req: NextRequest) {
           const grammar = resolveSqlGrammar(connection.type);
           const units = splitExecutionUnits(sql, grammar).filter((unit) => countCodeStatements(unit.sql, grammar) > 0);
           if (units.length > 1) {
-            const script = await runScriptInTransaction(provider, units, options, connectionScrub);
-            recordStatement(script.hasError ? "error" : "success", {});
-            // The script's own statements stay on the provider until they move with POST /api/db/multi-query; the
-            // state after them is read through the host (docs/providers/CONTRACT.md, clause C-50). The statements ran,
-            // so a read that fails answers `unknown`, logged, as after a failure: the record stays, unresolved, and the
-            // answer still reports their results (clause C-58).
-            const stillOpen = await readTransactionStateOrUnknown(provider, caller);
-            recordEndFound(settleTransaction(owned, stillOpen, ownCall.mark));
-            return NextResponse.json({ ...script, inTransaction: inTransactionAnswer(stillOpen), ...confirmation });
+            // Each statement runs through the provider host, and the state after them is read through it too
+            // (`answerScriptInTransaction`; docs/providers/CONTRACT.md, clause C-84).
+            return await answerScriptInTransaction({
+              provider,
+              units,
+              options,
+              caller,
+              scrub: connectionScrub,
+              owned,
+              ownCall,
+              owner,
+              event: { statement: sql, started },
+              confirmation,
+            });
           }
           if (units.length === 1) statementSql = units[0].sql;
         }

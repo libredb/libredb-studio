@@ -2754,7 +2754,6 @@ Its transaction call runs the provider's own method for the action, a begin with
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
 A provider's error passes by reference.
-The transaction route's script of several statements still calls `queryInTransaction` itself, statement by statement, and reads only the state after them through the host, C-59.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page and the statement as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
@@ -2778,7 +2777,7 @@ It sends the unit as the script route always sent it: every unit but the last as
 It runs the provider's `query` with that text, no params, the run id only for a provider that can cancel a run, and the request's scope, and a failure that names the bound Studio added says so, passed by reference.
 Its calls offer execute honouring `offset`, and `console.cancel` and `console.endScope` exactly as the console session offers them, with the same members; it offers no transaction, tree, maintenance or monitoring facet and is no read-only statement session.
 It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and its page's row limit is every row the provider returned, at least one, within one page.
-Each unit of a script of `POST /api/db/transaction` is served as a transaction script unit session of its own, built per unit by its facade, opened with the unit and, for the script's last unit only, the caller's page options.
+Each unit of a script of `POST /api/db/transaction` is served as a transaction script unit session of its own, built per unit by its facade, C-84, opened with the unit and, for the script's last unit only, the caller's page options.
 Its execute takes only the unit's own text as the request's statement, sent with `transaction`, and any other text, or a request without `transaction`, is a defect of the host, thrown by name before anything is called.
 It sends the unit as the transaction route always sent it: every unit as written, except a last unit of exactly one statement, which the provider's prepare bounds whole on a fresh copy of the options, and never the probe row past the page.
 It runs the provider's `queryInTransaction` with that text alone, no params, no run id and no scope, and a failure that names the bound Studio added says so, passed by reference, with nothing read after it.
@@ -3039,6 +3038,7 @@ An answered statement or script after which the session holds no transaction rec
 A teardown of the owner's providers by a governance reload records `unknown`, never `rolled-back`, while a call of the owner's is in flight or stopped and still running on the record, since that call may end the transaction before the teardown's rollback.
 A BEGIN that replaces a record whose end no path recorded records that end `unknown`, since the provider opened a new transaction and how the old one ended is not known.
 A COMMIT that fails after it may have reached the database, its outcome not `not-sent`, E-5, and leaves no transaction is recorded `unknown`, never rolled back.
+A unit of the transaction route's script that Studio stopped waiting for leaves the state unknown: nothing is read after it, the record is marked unresolved, the script's call counts as stopped until that unit settles, and the script's answer carries `inTransaction: null`, C-84.
 
 - test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "the core asks the session on every call and keeps no state between calls"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
@@ -3090,6 +3090,8 @@ A COMMIT that fails after it may have reached the database, its outcome not `not
 - test `tests/api/db/transaction.test.ts` "governance: a read that finds no transaction while a BEGIN whose caller left still runs keeps the record, so the transaction it opens stays its caller's and its end is recorded unknown"
 - test `tests/api/db/transaction.test.ts` "governance: a lease that lapses on an unknown state records unknown, never timed-out"
 - test `tests/api/db/transaction.test.ts` "governance: a credential change on a transaction whose state is unknown records unknown unless a rollback answered"
+- test `tests/api/db/transaction.test.ts` "a script unit that does not answer within its deadline is that unit's error inside the 200 answer, no further unit starts, and the transaction is kept with its state unknown until that unit settles"
+- test `tests/api/db/transaction.test.ts` "governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown"
 
 ### C-59 (normative): The transaction route on the host
 
@@ -3101,7 +3103,7 @@ A statement's page is held to the host's page budget, C-53, and answered as the 
 The rollback after a credential change reads the state and rolls back within 5 s of Studio's own, under a signal the request's leaving does not end, since it is Studio's cleanup, which the caller did not ask for.
 A begin Studio stopped waiting for, on a key with no record whose session held no transaction before it, is claimed for its caller alone, its state unknown, since it may have opened a transaction only that caller can own.
 A begin the session answers with no transaction held claims nothing and is refused in Studio's words.
-The transaction route's script of several statements is excepted, C-50.
+The script of several statements runs each unit through the host core, C-84.
 
 - test `tests/unit/lib/api/editor-transaction.test.ts` "each transaction call's deadline is the statement timeout plus ten seconds, and a state read's the cleanup deadline"
 - test `tests/unit/lib/api/editor-transaction.test.ts` "a begin past its deadline is refused before the provider is called, not-sent"
@@ -3836,7 +3838,46 @@ A provider that ends nothing of its query path is sent no scope and asked to end
 - test `tests/api/db/multi-query.test.ts` "a script run before the host core is installed fails by name and sends no unit"
 - test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
 - test `tests/unit/lib/api/route-statement-callers.test.ts` "the scan finds a call of a provider statement member, and not a comment or a field that names one"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the transaction route's script and the profile, whose statements still run on the provider"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the profile, whose statements still run on the provider"
+
+### C-84 (normative): The editor's script inside a transaction on the host
+
+`POST /api/db/transaction` runs every unit of its script of several statements through the host core's console execute sent with `transaction`, C-48, one unit at a time in the script's order, each on a transaction script unit session of its own that the legacy bridge serves, C-50.
+The route calls no provider statement member itself.
+The script reads the host core when it opens, before any unit, so a script run before the core is installed fails by name and sends nothing.
+A connection whose statement timeout is not a whole number of milliseconds from 1 to the longest timer is refused with the query route's sentence before a query action, a script or one statement, is gated or opens anything.
+Each unit's request is fresh: the unit's text, every row for every unit but the last and the request's page for the last, and `transaction`, with no run id, since Studio sends no cancel inside a transaction, and no scope, since a transaction is ended by its own COMMIT or ROLLBACK.
+Each unit's context is fresh: the unit's own deadline, the connection's statement timeout plus ten seconds from the unit's start, a signal that aborts at that deadline or when the request's signal aborts first, and the empty environment.
+The bridge sends each unit's text as the route always sent it, C-50.
+The host pumps each unit's first result within one page, C-53, as the host's measure and wait and never a cut: the unit is answered with the provider's rows by reference, every row, and its page record is released once its answer is built, or once building it failed.
+A row larger than one page is that unit's byte budget refusal, outcome unknown and its state unknown, a value nested past the value codec's depth bound is that unit's error in the codec's sentence, and an answer over one batch waits for the host's large-page slot within the unit's deadline.
+A unit its deadline or the request's leaving stopped is answered as that unit's error inside the script's 200 answer, the statement's timeout refusal in the editor's sentence for the wait it ended or the request's cancellation, and the script starts no further unit; nothing is cancelled, so the stopped unit goes on in the database.
+A unit started after the request left is refused before its call, not-sent, and reaches no provider.
+A unit's failure after Studio stopped waiting for it is logged under the route by kind and code, never its text.
+The state after the script is read once through the host after its last unit, unless Studio stopped waiting for that unit, when it is unknown and nothing is read, C-58.
+The script records its one `open` event as before, and after a unit Studio stopped waiting for, with status `error` and the stop's code.
+
+- test `tests/unit/lib/api/editor-script.test.ts` "each unit of a script inside a transaction is one host core execute sent with transaction, on a session of its own, a fresh request and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/editor-script.test.ts` "every unit of a script inside a transaction but the last asks every row and the last the request's page, with no run id and no scope"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's answer is built from the provider's result by reference before its page record is released exactly once, even when building it throws"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's answer keeps every row, however many pages its rows would fill"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit row larger than one page is unanswered with StudioByteBudgetRefusal, its call settled"
+- test `tests/unit/lib/api/editor-script.test.ts` "a value nested past the value codec's depth bound in a transaction script unit is the unit's error in the codec's sentence"
+- test `tests/unit/lib/api/editor-script.test.ts` "a script inside a transaction opened before the host core is installed throws by name and calls no provider"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's deadline is its connection's statement timeout plus ten seconds from the unit's start"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit its deadline stops is unanswered with StudioTimeoutRefusal in the statement's sentence, its later failure logged by kind and code only, and nothing cancelled"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit whose request leaves is unanswered with QueryCancelledError at once, and nothing cancelled"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit whose page waits for the large-page slot past its deadline answers the slot's sentence"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit started after its request left is refused before the call and reaches no provider"
+- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's provider error passes as the same object"
+- test `tests/unit/lib/api/editor-script-bounds.test.ts` "a unit of a script inside a transaction whose provider never answers ends at its deadline in the statement's timeout refusal"
+- test `tests/api/db/transaction.test.ts` "every unit of a script inside a transaction runs through the host core's console execute sent with transaction, one call per unit"
+- test `tests/api/db/transaction.test.ts` "a script unit that does not answer within its deadline is that unit's error inside the 200 answer, no further unit starts, and the transaction is kept with its state unknown until that unit settles"
+- test `tests/api/db/transaction.test.ts` "a script whose request leaves while a unit runs answers that unit's cancellation at once and sends no further unit"
+- test `tests/api/db/transaction.test.ts` "a malformed connection queryTimeout is refused with the query route's sentence before a query action opens anything"
+- test `tests/api/db/transaction.test.ts` "governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown"
+- test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the profile, whose statements still run on the provider"
 
 ## Not yet in this contract
 
@@ -3966,3 +4007,9 @@ Against this contract's earlier text:
 - A script's units are sent the script's scope only where the session offers `console.endScope`, and such a provider's script is asked to end none, C-83, where every unit was sent a scope and the end was refused as not offered.
 - A unit's failure after Studio stopped waiting for it, and a failed end of a stopped script's scope, are logged by kind and code, C-83.
 - The legacy bridge serves a transaction script unit session that sends a unit of the transaction route's script as that route always sent it, C-50.
+- Every unit of the transaction route's script runs through the host core's console execute sent with `transaction`, under its own deadline and the request's signal, C-84, where the route called `queryInTransaction` itself and waited for each unit without end: a unit that does not answer within its connection's statement timeout plus ten seconds is answered as that unit's error in the editor's sentence inside the script's answer, no further unit starts, and the transaction and its owner are kept with the state unknown until that unit settles, C-58.
+- A request that leaves while a unit of a script inside a transaction runs is answered at once with that unit's cancellation and no further unit is sent, C-84, where every remaining unit ran inside the transaction after the client had gone; the unit in flight goes on in the database.
+- A row larger than one page in a unit of a script inside a transaction is that unit's byte budget refusal with the state unknown, a unit whose first result passes one batch waits for the host's large-page slot within its deadline, and a value nested past the value codec's depth bound is that unit's error, C-84, where each was answered.
+- A query action of the transaction route whose connection statement timeout is malformed is refused with the query route's sentence before it is gated or opens anything, C-84, where a script ran and one statement failed with the host's deadline error.
+- A script inside a transaction whose unit Studio stopped waiting for records its `open` event with the stop's code, and the end found after it is recorded `unknown`, C-58 and C-84.
+- A provider whose state read throws right after a unit of a script inside a transaction fails that unit with its error, C-50, where only the read after the script was taken.
