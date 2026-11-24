@@ -525,7 +525,7 @@ paste tab. Two independent reasons, the same pair Druid records:
 - **There is no URI convention for this HTTP surface.** A cluster is addressed by host and port; the
   official client takes a `node` URL, which is not a credential-carrying DSN the shared parser could
   round-trip.
-- **`http://` and `https://` are already claimed by ClickHouse** in its connection string row
+- **`http://` and `https://` are already claimed by ClickHouse** in its paste reader
   ([`src/lib/db/providers/sql/clickhouse/connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts), #264),
   where an HTTP URL *is* the canonical connection target.
 
@@ -581,7 +581,7 @@ redirect would take the Basic or `ApiKey` credential and the statement to wherev
 
 ### Connection string
 
-`elasticsearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`elasticsearch-connection-string.ts`](../../src/lib/db/providers/sql/search/elasticsearch-connection-string.ts)).
+`elasticsearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 `apiKeyId` and `apiKeySecret` are its seed-only fields, its declaration's `connection.seedOnly` (`src/lib/db/engine-declarations/elasticsearch.json`), which Studio reads as its row of `SEED_ONLY_FIELDS`: a seed of any other engine that carries the pair is refused.
 The seed schema refuses it at load, and the managed connection mapper refuses it again, with its own sentence, for a seed built in memory past the schema, so no such seed is ever listed as an OpenSearch connection whose transport would drop the pair with no error.
 OpenSearch refuses the pair too: nothing here has measured whether OpenSearch's security plugin accepts `Authorization: ApiKey`, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.

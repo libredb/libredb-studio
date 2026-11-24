@@ -558,7 +558,7 @@ An application that embeds the npm library installs `oracledb` itself, and the p
 ### Connection string
 
 The scheme shown for Oracle is `oracle://`.
-Its row in `CONNECTION_STRING` is declared in [`oracle-connection-string.ts`](../../src/lib/db/providers/sql/oracle-connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`oracle.json`](../../src/lib/db/engine-declarations/oracle.json)), which names a paste reader, `ORACLE_PASTE_READER` in [`oracle-connection-string.ts`](../../src/lib/db/providers/sql/oracle-connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the name the declaration gives.
 Its `paste` claims `oracle://`, with port 1521 by default.
 It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the form, and it runs no seed load check.
 

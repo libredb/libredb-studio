@@ -466,7 +466,7 @@ const connection = {
 paste tab. Two independent reasons, the same pair Druid records: there is **no URI convention** for
 this HTTP surface (the official client takes a `node` URL, which is not a credential-carrying DSN the
 shared parser could round-trip), and **`http://` / `https://` are already claimed by ClickHouse** in
-its connection string row
+its paste reader
 ([`src/lib/db/providers/sql/clickhouse/connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts), #264).
 
 This provider's connection string row therefore has **no `paste`**. The consequence is
@@ -524,7 +524,7 @@ redirect would take the Basic credential and the statement to wherever the serve
 
 ### Connection string
 
-`opensearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`opensearch-connection-string.ts`](../../src/lib/db/providers/sql/search/opensearch-connection-string.ts)).
+`opensearch` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

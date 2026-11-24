@@ -4,7 +4,13 @@ import {
   readBooleanTLS,
   safeDecodeURIComponent,
 } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection, QueryParams, TLSIntent } from "@/lib/db/connection-string/types";
+import type {
+  ConnectionStringPasteReader,
+  ParsedConnection,
+  QueryParams,
+  TLSIntent,
+  UrlTlsReader,
+} from "@/lib/db/connection-string/types";
 import type { SSLMode } from "@/lib/types";
 
 /**
@@ -99,19 +105,12 @@ function parsePostgresURL(uri: string): ParsedConnection | null {
 /** `postgres://` and `postgresql://`. */
 const claimsPostgres = (text: string): boolean => text.startsWith("postgres://") || text.startsWith("postgresql://");
 
-/**
- * `postgres`: the `postgres://` scheme, the TLS its URL query carries, a paste of `postgres://` or `postgresql://`
- * read with libpq's query keywords, no seed load check.
- */
-export const POSTGRES_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "postgres",
-  readTls: readPostgresTLS,
-  paste: {
-    catchAll: false,
-    claims: claimsPostgres,
-    names: claimsPostgres,
-    parse: parsePostgresURL,
-    formats: ["postgres://"],
-  },
-  validateSeed: null,
-};
+/** `postgres`'s URL TLS reader: the TLS its URL query carries. */
+export const POSTGRES_URL_TLS: UrlTlsReader = readPostgresTLS;
+
+/** `postgres`'s paste reader, of `postgres://` or `postgresql://`, read with libpq's query keywords. */
+export const POSTGRES_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsPostgres,
+  names: claimsPostgres,
+  parse: parsePostgresURL,
+});

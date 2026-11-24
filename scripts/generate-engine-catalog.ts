@@ -4,23 +4,26 @@
  * the engine catalog (docs/providers/CONTRACT.md, clause M-70); the data-only connection tables (clause M-71), in
  * two modules: src/lib/db/engine-catalog/connection.generated.ts, the fields, seed-only fields, refused fields and
  * credential warnings, and src/lib/db/engine-catalog/connection-flags.generated.ts, the three yes or no answers
- * src/lib/db/compatibility.ts reads, so that module's readers load the three records and never the other four; and
+ * src/lib/db/compatibility.ts reads, so that module's readers load the three records and never the other four;
  * src/lib/db/engine-catalog/connection-form.generated.ts, the connection forms (clause M-72), which only
- * src/lib/db/connection-form.ts reads, so no reader of the connection tables loads them.
+ * src/lib/db/connection-form.ts reads, so no reader of the connection tables loads them; and
+ * src/lib/db/engine-catalog/connection-string.generated.ts, the connection strings (clause M-74), which only
+ * src/lib/db/connection-string/index.ts reads, so neither the paste parser nor the seed loader loads the forms.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
  * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
- * `projectConnectionTables` and `projectConnectionForms` (src/lib/db/engine-catalog/projection.ts). `--write` projects
- * each file's authored members, `AUTHORED_MEMBERS`, without admitting the whole file: the validator holds an authored
- * member to members the declaration generator writes (each host path field to `connection.seedOnly`), so a file whose
- * authored members just changed is refused until that generator has rewritten the rest. The command refuses,
- * by name, an entry that is not a `.json` file, a file that is not JSON, and a declaration whose `id` is not its file
- * name; `--write` a file that lacks an authored member, `--check` a declaration the schema refuses, with the
- * validator's refusal sentences; the projections refuse two declarations of one id. Studio's runtime reads no
- * declaration file: the browser cannot compile the schema under Studio's content security policy, which allows no
- * `eval`, and the published library and the standalone server carry no schema file, so every reader reads a generated
- * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
+ * `projectConnectionTables`, `projectConnectionForms` and `projectConnectionStrings`
+ * (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members, `AUTHORED_MEMBERS`,
+ * without admitting the whole file: the validator holds an authored member to members the declaration generator writes
+ * (each host path field to `connection.seedOnly`), so a file whose authored members just changed is refused until that
+ * generator has rewritten the rest. The command refuses, by name, an entry that is not a `.json` file, a file that is
+ * not JSON, and a declaration whose `id` is not its file name; `--write` a file that lacks an authored member,
+ * `--check` a declaration the schema refuses, with the validator's refusal sentences; the projections refuse two
+ * declarations of one id. Studio's runtime reads no declaration file: the browser cannot compile the schema under
+ * Studio's content security policy, which allows no `eval`, and the published library and the standalone server carry
+ * no schema file, so every reader reads a generated module, which tests/unit/db/engine-catalog.test.ts holds byte for
+ * byte to what this command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
  * of the union with no declaration fails the typecheck at the record. The connection modules are laid out as the
@@ -35,7 +38,9 @@
  * back unchanged, so one run is exact; and `--check` then admits the whole written set, so the run exits 1 with the
  * validator's refusal sentences when the authored members leave the declaration inconsistent, such as a placeable field
  * with no placement in the authored dialog, or when they and Studio's tables still disagree, such as a host path field
- * Studio's record lists that the authored seed-only fields no longer hold.
+ * Studio's record lists that the authored seed-only fields no longer hold. A function name Studio holds no function for
+ * fails the run earlier, at the declaration generator: it loads the connection form and the connection string index,
+ * which compose every engine from the modules `--write` just wrote and refuse such a name by name.
  *
  * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
  * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
@@ -48,10 +53,12 @@ import { compileManifestValidator, type EngineDeclaration, refusalSentence } fro
 import {
   type AuthoredDeclaration,
   type ConnectionForms,
+  type ConnectionStrings,
   type ConnectionTables,
   type EngineCatalog,
   projectCatalog,
   projectConnectionForms,
+  projectConnectionStrings,
   projectConnectionTables,
 } from "../src/lib/db/engine-catalog/projection";
 
@@ -69,6 +76,12 @@ export const ENGINE_CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connect
 
 /** The generated connection form module in the repository: the connection forms src/lib/db/connection-form.ts reads. */
 export const ENGINE_CONNECTION_FORM_MODULE = "src/lib/db/engine-catalog/connection-form.generated.ts";
+
+/**
+ * The generated connection string module in the repository: the connection strings
+ * src/lib/db/connection-string/index.ts reads.
+ */
+export const ENGINE_CONNECTION_STRING_MODULE = "src/lib/db/engine-catalog/connection-string.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -97,6 +110,10 @@ export const AUTHORED_MEMBERS = [
   "connection.refused",
   "connection.connectionString.accepted",
   "connection.connectionString.dialogOffersUri",
+  "connection.connectionString.scheme",
+  "connection.connectionString.urlTls",
+  "connection.connectionString.paste",
+  "connection.connectionString.seedCheck",
   "connection.tls",
   "connection.readsTrustMaterial",
   "connection.dialog",
@@ -110,6 +127,7 @@ export const AUTHORED_MEMBERS = [
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
+type ConnectionStringOffer = Connection["connectionString"];
 
 /** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
 export type AuthoredMembers = AuthoredDeclaration;
@@ -150,6 +168,10 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       connectionString: {
         accepted: read("connection.connectionString.accepted") as boolean,
         dialogOffersUri: read("connection.connectionString.dialogOffersUri") as boolean,
+        scheme: read("connection.connectionString.scheme") as ConnectionStringOffer["scheme"],
+        urlTls: read("connection.connectionString.urlTls") as ConnectionStringOffer["urlTls"],
+        paste: read("connection.connectionString.paste") as ConnectionStringOffer["paste"],
+        seedCheck: read("connection.connectionString.seedCheck") as ConnectionStringOffer["seedCheck"],
       },
       tls: read("connection.tls") as Connection["tls"],
       readsTrustMaterial: read("connection.readsTrustMaterial") as boolean,
@@ -433,22 +455,49 @@ export function renderConnectionFlags(tables: ConnectionTables): string {
 }
 
 /**
+ * The text of a generated module holding one frozen record of projected entries: a header, the type-id union's and
+ * `entryType`'s type imports, and the record under `doc` and `declaration`, typed over the union.
+ */
+function renderedEntryModule(
+  entryType: string,
+  doc: string,
+  declaration: string,
+  record: Readonly<Record<string, unknown>>,
+): string {
+  return [
+    ...HEADER,
+    'import type { DatabaseType } from "@/lib/types";',
+    `import type { ${entryType} } from "./projection";`,
+    "",
+    ...renderedRecord(doc, `${declaration}: Readonly<Record<DatabaseType, ${entryType}>> =`, record),
+    "",
+  ].join("\n");
+}
+
+/**
  * The text of the generated connection form module for `forms`: a header, type imports only, and one frozen record,
  * read by src/lib/db/connection-form.ts.
  */
 export function renderConnectionForms(forms: ConnectionForms): string {
-  return [
-    ...HEADER,
-    'import type { DatabaseType } from "@/lib/types";',
-    'import type { ConnectionFormEntry } from "./projection";',
-    "",
-    ...renderedRecord(
-      "Each engine's connection form, its display name and connection dialog members, read by `CONNECTION_FORM` (M-72).",
-      "export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionFormEntry>> =",
-      forms,
-    ),
-    "",
-  ].join("\n");
+  return renderedEntryModule(
+    "ConnectionFormEntry",
+    "Each engine's connection form, its display name and connection dialog members, read by `CONNECTION_FORM` (M-72).",
+    "export const BUNDLED_CONNECTION_FORMS",
+    forms,
+  );
+}
+
+/**
+ * The text of the generated connection string module for `strings`: a header, type imports only, and one frozen
+ * record, read by src/lib/db/connection-string/index.ts.
+ */
+export function renderConnectionStrings(strings: ConnectionStrings): string {
+  return renderedEntryModule(
+    "ConnectionStringEntry",
+    "Each engine's connection string, its scheme and the functions it names, read by `CONNECTION_STRING` (M-74).",
+    "export const BUNDLED_CONNECTION_STRINGS",
+    strings,
+  );
 }
 
 /** The current text of `file`, or null when it does not exist. */
@@ -490,6 +539,10 @@ function main(argv: readonly string[]): number {
     { file: fileOf(ENGINE_CONNECTION_MODULE), text: renderConnectionTables(tables) },
     { file: fileOf(ENGINE_CONNECTION_FLAGS_MODULE), text: renderConnectionFlags(tables) },
     { file: fileOf(ENGINE_CONNECTION_FORM_MODULE), text: renderConnectionForms(projectConnectionForms(declarations)) },
+    {
+      file: fileOf(ENGINE_CONNECTION_STRING_MODULE),
+      text: renderConnectionStrings(projectConnectionStrings(declarations)),
+    },
   ];
 
   if (mode === "--check") {

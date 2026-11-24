@@ -668,7 +668,7 @@ discrete-fields form** (the `connectionString` path bypasses it entirely). Note 
 
 #### `ssl-mode` in a pasted URL
 
-The paste box, through MySQL's connection string row
+The paste box, through MySQL's paste reader
 ([`mysql-connection-string.ts`](../../src/lib/db/providers/sql/mysql-connection-string.ts)), reads the
 query string, so `mysql://host/db?ssl-mode=REQUIRED` arrives with SSL Mode already set. The values are
 matched case-insensitively (MySQL writes them upper-case) and `sslmode` is accepted as an alias:
@@ -706,7 +706,7 @@ yourself in the SSL / TLS panel.
 ### Connection string
 
 The scheme shown for MySQL is `mysql://`.
-Its row in `CONNECTION_STRING` is declared in [`mysql-connection-string.ts`](../../src/lib/db/providers/sql/mysql-connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`mysql.json`](../../src/lib/db/engine-declarations/mysql.json)), which names a URL TLS reader and a paste reader, `MYSQL_URL_TLS` and `MYSQL_PASTE_READER` in [`mysql-connection-string.ts`](../../src/lib/db/providers/sql/mysql-connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the names the declaration gives.
 Its `paste` claims `mysql://`, with port 3306 by default.
 Its `readTls` reads `ssl-mode` (or `sslmode`) first, mapping `DISABLED`, `REQUIRED`, `VERIFY_CA` and `VERIFY_IDENTITY` onto `disable`, `require`, `verify-ca` and `verify-full`, and leaving `PREFERRED` unmapped for the reason postgres leaves `prefer` unmapped.
 Without a mode it reads the boolean `ssl` or `useSSL`: reading only `ssl-mode` dropped `?ssl=true` and `?useSSL=true` with no mode and no banner, the silent downgrade the TLS read exists to prevent.

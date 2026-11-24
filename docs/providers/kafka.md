@@ -298,7 +298,7 @@ An `enabled` that is not true, false or absent, such as the string `"true"`, is 
 
 ### Connection string
 
-`kafka` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/stream/kafka/connection-string.ts)).
+`kafka` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`kafka.json`](../../src/lib/db/engine-declarations/kafka.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

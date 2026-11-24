@@ -379,7 +379,7 @@ package inside libredb-platform.
 
 ### Connection string
 
-`libredb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`libredb-connection-string.ts`](../../src/lib/db/providers/embedded/libredb-connection-string.ts)).
+`libredb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`libredb.json`](../../src/lib/db/engine-declarations/libredb.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 LibreDB is embedded in the process, so there is no address to write a scheme for.
 
 ### Execution UI

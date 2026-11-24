@@ -422,7 +422,7 @@ refuses a tunnel that is on and was not opened before the provider is built
 
 ### Connection string
 
-`opcua` has no connection string scheme, no `readTls` and no `paste` ([`connection-string.ts`](../../src/lib/db/providers/industrial/opcua/connection-string.ts)).
+`opcua` has no connection string scheme, no `readTls` and no `paste`: its declaration's `connection.connectionString` ([`opcua.json`](../../src/lib/db/engine-declarations/opcua.json)) names only a seed check, `OPCUA_SEED_CHECK` in [`connection-string.ts`](../../src/lib/db/providers/industrial/opcua/connection-string.ts), which `CONNECTION_STRING_FUNCTIONS` binds to the name the declaration gives.
 Its `validateSeed` holds a seed's `agentReadRoots` to the read roots grammar (`readRootRefusals` in [`agent-roots.ts`](../../src/lib/db/providers/industrial/opcua/agent-roots.ts)) when the file loads, one refusal per element with its index, and the provider holds a connection built in memory to the same grammar when it is constructed.
 `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` and `agentReadRoots` are its seed-only fields, its declaration's `connection.seedOnly`, read as `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
 The last three are the fields the dialog has no box for, because they are deployment facts: the policy to insist on, and the client certificate and key to present.

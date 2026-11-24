@@ -5,12 +5,16 @@
  *
  * `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, one
  * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `AUTHORED_MEMBERS`, are read
- * from the committed file and written back unchanged; the engine catalog, the connection tables and the connection
- * forms project them (tests/unit/db/engine-catalog.test.ts), so the census of those members reads each table back to
- * the declaration it was projected from: for the connection form, `CONNECTION_FORM` composed from the projection and
- * Studio's function table (src/lib/db/connection-form.ts). The census below does not call the generator: its
- * read-back functions are written here, from the tables, so a slip in the generator cannot certify itself. Each test
- * loops over every shipped id and fails with the list of ids whose declaration and table differ.
+ * from the committed file and written back unchanged; the engine catalog, the connection tables, the connection forms
+ * and the connection strings project them (tests/unit/db/engine-catalog.test.ts), so the census of those members reads
+ * each table back to the declaration it was projected from: for the connection form, `CONNECTION_FORM` composed from
+ * the projection and Studio's function table (src/lib/db/connection-form.ts), and for the connection string,
+ * `CONNECTION_STRING` composed from the projection and Studio's connection string function table
+ * (src/lib/db/connection-string/index.ts). Those tests compare a composition with its source; what the rows do is held
+ * by the golden files, the paste tests, the parser tests and the seed tests, which read the same rows. The census below
+ * does not call the generator: its read-back functions are written here, from the tables, so a slip in the generator
+ * cannot certify itself. Each test loops over every shipped id and fails with the list of ids whose declaration and
+ * table differ.
  */
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -197,26 +201,26 @@ import { MONGODB_SQL_GRAMMAR } from "@/lib/db/providers/document/mongodb/sql-gra
 import { REDIS_SQL_GRAMMAR } from "@/lib/db/providers/keyvalue/redis-sql-grammar";
 import { POSTGRES_SQL_GRAMMAR } from "@/lib/db/providers/sql/postgres-sql-grammar";
 import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "@/lib/db/query-dialects";
-import { COUCHBASE_CONNECTION_STRING } from "@/lib/db/providers/document/couchbase/connection-string";
-import { MONGODB_CONNECTION_STRING } from "@/lib/db/providers/document/mongodb/connection-string";
-import { OPCUA_CONNECTION_STRING } from "@/lib/db/providers/industrial/opcua/connection-string";
-import { ETCD_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/etcd/connection-string";
-import { REDIS_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/redis-connection-string";
-import { CLICKHOUSE_CONNECTION_STRING } from "@/lib/db/providers/sql/clickhouse/connection-string";
-import { DATABEND_CONNECTION_STRING } from "@/lib/db/providers/sql/databend/connection-string";
-import { DB2_CONNECTION_STRING } from "@/lib/db/providers/sql/db2/connection-string";
-import { LIBSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/libsql/connection-string";
-import { MSSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mssql-connection-string";
-import { MYSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mysql-connection-string";
-import { ORACLE_CONNECTION_STRING } from "@/lib/db/providers/sql/oracle-connection-string";
-import { POSTGRES_CONNECTION_STRING } from "@/lib/db/providers/sql/postgres-connection-string";
+import { COUCHBASE_PASTE_READER } from "@/lib/db/providers/document/couchbase/connection-string";
+import { MONGODB_PASTE_READER } from "@/lib/db/providers/document/mongodb/connection-string";
+import { OPCUA_SEED_CHECK } from "@/lib/db/providers/industrial/opcua/connection-string";
+import { ETCD_SEED_CHECK } from "@/lib/db/providers/keyvalue/etcd/connection-string";
+import { REDIS_PASTE_READER } from "@/lib/db/providers/keyvalue/redis-connection-string";
+import { CLICKHOUSE_PASTE_READER } from "@/lib/db/providers/sql/clickhouse/connection-string";
+import { DATABEND_PASTE_READER } from "@/lib/db/providers/sql/databend/connection-string";
+import { DB2_PASTE_READER, DB2_URL_TLS } from "@/lib/db/providers/sql/db2/connection-string";
+import { LIBSQL_PASTE_READER } from "@/lib/db/providers/sql/libsql/connection-string";
+import { MSSQL_PASTE_READER, MSSQL_URL_TLS } from "@/lib/db/providers/sql/mssql-connection-string";
+import { MYSQL_PASTE_READER, MYSQL_URL_TLS } from "@/lib/db/providers/sql/mysql-connection-string";
+import { ORACLE_PASTE_READER } from "@/lib/db/providers/sql/oracle-connection-string";
+import { POSTGRES_PASTE_READER, POSTGRES_URL_TLS } from "@/lib/db/providers/sql/postgres-connection-string";
 import {
   snowflakeAccountRefusal,
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
-import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
-import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
+import { SNOWFLAKE_PASTE_READER, SNOWFLAKE_SEED_CHECK } from "@/lib/db/providers/sql/snowflake/connection-string";
+import { SPARK_PASTE_READER } from "@/lib/db/providers/sql/spark/connection-string";
 import {
   type AgentCredentialForm as ProviderAgentCredentialForm,
   declaredEntityOperations,
@@ -347,9 +351,10 @@ function commandReader(redaction: SqlRedaction): unknown {
  * exports, imported here from its own module. It is written apart from the generator and the inventory, so a name is
  * held to the function the connection form runs by identity, and never by a function's `name`.
  *
- * A connection string name resolves to the slot of the engine's own connection string row, imported from its provider
- * module rather than from the registry index the generator reads: every URL TLS reader, paste reader and seed check is
- * private to its module, so the row's slot is the binding there is, and the census holds it to the slot core runs.
+ * A connection string name resolves to the export of the engine's own connection string module, `<ID>_URL_TLS`,
+ * `<ID>_PASTE_READER` or `<ID>_SEED_CHECK`, imported from its provider module rather than from the registry index:
+ * `CONNECTION_STRING_FUNCTIONS` binds each name to one of them, and the census holds each composed row's functions to
+ * the export its declaration's name resolves to here.
  * A SQL grammar name resolves the same way, to the slot of the engine's own grammar row imported from its provider
  * module: every redaction reader and completion reader is private to its module too.
  */
@@ -358,32 +363,32 @@ const NAMED_FUNCTIONS: Readonly<Partial<Record<DatabaseType, Readonly<Record<str
     hostCheck: snowflakeAccountRefusal,
     hostHint: snowflakeHostHint,
     hostIdentity: snowflakeHostIdentity,
-    pasteReader: SNOWFLAKE_CONNECTION_STRING.paste,
-    seedCheck: SNOWFLAKE_CONNECTION_STRING.validateSeed,
+    pasteReader: SNOWFLAKE_PASTE_READER,
+    seedCheck: SNOWFLAKE_SEED_CHECK,
   },
   kubernetes: { importer: importKubeconfig },
-  clickhouse: { pasteReader: CLICKHOUSE_CONNECTION_STRING.paste },
-  couchbase: { pasteReader: COUCHBASE_CONNECTION_STRING.paste },
-  databend: { pasteReader: DATABEND_CONNECTION_STRING.paste },
-  db2: { urlTls: DB2_CONNECTION_STRING.readTls, pasteReader: DB2_CONNECTION_STRING.paste },
-  etcd: { seedCheck: ETCD_CONNECTION_STRING.validateSeed },
-  libsql: { pasteReader: LIBSQL_CONNECTION_STRING.paste },
+  clickhouse: { pasteReader: CLICKHOUSE_PASTE_READER },
+  couchbase: { pasteReader: COUCHBASE_PASTE_READER },
+  databend: { pasteReader: DATABEND_PASTE_READER },
+  db2: { urlTls: DB2_URL_TLS, pasteReader: DB2_PASTE_READER },
+  etcd: { seedCheck: ETCD_SEED_CHECK },
+  libsql: { pasteReader: LIBSQL_PASTE_READER },
   mongodb: {
-    pasteReader: MONGODB_CONNECTION_STRING.paste,
+    pasteReader: MONGODB_PASTE_READER,
     redactionReader: commandReader(MONGODB_SQL_GRAMMAR.redaction),
   },
-  mssql: { urlTls: MSSQL_CONNECTION_STRING.readTls, pasteReader: MSSQL_CONNECTION_STRING.paste },
-  mysql: { urlTls: MYSQL_CONNECTION_STRING.readTls, pasteReader: MYSQL_CONNECTION_STRING.paste },
-  opcua: { seedCheck: OPCUA_CONNECTION_STRING.validateSeed },
-  oracle: { pasteReader: ORACLE_CONNECTION_STRING.paste },
+  mssql: { urlTls: MSSQL_URL_TLS, pasteReader: MSSQL_PASTE_READER },
+  mysql: { urlTls: MYSQL_URL_TLS, pasteReader: MYSQL_PASTE_READER },
+  opcua: { seedCheck: OPCUA_SEED_CHECK },
+  oracle: { pasteReader: ORACLE_PASTE_READER },
   postgres: {
-    urlTls: POSTGRES_CONNECTION_STRING.readTls,
-    pasteReader: POSTGRES_CONNECTION_STRING.paste,
+    urlTls: POSTGRES_URL_TLS,
+    pasteReader: POSTGRES_PASTE_READER,
     formatSegment: POSTGRES_SQL_GRAMMAR.completion.formatSegment,
     readQuotedQualifier: POSTGRES_SQL_GRAMMAR.completion.readQuotedQualifier,
   },
-  redis: { pasteReader: REDIS_CONNECTION_STRING.paste, redactionReader: commandReader(REDIS_SQL_GRAMMAR.redaction) },
-  spark: { pasteReader: SPARK_CONNECTION_STRING.paste },
+  redis: { pasteReader: REDIS_PASTE_READER, redactionReader: commandReader(REDIS_SQL_GRAMMAR.redaction) },
+  spark: { pasteReader: SPARK_PASTE_READER },
 };
 
 /** The function `name` resolves to for `type` through the census's resolver, or undefined where it names none. */
@@ -993,7 +998,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and the connection form's", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's and the connection string's", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1004,6 +1009,10 @@ describe("the committed declarations", () => {
       "connection.refused",
       "connection.connectionString.accepted",
       "connection.connectionString.dialogOffersUri",
+      "connection.connectionString.scheme",
+      "connection.connectionString.urlTls",
+      "connection.connectionString.paste",
+      "connection.connectionString.seedCheck",
       "connection.tls",
       "connection.readsTrustMaterial",
       "connection.dialog",
@@ -1025,7 +1034,14 @@ describe("the committed declarations", () => {
         defaults: {},
         seedOnly: null,
         refused: [],
-        connectionString: { accepted: false, dialogOffersUri: false },
+        connectionString: {
+          accepted: false,
+          dialogOffersUri: false,
+          scheme: null,
+          urlTls: null,
+          paste: null,
+          seedCheck: null,
+        },
         tls: { modes: [] },
         readsTrustMaterial: false,
         dialog: bigquery.connection.dialog,
@@ -1049,7 +1065,19 @@ describe("the committed declarations", () => {
     expect(authored("rabbitmq").connection.refused).toEqual(declared("rabbitmq").connection.refused);
     expect(authored("s3").connection.credentialWarnings).toEqual(declared("s3").connection.credentialWarnings);
     expect(authored("db2").connection.readsTrustMaterial).toBe(true);
-    expect(authored("mongodb").connection.connectionString).toEqual({ accepted: true, dialogOffersUri: true });
+    expect(authored("mongodb").connection.connectionString).toEqual({
+      accepted: true,
+      dialogOffersUri: true,
+      scheme: "mongodb",
+      urlTls: null,
+      paste: { reader: "pasteReader", catchAll: false, formats: ["mongodb://"] },
+      seedCheck: null,
+    });
+    expect(authored("snowflake").connection.connectionString).toEqual(
+      declared("snowflake").connection.connectionString,
+    );
+    expect(authored("db2").connection.connectionString.urlTls).toBe("urlTls");
+    expect(authored("etcd").connection.connectionString.seedCheck).toBe("seedCheck");
   });
 
   test("a declaration's authored members are its committed file's, and every other member is the tables'", () => {
@@ -1060,7 +1088,11 @@ describe("the committed declarations", () => {
       ...committed.connection,
       refused,
       readsTrustMaterial: true,
-      connectionString: { ...committed.connection.connectionString, dialogOffersUri: true },
+      connectionString: {
+        ...committed.connection.connectionString,
+        dialogOffersUri: true,
+        paste: { reader: "pasteReader", catchAll: false, formats: ["postgres://", "Edited by hand"] },
+      },
       connectBudgetMs: 90_000,
       defaults: { port: 6543 },
       tls: { modes: [] },
@@ -1121,7 +1153,7 @@ describe("the committed declarations", () => {
         authoredMembersOf({ ...committed, connection: without(committed.connection, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member connection.${member}`);
     }
-    for (const member of ["accepted", "dialogOffersUri"] as const) {
+    for (const member of ["accepted", "dialogOffersUri", "scheme", "urlTls", "paste", "seedCheck"] as const) {
       const connectionString = without(committed.connection.connectionString, member);
       expect(() =>
         authoredMembersOf({ ...committed, connection: { ...committed.connection, connectionString } }, "bigquery.json"),
@@ -2649,23 +2681,26 @@ describe("the census", () => {
       const { urlTls, paste, seedCheck } = d.connection.connectionString;
       const same = (name: string | null, held: unknown) =>
         name === null ? held === null : held !== null && resolveNamed(type, name) === held;
+      // A paste reader is three operations under one name: the row's are the reader's, by identity, each one.
       const reader =
         paste === null ? undefined : (resolveNamed(type, paste.reader) as ConnectionStringPaste | undefined);
       const readerOperations =
-        reader === undefined ||
-        (typeof reader.claims === "function" &&
-          typeof reader.names === "function" &&
-          typeof reader.parse === "function");
-      return (
-        same(urlTls, row.readTls) &&
-        same(paste?.reader ?? null, row.paste) &&
-        same(seedCheck, row.validateSeed) &&
-        readerOperations
-      );
+        paste === null
+          ? row.paste === null
+          : reader !== undefined &&
+            row.paste !== null &&
+            typeof reader.claims === "function" &&
+            row.paste.claims === reader.claims &&
+            row.paste.names === reader.names &&
+            row.paste.parse === reader.parse;
+      return same(urlTls, row.readTls) && same(seedCheck, row.validateSeed) && readerOperations;
     };
 
     expect(differing(matches)).toEqual([]);
     expect(resolveNamed("postgres", "urlTls")).toBe(CONNECTION_STRING.postgres.readTls);
+    expect((resolveNamed("postgres", "pasteReader") as ConnectionStringPaste).parse).toBe(
+      CONNECTION_STRING.postgres.paste?.parse as ConnectionStringPaste["parse"],
+    );
     expect(resolveNamed("snowflake", "seedCheck")).toBe(CONNECTION_STRING.snowflake.validateSeed);
   });
 

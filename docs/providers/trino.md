@@ -537,10 +537,10 @@ reach other catalogs. The session schema is also supported in seeded connections
 ### 4.2 There is no connection string — yet
 
 `supportsConnectionString: false`. Trino's own JDBC URL — `jdbc:trino://host:port/catalog/schema` —
-is a real and widely pasted form, but Trino's connection string row
-(`src/lib/db/providers/sql/trino/connection-string.ts`) has no `paste`, so nothing reads it.
+is a real and widely pasted form, but Trino's declaration
+(`src/lib/db/engine-declarations/trino.json`) names no paste reader, so nothing reads it.
 Advertising a field that would reject everything a user pastes is worse than not
-offering it, so this stays false until that row reads the scheme.
+offering it, so this stays false until a paste reader reads the scheme.
 
 ### 4.3 TLS and the password rule
 
@@ -584,7 +584,7 @@ is what the refusal message points at.
 
 ### Connection string
 
-Trino has no connection string scheme, no `readTls`, no `paste` and no seed load check ([`connection-string.ts`](../../src/lib/db/providers/sql/trino/connection-string.ts)).
+Trino has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names none of them ([`trino.json`](../../src/lib/db/engine-declarations/trino.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 Trino is the sharpest version of the scheme gap: it has a canonical URL, `jdbc:trino://host:port/catalog/schema`, but that is a JDBC URL and not a URI, since `new URL()` reads its scheme as `jdbc:`.
 Stripping the prefix would invent a `trino://` form no Trino tool emits, so the scheme is `null`, its capabilities say `supportsConnectionString: false`, and its form offers no paste toggle.
 

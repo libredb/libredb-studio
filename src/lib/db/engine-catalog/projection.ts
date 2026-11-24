@@ -1,6 +1,6 @@
 /**
- * Studio's engine catalog, its data-only connection tables and its connection forms as projections of a set of admitted
- * engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71 and M-72).
+ * Studio's engine catalog, its data-only connection tables, its connection forms and its connection strings as
+ * projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -17,6 +17,10 @@
  * the `hostIdentity` and the `import`, each as the declaration states it: a pattern as its source and flags, and a
  * function as the name the declaration gives it, which src/lib/db/connection-form.ts binds to Studio's own function.
  *
+ * The connection strings answer, per engine, the scheme shown for it and the functions that read its connection string,
+ * the `scheme`, `urlTls`, `paste` and `seedCheck` of its `connection.connectionString`, each as the declaration states
+ * it: a function as its name, which src/lib/db/connection-string/index.ts binds to Studio's own function.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim. Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
@@ -28,10 +32,10 @@
  * is frozen, and a copy: no list or record of a declaration is handed out.
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
- * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts` and
- * `connection-form.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the
- * set it admits through the SDK's validator. A loader that admits a provider package at run time projects its set
- * through these same functions.
+ * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
+ * `connection-form.generated.ts` and `connection-string.generated.ts`, the modules Studio's readers read, and holds
+ * each module to the projection of the set it admits through the SDK's validator. A loader that admits a provider
+ * package at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
@@ -42,6 +46,7 @@ import type {
 } from "@libredb/provider-sdk/manifest";
 
 type Connection = EngineDeclaration["connection"];
+type ConnectionStringOffer = Connection["connectionString"];
 
 /** The members of a declaration the projections read, every one a member the declaration authors. */
 export interface AuthoredDeclaration {
@@ -54,8 +59,12 @@ export interface AuthoredDeclaration {
     readonly seedOnly: Connection["seedOnly"];
     readonly refused: Connection["refused"];
     readonly connectionString: {
-      readonly accepted: Connection["connectionString"]["accepted"];
-      readonly dialogOffersUri: Connection["connectionString"]["dialogOffersUri"];
+      readonly accepted: ConnectionStringOffer["accepted"];
+      readonly dialogOffersUri: ConnectionStringOffer["dialogOffersUri"];
+      readonly scheme: ConnectionStringOffer["scheme"];
+      readonly urlTls: ConnectionStringOffer["urlTls"];
+      readonly paste: ConnectionStringOffer["paste"];
+      readonly seedCheck: ConnectionStringOffer["seedCheck"];
     };
     readonly tls: Connection["tls"];
     readonly readsTrustMaterial: Connection["readsTrustMaterial"];
@@ -127,6 +136,20 @@ export interface ConnectionFormEntry {
 
 /** The connection forms: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type ConnectionForms = Readonly<Record<string, ConnectionFormEntry>>;
+
+/**
+ * One engine's connection string: the scheme shown for it, and the names of its URL TLS reader, its paste reader with
+ * its catch-all flag and formats, and its seed check, each as the declaration states it, a function as its name.
+ */
+export interface ConnectionStringEntry {
+  readonly scheme: ConnectionStringOffer["scheme"];
+  readonly urlTls: ConnectionStringOffer["urlTls"];
+  readonly paste: ConnectionStringOffer["paste"];
+  readonly seedCheck: ConnectionStringOffer["seedCheck"];
+}
+
+/** The connection strings: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type ConnectionStrings = Readonly<Record<string, ConnectionStringEntry>>;
 
 /**
  * `declarations` in ascending code-unit order of their ids.
@@ -255,6 +278,22 @@ export function projectConnectionForms(declarations: readonly AuthoredDeclaratio
       hostHint: connection.hostHint,
       hostIdentity: connection.hostIdentity,
       import: connection.import,
+    }),
+  );
+}
+
+/**
+ * The connection strings of `declarations`, each entry read from the members every declaration authors.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectConnectionStrings(declarations: readonly AuthoredDeclaration[]): ConnectionStrings {
+  return recordOf(inIdOrder(declarations), ({ connection: { connectionString } }) =>
+    frozenCopy<ConnectionStringEntry>({
+      scheme: connectionString.scheme,
+      urlTls: connectionString.urlTls,
+      paste: connectionString.paste,
+      seedCheck: connectionString.seedCheck,
     }),
   );
 }

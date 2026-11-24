@@ -1,4 +1,4 @@
-import type { ConnectionStringSpec, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
+import type { SeedCheck, SeedCheckedFields, SeedFieldRefusal } from "@/lib/db/connection-string/types";
 
 /** The user etcd's auth store permits every key without a grant. */
 const ROOT_USER = "root";
@@ -29,10 +29,5 @@ function etcdLoadRefusals(
   return [{ field, sentence: ETCD_MCP_ROOT_REFUSAL }];
 }
 
-/** `etcd`: no connection string scheme, no TLS read from a URL query, and the MCP seed's principal checked at load. */
-export const ETCD_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: null,
-  readTls: null,
-  paste: null,
-  validateSeed: etcdLoadRefusals,
-};
+/** `etcd`'s seed load check: the MCP seed's principal checked at load. */
+export const ETCD_SEED_CHECK: SeedCheck = etcdLoadRefusals;

@@ -1,5 +1,5 @@
 import { parseGenericURL, withSSLMode } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection } from "@/lib/db/connection-string/types";
+import type { ConnectionStringPasteReader, ParsedConnection } from "@/lib/db/connection-string/types";
 
 const claimsRedis = (text: string): boolean => text.startsWith("redis://") || text.startsWith("rediss://");
 
@@ -22,12 +22,11 @@ function parseRedisURL(text: string): ParsedConnection | null {
 }
 
 /**
- * `redis`: the `redis://` scheme, no TLS in the URL query (for `rediss://` the scheme IS the transport and already
- * decided), a paste of `redis://` or `rediss://`, no seed load check.
+ * `redis`'s paste reader, of `redis://` or `rediss://`: it reads no TLS from the URL query, since for `rediss://` the
+ * scheme IS the transport and already decided.
  */
-export const REDIS_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "redis",
-  readTls: null,
-  paste: { catchAll: false, claims: claimsRedis, names: claimsRedis, parse: parseRedisURL, formats: ["redis://"] },
-  validateSeed: null,
-};
+export const REDIS_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsRedis,
+  names: claimsRedis,
+  parse: parseRedisURL,
+});

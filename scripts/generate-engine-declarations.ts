@@ -5,20 +5,21 @@
  * (docs/providers/CONTRACT.md, clause M-15).
  *
  * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `displayName`, `location`, and of `connection` its
- * `fields`, `defaults`, `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`,
- * `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`, `credentialWarnings`, `fieldRules`, `hostHint`,
- * `hostIdentity`, `import` and `connectBudgetMs`), are written in the declaration itself: this script reads them from
+ * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
+ * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
+ * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`), are written in the
+ * declaration itself: this script reads them from
  * the committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
  * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
  * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine
- * catalog, the connection tables and the connection forms (scripts/generate-engine-catalog.ts, clauses M-70, M-71 and
- * M-72) project the authored members, and `bun run engines:generate` runs that command's `--write` first and its
- * `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
- * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
- * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with no
- * placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
- * written for the new engine; the catalog generator projects it, this script writes every other member, and the
- * catalog generator then admits it.
+ * catalog, the connection tables, the connection forms and the connection strings (scripts/generate-engine-catalog.ts,
+ * clauses M-70, M-71, M-72 and M-74) project the authored members, and `bun run engines:generate` runs that command's
+ * `--write` first and its `--check` last: this script builds every provider through the factory, which builds only an
+ * engine the catalog holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules,
+ * which refuse by name, among others, a dialog entry or a field rule for a field the engine does not take and a
+ * placeable field with no placement. A new engine's declaration therefore starts as a copy of another engine's file
+ * with its authored members written for the new engine; the catalog generator projects it, this script writes every
+ * other member, and the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -35,13 +36,15 @@
  * functions of its own.
  *
  * A function a table holds is named, never carried, and named by the slot it fills, one convention for every
- * engine: `urlTls` for the connection string's URL TLS reader, `pasteReader` for its paste reader (one name for the
- * reader's claims, names and parse) and `seedCheck` for its seed load check, and, written by hand in the authored
- * connection form members, `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the
- * Host text readers and `importer` for the connection import's parser, which Studio's function table in
- * src/lib/db/connection-form.ts binds. The name is read from where the function sits, never from the function itself,
- * so this script imports no provider module directly and reads no function's `name`; the census resolves each name with
- * a table of its own and holds it, by identity, to the function the connection form or the connection string row holds.
+ * engine: written by hand in the authored connection string members, `urlTls` for the connection string's URL TLS
+ * reader, `pasteReader` for its paste reader (one name for the reader's claims, names and parse) and `seedCheck` for
+ * its seed load check, which Studio's connection string function table in src/lib/db/connection-string/index.ts binds,
+ * and, written by hand in the authored connection form members, `<field>Check` for a field rule's check (`hostCheck`),
+ * `hostHint` and `hostIdentity` for the Host text readers and `importer` for the connection import's parser, which
+ * Studio's function table in src/lib/db/connection-form.ts binds. The name is read from where the function sits, never
+ * from the function itself, so this script imports no provider module directly and reads no function's `name`; the
+ * census resolves each name with a table of its own and holds it, by identity, to the function the connection form or
+ * the connection string row holds.
  *
  * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
  * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
@@ -150,7 +153,6 @@ import type {
   CatalogCapture,
   CatalogRead,
   ClausePattern,
-  ConnectionStringOffer,
   Editor,
   EditorLanguageFacts,
   EngineDeclaration,
@@ -205,7 +207,6 @@ import {
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
 } from "../src/lib/db/connection-fields";
-import { CONNECTION_STRING } from "../src/lib/db/connection-string";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
 import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
@@ -258,29 +259,6 @@ const FIELD_NAMES: ReadonlySet<string> = new Set([
 function fieldName(name: string, type: DatabaseType): FieldName {
   if (!FIELD_NAMES.has(name)) throw new Error(`${type}: "${name}" is not a field name of the provider contract`);
   return name as FieldName;
-}
-
-/**
- * One engine's connection string: what the provider accepts and the dialog offers, as `authored` states them, then its
- * row in `CONNECTION_STRING`, the scheme as written, the paste's catch-all flag and formats in order, and each function
- * named by its slot.
- */
-function buildConnectionString(
-  type: DatabaseType,
-  authored: AuthoredMembers["connection"]["connectionString"],
-): ConnectionStringOffer {
-  const row = CONNECTION_STRING[type];
-  return {
-    accepted: authored.accepted,
-    dialogOffersUri: authored.dialogOffersUri,
-    scheme: row.scheme,
-    urlTls: row.readTls === null ? null : "urlTls",
-    paste:
-      row.paste === null
-        ? null
-        : { reader: "pasteReader", catchAll: row.paste.catchAll, formats: [...row.paste.formats] },
-    seedCheck: row.validateSeed === null ? null : "seedCheck",
-  };
 }
 
 /** The tables an engine's editor facts are read from, a parameter so a test can hand the generator others. */
@@ -1242,7 +1220,7 @@ export function buildEngineDeclaration(
       defaults: authored.connection.defaults,
       seedOnly: authored.connection.seedOnly,
       refused: authored.connection.refused,
-      connectionString: buildConnectionString(type, authored.connection.connectionString),
+      connectionString: authored.connection.connectionString,
       tls: authored.connection.tls,
       readsTrustMaterial: authored.connection.readsTrustMaterial,
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },

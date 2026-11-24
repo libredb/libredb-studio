@@ -277,7 +277,7 @@ The device at the far end is not checked here: a link-local or metadata address 
 
 ### Connection string
 
-`netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
+`netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`netconf.json`](../../src/lib/db/engine-declarations/netconf.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 Its one seed-only field is `hostKeyFingerprint` (its declaration's `connection.seedOnly`, read as `SEED_ONLY_FIELDS.netconf` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): only the NETCONF provider reads it, so a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI

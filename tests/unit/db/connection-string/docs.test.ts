@@ -2,16 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { CONNECTION_STRING } from "@/lib/db/connection-string";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * The provider triad's connection string leg: every provider document carries one `Connection string` subsection, at
  * whatever level the document's own scheme gives it, and that subsection says what the engine's `CONNECTION_STRING`
- * row declares. The scheme it shows (or that it shows none), each query parameter its `readTls` reads (or that it has
- * no `readTls`), whether its `paste` reads a pasted connection string (or that it has no `paste`), each field its
- * `validateSeed` refuses (or that it runs no seed load check), and each field its
- * `SEED_ONLY_FIELDS` entry refuses on every other engine.
+ * row, composed from its declaration's `connection.connectionString`, declares. The scheme it shows (or that it shows
+ * none), each query parameter its `readTls` reads (or that it has no `readTls`), whether its `paste` reads a pasted
+ * connection string (or that it has no `paste`), each field its `validateSeed` refuses (or that it runs no seed load
+ * check), and each field its `SEED_ONLY_FIELDS` entry refuses on every other engine.
  */
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -76,7 +77,7 @@ const sectionOf = (type: DatabaseType): string => {
 
 describe("each provider document's Connection string subsection", () => {
   test("covers every engine the registry has a row for", () => {
-    expect(ENGINES).toHaveLength(43);
+    expect([...ENGINES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   for (const type of ENGINES) {

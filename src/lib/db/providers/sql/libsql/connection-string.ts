@@ -1,4 +1,4 @@
-import type { ConnectionStringSpec, ParsedConnection } from "@/lib/db/connection-string/types";
+import type { ConnectionStringPasteReader, ParsedConnection } from "@/lib/db/connection-string/types";
 
 /**
  * A `libsql://` URL as a connection.
@@ -33,10 +33,9 @@ function parseLibSQLURL(uri: string): ParsedConnection | null {
 
 const claimsLibSQL = (text: string): boolean => text.startsWith("libsql://");
 
-/** `libsql`: the `libsql://` scheme, no TLS read from the URL query, a paste of `libsql://`, no seed load check. */
-export const LIBSQL_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "libsql",
-  readTls: null,
-  paste: { catchAll: false, claims: claimsLibSQL, names: claimsLibSQL, parse: parseLibSQLURL, formats: ["libsql://"] },
-  validateSeed: null,
-};
+/** `libsql`'s paste reader, of `libsql://`, which is always TLS, so it reads no TLS from the URL query. */
+export const LIBSQL_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsLibSQL,
+  names: claimsLibSQL,
+  parse: parseLibSQLURL,
+});

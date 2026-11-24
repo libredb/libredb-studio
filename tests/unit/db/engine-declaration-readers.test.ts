@@ -1,7 +1,7 @@
 /**
  * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, none of
  * them reads a claim, no member a declaration authors is a claim, and every claim record Studio keeps in core is
- * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71 and M-72).
+ * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72 and M-74).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
  * Studio grants only through its review record of each claim, the table of Studio's source every gate reads. A module
@@ -77,6 +77,18 @@ const CONNECTION_FORM_MEMBERS = [
   "connection.import",
 ] as const;
 
+/**
+ * The members of the connection string the connection string module holds, M-74: authored members, M-15, each
+ * presentation, a reader bound only to Studio's own function for that engine, or a seed check that only refuses earlier
+ * what the provider refuses again when the connection opens, none a claim.
+ */
+const CONNECTION_STRING_MEMBERS = [
+  "connection.connectionString.scheme",
+  "connection.connectionString.urlTls",
+  "connection.connectionString.paste",
+  "connection.connectionString.seedCheck",
+] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -108,6 +120,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "each engine's connection form, composed from the connection form module and Studio's function table, which binds each named function",
   },
   {
+    path: "src/lib/db/connection-string/index.ts",
+    members: CONNECTION_STRING_MEMBERS,
+    reason:
+      "each engine's connection string, composed from the connection string module and Studio's connection string function table, which binds each named function",
+  },
+  {
     path: "src/lib/db/credential-warnings.ts",
     members: ["connection.credentialWarnings"],
     reason: "each engine's credential warnings, read from the connection tables",
@@ -128,15 +146,26 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "the connection forms, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/connection-string.generated.ts",
+    members: CONNECTION_STRING_MEMBERS,
+    reason: "the connection strings, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/connection.generated.ts",
     members: CONNECTION_TABLE_MEMBERS,
     reason: "the other data-only connection tables, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/engine-catalog/projection.ts",
-    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS, ...CONNECTION_FLAG_MEMBERS, ...CONNECTION_FORM_MEMBERS],
+    members: [
+      ...CATALOG_MEMBERS,
+      ...CONNECTION_TABLE_MEMBERS,
+      ...CONNECTION_FLAG_MEMBERS,
+      ...CONNECTION_FORM_MEMBERS,
+      ...CONNECTION_STRING_MEMBERS,
+    ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables and the connection forms",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms and the connection strings",
   },
 ];
 

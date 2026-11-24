@@ -569,7 +569,7 @@ A route per node is a later change.
 
 ### Connection string
 
-`cassandra` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/cassandra/connection-string.ts)).
+`cassandra` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

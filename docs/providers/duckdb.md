@@ -669,7 +669,7 @@ Explicitly **not** supported, so that a reader does not go looking:
 
 ### Connection string
 
-`duckdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/sql/duckdb/connection-string.ts)).
+`duckdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`duckdb.json`](../../src/lib/db/engine-declarations/duckdb.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

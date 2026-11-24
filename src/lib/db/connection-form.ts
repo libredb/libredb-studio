@@ -9,11 +9,12 @@
  * `hostHint`, `hostIdentity` and `import`, which src/lib/db/engine-catalog/connection-form.generated.ts holds as
  * `BUNDLED_CONNECTION_FORMS`, and `composeConnectionForm` reads them into today's `ConnectionFormSpec`. A declaration
  * names a function and never carries one: `CONNECTION_FORM_FUNCTIONS`, Studio's function table, binds each name to the
- * function Studio's own source holds for that engine at that slot, and a name it holds no function for is refused by
- * name when the form is composed, with no default. The dialog's own words for an engine, its hints and its refusal
- * sentences, are therefore edited in the engine's declaration under src/lib/db/engine-declarations and regenerated with
- * `bun run engines:generate`; a sentence a provider also refuses with is a copy of the provider's, held to it by
- * tests/unit/lib/db-ui-config.test.ts, since the dialog may not import provider modules.
+ * function Studio's own source holds for that engine at that slot, looked up through src/lib/db/function-table.ts, and
+ * a name it holds no function for is refused by name when the form is composed, with no default. The dialog's own words
+ * for an engine, its hints and its refusal sentences, are therefore edited in the engine's declaration under
+ * src/lib/db/engine-declarations and regenerated with `bun run engines:generate`; a sentence a provider also refuses
+ * with is a copy of the provider's, held to it by tests/unit/lib/db-ui-config.test.ts, since the dialog may not import
+ * provider modules.
  *
  * UI-free: nothing here imports `react`, `lucide-react` or a module under src/components/, so a bundle with no React
  * can load it. The web dialog reads it through `DB_UI_CONFIG` (src/lib/db-ui-config.ts), which adds each engine's icon
@@ -41,6 +42,7 @@ import {
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { boundFunction, type FunctionTable } from "@/lib/db/function-table";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 
@@ -192,11 +194,6 @@ export interface ConnectionFieldRule {
   readonly check?: (value: string) => string | undefined;
 }
 
-/** One slot kind of Studio's function table: per engine, each name its declaration may give mapped to the function. */
-export type ConnectionFormFunctionTable<Bound> = Readonly<
-  Partial<Record<DatabaseType, Readonly<Record<string, Bound>>>>
->;
-
 /**
  * Studio's form function table: for each slot kind a declaration's connection form names a function at, the functions
  * Studio's own source holds, per engine and name. A name is bound only at its own kind, so a function held as a host
@@ -204,13 +201,13 @@ export type ConnectionFormFunctionTable<Bound> = Readonly<
  */
 export interface ConnectionFormFunctions {
   /** A field rule's `check`: reads a field that passes its format and range, and answers its refusal or undefined. */
-  readonly checks: ConnectionFormFunctionTable<NonNullable<ConnectionFieldRule["check"]>>;
+  readonly checks: FunctionTable<NonNullable<ConnectionFieldRule["check"]>>;
   /** `hostHint`: the sentence drawn under the Host box from what is typed in it, or undefined. */
-  readonly hostHints: ConnectionFormFunctionTable<NonNullable<ConnectionFormSpec["hostHint"]>>;
+  readonly hostHints: FunctionTable<NonNullable<ConnectionFormSpec["hostHint"]>>;
   /** `hostIdentity`: the server a Host text names. */
-  readonly hostIdentities: ConnectionFormFunctionTable<NonNullable<ConnectionFormSpec["hostIdentity"]>>;
+  readonly hostIdentities: FunctionTable<NonNullable<ConnectionFormSpec["hostIdentity"]>>;
   /** An import's `importer`: a loader of the browser-side parser, called when the import opens, never before. */
-  readonly importers: ConnectionFormFunctionTable<ConnectionImportDeclaration["load"]>;
+  readonly importers: FunctionTable<ConnectionImportDeclaration["load"]>;
 }
 
 /**
@@ -232,20 +229,6 @@ export const CONNECTION_FORM_FUNCTIONS: ConnectionFormFunctions = Object.freeze(
     }),
   }),
 });
-
-/**
- * The function `table` holds for engine `id` under `name`.
- *
- * @throws {Error} Naming the engine and the name, where the table holds no function for that engine under that name,
- * including a name it holds only under another slot kind: there is no default and no slot is skipped.
- */
-function bound<Bound>(id: DatabaseType, table: ConnectionFormFunctionTable<Bound>, name: string): Bound {
-  const slots = Object.hasOwn(table, id) ? table[id] : undefined;
-  if (slots === undefined || !Object.hasOwn(slots, name)) {
-    throw new Error(`${id} names the function ${JSON.stringify(name)}, which Studio holds no function for.`);
-  }
-  return slots[name] as Bound;
-}
 
 /**
  * `field` as a field of Studio's connection dialog.
@@ -282,8 +265,10 @@ function hostReaders(
   functions: ConnectionFormFunctions,
 ): Pick<ConnectionFormSpec, "hostHint" | "hostIdentity"> {
   return {
-    ...(entry.hostHint === null ? {} : { hostHint: bound(id, functions.hostHints, entry.hostHint) }),
-    ...(entry.hostIdentity === null ? {} : { hostIdentity: bound(id, functions.hostIdentities, entry.hostIdentity) }),
+    ...(entry.hostHint === null ? {} : { hostHint: boundFunction(id, functions.hostHints, entry.hostHint) }),
+    ...(entry.hostIdentity === null
+      ? {}
+      : { hostIdentity: boundFunction(id, functions.hostIdentities, entry.hostIdentity) }),
   };
 }
 
@@ -303,7 +288,7 @@ function ruleOf(id: DatabaseType, rule: FieldRule, functions: ConnectionFormFunc
     ...(charRange === null
       ? {}
       : { charRange: Object.freeze({ min: charRange.min, max: charRange.max, sentence: charRange.sentence }) }),
-    ...(check === null ? {} : { check: bound(id, functions.checks, check) }),
+    ...(check === null ? {} : { check: boundFunction(id, functions.checks, check) }),
   });
 }
 
@@ -361,7 +346,7 @@ export function composeConnectionForm(
       : {
           connectionImport: Object.freeze({
             label: entry.import.label,
-            load: bound(id, functions.importers, entry.import.importer),
+            load: boundFunction(id, functions.importers, entry.import.importer),
           }),
         }),
   };

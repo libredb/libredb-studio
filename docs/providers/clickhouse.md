@@ -699,8 +699,8 @@ const connection = {
 
 - **A pasted URL** goes through the shared parser, `parseConnectionString()`
   ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), which hands it to
-  ClickHouse's connection string row
-  ([`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts)); the row decomposes
+  ClickHouse's paste reader
+  ([`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts)); the reader decomposes
   it into discrete fields (host/port/user/password/database) before the provider ever sees it, and
   stores no `connectionString` on the connection.
 - **A hand-typed connection string** (the ConnectionModal's URI tab clears host, port, user and
@@ -786,7 +786,7 @@ redirect would take the Basic credential and the statement to wherever the serve
 ### Connection string
 
 The scheme shown for ClickHouse is `clickhouse://`, and the parser also accepts `http://` and `https://`.
-Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json)), which names a paste reader, `CLICKHOUSE_PASTE_READER` in [`connection-string.ts`](../../src/lib/db/providers/sql/clickhouse/connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the name the declaration gives.
 Its `paste` claims `clickhouse://`, `http://` and `https://`, and it is the one catch-all row: it takes an `http://` or `https://` text only when no other row claims that text as its own, so an `https://` URL on a Snowflake host stays Snowflake's.
 It has no `readTls`: `clickhouse://` names no transport and leaves the form's SSL mode alone, while for `http(s)://` the scheme is the transport and already decided, `disable` for `http://` and `require` for `https://`.
 It runs no seed load check.

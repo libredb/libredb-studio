@@ -60,8 +60,6 @@ const SHARED = [
   "run-database",
   "monitoring",
   "labels",
-  "influxdb-connection-string",
-  "influxdb3-connection-string",
   "influxdb-execution-ui",
   "influxdb3-execution-ui",
 ];

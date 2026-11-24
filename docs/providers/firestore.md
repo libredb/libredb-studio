@@ -224,7 +224,7 @@ The shared transport has no HTTPS proxy support, so a Studio whose egress goes t
 
 ### Connection string
 
-`firestore` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/document/firestore/connection-string.ts)).
+`firestore` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`firestore.json`](../../src/lib/db/engine-declarations/firestore.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

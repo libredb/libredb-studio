@@ -1,6 +1,6 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
- * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71 and M-72).
+ * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72 and M-74).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -17,19 +17,24 @@ import {
   ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
+  ENGINE_CONNECTION_STRING_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
+  renderConnectionStrings,
   renderConnectionTables,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CONNECTION_FORM_FUNCTIONS, composeConnectionForm } from "@/lib/db/connection-form";
+import { CONNECTION_STRING_FUNCTIONS, composeConnectionString } from "@/lib/db/connection-string";
 import {
   type ConnectionFormEntry,
+  type ConnectionStringEntry,
   type ConnectionTables,
   projectCatalog,
   projectConnectionForms,
+  projectConnectionStrings,
   projectConnectionTables,
 } from "@/lib/db/engine-catalog/projection";
 import { unknownTypeSentence } from "@/lib/db/type-id";
@@ -151,6 +156,41 @@ describe("each projection of the admitted declarations, built with and without a
       const forms = projectConnectionForms(order);
       expect(forms).toEqual(built);
       expect(Object.keys(forms)).toEqual(Object.keys(built));
+    }
+  });
+
+  test("the connection strings built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module", () => {
+    const withFixture = projectConnectionStrings([...ADMITTED, FIXTURE]);
+    const entry = withFixture.acmefoo as ConnectionStringEntry;
+    // The fixture names no connection string function, whatever its base names: PostgreSQL names three.
+    expect(entry).toEqual({ scheme: null, urlTls: null, paste: null, seedCheck: null });
+    expect(POSTGRES.connection.connectionString.paste).not.toBeNull();
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+    // Its connection string composes with Studio's function table, which holds nothing for it.
+    expect(composeConnectionString(FIXTURE.id as DatabaseType, entry, CONNECTION_STRING_FUNCTIONS)).toEqual({
+      scheme: null,
+      readTls: null,
+      paste: null,
+      validateSeed: null,
+    });
+
+    const removed = projectConnectionStrings([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(projectConnectionStrings(ADMITTED));
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderConnectionStrings(removed)).toBe(
+      readFileSync(path.join(ROOT, ENGINE_CONNECTION_STRING_MODULE), "utf8"),
+    );
+  });
+
+  test("the connection strings are the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectConnectionStrings(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const strings = projectConnectionStrings(order);
+      expect(strings).toEqual(built);
+      expect(Object.keys(strings)).toEqual(Object.keys(built));
     }
   });
 

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D790, U17 · 378
+- [Drivers and connections](#drivers-and-connections) — D1-D810, U17 · 379
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5008,6 +5008,17 @@ Not a security boundary: each of the 16 either verifies or reads the mode as one
 Found 2026-11-24 while moving each engine's TLS modes into its declaration.
 
 **Done when:** core refuses, by name and before any tunnel or provider build, a connection whose `ssl.mode` is not one its engine's declaration lists, on every path that builds a provider from a caller's connection, with a test over every engine and a mode outside its list.
+
+### D810. A paste reader's not-applied parameters are described in Databend's words
+
+The connection dialog's paste handler (`src/hooks/use-connection-form.ts`) renders a paste's `ignoredParameters` and `unnamedParameters` through `databendNotAppliedNotice`, which `src/lib/connection-string-parser.ts` re-exports from Databend's paste reader.
+So any other paste reader that set either field would show a sentence naming Databend's connection; Apache Spark's reader writes its own sentence into `notice` to avoid it.
+The paste result should carry the reader's own sentence before a provider package's reader can return one, and the parser's two imports into provider directories, Databend's and Snowflake's paste sentences, leave with it.
+Owner: an input to PR 12 of the provider plugin program, which admits a package's engine at run time.
+
+Found 2026-11-24 while projecting each engine's connection string from its declaration.
+
+**Done when:** a paste reader's not-applied parameters are shown in a sentence the reader itself writes, with a test that plants a reader setting `ignoredParameters` and shows its own sentence, not Databend's.
 
 ## Value interpolation
 

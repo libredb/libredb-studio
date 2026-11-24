@@ -464,7 +464,7 @@ const connection = {
 
 `supportsConnectionString` is `true`, and the UI parser, `parseConnectionString()`
 ([`connection-string-parser.ts`](../../src/lib/connection-string-parser.ts)), hands the URL to
-Couchbase's connection string row
+Couchbase's paste reader
 ([`connection-string.ts`](../../src/lib/db/providers/document/couchbase/connection-string.ts)), which
 decomposes it into discrete fields before the provider sees it:
 
@@ -572,7 +572,7 @@ A route per node is a later change.
 ### Connection string
 
 The scheme shown for Couchbase is `couchbase://`, and the parser also accepts `couchbases://`.
-Its row in `CONNECTION_STRING` is declared in [`connection-string.ts`](../../src/lib/db/providers/document/couchbase/connection-string.ts).
+Its connection string is declared in its declaration's `connection.connectionString` ([`couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json)), which names a paste reader, `COUCHBASE_PASTE_READER` in [`connection-string.ts`](../../src/lib/db/providers/document/couchbase/connection-string.ts), bound by `CONNECTION_STRING_FUNCTIONS` to the name the declaration gives.
 Its `paste` claims `couchbase://` and `couchbases://`, and stores only the management port, 8091 or 18091, since the query ports are discovered from the cluster.
 It has no `readTls`: the scheme itself is the TLS, so `couchbases://` sets `require` and `couchbase://` sets `disable`.
 It runs no seed load check.

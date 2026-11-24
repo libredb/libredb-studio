@@ -1,5 +1,5 @@
 import { parseGenericURL, withSSLMode } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection } from "@/lib/db/connection-string/types";
+import type { ConnectionStringPasteReader, ParsedConnection } from "@/lib/db/connection-string/types";
 
 /**
  * A ClickHouse paste. The HTTP endpoint IS the connection target, so a bare http(s) URL is
@@ -23,21 +23,14 @@ const claimsClickHouse = (text: string): boolean =>
   text.startsWith("clickhouse://") || text.startsWith("http://") || text.startsWith("https://");
 
 /**
- * `clickhouse`: the `clickhouse://` scheme, no TLS in the URL query (for its `http(s)://` the scheme IS the transport
- * and already decided), a paste of `clickhouse://`, `http://` or `https://`, no seed load check.
+ * `clickhouse`'s paste reader, of `clickhouse://`, `http://` or `https://`: it reads no TLS from the URL query, since
+ * for its `http(s)://` the scheme IS the transport and already decided.
  *
- * Its paste is the catch-all: `http://` and `https://` are every HTTP engine's transport, so ClickHouse takes them
- * only when no row claims the text as its own spelling (an `https://` Snowflake host does).
+ * Its declaration marks the paste a catch-all: `http://` and `https://` are every HTTP engine's transport, so
+ * ClickHouse takes them only when no row claims the text as its own spelling (an `https://` Snowflake host does).
  */
-export const CLICKHOUSE_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "clickhouse",
-  readTls: null,
-  paste: {
-    catchAll: true,
-    claims: claimsClickHouse,
-    names: claimsClickHouse,
-    parse: parseClickHousePaste,
-    formats: ["clickhouse://", "http(s)://"],
-  },
-  validateSeed: null,
-};
+export const CLICKHOUSE_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsClickHouse,
+  names: claimsClickHouse,
+  parse: parseClickHousePaste,
+});

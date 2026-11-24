@@ -1,5 +1,11 @@
 import { parseGenericURL, readADONetTLS } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, ParsedConnection, QueryParams, TLSIntent } from "@/lib/db/connection-string/types";
+import type {
+  ConnectionStringPasteReader,
+  ParsedConnection,
+  QueryParams,
+  TLSIntent,
+  UrlTlsReader,
+} from "@/lib/db/connection-string/types";
 
 /** The ADO.NET Encrypt/TrustServerCertificate pair, read from an `mssql://` URL's query. */
 const readMssqlTLS = (params: QueryParams): TLSIntent => readADONetTLS((key) => params.get(key)?.value);
@@ -52,20 +58,13 @@ const ADO_NET = /^Server\s*=/i;
 const claimsMssql = (text: string): boolean =>
   text.startsWith("mssql://") || text.startsWith("sqlserver://") || ADO_NET.test(text);
 
-/**
- * `mssql`: the `mssql://` scheme, the ADO.NET Encrypt/TrustServerCertificate pair in its URL query, a paste of
- * `mssql://`, `sqlserver://` or the ADO.NET form `Server=...;`, no seed load check.
- */
-export const MSSQL_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "mssql",
-  readTls: readMssqlTLS,
-  paste: {
-    catchAll: false,
-    claims: claimsMssql,
-    names: claimsMssql,
-    parse: (text) =>
-      ADO_NET.test(text) ? parseADONetString(text) : parseGenericURL(text, "mssql", "1433", readMssqlTLS),
-    formats: ["mssql://", "Server=… (ADO.NET)"],
-  },
-  validateSeed: null,
-};
+/** `mssql`'s URL TLS reader: the ADO.NET Encrypt/TrustServerCertificate pair in its URL query. */
+export const MSSQL_URL_TLS: UrlTlsReader = readMssqlTLS;
+
+/** `mssql`'s paste reader, of `mssql://`, `sqlserver://` or the ADO.NET form `Server=...;`. */
+export const MSSQL_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsMssql,
+  names: claimsMssql,
+  parse: (text: string) =>
+    ADO_NET.test(text) ? parseADONetString(text) : parseGenericURL(text, "mssql", "1433", readMssqlTLS),
+});

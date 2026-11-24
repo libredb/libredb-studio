@@ -1,5 +1,10 @@
 import { mapTLSValue, parseGenericURL, readBooleanTLS } from "@/lib/db/connection-string/shared";
-import type { ConnectionStringSpec, QueryParams, TLSIntent } from "@/lib/db/connection-string/types";
+import type {
+  ConnectionStringPasteReader,
+  QueryParams,
+  TLSIntent,
+  UrlTlsReader,
+} from "@/lib/db/connection-string/types";
 import type { SSLMode } from "@/lib/types";
 
 /**
@@ -28,16 +33,12 @@ function readMysqlTLS(params: QueryParams): TLSIntent {
 
 const claimsMysql = (text: string): boolean => text.startsWith("mysql://");
 
-/** `mysql`: the `mysql://` scheme, the TLS its URL query carries, a paste of `mysql://`, no seed load check. */
-export const MYSQL_CONNECTION_STRING: ConnectionStringSpec = {
-  scheme: "mysql",
-  readTls: readMysqlTLS,
-  paste: {
-    catchAll: false,
-    claims: claimsMysql,
-    names: claimsMysql,
-    parse: (text) => parseGenericURL(text, "mysql", "3306", readMysqlTLS),
-    formats: ["mysql://"],
-  },
-  validateSeed: null,
-};
+/** `mysql`'s URL TLS reader: the TLS its URL query carries. */
+export const MYSQL_URL_TLS: UrlTlsReader = readMysqlTLS;
+
+/** `mysql`'s paste reader, of `mysql://`. */
+export const MYSQL_PASTE_READER: ConnectionStringPasteReader = Object.freeze({
+  claims: claimsMysql,
+  names: claimsMysql,
+  parse: (text: string) => parseGenericURL(text, "mysql", "3306", readMysqlTLS),
+});

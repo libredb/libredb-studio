@@ -86,7 +86,6 @@ The command language's modules (its numbers, the lexer, the command table, the g
 | `key-scan.ts` | The Keys panel's pages | server |
 | `monitoring-reads.ts` | Health and the overview | server |
 | `labels.ts` | The labels, the statement language and the key order in words | browser |
-| `connection-string.ts` | The engine's connection string row: no scheme, no TLS read from a URL query, no seed load check | browser |
 | `execution-ui.ts` | The engine's execution UI row: the rolled-back notice names `COMMIT`, no consent deadline | browser |
 | `engine-facets.ts` | The engine's facets row: no monitoring panel is offered | browser |
 | `generators.ts` | The commands Generate Command writes | browser |
@@ -331,7 +330,7 @@ The URL is not pasted whole: type `host` in Host, `6648` in Port and `ns` in Nam
 
 ### Connection string
 
-`oxia` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/oxia/connection-string.ts)).
+`oxia` has no connection string scheme, no `readTls`, no `paste` and no seed load check: its declaration's `connection.connectionString` names no scheme, URL TLS reader, paste reader or seed check ([`oxia.json`](../../src/lib/db/engine-declarations/oxia.json)), so every field of its row in `CONNECTION_STRING` is `null`.
 
 ### Execution UI
 

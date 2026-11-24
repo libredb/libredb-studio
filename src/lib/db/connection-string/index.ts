@@ -1,100 +1,135 @@
-import { BIGQUERY_CONNECTION_STRING } from "@/lib/db/providers/sql/bigquery/connection-string";
-import { CASSANDRA_CONNECTION_STRING } from "@/lib/db/providers/sql/cassandra/connection-string";
-import { CLICKHOUSE_CONNECTION_STRING } from "@/lib/db/providers/sql/clickhouse/connection-string";
-import { COUCHBASE_CONNECTION_STRING } from "@/lib/db/providers/document/couchbase/connection-string";
-import { DATABEND_CONNECTION_STRING } from "@/lib/db/providers/sql/databend/connection-string";
-import { DB2_CONNECTION_STRING } from "@/lib/db/providers/sql/db2/connection-string";
-import { DRUID_CONNECTION_STRING } from "@/lib/db/providers/sql/druid/connection-string";
-import { DUCKDB_CONNECTION_STRING } from "@/lib/db/providers/sql/duckdb/connection-string";
-import { ELASTICSEARCH_CONNECTION_STRING } from "@/lib/db/providers/sql/search/elasticsearch-connection-string";
-import { ETCD_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/etcd/connection-string";
-import { FIRESTORE_CONNECTION_STRING } from "@/lib/db/providers/document/firestore/connection-string";
-import { INFLUXDB_CONNECTION_STRING } from "@/lib/db/providers/timeseries/influxdb/influxdb-connection-string";
-import { INFLUXDB3_CONNECTION_STRING } from "@/lib/db/providers/timeseries/influxdb/influxdb3-connection-string";
-import { KAFKA_CONNECTION_STRING } from "@/lib/db/providers/stream/kafka/connection-string";
-import { KUBERNETES_CONNECTION_STRING } from "@/lib/db/providers/platform/kubernetes/connection-string";
-import { LIBREDB_CONNECTION_STRING } from "@/lib/db/providers/embedded/libredb-connection-string";
-import { LIBSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/libsql/connection-string";
-import { MILVUS_CONNECTION_STRING } from "@/lib/db/providers/vector/milvus/connection-string";
-import { MODBUS_CONNECTION_STRING } from "@/lib/db/providers/industrial/modbus/connection-string";
-import { MONGODB_CONNECTION_STRING } from "@/lib/db/providers/document/mongodb/connection-string";
-import { MQTT_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/mqtt/connection-string";
-import { MSSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mssql-connection-string";
-import { MTCONNECT_CONNECTION_STRING } from "@/lib/db/providers/industrial/mtconnect/connection-string";
-import { MYSQL_CONNECTION_STRING } from "@/lib/db/providers/sql/mysql-connection-string";
-import { NEO4J_CONNECTION_STRING } from "@/lib/db/providers/graph/neo4j/connection-string";
-import { NETCONF_CONNECTION_STRING } from "@/lib/db/providers/network/netconf/connection-string";
-import { OPCUA_CONNECTION_STRING } from "@/lib/db/providers/industrial/opcua/connection-string";
-import { OPENSEARCH_CONNECTION_STRING } from "@/lib/db/providers/sql/search/opensearch-connection-string";
-import { ORACLE_CONNECTION_STRING } from "@/lib/db/providers/sql/oracle-connection-string";
-import { OXIA_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/oxia/connection-string";
-import { POSTGRES_CONNECTION_STRING } from "@/lib/db/providers/sql/postgres-connection-string";
-import { PROMETHEUS_CONNECTION_STRING } from "@/lib/db/providers/timeseries/prometheus/connection-string";
-import { QDRANT_CONNECTION_STRING } from "@/lib/db/providers/vector/qdrant/connection-string";
-import { WEAVIATE_CONNECTION_STRING } from "@/lib/db/providers/vector/weaviate/connection-string";
-import { RABBITMQ_CONNECTION_STRING } from "@/lib/db/providers/stream/rabbitmq/connection-string";
-import { REDIS_CONNECTION_STRING } from "@/lib/db/providers/keyvalue/redis-connection-string";
-import { S3_CONNECTION_STRING } from "@/lib/db/providers/objectstore/s3/connection-string";
-import { SNMP_CONNECTION_STRING } from "@/lib/db/providers/network/snmp/connection-string";
-import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
-import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
-import { SPARKPLUG_CONNECTION_STRING } from "@/lib/db/providers/industrial/sparkplug/connection-string";
-import { SQLITE_CONNECTION_STRING } from "@/lib/db/providers/sql/sqlite-connection-string";
-import { TRINO_CONNECTION_STRING } from "@/lib/db/providers/sql/trino/connection-string";
+import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
+import type { ConnectionStringEntry } from "@/lib/db/engine-catalog/projection";
+import { boundFunction, type FunctionTable } from "@/lib/db/function-table";
+import { COUCHBASE_PASTE_READER } from "@/lib/db/providers/document/couchbase/connection-string";
+import { MONGODB_PASTE_READER } from "@/lib/db/providers/document/mongodb/connection-string";
+import { OPCUA_SEED_CHECK } from "@/lib/db/providers/industrial/opcua/connection-string";
+import { ETCD_SEED_CHECK } from "@/lib/db/providers/keyvalue/etcd/connection-string";
+import { REDIS_PASTE_READER } from "@/lib/db/providers/keyvalue/redis-connection-string";
+import { CLICKHOUSE_PASTE_READER } from "@/lib/db/providers/sql/clickhouse/connection-string";
+import { DATABEND_PASTE_READER } from "@/lib/db/providers/sql/databend/connection-string";
+import { DB2_PASTE_READER, DB2_URL_TLS } from "@/lib/db/providers/sql/db2/connection-string";
+import { LIBSQL_PASTE_READER } from "@/lib/db/providers/sql/libsql/connection-string";
+import { MSSQL_PASTE_READER, MSSQL_URL_TLS } from "@/lib/db/providers/sql/mssql-connection-string";
+import { MYSQL_PASTE_READER, MYSQL_URL_TLS } from "@/lib/db/providers/sql/mysql-connection-string";
+import { ORACLE_PASTE_READER } from "@/lib/db/providers/sql/oracle-connection-string";
+import { POSTGRES_PASTE_READER, POSTGRES_URL_TLS } from "@/lib/db/providers/sql/postgres-connection-string";
+import { SNOWFLAKE_PASTE_READER, SNOWFLAKE_SEED_CHECK } from "@/lib/db/providers/sql/snowflake/connection-string";
+import { SPARK_PASTE_READER } from "@/lib/db/providers/sql/spark/connection-string";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { NO_CONNECTION_CONNECTION_STRING } from "./no-connection";
-import type { ConnectionStringPaste, ConnectionStringSpec } from "./types";
-import { typeIdRow } from "@/lib/db/type-id";
+import type {
+  ConnectionStringPaste,
+  ConnectionStringPasteReader,
+  ConnectionStringSpec,
+  SeedCheck,
+  UrlTlsReader,
+} from "./types";
 
 /**
- * Each engine's connection string facts, one row per type id, each declared beside its provider. A missing id is a
- * compile error here, so a new engine cannot ship without saying whether it has a scheme, URL TLS or seed checks.
+ * Studio's connection string function table: for each slot kind a declaration's connection string names a function at,
+ * the functions Studio's own source holds, per engine and name. A name is bound only at its own kind, so a function
+ * held as a URL TLS reader is never run as a seed check.
  */
-export const CONNECTION_STRING: Readonly<Record<DatabaseType, ConnectionStringSpec>> = Object.freeze({
-  bigquery: BIGQUERY_CONNECTION_STRING,
-  cassandra: CASSANDRA_CONNECTION_STRING,
-  clickhouse: CLICKHOUSE_CONNECTION_STRING,
-  couchbase: COUCHBASE_CONNECTION_STRING,
-  databend: DATABEND_CONNECTION_STRING,
-  db2: DB2_CONNECTION_STRING,
-  druid: DRUID_CONNECTION_STRING,
-  duckdb: DUCKDB_CONNECTION_STRING,
-  elasticsearch: ELASTICSEARCH_CONNECTION_STRING,
-  etcd: ETCD_CONNECTION_STRING,
-  firestore: FIRESTORE_CONNECTION_STRING,
-  influxdb: INFLUXDB_CONNECTION_STRING,
-  influxdb3: INFLUXDB3_CONNECTION_STRING,
-  kafka: KAFKA_CONNECTION_STRING,
-  kubernetes: KUBERNETES_CONNECTION_STRING,
-  libredb: LIBREDB_CONNECTION_STRING,
-  libsql: LIBSQL_CONNECTION_STRING,
-  milvus: MILVUS_CONNECTION_STRING,
-  modbus: MODBUS_CONNECTION_STRING,
-  mongodb: MONGODB_CONNECTION_STRING,
-  mqtt: MQTT_CONNECTION_STRING,
-  mssql: MSSQL_CONNECTION_STRING,
-  mtconnect: MTCONNECT_CONNECTION_STRING,
-  mysql: MYSQL_CONNECTION_STRING,
-  neo4j: NEO4J_CONNECTION_STRING,
-  netconf: NETCONF_CONNECTION_STRING,
-  opcua: OPCUA_CONNECTION_STRING,
-  opensearch: OPENSEARCH_CONNECTION_STRING,
-  oracle: ORACLE_CONNECTION_STRING,
-  oxia: OXIA_CONNECTION_STRING,
-  postgres: POSTGRES_CONNECTION_STRING,
-  prometheus: PROMETHEUS_CONNECTION_STRING,
-  qdrant: QDRANT_CONNECTION_STRING,
-  rabbitmq: RABBITMQ_CONNECTION_STRING,
-  redis: REDIS_CONNECTION_STRING,
-  s3: S3_CONNECTION_STRING,
-  snmp: SNMP_CONNECTION_STRING,
-  snowflake: SNOWFLAKE_CONNECTION_STRING,
-  spark: SPARK_CONNECTION_STRING,
-  sparkplug: SPARKPLUG_CONNECTION_STRING,
-  sqlite: SQLITE_CONNECTION_STRING,
-  trino: TRINO_CONNECTION_STRING,
-  weaviate: WEAVIATE_CONNECTION_STRING,
+export interface ConnectionStringFunctions {
+  /** `urlTls`: the TLS a URL carries in its query string. */
+  readonly urlTlsReaders: FunctionTable<UrlTlsReader>;
+  /** `paste.reader`: the three operations that read a pasted connection string. */
+  readonly pasteReaders: FunctionTable<ConnectionStringPasteReader>;
+  /** `seedCheck`: the checks the engine's provider makes before any socket, run at seed load. */
+  readonly seedChecks: FunctionTable<SeedCheck>;
+}
+
+/**
+ * The functions the committed declarations name (docs/providers/CONTRACT.md, clause M-74), each the one Studio's source
+ * holds for that engine at that slot, exported by the engine's own module beside its provider as `<ID>_URL_TLS`,
+ * `<ID>_PASTE_READER` or `<ID>_SEED_CHECK`. The dialog runs the paste readers in the browser, so a pasted connection
+ * string never reaches the server before Test Connection or Save. A function only a package would hold has no place
+ * here: no package function runs in a browser, and a name this table does not hold is refused when the connection
+ * string is composed. tests/unit/db/connection-string/compose.test.ts holds the table to exactly the names the
+ * committed declarations give.
+ */
+export const CONNECTION_STRING_FUNCTIONS: ConnectionStringFunctions = Object.freeze({
+  urlTlsReaders: Object.freeze({
+    db2: Object.freeze({ urlTls: DB2_URL_TLS }),
+    mssql: Object.freeze({ urlTls: MSSQL_URL_TLS }),
+    mysql: Object.freeze({ urlTls: MYSQL_URL_TLS }),
+    postgres: Object.freeze({ urlTls: POSTGRES_URL_TLS }),
+  }),
+  pasteReaders: Object.freeze({
+    clickhouse: Object.freeze({ pasteReader: CLICKHOUSE_PASTE_READER }),
+    couchbase: Object.freeze({ pasteReader: COUCHBASE_PASTE_READER }),
+    databend: Object.freeze({ pasteReader: DATABEND_PASTE_READER }),
+    db2: Object.freeze({ pasteReader: DB2_PASTE_READER }),
+    libsql: Object.freeze({ pasteReader: LIBSQL_PASTE_READER }),
+    mongodb: Object.freeze({ pasteReader: MONGODB_PASTE_READER }),
+    mssql: Object.freeze({ pasteReader: MSSQL_PASTE_READER }),
+    mysql: Object.freeze({ pasteReader: MYSQL_PASTE_READER }),
+    oracle: Object.freeze({ pasteReader: ORACLE_PASTE_READER }),
+    postgres: Object.freeze({ pasteReader: POSTGRES_PASTE_READER }),
+    redis: Object.freeze({ pasteReader: REDIS_PASTE_READER }),
+    snowflake: Object.freeze({ pasteReader: SNOWFLAKE_PASTE_READER }),
+    spark: Object.freeze({ pasteReader: SPARK_PASTE_READER }),
+  }),
+  seedChecks: Object.freeze({
+    etcd: Object.freeze({ seedCheck: ETCD_SEED_CHECK }),
+    opcua: Object.freeze({ seedCheck: OPCUA_SEED_CHECK }),
+    snowflake: Object.freeze({ seedCheck: SNOWFLAKE_SEED_CHECK }),
+  }),
 });
+
+/**
+ * Engine `id`'s connection string, composed from `entry`, its projected connection string, and `functions`: the scheme
+ * as declared; `readTls` the bound URL TLS reader, or null; `paste` null, or the declared catch-all flag, the bound
+ * paste reader's three operations by identity and the declared formats; `validateSeed` the bound seed check, or null.
+ * The row and its paste are frozen.
+ *
+ * @throws {Error} Naming the engine and the name, for a function name `functions` holds none for at its slot, including
+ * a name it holds only at another slot.
+ */
+export function composeConnectionString(
+  id: DatabaseType,
+  entry: ConnectionStringEntry,
+  functions: ConnectionStringFunctions,
+): ConnectionStringSpec {
+  const { scheme, urlTls, paste, seedCheck } = entry;
+  let composedPaste: ConnectionStringPaste | null = null;
+  if (paste !== null) {
+    const reader = boundFunction(id, functions.pasteReaders, paste.reader);
+    composedPaste = Object.freeze({
+      catchAll: paste.catchAll,
+      claims: reader.claims,
+      names: reader.names,
+      parse: reader.parse,
+      formats: paste.formats,
+    });
+  }
+  return Object.freeze({
+    scheme,
+    readTls: urlTls === null ? null : boundFunction(id, functions.urlTlsReaders, urlTls),
+    paste: composedPaste,
+    validateSeed: seedCheck === null ? null : boundFunction(id, functions.seedChecks, seedCheck),
+  });
+}
+
+/**
+ * Each engine's connection string facts, one row per type id, each composed when this module loads from the engine's
+ * declaration (docs/providers/CONTRACT.md, clause M-74): its `connection.connectionString` scheme, URL TLS reader,
+ * paste and seed check, which src/lib/db/engine-catalog/connection-string.generated.ts holds as
+ * `BUNDLED_CONNECTION_STRINGS`, each named function bound through `CONNECTION_STRING_FUNCTIONS`. The generated record
+ * is typed over the type-id union, so a new engine cannot ship without a declaration that says whether it has a scheme,
+ * URL TLS or seed checks, and a name Studio holds no function for stops this module from loading, naming the engine and
+ * the name.
+ */
+export const CONNECTION_STRING: Readonly<Record<DatabaseType, ConnectionStringSpec>> = Object.freeze(
+  Object.fromEntries(
+    (Object.keys(BUNDLED_CONNECTION_STRINGS) as DatabaseType[]).map((id) => [
+      id,
+      composeConnectionString(id, BUNDLED_CONNECTION_STRINGS[id], CONNECTION_STRING_FUNCTIONS),
+    ]),
+  ) as Record<DatabaseType, ConnectionStringSpec>,
+);
 
 /**
  * The engines whose row reads a pasted connection string, in the order the parser offers a paste to them: the first
@@ -181,7 +216,7 @@ export function connectionStringFor(type: string | undefined): ConnectionStringS
 
 /**
  * The canonical URI scheme each engine is reachable by, for the engines that HAVE one.
- * Built from the `scheme` of each engine's row in `CONNECTION_STRING` above, declared beside its provider, so a
+ * Built from the `scheme` of each engine's row in `CONNECTION_STRING` above, which its declaration states, so a
  * scheme is added there. Its key order is `CONNECTION_STRING`'s and carries no meaning: readers look a type up by
  * key, and the login signature orders by the engine list.
  *

@@ -2,18 +2,26 @@
  * The seam around each engine's connection string module: an engine module reads only the registry's leaves
  * (`types`, `shared`) and the modules of its own provider directory (Snowflake's browser-safe `account-host`, a paste
  * reader beside its provider), never the parser, the seed loader, the dialog's table, the registry index or another
- * engine's module, so one engine's scheme, URL TLS, paste or seed checks can never reach another's output. The seed loader and the connection-field record reach neither the icon set nor the
- * dialog's table at run time, and every module loads in a fresh process on its own.
+ * engine's module, so one engine's URL TLS reader, paste reader or seed check can never reach another's output. Only an
+ * engine whose declaration names a connection string function has a module: the registry index imports its
+ * `<ID>_URL_TLS`, `<ID>_PASTE_READER` and `<ID>_SEED_CHECK` exports. The seed loader and the connection-field record
+ * reach neither the icon set nor the dialog's table at run time, and every module loads in a fresh process on its own.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import ts from "typescript";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const REGISTRY = join(ROOT, "src/lib/db/connection-string");
-const ALL: readonly string[] = [...EXTERNAL_DATABASE_TYPES, "libredb"].sort();
+/** The engines whose declaration names a URL TLS reader, a paste reader or a seed check. */
+const NAMING: readonly string[] = Object.entries(BUNDLED_CONNECTION_STRINGS)
+  .filter(([, entry]) => entry.urlTls !== null || entry.paste !== null || entry.seedCheck !== null)
+  .map(([id]) => id)
+  .sort();
+/** An export the registry index binds: an engine's id, upper-cased, then the slot it fills. */
+const BOUND_EXPORT = /^([A-Z0-9]+)_(URL_TLS|PASTE_READER|SEED_CHECK)$/;
 
 const TYPES = "@/lib/db/connection-string/types";
 const SHARED = "@/lib/db/connection-string/shared";
@@ -88,7 +96,7 @@ function resolveLocal(from: string, specifier: string): string | null {
   throw new Error(`${specifier}, imported by ${from}, resolves to no file`);
 }
 
-/** The engine modules as the registry index imports them, keyed by the type id each one's export names. */
+/** The engine modules as the registry index imports them, keyed by the type id their exports name, each once. */
 function engineModules(): { id: string; specifier: string; path: string }[] {
   const index = join(REGISTRY, "index.ts");
   const file = parse(index, readFileSync(index, "utf8"));
@@ -99,10 +107,16 @@ function engineModules(): { id: string; specifier: string; path: string }[] {
     if (!specifier.startsWith("@/lib/db/providers/")) continue;
     const bindings = statement.importClause?.namedBindings;
     if (bindings === undefined || !ts.isNamedImports(bindings)) throw new Error(`${specifier} has no named import`);
-    for (const element of bindings.elements) {
-      const id = element.name.text.replace(/_CONNECTION_STRING$/, "").toLowerCase();
-      found.push({ id, specifier, path: resolveLocal(index, specifier) as string });
-    }
+    const ids = new Set(
+      bindings.elements.map((element) => {
+        const bound = BOUND_EXPORT.exec(element.name.text);
+        if (bound === null)
+          throw new Error(`${specifier} exports ${element.name.text}, which the index binds no slot to`);
+        return (bound[1] as string).toLowerCase();
+      }),
+    );
+    if (ids.size !== 1) throw new Error(`${specifier} exports the functions of ${[...ids].join(", ")}`);
+    found.push({ id: [...ids][0] as string, specifier, path: resolveLocal(index, specifier) as string });
   }
   return found;
 }
@@ -158,9 +172,10 @@ function reachedImports(entry: string): { from: string; specifier: string; resol
 }
 
 describe("the engine connection string modules", () => {
-  test("the registry index imports each engine's module exactly once", () => {
-    expect(MODULES.map(({ id }) => id).sort()).toEqual([...ALL]);
-    expect(new Set(MODULES.map(({ specifier }) => specifier)).size).toBe(ALL.length);
+  test("the registry index imports the module of exactly the engines whose declaration names a connection string function, each once", () => {
+    expect(MODULES.map(({ id }) => id).sort()).toEqual([...NAMING]);
+    expect(new Set(MODULES.map(({ specifier }) => specifier)).size).toBe(NAMING.length);
+    expect(NAMING.length).toBe(15);
   });
 
   test.each(MODULES.map(({ id, path }) => [id, path] as const))("%s imports only the registry's leaves", (id, path) => {
@@ -170,7 +185,7 @@ describe("the engine connection string modules", () => {
   test("an engine module that imports another engine's module fails by name", () => {
     const mysql = MODULES.find(({ id }) => id === "mysql");
     if (mysql === undefined) throw new Error("no mysql module");
-    const planted = 'import { POSTGRES_CONNECTION_STRING } from "@/lib/db/providers/sql/postgres-connection-string";\n';
+    const planted = 'import { POSTGRES_PASTE_READER } from "@/lib/db/providers/sql/postgres-connection-string";\n';
     expect(engineFindings("mysql", mysql.path, planted)).toEqual([
       `mysql: ${relative(ROOT, mysql.path)} imports @/lib/db/providers/sql/postgres-connection-string`,
     ]);
@@ -192,10 +207,9 @@ describe("the engine connection string modules", () => {
     expect(
       engineFindings("snowflake", snowflake.path, 'import { x } from "@/lib/db/providers/sql/databend/paste";\n'),
     ).toHaveLength(1);
-    const influxdb = MODULES.find(({ id }) => id === "influxdb");
-    if (influxdb === undefined) throw new Error("no influxdb module");
-    expect(engineFindings("influxdb", influxdb.path, 'import { x } from "./influxdb3-connection-string";\n')).toEqual([
-      `influxdb: ${relative(ROOT, influxdb.path)} imports ./influxdb3-connection-string`,
+    // A flat module shares its directory with other engines, so a sibling engine's module there is another engine's.
+    expect(engineFindings("mysql", mysql.path, 'import { x } from "./postgres-connection-string";\n')).toEqual([
+      `mysql: ${relative(ROOT, mysql.path)} imports ./postgres-connection-string`,
     ]);
     expect(engineFindings("mysql", mysql.path, 'import { SSL } from "@/lib/types";\n')).toHaveLength(1);
     expect(engineFindings("mysql", mysql.path, 'import type { SSLMode } from "@/lib/types";\n')).toEqual([]);
