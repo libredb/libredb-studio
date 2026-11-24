@@ -1442,7 +1442,9 @@ server. Paste the certificate content instead.
 
 ### 4.2 Connection pooling
 
-The object tree reads on a pool of its own, the connection's metadata session, of at most 2 connections and none while idle, so a listing never waits for the editor's pool ([`CONTRACT.md`](CONTRACT.md), clause C-66; the live check in [§13.5](#135-live-checks-ci-runs)).
+The object tree reads, and a session kill runs, on a pool of its own, the connection's metadata session, of at most 2 connections and none while idle, so a listing or a kill never waits for the editor's pool ([`CONTRACT.md`](CONTRACT.md), clause C-66; the live check in [§13.5](#135-live-checks-ci-runs)).
+On a server-level connection, a tree read inside a database and a kill in a catalog run on the catalog session the metadata session opens for that database.
+Each catalog session takes a pool of its own of at most 3 connections with a minimum of none (`CATALOG_SESSION_POOL`), in place of the metadata session's 2, and at most 5 databases are open at once (`CATALOG_SESSION_LIMIT`), so the metadata session of a server-level connection holds at most 17 connections.
 
 `connect()` builds a `pg.Pool` ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)) and
 validates it by acquiring and releasing one client. Pool **sizing** comes from `ProviderOptions.pool`

@@ -8,7 +8,7 @@ import { maintenanceControl, type MaintenancePlacement } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider } from "@/lib/api/editor-provider";
+import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type MaintenanceRunOutcome, providerMaintenance } from "@/lib/api/provider-maintenance";
 import { QueryCancelledError } from "@/lib/db/errors";
@@ -37,6 +37,10 @@ import { logger } from "@/lib/logger";
  * plus ten seconds and until the request leaves. A run the host refused before the call, or failed before it by an
  * error the host raised, reached no provider and writes no audit row; a run Studio stopped waiting for is audited as
  * an unknown outcome, since the engine may still complete it, and answers 499 or 504 with outcome unknown.
+ *
+ * A kill runs on the connection's metadata session (clause C-66), in the request's catalog, opened under the same
+ * editor posture and checks, so it never waits behind the editor's statements; every other operation runs on the
+ * editor's provider.
  */
 export async function POST(request: Request) {
   // Session, rate limit and denial audit share the same door as every other provider-reaching
@@ -114,7 +118,13 @@ export async function POST(request: Request) {
     // refused 400 FACET_NOT_OFFERED by name, and no provider, SSH tunnel or connection is opened for it.
     assertMaintenanceOffered(connection.type, type);
 
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // A kill runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so it never waits for
+    // a connection the editor's statements hold; every other operation runs on the editor's provider.
+    const catalog = requestCatalog(body);
+    const provider =
+      type === "kill"
+        ? await metadataProvider(guard.session, connection, catalog)
+        : await editorProvider(guard.session, connection, catalog);
     const capabilities = provider.getCapabilities();
 
     // The connected server may accept fewer operations than its engine's row (PostgreSQL and MySQL narrow at

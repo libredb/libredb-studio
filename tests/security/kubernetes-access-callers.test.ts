@@ -65,7 +65,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "withOneShotTunnel",
     "findCachedProvider",
   ],
-  "src/lib/api/editor-provider.ts": ["editorProvider", "cachedEditorProvider"],
+  "src/lib/api/editor-provider.ts": ["editorProvider", "metadataProvider", "cachedEditorProvider"],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
   "src/lib/api/test-connection.ts": ["testConnection"],
 };
@@ -238,6 +238,8 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
   },
   getOrCreateMetadataProvider: {
+    "src/lib/api/editor-provider.ts":
+      "metadataProvider builds for the connection its caller hands it, and its one caller, POST /api/db/maintenance, resolved it through resolveConnection first",
     "src/lib/api/object-route.ts":
       "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
   },
@@ -267,6 +269,9 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/profile/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/transaction/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
+  },
+  metadataProvider: {
+    "src/app/api/db/maintenance/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
   },
   cachedEditorProvider: {
     "src/app/api/db/transaction/route.ts":

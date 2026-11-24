@@ -19,11 +19,23 @@ mock.module("@/lib/db", () => ({
 
 /** The writable cache by key, as `findCachedProvider` reads it. */
 const cachedByKey = new Map<string, DatabaseProvider>();
+/** Every open of a metadata session, as `getOrCreateMetadataProvider` receives it. */
+const openedMetadata: { connection: DatabaseConnection; options: unknown; context: unknown; rest: unknown[] }[] = [];
+let metadataSession: DatabaseProvider;
 mock.module("@/lib/db/factory", () => ({
   findCachedProvider: (key: string) => cachedByKey.get(key) ?? null,
+  getOrCreateMetadataProvider: async (
+    connection: DatabaseConnection,
+    options: unknown,
+    context: unknown,
+    ...rest: unknown[]
+  ) => {
+    openedMetadata.push({ connection, options, context, rest });
+    return metadataSession;
+  },
 }));
 
-const { cachedEditorProvider, editorProvider } = await import("@/lib/api/editor-provider");
+const { cachedEditorProvider, editorProvider, metadataProvider } = await import("@/lib/api/editor-provider");
 
 const connection = { id: "c", name: "c", type: "postgres", host: "h", database: "" } as DatabaseConnection;
 const session = (role: string) => ({ role });
@@ -71,6 +83,42 @@ describe("editorProvider", () => {
 
     connected = providerOf({});
     await expect(editorProvider(session("user"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
+  });
+});
+
+/** The connection's metadata session, under the editor's posture, as the maintenance route runs a kill on it (C-66). */
+describe("metadataProvider", () => {
+  test("opens the connection's metadata session with the editor's connection and posture, and without a catalog runs on it", async () => {
+    metadataSession = providerOf({});
+    connected = providerOf({});
+    openedMetadata.length = 0;
+    opened.length = 0;
+
+    expect(await metadataProvider(session("admin"), connection, undefined)).toBe(metadataSession);
+    expect(await metadataProvider(session("user"), connection, undefined)).toBe(metadataSession);
+    await editorProvider(session("admin"), connection, undefined);
+    await editorProvider(session("user"), connection, undefined);
+
+    expect(openedMetadata.map((open) => open.context)).toEqual([
+      { allowExternalFileAccess: true },
+      { allowExternalFileAccess: false },
+    ]);
+    // Each the context editorProvider hands the editor's open for the same session.
+    expect(openedMetadata.map((open) => open.context)).toEqual(opened.map((open) => open.context));
+    expect(openedMetadata.map((open) => open.options)).toEqual([{}, {}]);
+    expect(openedMetadata.map((open) => open.rest)).toEqual([[], []]);
+    expect(openedMetadata[0].connection).toBe(connection);
+  });
+
+  test("a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one", async () => {
+    const shop = providerOf({});
+    const editorShop = providerOf({});
+    connected = providerOf({ catalogSessions: true }, { shop: editorShop });
+    metadataSession = providerOf({ catalogSessions: true }, { shop });
+    expect(await metadataProvider(session("admin"), connection, "shop")).toBe(shop);
+
+    metadataSession = providerOf({});
+    await expect(metadataProvider(session("admin"), connection, "shop")).rejects.toThrow(DatabaseConfigError);
   });
 });
 

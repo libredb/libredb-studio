@@ -464,8 +464,8 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * session a tree read runs on is the host's measurement of the engine and not a claim the engine makes. It is read only
  * by `sessionCapacity` in src/lib/db/session-capacity.ts, which answers `one` for an engine this record names a reason
  * for, and for a connection whose database is in memory, and `several` otherwise. The class decides only which session a
- * tree read runs on, so a wrong `null` opens one more session for the tree, a wrong reason keeps today's sharing, and
- * neither authorizes anything.
+ * tree read or a kill runs on, so a wrong `null` opens one more session for the tree, a wrong reason keeps today's
+ * sharing, and neither authorizes anything.
  *
  * An exhaustive Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/unit/db/compatibility.test.ts` holds a reason for every engine `SINGLE_WRITER_FILE` names. Frozen like the

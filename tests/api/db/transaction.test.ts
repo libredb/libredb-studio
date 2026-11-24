@@ -138,6 +138,10 @@ const mockFindCachedProvider = mock<(key: string) => unknown>(() => null);
 mock.module("@/lib/db/factory", () => ({
   editorCacheKey: mockEditorCacheKey,
   findCachedProvider: mockFindCachedProvider,
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route runs no kill.
+  getOrCreateMetadataProvider: mock(async () => {
+    throw new Error("getOrCreateMetadataProvider is not read by this route");
+  }),
 }));
 
 // ─── Query events (docs/GOVERNANCE.md#query-events) ─────────────────────────
