@@ -1898,7 +1898,7 @@ The memory transport closes the session of an open answer it refuses under such 
 
 ### C-48 (normative): The host's console calls
 
-The host core makes each console call through `executeCall`, `cancelCall` or `transactionCall`, which answer a record of how the call ended and pass a provider's error by reference.
+The host core makes each console call through `executeCall`, `cancelCall`, `endScopeCall` or `transactionCall`, which answer a record of how the call ended and pass a provider's error by reference.
 Before the call it checks the context with `checkCallStart`, C-27, and the request with `checkExecuteRequest`, C-9, or the facet with `checkConsoleFacet`, C-17, and answers each refusal as a record, the signal's reason as its cause when the signal aborted, without calling the provider.
 It then freezes the context and the request in place, C-12, and waits for the call with `awaitWithin` until the context's signal, C-28.
 An execute's run pumps the first result with `pumpPage` within the limits the caller sets from the execute answer, C-15, under the core's page budget, C-53, closes every other result once, and answers a refusal the pump throws as a record.
@@ -1909,6 +1909,8 @@ A stopped execute sends the run's cancel when the session offers `console.cancel
 A transaction call is checked with `checkCallStart` and with `checkConsoleFacet` for `console.transaction`, frozen, and waited for until its signal; its answer is read with `checkTransactionAnswer`, C-57, and refused after the call, as a record, when the host cannot read it.
 A statement sent with `transaction` has its execute answer read with `checkTransactionStatement` before its page is pumped; an answer the host cannot read is refused after the call, as a record, with every source closed once, and otherwise its page record carries the session state the execute answered.
 A stopped transaction call or statement carries no session state.
+An endScope call is checked with `checkCallStart` and with `checkConsoleFacet` for `console.endScope`, frozen, and waited for until its signal, and answers a record of the outcome its session answered, `openTransaction`, read by reference as a cancel's answer is; a stop carries its `settled`, and a failure after the stop is handed to the caller once.
+Core's execute never ends a scope: the caller that minted the scope ends it through `endScopeCall`.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
 - test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
@@ -1938,6 +1940,13 @@ Core constructs no error class a caller tests with `instanceof`: the caller buil
 - test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction whose answer carries no readable session state is refused as a record, and every source is closed once"
 - test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction that its caller stops answers a stop with no state"
 - test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "a transaction call that never settles is stopped at the call's deadline"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call to a session without console.endScope is refused as a record before the call"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call answers the outcome its session answered, with the request and context frozen"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an error the provider throws reaches the caller as the same object"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
+- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "a session that offers console.endScope with no endScope function is a host defect, named"
+- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an endScope call that never settles is stopped at the call's deadline"
 
 ### C-49 (normative): A turn of the event loop before every pull
 

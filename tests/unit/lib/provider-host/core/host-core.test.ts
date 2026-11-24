@@ -10,6 +10,7 @@ import { BATCH_MAX_BYTES, envReader, PAGE_MAX_BYTES, type ResultSource } from "@
 import {
   cancelCall,
   type ConsoleSession,
+  endScopeCall,
   type ExecuteRecord,
   type PageRecord,
   transactionCall,
@@ -69,8 +70,9 @@ describe("the host core instance", () => {
   test("the host core holds the console calls on a page budget of its own, frozen, and nothing else", () => {
     const core = createHostCore();
 
-    expect(Object.keys(core).sort()).toEqual(["cancelCall", "executeCall", "transactionCall"]);
+    expect(Object.keys(core).sort()).toEqual(["cancelCall", "endScopeCall", "executeCall", "transactionCall"]);
     expect(core.cancelCall).toBe(cancelCall);
+    expect(core.endScopeCall).toBe(endScopeCall);
     expect(core.transactionCall).toBe(transactionCall);
     expect(typeof core.executeCall).toBe("function");
     expect(Object.isFrozen(core)).toBe(true);

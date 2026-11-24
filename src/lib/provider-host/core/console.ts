@@ -2,8 +2,8 @@
  * The host's console calls (docs/providers/CONTRACT.md, clauses C-48, C-28, C-47, C-57 and C-58), part of the provider
  * host core.
  *
- * `executeCall`, `cancelCall` and `transactionCall` make one console call on a session and answer a record of how it
- * ended. Each call is checked before it is made: `checkCallStart` refuses a call whose deadline passed or whose signal
+ * `executeCall`, `cancelCall`, `endScopeCall` and `transactionCall` make one console call on a session and answer a
+ * record of how it ended. Each call is checked before it is made: `checkCallStart` refuses a call whose deadline passed or whose signal
  * aborted, then `checkExecuteRequest` refuses a request field the session does not honour, or `checkConsoleFacet` a
  * facet it does not offer. Each refusal is answered as a record, `called` false, and the provider is never called. Then the context and
  * the request are frozen in place, `freezeContext` and `freezeData`, so the caller builds both fresh for each call.
@@ -14,6 +14,10 @@
  * (`withLargePageSlot`, clause C-53), then every other result closed once. A `CallRefusalError` the pump throws is
  * answered as a record, `called` true. When the run sees the signal aborted after execute answered, it closes every
  * source and pumps nothing.
+ *
+ * An endScope call answers the outcome its session answered, `openTransaction`, read by reference as a cancel's
+ * `cancelled` is. Core's execute never ends a scope: the caller that minted a scope sends it with its executes and ends
+ * it through `endScopeCall` after them, under a cleanup context of its own (clause C-47).
  *
  * A transaction call answers the session state its session answered, read by `checkTransactionAnswer`, and a statement
  * sent with `transaction` has its answer's session state read by `checkTransactionStatement` right after its execute
@@ -56,6 +60,8 @@ import {
   checkTransactionAnswer,
   checkTransactionStatement,
   cleanupContext,
+  type EndScopeAnswer,
+  type EndScopeRequest,
   type ExecuteAnswer,
   type ExecuteRequest,
   freezeContext,
@@ -79,6 +85,7 @@ export interface ConsoleSession {
   readonly calls: Calls;
   execute(request: ExecuteRequest, ctx: CallContext): Promise<ExecuteAnswer>;
   cancel?(request: CancelRequest, ctx: CallContext): Promise<CancelAnswer>;
+  endScope?(request: EndScopeRequest, ctx: CallContext): Promise<EndScopeAnswer>;
   transaction?(request: TransactionRequest, ctx: CallContext): Promise<TransactionAnswer>;
 }
 
@@ -135,6 +142,12 @@ export interface PageRecord {
 export type ExecuteRecord = RefusedRecord | StoppedRecord | PageRecord;
 
 export type CancelRecord = RefusedRecord | StoppedRecord | { readonly kind: "answered"; readonly cancelled: boolean };
+
+/** How an endScope call ended: answered with the outcome its session answered, refused, or stopped. */
+export type EndScopeRecord =
+  | RefusedRecord
+  | StoppedRecord
+  | { readonly kind: "answered"; readonly openTransaction: EndScopeAnswer["openTransaction"] };
 
 /** A transaction call that answered: the session state after it, and for a begin whether the server reported it. */
 export interface AnsweredTransaction {
@@ -268,6 +281,16 @@ function sessionCancel(session: ConsoleSession, request: CancelRequest, ctx: Cal
     throw new Error("The session offers console.cancel and has no cancel function, a defect of the host's session.");
   }
   return session.cancel(request, ctx);
+}
+
+/** The console endScope of `session`, a host defect when the session offers it and holds no function for it. */
+function sessionEndScope(session: ConsoleSession, request: EndScopeRequest, ctx: CallContext): Promise<EndScopeAnswer> {
+  if (session.endScope === undefined) {
+    throw new Error(
+      "The session offers console.endScope and has no endScope function, a defect of the host's session.",
+    );
+  }
+  return session.endScope(request, ctx);
 }
 
 /** The console transaction of `session`, a host defect when the session offers it and holds no function for it. */
@@ -450,6 +473,35 @@ export async function cancelCall(
 }
 
 /**
+ * One console endScope on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, answered as a
+ * record, the provider's answer by reference. A failure after the wait ended reaches `ports.late` once, and a later
+ * answer is dropped. The caller that minted the scope makes this call, under a cleanup context of its own (clause C-47).
+ *
+ * @throws The provider's error by reference, or a host defect when the session offers the facet and holds no function.
+ */
+export async function endScopeCall(
+  session: ConsoleSession,
+  request: EndScopeRequest,
+  ctx: CallContext,
+  ports: Pick<HostCallPorts, "late">,
+): Promise<EndScopeRecord> {
+  const start = checkCallStart(ctx);
+  if (start.length > 0) return refusedBefore(start, ctx);
+  const facet = checkConsoleFacet(session.calls, "endScope");
+  if (facet.length > 0) return refusedBefore(facet, ctx);
+  freezeContext(ctx);
+  freezeData(request);
+  const call = startCall(() => sessionEndScope(session, request, ctx));
+  try {
+    const answer = await awaitWithin(call, ctx.signal, lateFailure(ctx, ports.late));
+    return { kind: "answered", openTransaction: answer.openTransaction };
+  } catch (error) {
+    if (!stoppedBy(ctx, error)) throw error;
+    return { kind: "stopped", reason: error, settled: settledOf(call) };
+  }
+}
+
+/**
  * One console transaction call on `session`: checked, the facet included, frozen, waited for until `ctx.signal`, its
  * answer read by `checkTransactionAnswer` and answered as a record built fresh from that answer's data properties. An
  * answer the host cannot read is refused, `called` true; a stop answers no state. A failure after the wait ended
@@ -494,12 +546,13 @@ export type ExecuteCall = (
 ) => Promise<ExecuteRecord>;
 
 /**
- * The console calls one host core holds: the execute bound to its page budget, and the cancel and the transaction call,
- * which pump nothing.
+ * The console calls one host core holds: the execute bound to its page budget, and the cancel, the endScope and the
+ * transaction call, which pump nothing.
  */
 export interface ConsoleCalls {
   readonly executeCall: ExecuteCall;
   readonly cancelCall: typeof cancelCall;
+  readonly endScopeCall: typeof endScopeCall;
   readonly transactionCall: typeof transactionCall;
 }
 
@@ -509,6 +562,7 @@ export function consoleCalls(budget: PageBudget): ConsoleCalls {
     executeCall: (session, request, ctx, pumpLimits, ports) =>
       executeCall(budget, session, request, ctx, pumpLimits, ports),
     cancelCall,
+    endScopeCall,
     transactionCall,
   };
 }
