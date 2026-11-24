@@ -17,15 +17,14 @@
  * `previewMaintenance`. `monitoring.panel` is offered on every session, since every legacy provider holds the seven
  * panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read (`getPoolStats`, a
  * function on the provider or its prototype); the session's panels are its engine's `ENGINE_FACETS` row
- * (`engineFacetsFor`). `health` is served on every session, since every legacy provider holds `getHealth`: the health
- * and fleet health routes and Test Connection still call `getHealth` themselves until they move onto the host core.
+ * (`engineFacetsFor`). `health` is served on every session, since every legacy provider holds `getHealth`.
  *
  * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
  * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
  * statistics call answers the provider's own `getPoolStats()` by reference, a synchronous throw answered as the call's
  * rejection. Its health call runs `getHealth()` with no argument and answers its health by reference, a synchronous
- * throw answered as the call's rejection. None calls `forCatalog`, and each passes a provider's error by reference. The facade that reads them is
- * `providerMonitoring` in src/lib/api/provider-monitoring.ts.
+ * throw answered as the call's rejection. None calls `forCatalog`, and each passes a provider's error by reference. The
+ * facade that reads them is `providerMonitoring` in src/lib/api/provider-monitoring.ts.
  *
  * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
  * container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh

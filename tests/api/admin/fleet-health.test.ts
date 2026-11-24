@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -20,6 +20,9 @@ import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseOverview, HealthInfo } from "@/lib/db/types";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { HealthRecord, PanelRecord } from "@/lib/provider-host/core/monitoring";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -76,6 +79,11 @@ mock.module("@/lib/db", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/admin/fleet-health/route");
+
+// The route reads health and the overview through the process's host core (src/lib/provider-host/instance.ts), so
+// this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const connections = [
@@ -201,7 +209,7 @@ describe("POST /api/admin/fleet-health", () => {
   test("an engine that offers the overview but not table statistics is asked for it once and carries its byte figure", async () => {
     expect(ENGINE_FACETS.kafka.monitoring.overview).toBe("offered");
     expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
-    const kafkaProvider = createMockProvider();
+    const kafkaProvider = createMockProvider({ type: "kafka" });
     mockGetOrCreateProvider.mockImplementation(async () => kafkaProvider);
     const kafka = {
       id: "conn-kafka",
@@ -223,7 +231,7 @@ describe("POST /api/admin/fleet-health", () => {
   });
 
   test("an engine that does not offer the overview panel is never asked for it, and its row carries no byte figure", async () => {
-    const s3Provider = createMockProvider();
+    const s3Provider = createMockProvider({ type: "s3" });
     mockGetOrCreateProvider.mockImplementation(async () => s3Provider);
     const s3 = {
       id: "conn-s3",
@@ -700,5 +708,172 @@ describe("what fleet health answers today, which the host core keeps", () => {
       error: sentence,
     });
     expect(provider.getOverview).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Fleet health on the host core: each row's health read and overview read are host core calls, each under its own
+ * deadline and the request's signal. A core of the test's own answers a stop where the real one would only at a real
+ * deadline; `Date.now` reads a clock the test owns, so no timer is awaited.
+ */
+describe("fleet health on the host core", () => {
+  type Mocked = ReturnType<typeof mock>;
+  let clock = 1_700_000_000_000;
+  let now: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
+    now = spyOn(Date, "now").mockImplementation(() => clock);
+  });
+
+  afterEach(() => {
+    now.mockRestore();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+  });
+
+  const s3Connection = {
+    id: "conn-s3",
+    name: "Objects",
+    type: "s3",
+    host: "objects.example.com",
+    port: 9000,
+    database: "",
+    createdAt: new Date(),
+  };
+
+  /** Runs `body` with the core `make` builds from the real one installed, then puts the real one back. */
+  async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+    const real = hostCore();
+    forgetHostCore();
+    installHostCore(make(real), "test");
+    try {
+      return await body();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  /** The rows fleet health answers for `items`, each served by a mock provider of its own type, the request's signal `signal`. */
+  async function rowsOf(
+    items: readonly { readonly type: string }[],
+    signal?: AbortSignal,
+  ): Promise<{ rows: Record<string, unknown>[]; providers: Map<string, ReturnType<typeof createMockProvider>> }> {
+    const providers = new Map<string, ReturnType<typeof createMockProvider>>();
+    mockGetOrCreateProvider.mockImplementation((async (connection: { type: string }) => {
+      const provider = createMockProvider({ type: connection.type as never });
+      providers.set(connection.type, provider);
+      return provider;
+    }) as never);
+    const res = await POST(
+      new Request("http://localhost:3000/api/admin/fleet-health", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connections: items }),
+        ...(signal === undefined ? {} : { signal }),
+      }) as never,
+    );
+    expect(res.status).toBe(200);
+    const data = await parseResponseJSON<{ results: Record<string, unknown>[] }>(res);
+    return { rows: data.results, providers };
+  }
+
+  test("each row's health and overview are read through the host core, the overview only where the engine offers it", async () => {
+    const health: unknown[] = [];
+    const panels: unknown[] = [];
+    const { rows, providers } = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: (session, ctx, ports) => {
+          health.push(ctx);
+          return real.healthCall(session, ctx, ports);
+        },
+        panelCall: (session, request, ctx, ports) => {
+          panels.push(request);
+          return real.panelCall(session, request, ctx, ports);
+        },
+      }),
+      () => rowsOf([connections[0] as { type: string }, s3Connection]),
+    );
+
+    expect(health).toHaveLength(2);
+    expect(panels).toEqual([{ panel: "overview" }]);
+    expect(rows.map((row) => row.status)).toEqual(["healthy", "healthy"]);
+    expect(rows[0]?.databaseSizeBytes).toBe(268435456);
+    expect("databaseSizeBytes" in (rows[1] as object)).toBe(false);
+    const postgres = providers.get("postgres");
+    const s3 = providers.get("s3");
+    if (postgres === undefined || s3 === undefined) throw new Error("A provider per row was expected.");
+    expect((postgres.getOverview as Mocked).mock.calls).toEqual([[]]);
+    expect(s3.getOverview).not.toHaveBeenCalled();
+    expect((s3.getHealth as Mocked).mock.calls).toEqual([[]]);
+  });
+
+  test("a row whose health read the host stopped at its deadline answers error with the health read's sentence", async () => {
+    const { rows, providers } = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: async (): Promise<HealthRecord> => {
+          clock += 70_000;
+          return {
+            kind: "stopped",
+            reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+            settled: Promise.resolve(),
+          };
+        },
+      }),
+      () => rowsOf([connections[0] as { type: string }]),
+    );
+
+    expect(rows).toEqual([
+      {
+        connectionId: "conn-1",
+        connectionName: "Production DB",
+        type: "postgres",
+        status: "error",
+        latencyMs: 70_000,
+        error:
+          "The health read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+      },
+    ]);
+    expect(providers.get("postgres")?.getOverview).not.toHaveBeenCalled();
+  });
+
+  test("a row whose overview read the host stopped stays healthy and carries no byte figure", async () => {
+    const { rows } = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: async (): Promise<PanelRecord> => ({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: Promise.resolve(),
+        }),
+      }),
+      () => rowsOf([connections[0] as { type: string }]),
+    );
+
+    expect(rows[0]?.status).toBe("healthy");
+    expect("databaseSizeBytes" in (rows[0] as object)).toBe(false);
+  });
+
+  test("a request already gone answers each row error with the cancelled sentence and reads no health", async () => {
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const { rows, providers } = await rowsOf(connections, caller.signal);
+
+    expect(rows.map((row) => [row.status, row.error])).toEqual([
+      ["error", "The query was cancelled."],
+      ["error", "The query was cancelled."],
+    ]);
+    for (const provider of providers.values()) {
+      expect(provider.getHealth).not.toHaveBeenCalled();
+      expect(provider.getOverview).not.toHaveBeenCalled();
+    }
+    expect(providers.size).toBe(2);
   });
 });

@@ -5,6 +5,7 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import { type HealthWithin, readHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { fieldRuleRefusal } from "@/lib/db/connection-field-rules";
 import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, waitedSeconds } from "@/lib/db/errors";
@@ -54,7 +55,7 @@ export type TestConnectionAnswer =
  * A resolution that is not an array is the same defect and gets the same answer.
  *
  * No deadline of its own is put on the call: the test's deadline bounds it, as it bounds
- * `getHealth()` below.
+ * the health read below.
  */
 async function testConnectionCautions(
   provider: DatabaseProvider,
@@ -113,7 +114,10 @@ function testDeadlineSentence(budgetMs: number): string {
  *
  * The whole test, the tunnel, the build, the connect, the test-only checks and the health read,
  * answers within its engine's connect budget from `now` (`connectBudgetFor`, src/lib/db/connect-budget.ts;
- * docs/providers/CONTRACT.md, clause C-56). At that deadline it rejects with a `ConnectionError`
+ * docs/providers/CONTRACT.md, clause C-56). The health read is one host core health call on the bridged
+ * session of the provider the test holds (`readHealthWithin`, src/lib/api/provider-monitoring.ts; clause
+ * C-75), on the test's own deadline and its deadline signal, so the test keeps one deadline; a health
+ * failure after that deadline is logged by kind and code. At that deadline it rejects with a `ConnectionError`
  * naming the budget, never a caution or a degraded success: a one-shot tunnel closes at once, and
  * the provider it built is closed once its connect settles, since no provider promises a
  * disconnect during its connect, and one measured there (PostgreSQL, SQL Server) frees nothing
@@ -224,7 +228,7 @@ export async function testConnection(
 
       /*
         The health read is a SECOND fact, and conflating the two is the defect this
-        replaced: `getHealth()` is the richest surface a provider has, so a failure
+        replaced: health is the richest surface a provider has, so a failure
         here is worth telling the user about - but it is not the connection.
 
         Measured 2026-08-24 against scylladb/scylla:2026.2.4: eight of the Cassandra
@@ -239,11 +243,12 @@ export async function testConnection(
         elapsed time of a read that failed is not a round trip.
       */
       const startTime = Date.now();
+      // Started outside the `try` below: a host core not yet installed throws here by name, never a degraded success.
+      const reading = readHealthWithin(provider, now + budget, deadline, route);
+      let health: HealthWithin;
       try {
-        await within(provider.getHealth());
+        health = await reading;
       } catch (healthError) {
-        // The deadline is the test's answer, never a degraded success.
-        if (healthError === late) throw healthError;
         await release();
 
         const withheld = withheldProviderError(scrub, healthError);
@@ -256,6 +261,8 @@ export async function testConnection(
           ...warnings,
         };
       }
+      // The deadline is the test's answer, never a degraded success.
+      if (health.kind === "ended") throw expired();
       const latency = Date.now() - startTime;
 
       await release();

@@ -3,13 +3,13 @@
  *
  * `createHostCore` answers what a composition root installs once per process (src/lib/provider-host/instance.ts): the
  * core's console calls, its tree call, its maintenance calls, its monitoring calls and its health call in a frozen
- * object, and nothing else. `executeCall` is bound to a page budget of `LARGE_PAGE_SLOTS` slots the core creates for itself
- * (src/lib/provider-host/core/page-budget.ts), so the process holds one page budget as it holds one core; `cancelCall`,
- * `endScopeCall` and `transactionCall` pump nothing and are the console's own functions, `treeCall` is the object
- * facet's own (src/lib/provider-host/core/objects.ts), `maintenanceRunCall` and `maintenancePreviewCall` are the
- * maintenance facets' own (src/lib/provider-host/core/maintenance.ts), and `panelCall` and `poolStatsCall` are the
- * monitoring facets' own and `healthCall` the mandatory health call's (src/lib/provider-host/core/monitoring.ts). The budget is not exposed: it is reached only
- * through the core's execute.
+ * object, and nothing else. `executeCall` is bound to a page budget of `LARGE_PAGE_SLOTS` slots the core creates for
+ * itself (src/lib/provider-host/core/page-budget.ts), so the process holds one page budget as it holds one core;
+ * `cancelCall`, `endScopeCall` and `transactionCall` pump nothing and are the console's own functions, `treeCall` is
+ * the object facet's own (src/lib/provider-host/core/objects.ts), `maintenanceRunCall` and `maintenancePreviewCall` are
+ * the maintenance facets' own (src/lib/provider-host/core/maintenance.ts), and `panelCall` and `poolStatsCall` are the
+ * monitoring facets' own and `healthCall` the mandatory health call's (src/lib/provider-host/core/monitoring.ts). The
+ * budget is not exposed: it is reached only through the core's execute.
  *
  * Next.js bundles instrumentation apart from every route handler, and each bundle holds its own copy of Studio's error
  * classes (docs/ARCHITECTURE.md, "The provider host core"). The core answers records and constructs no class, so the

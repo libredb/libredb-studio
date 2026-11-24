@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -20,6 +20,10 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { HealthInfo } from "@/lib/db/types";
+import { logger } from "@/lib/logger";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { HealthRecord } from "@/lib/provider-host/core/monitoring";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -86,6 +90,11 @@ mock.module("@/lib/db", () => ({
 
 // ─── Import route handlers AFTER mocking ────────────────────────────────────
 const { GET, POST } = await import("@/app/api/db/health/route");
+
+// The route reads health through the process's host core (src/lib/provider-host/instance.ts), so this file composes
+// its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -358,5 +367,105 @@ describe("what the health route answers today, which the host core keeps", () =>
 
     expect(res.status).toBe(500);
     expect(await parseResponseJSON(res)).toEqual({ error: words, code: "INTERNAL_ERROR", statusCode: 500 });
+  });
+});
+
+describe("the health route on the host core", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+  });
+
+  afterEach(() => {
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+  });
+
+  /** A health request for `provider`, whose signal is `signal`, as a browser that may leave sends it. */
+  function healthWith(provider: unknown, signal?: AbortSignal): Promise<Response> {
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    return POST(
+      new Request("http://localhost:3000/api/db/health", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connection: validConnection }),
+        ...(signal === undefined ? {} : { signal }),
+      }) as never,
+    );
+  }
+
+  test("a health read whose request leaves answers 499 at once, outcome unknown", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const pending = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<void>();
+    const getHealth = mock(() => {
+      reached.resolve();
+      return pending.promise;
+    });
+    const caller = new AbortController();
+    try {
+      const answering = healthWith({ ...createMockProvider(), getHealth }, caller.signal);
+      await reached.promise;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      const response = await answering;
+
+      expect(response.status).toBe(499);
+      expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "unknown" });
+      pending.reject(new Error(crypto.randomUUID()));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a health read whose request is already gone answers 499 not-sent and reads nothing", async () => {
+    const getHealth = mock(async () => ({
+      databaseSize: "0",
+      cacheHitRatio: "0",
+      slowQueries: [],
+      activeSessions: [],
+    }));
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const response = await healthWith({ ...createMockProvider(), getHealth }, caller.signal);
+
+    expect(response.status).toBe(499);
+    expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "not-sent" });
+    expect(getHealth).not.toHaveBeenCalled();
+  });
+
+  test("a health read past its deadline answers 504 studio-timeout-refusal naming the health read", async () => {
+    const real = hostCore();
+    const stopping: HostCore = {
+      ...real,
+      healthCall: async (): Promise<HealthRecord> => ({
+        kind: "stopped",
+        reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+        settled: Promise.resolve(),
+      }),
+    };
+    const getHealth = mock(async () => ({
+      databaseSize: "0",
+      cacheHitRatio: "0",
+      slowQueries: [],
+      activeSessions: [],
+    }));
+    forgetHostCore();
+    installHostCore(stopping, "test");
+    let response: Response;
+    try {
+      response = await healthWith({ ...createMockProvider(), getHealth });
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(504);
+    expect(body).toMatchObject({ code: "TIMEOUT_ERROR", kind: "studio-timeout-refusal", outcome: "unknown" });
+    expect(body.error).toBe(
+      "The health read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+    expect(getHealth).not.toHaveBeenCalled();
   });
 });

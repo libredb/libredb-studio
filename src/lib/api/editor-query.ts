@@ -232,9 +232,17 @@ export function hostPorts(route: string, cancelSent: () => boolean = () => false
   };
 }
 
+/**
+ * A call's context on a wait the caller already holds: `deadline`, and `signal` itself, by reference, so a caller that
+ * holds a deadline signal of its own keeps one deadline and no second timer races it.
+ */
+export function contextOn(deadline: number, signal: AbortSignal): CallContext {
+  return { deadline, signal, env: NO_ENVIRONMENT };
+}
+
 /** A call's context: `deadline`, and a signal that aborts at it or when `caller` aborts first. */
 export function callContext(deadline: number, caller: AbortSignal): CallContext {
-  return { deadline, signal: deadlineSignal(deadline, caller), env: NO_ENVIRONMENT };
+  return contextOn(deadline, deadlineSignal(deadline, caller));
 }
 
 /*

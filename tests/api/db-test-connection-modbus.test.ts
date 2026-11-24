@@ -14,7 +14,9 @@
  *
  * The provider dials in `connect()` now, and these tests hold the answer at both ends.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createServer, type Server } from "node:net";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { setEgressFlag } from "../helpers/egress-flag";
@@ -37,6 +39,11 @@ mock.module("@/lib/seed/resolve-connection", () => ({
 }));
 
 const route = await import("@/app/api/db/test-connection/route");
+
+// Test Connection reads health through the process's host core (src/lib/provider-host/instance.ts), so this file
+// composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 const MAP = JSON.stringify([{ name: "v", unitId: 1, table: "holding_register", address: 0, type: "uint16" }]);
 
 async function testConnection(port: number, registerMap: string) {

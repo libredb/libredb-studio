@@ -71,14 +71,20 @@ function requestOf(
   }
 }
 
+/** What a panel answer holds for `P`: the member under the panel's own key in the answer form of that panel. */
+type PanelMember<P extends MonitoringPanel> = Extract<MonitoringPanelAnswer, Readonly<Record<P, unknown>>>[P];
+
 /**
  * What `answer` holds for the panel `request` names: its one own key, the panel's, read as a data property by its
- * descriptor.
+ * descriptor, typed as that panel's member. The host's monitoring facade reads the overview through it too.
  *
  * @throws {Error} When the answer's own keys are not exactly the panel's, or the panel's key is an accessor, naming the
  * panel and never a value of the answer.
  */
-function memberOf(request: MonitoringPanelRequest, answer: MonitoringPanelAnswer): unknown {
+export function memberOf<P extends MonitoringPanel>(
+  request: { readonly panel: P },
+  answer: MonitoringPanelAnswer,
+): PanelMember<P> {
   const { panel } = request;
   const keys = typeof answer === "object" && answer !== null ? Reflect.ownKeys(answer) : [];
   const descriptor =

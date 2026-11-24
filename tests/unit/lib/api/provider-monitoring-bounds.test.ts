@@ -1,7 +1,8 @@
 /**
- * A dashboard read whose panels never answer, with a real deadline and a real host core, in a bounded Node child
- * (src/lib/api/provider-monitoring.ts; docs/providers/CONTRACT.md, clause C-74): each panel read waits until its own
- * deadline, so the dashboard answers `StudioTimeoutRefusal` naming the panel read within the child's spawn timeout.
+ * A dashboard read whose panels never answer, and a health read whose provider never answers, with a real deadline and
+ * a real host core, in a bounded Node child (src/lib/api/provider-monitoring.ts; docs/providers/CONTRACT.md, clauses
+ * C-74 and C-75): each read waits until its own deadline, so it answers `StudioTimeoutRefusal` naming the read within
+ * the child's spawn timeout.
  * Without the wait the child waits until the spawn timeout kills it, and the case fails within seconds; the child holds
  * a referenced interval, so Node cannot exit early on the unsettled reads (tests/helpers/bounded-node-child.ts).
  *
@@ -36,7 +37,7 @@ const child = boundedChild({
     { from: path.join(SRC, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
     { from: path.join(SRC, "lib", "db", "error-record.ts"), names: ["errorKind", "errorOutcome"] },
   ],
-  runCase: async (deps: ChildDeps) => {
+  runCase: async (deps: ChildDeps, name: string) => {
     deps.installHostCore(deps.createHostCore(), "test");
     const never = () => new Promise<never>(() => {});
     const queryTimeout = 1_000;
@@ -50,13 +51,15 @@ const child = boundedChild({
       getTableStats: never,
       getIndexStats: never,
       getStorageStats: never,
+      getHealth: never,
       runMaintenance: never,
       getCapabilities: () => ({}),
     } as unknown as Parameters<typeof deps.providerMonitoring>[0];
     // The clock sets each read's deadline 50 ms from now: the statement timeout and the slack already spent.
     const clock = () => Date.now() + 50 - queryTimeout - deps.EXECUTE_SLACK_MS;
     try {
-      await deps.providerMonitoring(provider, new AbortController().signal, "bounds", clock).readDashboard({});
+      const monitoring = deps.providerMonitoring(provider, new AbortController().signal, "bounds", clock);
+      await (name === "health" ? monitoring.readHealth() : monitoring.readDashboard({}));
       return "answered";
     } catch (error) {
       return `${(error as Error).name} ${deps.errorKind(error)} ${deps.errorOutcome(error)} ${(error as Error).message}`;
@@ -78,6 +81,12 @@ describe("a monitoring dashboard read in a bounded child", () => {
   test("a dashboard read whose panels never answer is stopped at their deadline, StudioTimeoutRefusal naming the panel read", async () => {
     expect(await child.run<unknown>("dashboard")).toBe(
       "TimeoutError studio-timeout-refusal unknown A monitoring panel read did not answer within the statement timeout of 1 second and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+  });
+
+  test("a health read whose provider never answers is stopped at its deadline, StudioTimeoutRefusal naming the health read", async () => {
+    expect(await child.run<unknown>("health")).toBe(
+      "TimeoutError studio-timeout-refusal unknown The health read did not answer within the statement timeout of 1 second and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
     );
   });
 });

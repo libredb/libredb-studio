@@ -12,9 +12,9 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { CallContext, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import type { CallContext, HealthInfo, MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
 import { EXECUTE_SLACK_MS, executeDeadline } from "@/lib/api/editor-query";
-import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
+import { monitoringOptionsRefusal, providerMonitoring, readHealthWithin } from "@/lib/api/provider-monitoring";
 import { MONITORING_PANELS, type MonitoringPanel } from "@/lib/db/engine-facets/types";
 import { errorOutcome } from "@/lib/db/error-record";
 import { QueryCancelledError, StudioTimeoutRefusal, waitedSeconds } from "@/lib/db/errors";
@@ -23,7 +23,7 @@ import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { HOST_DEFECT_PREFIX } from "@/lib/provider-host/access";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
-import type { PanelRecord, PoolStatsRecord } from "@/lib/provider-host/core/monitoring";
+import type { HealthRecord, PanelRecord, PoolStatsRecord } from "@/lib/provider-host/core/monitoring";
 import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import type { DatabaseConnection } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
@@ -97,7 +97,10 @@ async function failure(run: () => Promise<unknown>): Promise<unknown> {
 const TIMEOUT_REASON = () => new DOMException("The call's deadline has passed.", "TimeoutError");
 
 /** The deadline sentence of a panel read or the pool statistics read on a provider whose timeout is `queryTimeout`. */
-const deadlineSentence = (read: "A monitoring panel read" | "The pool statistics read", queryTimeout: number) =>
+const deadlineSentence = (
+  read: "A monitoring panel read" | "The pool statistics read" | "The health read",
+  queryTimeout: number,
+) =>
   `${read} did not answer within the statement timeout of ${waitedSeconds(queryTimeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`;
 
 const pooled = () => ({ getPoolStats: mock(() => ({ total: 4, idle: 1, active: 3, waiting: 0 })) });
@@ -311,6 +314,7 @@ describe("providerMonitoring", () => {
     const late = providerMonitoring(provider, new AbortController().signal, ROUTE, behind);
     const refusedDashboard = await failure(() => late.readDashboard({}));
     const refusedPool = await failure(() => late.readPoolStats());
+    const refusedOverview = await failure(() => late.readOverview());
     const stopped = await withCore(
       (real) => ({
         ...real,
@@ -327,15 +331,21 @@ describe("providerMonitoring", () => {
       }),
       async () => {
         const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
-        return [await failure(() => monitoring.readDashboard({})), await failure(() => monitoring.readPoolStats())];
+        return [
+          await failure(() => monitoring.readDashboard({})),
+          await failure(() => monitoring.readPoolStats()),
+          await failure(() => monitoring.readOverview()),
+        ];
       },
     );
 
     for (const [error, read, outcome] of [
       [refusedDashboard, "A monitoring panel read", "not-sent"],
       [refusedPool, "The pool statistics read", "not-sent"],
+      [refusedOverview, "A monitoring panel read", "not-sent"],
       [stopped[0], "A monitoring panel read", "unknown"],
       [stopped[1], "The pool statistics read", "unknown"],
+      [stopped[2], "A monitoring panel read", "unknown"],
     ] as const) {
       expect(error).toBeInstanceOf(StudioTimeoutRefusal);
       expect((error as Error).message).toBe(deadlineSentence(read, queryTimeout));
@@ -385,15 +395,292 @@ describe("providerMonitoring", () => {
     let caught: unknown[];
     try {
       const monitoring = providerMonitoring(provider, new AbortController().signal, ROUTE);
-      caught = [await failure(() => monitoring.readDashboard({})), await failure(() => monitoring.readPoolStats())];
+      caught = [
+        await failure(() => monitoring.readDashboard({})),
+        await failure(() => monitoring.readPoolStats()),
+        await failure(() => monitoring.readHealth()),
+        await failure(() => monitoring.readOverview()),
+        await failure(() => readHealthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
+      ];
     } finally {
       installHostCore(real, "test");
     }
 
+    expect(caught).toHaveLength(5);
     for (const error of caught) expect(error).toBeInstanceOf(HostCoreBootOrderError);
-    for (const member of [...MEMBERS, "getPoolStats" as const]) {
+    for (const member of [...MEMBERS, "getPoolStats" as const, "getHealth" as const]) {
       expect(mockOf((provider as unknown as Record<string, unknown>)[member])).not.toHaveBeenCalled();
     }
+  });
+});
+
+/** A health answer of the test's own, its size drawn at run time. */
+function healthOf(): HealthInfo {
+  return { activeConnections: 2, databaseSize: marker(), cacheHitRatio: "1", slowQueries: [], activeSessions: [] };
+}
+
+/** `provider`'s getHealth answers what `answer` gives, resolving the answered promise when it is called. */
+function healthMember(provider: DatabaseProvider, answer: () => Promise<unknown>): Promise<void> {
+  const reached = Promise.withResolvers<void>();
+  mockOf(provider.getHealth).mockImplementation(() => {
+    reached.resolve();
+    return answer();
+  });
+  return reached.promise;
+}
+
+/** The warnings logged while `body` runs, `logger.warn` restored afterwards. */
+async function warningsOf(body: () => Promise<void>): Promise<unknown[][]> {
+  const warned: unknown[][] = [];
+  const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+    warned.push(args);
+  });
+  try {
+    await body();
+  } finally {
+    warn.mockRestore();
+  }
+  return warned;
+}
+
+/** The late log line of a health read whose failure arrived after the wait ended. */
+const HEALTH_LATE = [
+  "A monitoring read Studio stopped waiting for failed afterwards",
+  { route: ROUTE, facet: "health", kind: "internal", code: "INTERNAL_ERROR" },
+];
+
+describe("the health and overview reads", () => {
+  test("a health read is one host core health call on a deadline of the statement timeout plus ten seconds from its own start and the caller's signal, answering the provider's own health by reference", async () => {
+    const provider = providerOf(2_000);
+    const health = healthOf();
+    void healthMember(provider, async () => health);
+    const contexts: CallContext[] = [];
+    const starts: number[] = [];
+    const steppedClock = () => {
+      const at = Date.now() + 7 + starts.length * 7;
+      starts.push(at);
+      return at;
+    };
+    const caller = new AbortController();
+    const answered = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: (session, ctx, ports) => {
+          contexts.push(ctx);
+          return real.healthCall(session, ctx, ports);
+        },
+      }),
+      () => providerMonitoring(provider, caller.signal, ROUTE, steppedClock).readHealth(),
+    );
+
+    expect(answered).toBe(health);
+    expect(mockOf(provider.getHealth).mock.calls).toEqual([[]]);
+    expect(contexts).toHaveLength(1);
+    expect(starts).toHaveLength(1);
+    expect(contexts[0]?.deadline).toBe((starts[0] as number) + 2_000 + EXECUTE_SLACK_MS);
+    expect(contexts[0]?.signal.aborted).toBe(false);
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+    expect(contexts[0]?.signal.aborted).toBe(true);
+  });
+
+  test("a health read's provider error reaches the caller as the same object", async () => {
+    const provider = providerOf();
+    const thrown = new Error(marker());
+    void healthMember(provider, async () => {
+      throw thrown;
+    });
+
+    expect(await failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readHealth())).toBe(
+      thrown,
+    );
+  });
+
+  test("a health read whose caller leaves is answered a stop at once, QueryCancelledError outcome unknown, and its later failure is logged by kind and code, never its text", async () => {
+    const secret = marker();
+    const warned = await warningsOf(async () => {
+      const pending = Promise.withResolvers<never>();
+      const provider = providerOf();
+      const reached = healthMember(provider, () => pending.promise);
+      const caller = new AbortController();
+      const reading = failure(() => providerMonitoring(provider, caller.signal, ROUTE).readHealth());
+      await reached;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      const left = await reading;
+      expect(left).toBeInstanceOf(QueryCancelledError);
+      expect(errorOutcome(left)).toBe("unknown");
+      pending.reject(new Error(secret));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    expect(warned).toEqual([HEALTH_LATE]);
+    expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+
+  test("a health read whose caller is already gone sends nothing and is answered not-sent", async () => {
+    const provider = providerOf();
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const gone = await failure(() => providerMonitoring(provider, caller.signal, ROUTE).readHealth());
+
+    expect(gone).toBeInstanceOf(QueryCancelledError);
+    expect(errorOutcome(gone)).toBe("not-sent");
+    expect(mockOf(provider.getHealth)).not.toHaveBeenCalled();
+  });
+
+  test("a health read past its deadline answers StudioTimeoutRefusal naming the health read, the statement timeout and the slack", async () => {
+    const provider = providerOf();
+    const stopped = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: async (): Promise<HealthRecord> => ({
+          kind: "stopped",
+          reason: TIMEOUT_REASON(),
+          settled: Promise.resolve(),
+        }),
+      }),
+      () => failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readHealth()),
+    );
+    const behind = () => Date.now() - 60_000 - EXECUTE_SLACK_MS - 1_000;
+    const refused = await failure(() =>
+      providerMonitoring(provider, new AbortController().signal, ROUTE, behind).readHealth(),
+    );
+
+    expect(refused).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((refused as Error).message).toBe(deadlineSentence("The health read", 60_000));
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect(stopped).toBeInstanceOf(StudioTimeoutRefusal);
+    expect((stopped as Error).message).toBe(
+      "The health read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+    expect((stopped as Error).message).toBe(deadlineSentence("The health read", 60_000));
+    expect(errorOutcome(stopped)).toBe("unknown");
+    expect(mockOf(provider.getHealth)).not.toHaveBeenCalled();
+  });
+
+  test("an overview read is one host core panel call where the engine offers the overview, answering its figures by reference, and reads nothing where it does not", async () => {
+    const provider = providerOf(2_000);
+    const overview = { marker: marker() };
+    mockOf(provider.getOverview).mockImplementation(async () => overview);
+    const s3 = createMockProvider({ type: "s3" });
+    const panels: { request: MonitoringPanelRequest; ctx: CallContext }[] = [];
+    const starts: number[] = [];
+    const steppedClock = () => {
+      const at = Date.now() + 7 + starts.length * 7;
+      starts.push(at);
+      return at;
+    };
+    const caller = new AbortController();
+    const [answered, none] = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: (session, request, ctx, ports) => {
+          panels.push({ request, ctx });
+          return real.panelCall(session, request, ctx, ports);
+        },
+      }),
+      async () => [
+        await providerMonitoring(provider, caller.signal, ROUTE, steppedClock).readOverview(),
+        await providerMonitoring(s3, caller.signal, ROUTE, steppedClock).readOverview(),
+      ],
+    );
+
+    expect(answered).toBe(overview as never);
+    expect(none).toBeUndefined();
+    expect(panels.map(({ request }) => request)).toEqual([{ panel: "overview" }]);
+    expect(panels[0]?.ctx.deadline).toBe((starts[0] as number) + 2_000 + EXECUTE_SLACK_MS);
+    expect(starts).toHaveLength(1);
+    expect(mockOf(provider.getOverview).mock.calls).toEqual([[]]);
+    expect(mockOf(s3.getOverview)).not.toHaveBeenCalled();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+    expect(panels[0]?.ctx.signal.aborted).toBe(true);
+  });
+
+  test("an overview answer whose form is not the overview panel's fails by name", async () => {
+    const provider = providerOf();
+    const wrong = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: async (): Promise<PanelRecord> => ({
+          kind: "answered",
+          answer: { performance: { marker: marker() } } as never,
+        }),
+      }),
+      () => failure(() => providerMonitoring(provider, new AbortController().signal, ROUTE).readOverview()),
+    );
+
+    expect((wrong as Error).constructor).toBe(Error);
+    expect((wrong as Error).message).toBe(
+      "The overview panel read answered a form other than the overview panel's, which is a defect of the session that answered it.",
+    );
+  });
+});
+
+describe("readHealthWithin", () => {
+  test("a health read within a wait the caller holds runs on that deadline and that signal itself, and answers the provider's health by reference", async () => {
+    const provider = providerOf();
+    const health = healthOf();
+    void healthMember(provider, async () => health);
+    const contexts: CallContext[] = [];
+    const deadline = Date.now() + 5_000 + 7;
+    const signal = new AbortController().signal;
+    const within = await withCore(
+      (real) => ({
+        ...real,
+        healthCall: (session, ctx, ports) => {
+          contexts.push(ctx);
+          return real.healthCall(session, ctx, ports);
+        },
+      }),
+      () => readHealthWithin(provider, deadline, signal, ROUTE),
+    );
+
+    expect(within).toEqual({ kind: "answered", health });
+    expect(within.kind === "answered" && within.health).toBe(health);
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.deadline).toBe(deadline);
+    expect(contexts[0]?.signal).toBe(signal);
+    expect(mockOf(provider.getHealth).mock.calls).toEqual([[]]);
+  });
+
+  test("a health read within a wait that ended answers that it ended, before the call or while it was pending, and a later failure is logged by kind and code", async () => {
+    const secret = marker();
+    const before = providerOf();
+    const pendingProvider = providerOf();
+    const warned = await warningsOf(async () => {
+      const ended = new AbortController();
+      ended.abort(new DOMException("The test's deadline has passed.", "TimeoutError"));
+      expect(await readHealthWithin(before, Date.now() + 60_000, ended.signal, ROUTE)).toEqual({ kind: "ended" });
+
+      const pending = Promise.withResolvers<never>();
+      const reached = healthMember(pendingProvider, () => pending.promise);
+      const wait = new AbortController();
+      const reading = readHealthWithin(pendingProvider, Date.now() + 60_000, wait.signal, ROUTE);
+      await reached;
+      wait.abort(new DOMException("The test's deadline has passed.", "TimeoutError"));
+      expect(await reading).toEqual({ kind: "ended" });
+      pending.reject(new Error(secret));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+
+    expect(mockOf(before.getHealth)).not.toHaveBeenCalled();
+    expect(mockOf(pendingProvider.getHealth).mock.calls).toEqual([[]]);
+    expect(warned).toEqual([HEALTH_LATE]);
+    expect(JSON.stringify(warned)).not.toContain(secret);
+  });
+
+  test("a health read within a wait passes the provider's error as the same object", async () => {
+    const provider = providerOf();
+    const thrown = new Error(marker());
+    void healthMember(provider, async () => {
+      throw thrown;
+    });
+
+    expect(
+      await failure(() => readHealthWithin(provider, Date.now() + 60_000, new AbortController().signal, ROUTE)),
+    ).toBe(thrown);
   });
 });
 

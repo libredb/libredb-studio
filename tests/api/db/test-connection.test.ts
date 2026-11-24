@@ -1,4 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { ConnectionError, DatabaseConfigError, TimeoutError } from "@/lib/db/errors";
@@ -113,6 +115,11 @@ mock.module("@/lib/db/connect-budget", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/test-connection/route");
+
+// Test Connection reads health through the process's host core (src/lib/provider-host/instance.ts), so this file
+// composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
