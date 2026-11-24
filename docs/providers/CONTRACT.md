@@ -1036,6 +1036,10 @@ Removing an engine's declaration gives exactly the catalog a fresh build from th
 - test `tests/unit/db/engine-catalog.test.ts` "SHIPPED_DATABASE_TYPES is the catalog's engines in its order"
 - test `tests/unit/db/engine-catalog.test.ts` "EXTERNAL_DATABASE_TYPES and isExternalDatabaseType answer the location each declaration authors"
 - test `tests/unit/db/engine-declarations.test.ts` "connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the fixture engine's declaration is admitted by the schema's engine declaration and its rules"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the catalog built with the fixture engine holds it, and with it removed is exactly a fresh build from the remaining set and the committed catalog"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the catalog is the same whatever order the declarations are admitted in"
+- test `tests/unit/db/engine-projections-removal.test.ts` "a stored connection of an engine the catalog no longer holds is kept and shown as Unavailable"
 
 ## Values
 
