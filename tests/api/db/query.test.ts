@@ -2038,9 +2038,12 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
     const capabilities = mockProvider.getCapabilities as ReturnType<typeof mock>;
     const defaults = mockProvider.getCapabilities();
     capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
-    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown };
+    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown; config: DatabaseConnection };
     const forCatalog = mock(async (_catalog: string) => session);
     server.forCatalog = forCatalog;
+    // The provider stands for the server-level connection, which `catalogChoice` reads (M-57).
+    const config = server.config;
+    server.config = serverConnection as DatabaseConnection;
     try {
       const res = await POST(
         createMockRequest("/api/db/query", {
@@ -2051,6 +2054,33 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
       expect(res.status).toBe(200);
       expect(forCatalog.mock.calls).toEqual([["shop"]]);
       expect(session.query).toHaveBeenCalledTimes(1);
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockImplementation(() => defaults);
+      delete server.forCatalog;
+      server.config = config;
+    }
+  });
+
+  test("a provider that declares catalog sessions on a connection naming its database runs nothing in another: the catalog is refused by name", async () => {
+    const capabilities = mockProvider.getCapabilities as ReturnType<typeof mock>;
+    const defaults = mockProvider.getCapabilities();
+    capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
+    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown };
+    const forCatalog = mock(async () => createMockProvider());
+    server.forCatalog = forCatalog;
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1", catalog: "shop" },
+        }) as never,
+      );
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        'This postgres connection runs every request in its own database and cannot run one in "shop": it names its own database, so Studio honours no session per database its provider declares',
+      );
+      expect(forCatalog).not.toHaveBeenCalled();
       expect(mockProvider.query).not.toHaveBeenCalled();
     } finally {
       capabilities.mockImplementation(() => defaults);

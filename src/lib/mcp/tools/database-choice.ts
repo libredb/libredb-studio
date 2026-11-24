@@ -1,4 +1,4 @@
-import { scopeToCatalog } from "@/lib/db/catalog-scope";
+import { catalogChoice, catalogChoiceBound, scopeToCatalog } from "@/lib/db/catalog-scope";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { databaseContentNotice, type ToolResult } from "../output";
@@ -54,14 +54,27 @@ export function databaseRequiredAnswer(
   };
 }
 
-/** The provider one tool call reads: a server-level connection needs `database`, any other refuses it. */
+/**
+ * The provider one tool call reads: a connection on which Studio honours the provider's catalog sessions
+ * (`catalogChoice`, M-57) needs `database`, any other refuses it, saying why when its provider declares sessions
+ * Studio does not honour.
+ */
 export async function providerInDatabase(
   provider: DatabaseProvider,
   database: string | undefined,
 ): Promise<McpDatabaseChoice> {
-  if (provider.getCapabilities().catalogSessions !== true) {
+  const choice = catalogChoice(provider.config, provider.getCapabilities());
+  if (choice !== "honoured") {
     if (database === undefined) return { kind: "chosen", provider };
-    throw new McpDatabaseChoiceError("This connection reads only the database it names; call again without database.");
+    if (choice === "not-declared") {
+      throw new McpDatabaseChoiceError(
+        "This connection reads only the database it names; call again without database.",
+      );
+    }
+    const bound = catalogChoiceBound(choice, provider.type);
+    throw new McpDatabaseChoiceError(
+      `This connection reads only its own database: ${bound}; call again without database.`,
+    );
   }
   if (database === undefined) {
     const names = (await provider.listContainers()).map((container) => container.name);

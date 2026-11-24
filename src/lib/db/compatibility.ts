@@ -1756,6 +1756,10 @@ export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
  * `connection.serverLevelWithoutDatabase`, and every gate reads it: the declaration states each shipped engine's
  * request as this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
  * M-52 and M-53).
+ *
+ * It is also the bound of the catalog sessions a provider declares: the places that honour a caller's choice of
+ * database read it through `catalogChoice` in `src/lib/db/catalog-scope.ts`, and honour that choice only where this
+ * table holds the engine and the connection names no database and no connection string (M-57).
  */
 export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts);

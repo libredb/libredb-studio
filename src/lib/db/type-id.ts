@@ -14,7 +14,8 @@
  * read-only marker and the connection form hook, `READ_ONLY_ENFORCED` by the provider factory,
  * `READS_FILE_ACCESS_POSTURE` by the provider factory and the provider cache key, `SINGLE_WRITER_FILE` by the provider
  * cache key and the provider factory, `AGENT_CREDENTIAL_FORM` by the provider factory, `MASKING_EXEMPT_COLUMNS` by
- * `clientCapabilities`, `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by its six readers. Other
+ * `clientCapabilities`, `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` by `catalogChoice`, `CONNECTION_FORM` by
+ * `offersSslPanel`, and the destructive vocabulary by its six readers. Other
  * reads are still by bare index, of other per-engine tables and of some of these (the seed schema's `WRITE_REACH`
  * refinement, the VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module
  * unless it calls it.

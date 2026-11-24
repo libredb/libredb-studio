@@ -32,6 +32,8 @@ import {
 } from "@/lib/db/compatibility";
 import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { catalogChoice } from "@/lib/db/catalog-scope";
+import { DatabaseConfigError } from "@/lib/db/errors";
 import { isFileBased } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
@@ -836,6 +838,28 @@ describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE", () => {
     );
     expect(providers.map((provider) => provider.getCapabilities().catalogSessions)).toEqual([undefined, undefined]);
   });
+
+  /**
+   * The record also bounds the catalog sessions a provider declares (`catalogChoice`, M-57): for every shipped engine
+   * the bound changes no answer. A connection without a database that its provider refuses to build is never handed
+   * to a gate, so only the census connection is read there.
+   */
+  test.each([...SHIPPED_DATABASE_TYPES])(
+    "%s: Studio honours catalog sessions exactly where its provider declares them, with and without a database",
+    async (type) => {
+      const withoutDatabase = { ...CENSUS_CONNECTION[type], database: undefined, connectionString: undefined };
+      const providers = [await createDatabaseProvider(CENSUS_CONNECTION[type])];
+      const server = await createDatabaseProvider(withoutDatabase).catch((error: unknown) => {
+        if (error instanceof DatabaseConfigError) return null;
+        throw error;
+      });
+      if (server !== null) providers.push(server);
+      for (const provider of providers) {
+        const capabilities = provider.getCapabilities();
+        expect(catalogChoice(provider.config, capabilities) === "honoured").toBe(capabilities.catalogSessions === true);
+      }
+    },
+  );
 });
 
 /**

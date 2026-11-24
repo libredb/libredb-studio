@@ -1709,6 +1709,11 @@ export interface ProviderCapabilities {
   /**
    * The connection reaches a whole server and names no catalog (#1530): each request runs in the
    * catalog the caller picks through `forCatalog()`. Absent means requests run where it points.
+   *
+   * Studio honours it only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds the engine and the
+   * connection names no database and no connection string (`catalogChoice` in
+   * `src/lib/db/catalog-scope.ts`, docs/providers/CONTRACT.md clause M-57), and elsewhere refuses a
+   * caller's catalog by name; `assertNotWholeServer` reads it as declared.
    */
   catalogSessions?: true;
   /**
@@ -2703,7 +2708,10 @@ export interface DatabaseProvider {
    */
   engineUser?(): string | undefined;
 
-  /** The provider for one catalog of a server-level connection, owned (and closed) by this one (#1530). */
+  /**
+   * The provider for one catalog of a server-level connection, owned (and closed) by this one (#1530).
+   * Called only where `catalogChoice` honours the connection (M-57).
+   */
   forCatalog?(catalog: string): Promise<DatabaseProvider>;
 
   /**

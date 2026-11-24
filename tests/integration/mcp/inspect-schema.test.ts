@@ -864,6 +864,10 @@ describe("the registration", () => {
  * `listContainers` call by its parent.
  */
 class FixedProvider {
+  readonly type = "postgres";
+  /** The connection it stands for, a server-level one, which `catalogChoice` reads where a test declares catalog sessions (M-57). */
+  readonly config = { id: "fixed", name: "fixed", type: "postgres", database: "" } as const;
+
   constructor(
     readonly levels: 0 | 1 | 2,
     readonly listing: (parent: readonly string[] | undefined) => Container[] = () => [],
@@ -1509,6 +1513,8 @@ describe("a provider's text on inspect_schema", () => {
       createdAt: new Date(),
     } as ManagedConnection;
     const provider = {
+      type: "postgres",
+      config: { id: "seed:fixed", name: "fixed", type: "postgres", database: "" },
       getCapabilities: () => ({ catalogSessions: true }),
       forCatalog: async () => {
         throw new DatabaseConfigError('"payroll" cannot be opened', "postgres");

@@ -833,6 +833,26 @@ describe("query/run", () => {
     await refused(handlers.runQuery({ ...RUN, catalog: "" }, idle), -32602, "catalog must be a non-empty string");
   });
 
+  it("a provider that declares catalog sessions on a connection naming its database runs nothing in another catalog, and the refusal says why", async () => {
+    const server = fakeProvider({
+      config: { id: "fake", name: "Fake", type: "postgres", createdAt: new Date(0), database: "orders" },
+      getCapabilities: () => ({ ...CAPS, catalogSessions: true }),
+      forCatalog: async () => fakeProvider(),
+    });
+    const { handlers } = await openedOn(server);
+    await answeredAs(
+      handlers.runQuery({ ...RUN, catalog: "sales" }, idle),
+      new DatabaseConfigError(
+        'This postgres connection runs every request in its own database and cannot run one in "sales": it names its own database, so Studio honours no session per database its provider declares',
+        "postgres",
+      ),
+    );
+    assert.equal(
+      server.calls.some(([method]) => method === "forCatalog"),
+      false,
+    );
+  });
+
   it("refuses params it cannot read, naming the field, before resolving a provider", async () => {
     const { handlers, calls } = await openedOn();
     const before = calls.length;

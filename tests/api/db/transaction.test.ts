@@ -1926,12 +1926,16 @@ describe("POST /api/db/transaction on a server-level connection (#1530)", () => 
     capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
     const server = mockTxProvider as typeof mockTxProvider & { forCatalog?: unknown };
     server.forCatalog = mock(async (catalog: "shop" | "analytics") => sessions[catalog]);
+    const serverConnection = { ...validConnection, id: "server-1", database: "" };
+    // The provider stands for the server-level connection, which `catalogChoice` reads (M-57).
+    const config = server.config;
+    server.config = serverConnection as typeof server.config;
     const as = (username: string) => mockGetSession.mockImplementationOnce(async () => ({ role: "admin", username }));
     const send = (body: Record<string, unknown>) =>
       POST(
         createMockRequest("/api/db/transaction", {
           method: "POST",
-          body: { connection: { ...validConnection, id: "server-1", database: "" }, ...body },
+          body: { connection: serverConnection, ...body },
         }) as never,
       );
     try {
@@ -1958,9 +1962,14 @@ describe("POST /api/db/transaction on a server-level connection (#1530)", () => 
     } finally {
       capabilities.mockImplementation(() => defaults);
       delete server.forCatalog;
-      for (const catalog of ["shop", "analytics"]) {
-        as(catalog === "shop" ? "alice" : "bob");
-        await send({ action: "rollback", catalog });
+      try {
+        for (const catalog of ["shop", "analytics"]) {
+          as(catalog === "shop" ? "alice" : "bob");
+          // oxlint-disable-next-line no-await-in-loop -- each rollback runs as its own user, one request at a time, as the editor sends them.
+          await send({ action: "rollback", catalog });
+        }
+      } finally {
+        server.config = config;
       }
     }
   });
