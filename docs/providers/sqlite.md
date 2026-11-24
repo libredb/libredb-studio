@@ -553,7 +553,8 @@ SQLite is a file path, so inventing `sqlite://` would put a scheme on the login 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction.
-Its row in `EXECUTION_UI` is declared in [`sqlite-execution-ui.ts`](../../src/lib/db/providers/sql/sqlite-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`sqlite.json`](../../src/lib/db/engine-declarations/sqlite.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `sqlite`, and its declaration's `editor.fenceAliases`, `sqlite3`.
 How `mapDatabaseError` classifies its driver's errors, its result codes of a refused statement, as `bun:sqlite` and `node:sqlite` report them, is the `sqlite` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`sqlite-driver-errors.ts`](../../src/lib/db/providers/sql/sqlite-driver-errors.ts).
 SQLite is the one engine with a consent deadline: an on-disk SQLite read that overruns its timeout is now killed mid-flight, so only the in-memory database keeps the old blocking behaviour.
 The agent's consent card says so in the words the budget meter already uses for the same fact, true of SQLite and of nothing else.

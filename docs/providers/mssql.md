@@ -370,7 +370,8 @@ It runs no seed load check.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mssql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`mssql-execution-ui.ts`](../../src/lib/db/providers/sql/mssql-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mssql.json`](../../src/lib/db/engine-declarations/mssql.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `mssql`, and its declaration's `editor.fenceAliases`, `tsql` and `sqlserver`.
 What a tree click and Generate Query write is `MSSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its statement and access-refusal error numbers, its cannot-open-database words and its `ECANCEL` cancel code, is the `mssql` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts).
 

@@ -529,7 +529,10 @@ redirect would take the Basic credential and the statement to wherever the serve
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opensearch` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`opensearch-execution-ui.ts`](../../src/lib/db/providers/sql/search/opensearch-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `opensearch`: its declaration's `editor.fenceAliases` is empty.
+Its query language is SQL over its HTTP endpoint (measured on OpenSearch 3.8.0), so a block tagged with its id holds a statement the editor can run.
+No alias names it: an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 
 ---
 

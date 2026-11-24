@@ -286,7 +286,10 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public a
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `influxdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`influxdb-execution-ui.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`influxdb.json`](../../src/lib/db/engine-declarations/influxdb.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `influxdb`, and its declaration's `editor.fenceAliases`, `influxql`.
+A block tagged `influxdb` holds one InfluxQL statement the editor runs as it is, and `influxql` spells the language, which only `influxdb` runs (`influxdb3` runs SQL); a second InfluxQL type-id is the moment to revisit it.
+No `flux` tag names any engine: no type-id runs Flux, and an alias would make a Flux block look runnable on `influxdb`.
 What a tree click and Generate Query write is `INFLUXQL_GENERATORS`, the `influxql` row of `LANGUAGE_GENERATORS`, declared in [`influxql-generators.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `influxql`, is the row in `EDITOR_LANGUAGES` declared in [`influxql-editor-language.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 

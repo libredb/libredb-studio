@@ -682,7 +682,6 @@ const provider = new S3Provider(
 /** The client, console and preview modules a browser bundle may import. */
 const BROWSER_SET: ReadonlySet<string> = new Set([
   "constants.ts",
-  "execution-ui.ts",
   "engine-facets.ts",
   "names.ts",
   "xml.ts",

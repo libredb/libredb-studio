@@ -794,7 +794,8 @@ It runs no seed load check.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `clickhouse` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/clickhouse/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`clickhouse.json`](../../src/lib/db/engine-declarations/clickhouse.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `clickhouse`: its declaration's `editor.fenceAliases` is empty.
 
 ---
 

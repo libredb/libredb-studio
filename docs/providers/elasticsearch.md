@@ -589,7 +589,10 @@ OpenSearch refuses the pair too: nothing here has measured whether OpenSearch's 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `elasticsearch` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`elasticsearch-execution-ui.ts`](../../src/lib/db/providers/sql/search/elasticsearch-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `elasticsearch`: its declaration's `editor.fenceAliases` is empty.
+Its query language is SQL over its HTTP endpoint (measured on Elasticsearch 9.1.4), so a block tagged with its id holds a statement the editor can run.
+No alias names it: `es` names Spanish as often as Elasticsearch in a fence, and an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 
 ---
 

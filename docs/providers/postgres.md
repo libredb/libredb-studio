@@ -1523,7 +1523,8 @@ It runs no seed load check.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `postgres` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`postgres-execution-ui.ts`](../../src/lib/db/providers/sql/postgres-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`postgres.json`](../../src/lib/db/engine-declarations/postgres.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `postgres`, and its declaration's `editor.fenceAliases`, `postgresql`, `pgsql`, `psql` and `plpgsql`.
 How `mapDatabaseError` classifies its driver's errors, its statement timeout and lock timeout words, its cancel words and the words of its statement errors, is the `pg` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`postgres-driver-errors.ts`](../../src/lib/db/providers/sql/postgres-driver-errors.ts).
 
 ---

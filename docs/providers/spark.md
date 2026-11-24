@@ -209,7 +209,9 @@ It has no scheme on purpose, though its `sc://` address is pasted and decomposed
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `spark` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/spark/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`spark.json`](../../src/lib/db/engine-declarations/spark.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `spark`: its declaration's `editor.fenceAliases` is empty.
+A block tagged `spark` holds one statement in Spark SQL, sent as it is over Spark Connect, and no alias names it.
 
 ## 3. The recommended Spark setup
 

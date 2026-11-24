@@ -1,14 +1,14 @@
 /**
- * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): four declared beside the
- * provider and registered as its row, the connection string composed from its declaration, and each saying what the
- * design says, since a Weaviate console request is not SQL text and nothing it runs writes.
+ * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): three declared beside the
+ * provider and registered as its row, the connection string composed from its declaration, the execution UI read from
+ * its declaration, and each saying what the design says, since a Weaviate console request is not SQL text and nothing
+ * it runs writes.
  */
 import { describe, expect, test } from "bun:test";
 import { CONNECTION_STRING } from "@/lib/db/connection-string";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
-import { WEAVIATE_EXECUTION_UI } from "@/lib/db/providers/vector/weaviate/execution-ui";
 import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
 import { WEAVIATE_SQL_GRAMMAR } from "@/lib/db/providers/vector/weaviate/sql-grammar";
 import { WEAVIATE_SQL_WRITING } from "@/lib/db/providers/vector/weaviate/sql-writing";
@@ -22,7 +22,6 @@ describe("each row is the registry's weaviate row", () => {
     ["SQL_GRAMMAR", SQL_GRAMMAR.weaviate, WEAVIATE_SQL_GRAMMAR],
     ["SQL_WRITING", SQL_WRITING.weaviate, WEAVIATE_SQL_WRITING],
     ["MIGRATION_DDL", MIGRATION_DDL.weaviate, WEAVIATE_MIGRATION_DDL],
-    ["EXECUTION_UI", EXECUTION_UI.weaviate, WEAVIATE_EXECUTION_UI],
   ] as const)("%s", (_name, registered, declared) => {
     expect(registered).toBe(declared as never);
   });
@@ -60,6 +59,6 @@ describe("the rows", () => {
   });
 
   test("the execution UI names COMMIT and has no consent deadline", () => {
-    expect(WEAVIATE_EXECUTION_UI).toEqual({ commitKeyword: SQL_COMMIT_KEYWORD, consentDeadline: null });
+    expect(EXECUTION_UI.weaviate).toEqual({ commitKeyword: SQL_COMMIT_KEYWORD, consentDeadline: null });
   });
 });

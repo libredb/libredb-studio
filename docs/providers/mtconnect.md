@@ -241,7 +241,9 @@ The agent at the far end is not checked here: a link-local or metadata address t
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mtconnect` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/mtconnect/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mtconnect.json`](../../src/lib/db/engine-declarations/mtconnect.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `mtconnect`, and its declaration's `editor.fenceAliases`, `mtconnectread`.
+A block tagged `mtconnect` holds one request line in the agent's own URL grammar, which the console runs as it is, and `mtconnectread` names the agent's MTConnect read request language, which only `mtconnect` runs.
 What a tree click and Generate Query write is `MTCONNECT_GENERATORS`, the `mtconnect` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/mtconnect/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `mtconnect`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/industrial/mtconnect/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 

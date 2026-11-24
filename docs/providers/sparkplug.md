@@ -194,7 +194,9 @@ The broker at the far end is not checked here: a link-local or metadata address 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `sparkplug` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/sparkplug/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`sparkplug.json`](../../src/lib/db/engine-declarations/sparkplug.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `sparkplug`, and its declaration's `editor.fenceAliases`, `sparkplugread`.
+A block tagged `sparkplug` holds one read request in the JSON shape the console runs as it is, and `sparkplugread` names the agent's Sparkplug read request language, which only `sparkplug` runs.
 What a tree click and Generate Query write is `SPARKPLUG_GENERATORS`, the `sparkplug` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/sparkplug/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface

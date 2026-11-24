@@ -184,7 +184,9 @@ Its one seed-only field is `registerMap` (its declaration's `connection.seedOnly
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `modbus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/modbus/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`modbus.json`](../../src/lib/db/engine-declarations/modbus.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `modbus`, and its declaration's `editor.fenceAliases`, `modbusread`.
+A block tagged `modbus` holds one JSON read request, which the console runs as it is, and `modbusread` names the agent's Modbus read request language, which only `modbus` runs.
 What a tree click and Generate Query write is `MODBUS_GENERATORS`, the `modbus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/modbus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface

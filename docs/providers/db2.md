@@ -169,7 +169,9 @@ It runs no seed load check.
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `db2` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/db2/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`db2.json`](../../src/lib/db/engine-declarations/db2.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `db2`: its declaration's `editor.fenceAliases` is empty.
+No alias names it: `sqlpl` names Db2's procedural language rather than the product, and an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 How `mapDatabaseError` classifies its driver's errors, its SQLCODEs of an access refusal, is the `db2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`driver-errors.ts`](../../src/lib/db/providers/sql/db2/driver-errors.ts).
 
 ## 4. Known issues (db2-node 1.0.25)

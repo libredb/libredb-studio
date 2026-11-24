@@ -432,7 +432,9 @@ A connection a browser or a client supplies inline that carries any of the three
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opcua` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/industrial/opcua/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`opcua.json`](../../src/lib/db/engine-declarations/opcua.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `opcua`, and its declaration's `editor.fenceAliases`, `opcuaread`.
+A block tagged `opcua` holds one JSON read request, which the console runs as it is, and `opcuaread` names the agent's OPC UA read request language, which only `opcua` runs.
 What a tree click and Generate Query write is `OPCUA_GENERATORS`, the `opcua` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/opcua/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ## 5. Query interface

@@ -5,13 +5,15 @@
  *
  * `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, one
  * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `AUTHORED_MEMBERS`, are read
- * from the committed file and written back unchanged; the engine catalog, the connection tables, the connection forms
- * and the connection strings project them (tests/unit/db/engine-catalog.test.ts), so the census of those members reads
- * each table back to the declaration it was projected from: for the connection form, `CONNECTION_FORM` composed from
- * the projection and Studio's function table (src/lib/db/connection-form.ts), and for the connection string,
- * `CONNECTION_STRING` composed from the projection and Studio's connection string function table
- * (src/lib/db/connection-string/index.ts). Those tests compare a composition with its source; what the rows do is held
- * by the golden files, the paste tests, the parser tests and the seed tests, which read the same rows. The census below
+ * from the committed file and written back unchanged; the engine catalog, the connection tables, the connection forms,
+ * the connection strings, and the execution UI and fence aliases project them (tests/unit/db/engine-catalog.test.ts),
+ * so the census of those members reads each table back to the declaration it was projected from: for the connection
+ * form, `CONNECTION_FORM` composed from the projection and Studio's function table (src/lib/db/connection-form.ts), for
+ * the connection string, `CONNECTION_STRING` composed from the projection and Studio's connection string function table
+ * (src/lib/db/connection-string/index.ts), and for the editor, `EXECUTION_UI`, `ALIAS_ENGINES` and
+ * `QUERY_FENCE_ALIASES` read from the generated editor record with Studio's generic fence tags. Those tests compare a
+ * composition with its source; what the rows do is held by the golden files, the paste tests, the parser tests, the
+ * seed tests and the fence tag tests, which read the same rows. The census below
  * does not call the generator: its read-back functions are written here, from the tables, so a slip in the generator
  * cannot certify itself. Each test loops over every shipped id and fails with the list of ids whose declaration and
  * table differ.
@@ -998,7 +1000,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's and the connection string's", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's and the editor's commit keyword, consent deadline and fence aliases", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1023,6 +1025,9 @@ describe("the committed declarations", () => {
       "connection.hostIdentity",
       "connection.import",
       "connection.connectBudgetMs",
+      "editor.commitKeyword",
+      "editor.consentDeadline",
+      "editor.fenceAliases",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1053,6 +1058,7 @@ describe("the committed declarations", () => {
         import: null,
         connectBudgetMs: 140_000,
       },
+      editor: { commitKeyword: "COMMIT", consentDeadline: null, fenceAliases: [] },
     });
     expect(authored("snowflake").connection.fieldRules).toEqual(declared("snowflake").connection.fieldRules);
     expect(authored("snowflake").connection.hostHint).toBe("hostHint");
@@ -1078,6 +1084,9 @@ describe("the committed declarations", () => {
     );
     expect(authored("db2").connection.connectionString.urlTls).toBe("urlTls");
     expect(authored("etcd").connection.connectionString.seedCheck).toBe("seedCheck");
+    expect(authored("redis").editor.commitKeyword).toBe("EXEC");
+    expect(authored("sqlite").editor.consentDeadline).toEqual(declared("sqlite").editor.consentDeadline);
+    expect(authored("postgres").editor.fenceAliases).toEqual(["postgresql", "pgsql", "psql", "plpgsql"]);
   });
 
   test("a declaration's authored members are its committed file's, and every other member is the tables'", () => {
@@ -1103,15 +1112,24 @@ describe("the committed declarations", () => {
       hostIdentity: "hostIdentity",
       import: { label: "Edited by hand", importer: "importer" },
     };
+    const editor = {
+      ...committed.editor,
+      commitKeyword: "APPLY",
+      consentDeadline: { chip: "Edited by hand", sentence: "Edited by hand." },
+      fenceAliases: ["pgedited"],
+    };
     const edited = {
       ...committed,
       displayName: "Edited by hand",
       location: "embedded",
       connection: { ...connection, sshTunnel: { offered: false, refusal: "Edited by hand." } },
+      editor: { ...editor, explainFormat: null },
     };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    expect(built).toEqual({ ...committed, displayName: "Edited by hand", location: "embedded", connection });
+    expect(built).toEqual({ ...committed, displayName: "Edited by hand", location: "embedded", connection, editor });
+    // The editor's authored members come from the declaration alone: the generator reads no execution UI or fence table.
+    expect(Object.keys(EDITOR_TABLES)).toEqual(["dialects", "languages", "tabEditors"]);
     expect(built.connection.sshTunnel).toEqual(committed.connection.sshTunnel);
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
@@ -1165,6 +1183,14 @@ describe("the committed declarations", () => {
         "bigquery.json",
       ),
     ).toThrow("bigquery.json lacks its authored member connection.connectionString.accepted");
+    for (const member of ["commitKeyword", "consentDeadline", "fenceAliases"] as const) {
+      expect(() =>
+        authoredMembersOf({ ...committed, editor: without(committed.editor, member) }, "bigquery.json"),
+      ).toThrow(`bigquery.json lacks its authored member editor.${member}`);
+    }
+    expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member editor.commitKeyword",
+    );
     for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
       expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
     }
@@ -1188,10 +1214,10 @@ describe("the committed declarations", () => {
       explainFormat: "postgres-json",
     };
 
-    expect(() => buildEditor("postgres", unformatted)).toThrow(
+    expect(() => buildEditor("postgres", unformatted, authored("postgres").editor)).toThrow(
       "postgres: the provider supports explain but declares no explain format",
     );
-    expect(() => buildEditor("kafka", unsupported)).toThrow(
+    expect(() => buildEditor("kafka", unsupported, authored("kafka").editor)).toThrow(
       "kafka: the provider declares an explain format but supports no explain",
     );
   });
@@ -1199,17 +1225,17 @@ describe("the committed declarations", () => {
   test("the generator refuses, by name, a dialect QUERY_DIALECTS has no row for", () => {
     const dialects = Object.fromEntries(Object.entries(QUERY_DIALECTS).filter(([dialect]) => dialect !== "kafka"));
 
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, dialects })).toThrow(
-      "kafka: the provider declares the kafka dialect, which QUERY_DIALECTS has no row for",
-    );
+    expect(() =>
+      buildEditor("kafka", CAPABILITIES.kafka, authored("kafka").editor, { ...EDITOR_TABLES, dialects }),
+    ).toThrow("kafka: the provider declares the kafka dialect, which QUERY_DIALECTS has no row for");
   });
 
   test("the generator refuses, by name, a dialect row whose tab type is not its name", () => {
     const dialects = { ...QUERY_DIALECTS, kafka: { ...QUERY_DIALECTS.kafka, tabType: "redis" as const } };
 
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, dialects })).toThrow(
-      "kafka: the kafka dialect's tab type \"redis\" is not the dialect's name",
-    );
+    expect(() =>
+      buildEditor("kafka", CAPABILITIES.kafka, authored("kafka").editor, { ...EDITOR_TABLES, dialects }),
+    ).toThrow("kafka: the kafka dialect's tab type \"redis\" is not the dialect's name");
   });
 
   test("the generator refuses, by name, a dialect row no engine declares", () => {
@@ -1218,15 +1244,6 @@ describe("the committed declarations", () => {
     expect(() => refuseUndeclaredDialects(CAPABILITIES)).not.toThrow();
     expect(() => refuseUndeclaredDialects(capabilities)).toThrow(
       "the kafka dialect's row in QUERY_DIALECTS is declared by no engine",
-    );
-  });
-
-  test("the generator refuses, by name, a fence alias that is no query fence tag", () => {
-    const alias = `q${crypto.randomUUID().replaceAll("-", "")}`;
-    const aliasEngines = { ...ALIAS_ENGINES, [alias]: "kafka" as const };
-
-    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...EDITOR_TABLES, aliasEngines })).toThrow(
-      `kafka: the fence alias "${alias}" names the engine but is not a query fence tag`,
     );
   });
 
@@ -1500,11 +1517,11 @@ describe("the committed declarations", () => {
       tabEditors: { ...DIALECT_EDITORS, sql: { ...DIALECT_EDITORS.sql, [key]: null } },
     };
 
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres)).not.toThrow();
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, language)).toThrow(
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, language)).toThrow(
       `postgres: the sql editor language member "${key}" has no place in the engine declaration`,
     );
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, tabEditor)).toThrow(
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, tabEditor)).toThrow(
       `postgres: the sql tab type's editor member "${key}" has no place in the engine declaration`,
     );
   });
@@ -1524,11 +1541,11 @@ describe("the committed declarations", () => {
       },
     };
 
-    expect(() => buildEditor("milvus", CAPABILITIES.milvus)).not.toThrow();
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, renamed)).toThrow(
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus, authored("milvus").editor)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, renamed)).toThrow(
       'postgres: the sql editor language\'s monacoId is "json", not its Monaco id',
     );
-    expect(() => buildEditor("milvus", CAPABILITIES.milvus, consoleId)).toThrow(
+    expect(() => buildEditor("milvus", CAPABILITIES.milvus, authored("milvus").editor, consoleId)).toThrow(
       'milvus: the milvus editor language\'s console dialect id is "milvus-console", not its Monaco id',
     );
   });

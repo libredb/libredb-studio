@@ -842,7 +842,8 @@ Druid is reached over plain HTTP through the form, so inventing `druid://` would
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `druid` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/druid/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`druid.json`](../../src/lib/db/engine-declarations/druid.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `druid`: its declaration's `editor.fenceAliases` is empty.
 What a tree click and Generate Query write is `DRUID_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), declared in [`generators.ts`](../../src/lib/db/providers/sql/druid/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---

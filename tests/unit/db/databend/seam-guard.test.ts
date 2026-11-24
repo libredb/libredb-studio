@@ -20,9 +20,8 @@
  *    runtime's `node:crypto`; types are free. The SSH tunnel's route comes from core under
  *    `TUNNEL_ROUTE`, read through `requireTunnelRoute` of `@/lib/db/utils/require-tunnel-route`, so no value of
  *    `@/lib/db/connection-fingerprint` is allowed: this directory frames no route of its own (FND-2 slice 5b).
- *    `execution-ui.ts`, the engine's execution UI contract module, may also import values from
- *    `@/lib/db/execution-ui/shared`, its contract's shared building block, `migration-ddl.ts`, the engine's
- *    migration DDL contract module, from `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
+ *    `migration-ddl.ts`, the engine's migration DDL contract module, may also import values from
+ *    `@/lib/db/migration-ddl/*`, its contract's shared building blocks, and
  *    `sql-writing.ts` and its `typed-literals.ts` sibling, the engine's SQL writing contract modules, from
  *    `@/lib/db/sql-writing/*`, and `paste.ts`, the engine's connection string paste reader, from
  *    `@/lib/db/connection-string/shared`.
@@ -69,7 +68,6 @@ const OUTSIDE_VALUES = [
  * import as values (rule 7). No other file of this directory may.
  */
 const CONTRACT_VALUES: Readonly<Record<string, string>> = {
-  "execution-ui": "src/lib/db/execution-ui/shared.ts",
   "migration-ddl": "src/lib/db/migration-ddl/",
   "sql-writing": "src/lib/db/sql-writing/",
   "typed-literals": "src/lib/db/sql-writing/",
@@ -579,7 +577,6 @@ describe("planted violations fail by name", () => {
     ["decode.ts", "decode.ts", 'import type { Readable } from "node:stream";\n'],
     ["errors.ts", "errors.ts", 'const sentence = "Databend refused POST /v1/query before it ran.";\n'],
     ["session.ts", "session.ts", 'const header = "x-databend-session";\n'],
-    ["execution-ui.ts", "execution-ui.ts", 'import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";\n'],
     ["migration-ddl.ts", "migration-ddl.ts", 'import { standardDropTable } from "@/lib/db/migration-ddl/shared";\n'],
     ["sql-writing.ts", "sql-writing.ts", 'import { binaryUnhex } from "@/lib/db/sql-writing/export-shared";\n'],
     [

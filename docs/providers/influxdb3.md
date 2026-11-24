@@ -304,7 +304,10 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public a
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `influxdb3` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`influxdb3-execution-ui.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`influxdb3.json`](../../src/lib/db/engine-declarations/influxdb3.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `influxdb3`: its declaration's `editor.fenceAliases` is empty.
+A block tagged `influxdb3` holds one DataFusion SQL statement.
+No alias names it: `sql` names no engine, and `influxql` and `flux` are not this type-id's language.
 
 ## 5. Query interface
 

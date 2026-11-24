@@ -1,16 +1,18 @@
 /**
- * One engine's execution UI module cannot reach another engine's output. For each of `separatingGroups`' groups of
- * type ids, a fresh `bun test` process replaces every module in the group with a sentinel spec (a commit keyword and a
- * consent deadline no engine has) before the hook, the consent card and the golden fixtures load, renders every golden
- * key, and writes them out. Every key OUTSIDE the group must still equal its committed golden file, and every replaced
- * key must not, which proves the sentinel was read; the groups separate every ordered pair of ids, so each engine is
- * held real while each other engine is replaced. The `explain =>` line is no engine's module, so it equals the golden
- * for every key, the replaced ones included.
+ * One engine's execution UI row cannot reach another engine's output. For each of `separatingGroups`' groups of type
+ * ids, a fresh `bun test` process replaces the group's entries of the generated execution UI record
+ * (`src/lib/db/engine-catalog/editor.generated.ts`, `BUNDLED_EXECUTION_UI`) with a sentinel spec (a commit keyword and a
+ * consent deadline no engine has), keeping every other export of that module real, before the hook, the consent card
+ * and the golden fixtures load, renders every golden key, and writes them out. Every key OUTSIDE the group must still
+ * equal its committed golden file, and every replaced key must not, which proves the sentinel was read; the groups
+ * separate every ordered pair of ids, so each engine is held real while each other engine is replaced. The `explain =>`
+ * line is no engine's row, so it equals the golden for every key, the replaced ones included.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { runPool, separatingGroups } from "../isolation-children";
 import { GOLDEN_KEYS } from "./fixtures";
@@ -18,34 +20,34 @@ import { GOLDEN_KEYS } from "./fixtures";
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const GOLDEN_DIR = join(import.meta.dir, "golden");
 const FIXTURES = join(import.meta.dir, "fixtures.tsx");
-const INDEX = join(ROOT, "src/lib/db/execution-ui/index.ts");
+const EDITOR_MODULE = join(ROOT, "src/lib/db/engine-catalog/editor.generated.ts");
 const IDS = Object.keys(EXECUTION_UI).sort();
 const GROUPS = separatingGroups(IDS);
 
-/** The module path the registry index imports for `id`, read from the index itself. */
-function modulePath(id: string): string {
-  const name = `${id.toUpperCase()}_EXECUTION_UI`;
-  const match = readFileSync(INDEX, "utf8").match(new RegExp(`import \\{ ${name} \\} from "@/([^"]+)";`));
-  if (match === null) throw new Error(`the registry index imports no ${name}`);
-  return join(ROOT, "src", `${match[1]}.ts`);
-}
-
-/** A test file that swaps each of `group`'s modules for the sentinel, then renders every golden key into `out`. */
+/**
+ * A test file that replaces each of `group`'s entries of the generated execution UI record with the sentinel, every
+ * other export of the module kept real, then renders every golden key into `out`.
+ */
 function childScript(group: readonly string[], out: string): string {
-  const mocks = group
+  const sentinels = group
     .map(
-      (id) => `mock.module(${JSON.stringify(modulePath(id))}, () => ({
-  ${id.toUpperCase()}_EXECUTION_UI: {
+      (id) => `  ${JSON.stringify(id)}: {
     commitKeyword: "SENTINEL",
     consentDeadline: { chip: "SENTINEL", sentence: "SENTINEL" },
-  },
-}));`,
+  },`,
     )
     .join("\n");
   return `import { mock, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 
-${mocks}
+const real = await import(${JSON.stringify(EDITOR_MODULE)});
+mock.module(${JSON.stringify(EDITOR_MODULE)}, () => ({
+  ...real,
+  BUNDLED_EXECUTION_UI: Object.freeze({
+    ...real.BUNDLED_EXECUTION_UI,
+${sentinels}
+  }),
+}));
 const { GOLDEN_KEYS, renderExecutionUiGolden } = await import(${JSON.stringify(FIXTURES)});
 
 test("render", async () => {
@@ -57,7 +59,7 @@ test("render", async () => {
 `;
 }
 
-/** The `explain =>` line of a render, which no engine module feeds. */
+/** The `explain =>` line of a render, which no engine's row feeds. */
 function explainLine(render: string): string | undefined {
   return render.split("\n").find((line) => line.startsWith("explain => "));
 }
@@ -91,9 +93,9 @@ afterAll(() => {
   if (dir !== "") rmSync(dir, { recursive: true, force: true });
 });
 
-describe("one engine's execution UI module cannot reach another engine's output", () => {
+describe("one engine's execution UI row cannot reach another engine's output", () => {
   test("one row per shipped type id", () => {
-    expect(IDS.length).toBe(43);
+    expect(IDS).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   test("the groups replace every engine while holding every other engine real", () => {

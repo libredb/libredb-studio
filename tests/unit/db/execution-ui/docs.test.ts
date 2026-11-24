@@ -1,32 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
+import { ALIAS_ENGINES } from "@/lib/sql/fence-tags";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * The provider triad's execution UI leg: every provider document carries one `Execution UI` subsection, at whatever
- * level the document's own scheme gives it, and that subsection says what the engine's `EXECUTION_UI` row declares.
- * The keyword the rolled-back notice names, the module that declares the row, and the consent card's deadline chip
- * and sentence verbatim (or that the engine has no consent deadline).
+ * level the document's own scheme gives it, and that subsection says what the engine's declaration states. The keyword
+ * the rolled-back notice names, a link to the declaration that states its row, the consent card's deadline chip and
+ * sentence verbatim (or that the engine has no consent deadline), and every fence tag that names the engine: its id and
+ * each of its `editor.fenceAliases`.
  */
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const PROVIDER_DOCS = path.join(ROOT, "docs/providers");
-const PROVIDERS = path.join(ROOT, "src/lib/db/providers");
 
 const ENGINES = Object.keys(EXECUTION_UI) as DatabaseType[];
 
 const HEADING = /^#{2,4} Execution UI$/;
 
-/** Every module file under the provider layer whose basename ends in `execution-ui.ts`, by its basename. */
-const MODULE_BASENAMES: readonly string[] = (readdirSync(PROVIDERS, { recursive: true }) as string[])
-  .map((file) => path.basename(file))
-  .filter((name) => name.endsWith("execution-ui.ts"));
-
-/** The basename of the module that declares a type's row: `<type-id>-execution-ui.ts` beside a flat provider file. */
-const moduleBasenameOf = (type: DatabaseType): string =>
-  MODULE_BASENAMES.includes(`${type}-execution-ui.ts`) ? `${type}-execution-ui.ts` : "execution-ui.ts";
+/** The fence tags that name `type`: its id, and each alias `ALIAS_ENGINES` maps to it. */
+const fenceTagsOf = (type: DatabaseType): string[] => [
+  type,
+  ...Object.keys(ALIAS_ENGINES).filter((alias) => ALIAS_ENGINES[alias] === type),
+];
 
 /** The headings outside fenced code, each with its level and line index. */
 function headingsOf(lines: readonly string[]): { readonly level: number; readonly index: number }[] {
@@ -60,7 +59,7 @@ const sectionOf = (type: DatabaseType): string => {
 
 describe("each provider document's Execution UI subsection", () => {
   test("covers every engine the registry has a row for", () => {
-    expect(ENGINES).toHaveLength(43);
+    expect([...ENGINES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   for (const type of ENGINES) {
@@ -71,8 +70,13 @@ describe("each provider document's Execution UI subsection", () => {
         expect(sectionOf(type)).toContain(`\`${spec.commitKeyword}\``);
       });
 
-      test("links the module that declares its row", () => {
-        expect(sectionOf(type)).toContain(`[\`${moduleBasenameOf(type)}\`](`);
+      test("links the declaration that states its row", () => {
+        expect(sectionOf(type)).toContain(`[\`${type}.json\`](../../src/lib/db/engine-declarations/${type}.json)`);
+      });
+
+      test("names every fence tag that names the engine", () => {
+        const section = sectionOf(type);
+        expect(fenceTagsOf(type).filter((tag) => !section.includes(`\`${tag}\``))).toEqual([]);
       });
 
       test("quotes the consent card's deadline chip and sentence, or says it has none", () => {

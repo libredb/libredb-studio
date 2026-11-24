@@ -674,7 +674,9 @@ Explicitly **not** supported, so that a reader does not go looking:
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `duckdb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/duckdb/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`duckdb.json`](../../src/lib/db/engine-declarations/duckdb.json)), projected into the generated execution UI record.
+The one fence tag that names it is its id, `duckdb`: its declaration's `editor.fenceAliases` is empty.
+No alias names it: `duck` and `ddb` are both written for other things (`ddb` is DynamoDB in most of the material a model has read), and an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 
 ---
 

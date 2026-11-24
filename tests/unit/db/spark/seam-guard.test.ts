@@ -55,7 +55,6 @@ const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts", "
 const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,
   "src/lib/db/engine-facets/index.ts": `${SPARK}/engine-facets`,
-  "src/lib/db/execution-ui/index.ts": `${SPARK}/execution-ui`,
   "src/lib/db/migration-ddl/index.ts": `${SPARK}/migration-ddl`,
   "src/lib/db/sql-writing/index.ts": `${SPARK}/sql-writing`,
 };

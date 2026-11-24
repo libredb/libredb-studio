@@ -4,12 +4,16 @@ import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
-/** The generated connection tables: frozen literals and type imports only, so loading one loads nothing else. */
-const GENERATED_CONNECTION_TABLES = [
+/**
+ * The generated connection tables and the generated editor record: frozen literals and type imports only, so loading
+ * one loads nothing else.
+ */
+const GENERATED_MODULES = [
   "src/lib/db/engine-catalog/connection.generated.ts",
   "src/lib/db/engine-catalog/connection-flags.generated.ts",
   "src/lib/db/engine-catalog/connection-form.generated.ts",
   "src/lib/db/engine-catalog/connection-string.generated.ts",
+  "src/lib/db/engine-catalog/editor.generated.ts",
 ] as const;
 
 /**
@@ -42,7 +46,7 @@ describe("browser-safe modules import types only", () => {
     },
   );
 
-  test.each(GENERATED_CONNECTION_TABLES)("the generated connection tables in %s import types only", (file) => {
+  test.each(GENERATED_MODULES)("the generated module %s imports types only", (file) => {
     const source = readFileSync(path.join(ROOT, file), "utf8");
     const imports = source.split("\n").filter((line) => line.startsWith("import "));
     expect(imports.length).toBeGreaterThan(0);

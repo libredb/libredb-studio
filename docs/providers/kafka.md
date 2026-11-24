@@ -303,7 +303,10 @@ An `enabled` that is not true, false or absent, such as the string `"true"`, is 
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kafka` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/stream/kafka/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`kafka.json`](../../src/lib/db/engine-declarations/kafka.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `kafka`, and its declaration's `editor.fenceAliases`, `kafkaread`.
+A block tagged `kafka` holds a JSON read request the editor sends to the provider as it is (#1088), and `kafkaread` names the agent's Kafka metadata read request language, which only `kafka` runs.
+`json` is the tempting alias and the wrong one, because a MongoDB document is JSON too, and `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 What a tree click and Generate Query write is `KAFKA_GENERATORS`, the `kafka` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/stream/kafka/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---

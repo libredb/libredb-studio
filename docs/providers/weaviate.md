@@ -189,7 +189,10 @@ With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public a
 ### Execution UI
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `weaviate` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
-Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/vector/weaviate/execution-ui.ts).
+Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`weaviate.json`](../../src/lib/db/engine-declarations/weaviate.json)), projected into the generated execution UI record.
+The fence tags that name it are its id, `weaviate`, and its declaration's `editor.fenceAliases`, `weaviateapi`.
+A block tagged `weaviate` holds one Weaviate console request the editor runs as it is (#1566 spec 3.4), and `weaviateapi` names the agent's Weaviate request language, which only `weaviate` runs.
+`graphql` would read as a request this console refuses, and `json` names no engine, so neither names it.
 What a tree click and Generate Query write is `WEAVIATE_GENERATORS`, the `weaviate` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/vector/weaviate/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 Its editor language, `weaviate`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/vector/weaviate/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
 
