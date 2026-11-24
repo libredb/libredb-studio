@@ -92,10 +92,8 @@ import {
   buildSqlWriting,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
-  EDITOR_TABLES,
   ENGINE_DECLARATIONS_DIRECTORY,
   readEngineCapabilities,
-  refuseUndeclaredDialects,
   renderEngineDeclaration,
 } from "../../../scripts/generate-engine-declarations";
 import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
@@ -901,7 +899,7 @@ const GENERIC_FENCE_TAGS: readonly string[] = (SCHEMA.$defs.genericFenceTag?.enu
 
 /**
  * The dialect table the declarations state, built here from them: each dialect's row read from the first declaration
- * that names it, its tab named by the dialect, `offersSqlExport` as written and a null history mask as none. A second
+ * that names it, its tab named by the dialect, and every member as written, a history mask null where it has none. A second
  * declaration of one dialect must state the same row, or the table is refused by name.
  */
 function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
@@ -915,7 +913,7 @@ function derivedDialects(): Readonly<Record<QueryDialect, DialectSpec>> {
       offersCodeGeneration: row.offersCodeGeneration,
       offersCountQuery: row.offersCountQuery,
       offersSqlExport: row.offersSqlExport,
-      ...(row.historyMask === null ? {} : { historyMask: { credentialFlags: [...row.historyMask.credentialFlags] } }),
+      historyMask: row.historyMask === null ? null : { credentialFlags: [...row.historyMask.credentialFlags] },
     };
     const earlier = table[row.name];
     if (earlier !== undefined && !sameValue(earlier, spec)) {
@@ -1000,7 +998,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's and the editor's commit keyword, consent deadline and fence aliases", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's and the editor's commit keyword, consent deadline, fence aliases, dialect and language", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1028,6 +1026,8 @@ describe("the committed declarations", () => {
       "editor.commitKeyword",
       "editor.consentDeadline",
       "editor.fenceAliases",
+      "editor.dialect",
+      "editor.language",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1058,7 +1058,13 @@ describe("the committed declarations", () => {
         import: null,
         connectBudgetMs: 140_000,
       },
-      editor: { commitKeyword: "COMMIT", consentDeadline: null, fenceAliases: [] },
+      editor: {
+        commitKeyword: "COMMIT",
+        consentDeadline: null,
+        fenceAliases: [],
+        dialect: null,
+        language: { queryLanguage: "sql", monacoId: "sql", accent: "border-hue-blue/40", console: false },
+      },
     });
     expect(authored("snowflake").connection.fieldRules).toEqual(declared("snowflake").connection.fieldRules);
     expect(authored("snowflake").connection.hostHint).toBe("hostHint");
@@ -1087,6 +1093,14 @@ describe("the committed declarations", () => {
     expect(authored("redis").editor.commitKeyword).toBe("EXEC");
     expect(authored("sqlite").editor.consentDeadline).toEqual(declared("sqlite").editor.consentDeadline);
     expect(authored("postgres").editor.fenceAliases).toEqual(["postgresql", "pgsql", "psql", "plpgsql"]);
+    expect(authored("kubernetes").editor.dialect).toEqual(declared("kubernetes").editor.dialect);
+    expect(authored("kubernetes").editor.dialect?.historyMask?.credentialFlags).toContain("--token");
+    expect(authored("milvus").editor.language).toEqual({
+      queryLanguage: "json",
+      monacoId: "milvus",
+      accent: "border-hue-teal/40",
+      console: true,
+    });
   });
 
   test("a declaration's authored members are its committed file's, and every other member is the tables'", () => {
@@ -1117,6 +1131,7 @@ describe("the committed declarations", () => {
       commitKeyword: "APPLY",
       consentDeadline: { chip: "Edited by hand", sentence: "Edited by hand." },
       fenceAliases: ["pgedited"],
+      language: { ...committed.editor.language, accent: "border-hue-orange/40" },
     };
     const edited = {
       ...committed,
@@ -1128,8 +1143,14 @@ describe("the committed declarations", () => {
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
     expect(built).toEqual({ ...committed, displayName: "Edited by hand", location: "embedded", connection, editor });
-    // The editor's authored members come from the declaration alone: the generator reads no execution UI or fence table.
-    expect(Object.keys(EDITOR_TABLES)).toEqual(["dialects", "languages", "tabEditors"]);
+    // The editor's authored members come from the declaration alone: the generator reads no execution UI, fence, dialect
+    // or editor language table, so a dialect row or an accent edited by hand is kept.
+    const kafka = declared("kafka");
+    const kafkaDialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const counting = { ...kafka, editor: { ...kafka.editor, dialect: { ...kafkaDialect, offersCountQuery: true } } };
+    expect(
+      buildEngineDeclaration("kafka", CAPABILITIES.kafka, authoredMembersOf(counting, "kafka.json")).editor.dialect,
+    ).toEqual({ ...kafkaDialect, offersCountQuery: true });
     expect(built.connection.sshTunnel).toEqual(committed.connection.sshTunnel);
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
@@ -1183,7 +1204,7 @@ describe("the committed declarations", () => {
         "bigquery.json",
       ),
     ).toThrow("bigquery.json lacks its authored member connection.connectionString.accepted");
-    for (const member of ["commitKeyword", "consentDeadline", "fenceAliases"] as const) {
+    for (const member of ["commitKeyword", "consentDeadline", "fenceAliases", "dialect", "language"] as const) {
       expect(() =>
         authoredMembersOf({ ...committed, editor: without(committed.editor, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member editor.${member}`);
@@ -1222,28 +1243,27 @@ describe("the committed declarations", () => {
     );
   });
 
-  test("the generator refuses, by name, a dialect QUERY_DIALECTS has no row for", () => {
-    const dialects = Object.fromEntries(Object.entries(QUERY_DIALECTS).filter(([dialect]) => dialect !== "kafka"));
+  test("the generator refuses, by name, a declaration whose query dialect or query language is not the one its provider declares", () => {
+    const kafka = authored("kafka").editor;
+    const postgres = authored("postgres").editor;
+    const redis = authored("redis").editor.dialect;
 
-    expect(() =>
-      buildEditor("kafka", CAPABILITIES.kafka, authored("kafka").editor, { ...EDITOR_TABLES, dialects }),
-    ).toThrow("kafka: the provider declares the kafka dialect, which QUERY_DIALECTS has no row for");
-  });
-
-  test("the generator refuses, by name, a dialect row whose tab type is not its name", () => {
-    const dialects = { ...QUERY_DIALECTS, kafka: { ...QUERY_DIALECTS.kafka, tabType: "redis" as const } };
-
-    expect(() =>
-      buildEditor("kafka", CAPABILITIES.kafka, authored("kafka").editor, { ...EDITOR_TABLES, dialects }),
-    ).toThrow("kafka: the kafka dialect's tab type \"redis\" is not the dialect's name");
-  });
-
-  test("the generator refuses, by name, a dialect row no engine declares", () => {
-    const capabilities = { ...CAPABILITIES, kafka: { ...CAPABILITIES.kafka, queryDialect: undefined } };
-
-    expect(() => refuseUndeclaredDialects(CAPABILITIES)).not.toThrow();
-    expect(() => refuseUndeclaredDialects(capabilities)).toThrow(
-      "the kafka dialect's row in QUERY_DIALECTS is declared by no engine",
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, kafka)).not.toThrow();
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, postgres)).not.toThrow();
+    // A dialect the provider does not declare, another one or none at all.
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...kafka, dialect: redis })).toThrow(
+      "kafka: the declaration states the query dialect redis, and its provider declares kafka",
+    );
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, { ...postgres, dialect: kafka.dialect })).toThrow(
+      "postgres: the declaration states the query dialect kafka, and its provider declares none",
+    );
+    expect(() => buildEditor("kafka", CAPABILITIES.kafka, { ...kafka, dialect: null })).toThrow(
+      "kafka: the declaration states the query dialect none, and its provider declares kafka",
+    );
+    // A query language the provider does not declare.
+    const json = { ...postgres, language: { ...postgres.language, queryLanguage: "json" as const } };
+    expect(() => buildEditor("postgres", CAPABILITIES.postgres, json)).toThrow(
+      "postgres: the declaration states the query language json, and its provider declares sql",
     );
   });
 
@@ -1504,50 +1524,6 @@ describe("the committed declarations", () => {
         `mssql: the profile type pattern ${member} has flags "g", which are not none, i, u or iu`,
       );
     }
-  });
-
-  test("the generator refuses, by name, an editor language or tab type member it has no place for", () => {
-    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
-    const language = {
-      ...EDITOR_TABLES,
-      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, [key]: null } },
-    };
-    const tabEditor = {
-      ...EDITOR_TABLES,
-      tabEditors: { ...DIALECT_EDITORS, sql: { ...DIALECT_EDITORS.sql, [key]: null } },
-    };
-
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor)).not.toThrow();
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, language)).toThrow(
-      `postgres: the sql editor language member "${key}" has no place in the engine declaration`,
-    );
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, tabEditor)).toThrow(
-      `postgres: the sql tab type's editor member "${key}" has no place in the engine declaration`,
-    );
-  });
-
-  test("the generator refuses, by name, an editor language row or a console whose id is not its Monaco id", () => {
-    const milvus = EDITOR_LANGUAGES.milvus;
-    if (milvus.console === undefined) throw new Error("the milvus editor language is no console dialect");
-    const renamed = {
-      ...EDITOR_TABLES,
-      languages: { ...EDITOR_LANGUAGES, sql: { ...EDITOR_LANGUAGES.sql, monacoId: "json" } },
-    };
-    const consoleId = {
-      ...EDITOR_TABLES,
-      languages: {
-        ...EDITOR_LANGUAGES,
-        milvus: { ...milvus, console: { ...milvus.console, spec: { ...milvus.console.spec, id: "milvus-console" } } },
-      },
-    };
-
-    expect(() => buildEditor("milvus", CAPABILITIES.milvus, authored("milvus").editor)).not.toThrow();
-    expect(() => buildEditor("postgres", CAPABILITIES.postgres, authored("postgres").editor, renamed)).toThrow(
-      'postgres: the sql editor language\'s monacoId is "json", not its Monaco id',
-    );
-    expect(() => buildEditor("milvus", CAPABILITIES.milvus, authored("milvus").editor, consoleId)).toThrow(
-      'milvus: the milvus editor language\'s console dialect id is "milvus-console", not its Monaco id',
-    );
   });
 
   test("--check names a differing, missing or extra file, and --write writes every declaration and removes a stray one", () => {
@@ -3018,8 +2994,8 @@ describe("the census", () => {
           offersColumnProfiling: row.offersColumnProfiling,
           offersCodeGeneration: row.offersCodeGeneration,
           offersCountQuery: row.offersCountQuery,
-          offersSqlExport: row.offersSqlExport !== false,
-          historyMask: row.historyMask ?? null,
+          offersSqlExport: row.offersSqlExport,
+          historyMask: row.historyMask,
         });
       }),
     ).toEqual([]);
@@ -3027,7 +3003,6 @@ describe("the census", () => {
 
   test("QUERY_DIALECTS is the dialect rows the declarations state, one per dialect, each opening tabs of its own name", () => {
     const derived = derivedDialects();
-    const resolved = (spec: DialectSpec) => ({ ...spec, offersSqlExport: spec.offersSqlExport !== false });
 
     expect(sorted(Object.keys(derived))).toEqual(sorted(Object.keys(QUERY_DIALECTS)));
     expect(
@@ -3037,7 +3012,7 @@ describe("the census", () => {
     ).toEqual([]);
     expect(
       (Object.keys(QUERY_DIALECTS) as QueryDialect[]).filter(
-        (dialect) => !sameValue(resolved(derived[dialect]), resolved(QUERY_DIALECTS[dialect])),
+        (dialect) => !sameValue(derived[dialect], QUERY_DIALECTS[dialect]),
       ),
     ).toEqual([]);
   });

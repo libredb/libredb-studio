@@ -10,31 +10,37 @@
  * src/lib/db/engine-catalog/connection-string.generated.ts, the connection strings (clause M-74), which only
  * src/lib/db/connection-string/index.ts reads, so neither the paste parser nor the seed loader loads the forms; and
  * src/lib/db/engine-catalog/editor.generated.ts, each engine's execution UI and the fence aliases (clause M-75), which
- * src/lib/db/execution-ui/index.ts and src/lib/sql/fence-tags.ts read, so no connection reader loads them.
+ * src/lib/db/execution-ui/index.ts and src/lib/sql/fence-tags.ts read, so no connection reader loads them; and
+ * src/lib/db/engine-catalog/query-editor.generated.ts, the query dialects, the tab type editors and the editor languages
+ * (clause M-77), which src/lib/db/query-dialects.ts, src/lib/editor/dialect-editors.ts and
+ * src/lib/db/editor-language/index.ts read, so neither the server routes that read a dialect row nor the execution UI's
+ * readers load another's records.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
  * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
  * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog`,
- * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings` and `projectEditorFacts`
- * (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members, `AUTHORED_MEMBERS`,
+ * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts` and
+ * `projectQueryEditorFacts` (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members, `AUTHORED_MEMBERS`,
  * without admitting the whole file: the validator holds an authored member to members the declaration generator writes
  * (each host path field to `connection.seedOnly`), so a file whose authored members just changed is refused until that
  * generator has rewritten the rest. The command refuses, by name, an entry that is not a `.json` file, a file that is
  * not JSON, and a declaration whose `id` is not its file name; `--write` a file that lacks an authored member,
  * `--check` a declaration the schema refuses, with the validator's refusal sentences; the projections refuse two
- * declarations of one id, and the editor facts a fence alias two declarations state or one equal to another
- * declaration's engine id, so either mode exits 1 naming it before any module is written. Studio's runtime reads no
+ * declarations of one id, the editor facts a fence alias two declarations state or one equal to another
+ * declaration's engine id, and the query editor facts a dialect, a tab type or an editor language two declarations
+ * state differently, so either mode exits 1 naming it before any module is written. Studio's runtime reads no
  * declaration file: the browser cannot compile the schema under Studio's content security policy, which allows no
  * `eval`, and the published library and the standalone server carry no schema file, so every reader reads a generated
  * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
- * of the union with no declaration fails the typecheck at the record. The connection and editor modules are laid out
+ * of the union with no declaration fails the typecheck at the record; the query editor module's records are typed over
+ * the query dialects, the tab types and the Monaco languages instead. The connection and editor modules are laid out
  * as the repository's formatter lays them out: a value that fits within the line width stays on one line, one that
  * does not breaks one element or member per line, and a member whose string does not fit puts the string on the next
  * line. A string is written in the formatter's quotes, a backslash doubled and a printable character outside ASCII as
- * itself, and a number is an integer written as its decimal text; a control character or another number is refused by
- * name.
+ * itself, a member's key bare where it is an identifier and in the formatter's quotes where it is not (`graph-cypher`),
+ * and a number is an integer written as its decimal text; a control character or another number is refused by name.
  *
  * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
  * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, so
@@ -61,11 +67,13 @@ import {
   type ConnectionTables,
   type EditorFacts,
   type EngineCatalog,
+  type QueryEditorFacts,
   projectCatalog,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
+  projectQueryEditorFacts,
 } from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
@@ -94,6 +102,13 @@ export const ENGINE_CONNECTION_STRING_MODULE = "src/lib/db/engine-catalog/connec
  * reads, and the fence aliases, which src/lib/sql/fence-tags.ts reads.
  */
 export const ENGINE_EDITOR_MODULE = "src/lib/db/engine-catalog/editor.generated.ts";
+
+/**
+ * The generated query editor module in the repository: the query dialects, which src/lib/db/query-dialects.ts reads,
+ * the tab type editors, which src/lib/editor/dialect-editors.ts reads, and the editor languages, which
+ * src/lib/db/editor-language/index.ts reads.
+ */
+export const ENGINE_QUERY_EDITOR_MODULE = "src/lib/db/engine-catalog/query-editor.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -139,6 +154,8 @@ export const AUTHORED_MEMBERS = [
   "editor.commitKeyword",
   "editor.consentDeadline",
   "editor.fenceAliases",
+  "editor.dialect",
+  "editor.language",
 ] as const;
 
 type Connection = EngineDeclaration["connection"];
@@ -204,6 +221,8 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       commitKeyword: read("editor.commitKeyword") as Editor["commitKeyword"],
       consentDeadline: read("editor.consentDeadline") as Editor["consentDeadline"],
       fenceAliases: read("editor.fenceAliases") as Editor["fenceAliases"],
+      dialect: read("editor.dialect") as Editor["dialect"],
+      language: read("editor.language") as Editor["language"],
     },
   };
   if (`${authored.id}.json` !== file) {
@@ -322,10 +341,14 @@ function quoted(text: string): string {
   return doubles > singles ? `'${escaped.replaceAll("'", "\\'")}'` : `"${escaped.replaceAll('"', '\\"')}"`;
 }
 
-/** `key` as a record member, written bare. */
+/**
+ * `key` as a record member: bare where it is an identifier, as every engine id and field name is, and otherwise in the
+ * formatter's quotes, as the Monaco language `graph-cypher` is.
+ *
+ * @throws {Error} For a key holding a character `UNQUOTED_CHARACTER` names, as `quoted` refuses it.
+ */
 function memberKey(key: string): string {
-  if (!IDENTIFIER.test(key)) throw new Error(`The connection module cannot write the member ${JSON.stringify(key)}`);
-  return key;
+  return IDENTIFIER.test(key) ? key : quoted(key);
 }
 
 /** Whether `value` is a record the module writes: an object that is not a list, made by an object literal. */
@@ -547,6 +570,39 @@ export function renderEditorFacts(facts: EditorFacts): string {
   ].join("\n");
 }
 
+/**
+ * The text of the generated query editor module for `facts`: a header, type imports only, and three frozen records, the
+ * query dialects, read by src/lib/db/query-dialects.ts, the tab type editors, read by src/lib/editor/dialect-editors.ts,
+ * and the editor languages, read by src/lib/db/editor-language/index.ts.
+ */
+export function renderQueryEditorFacts(facts: QueryEditorFacts): string {
+  return [
+    ...HEADER,
+    'import type { MonacoLanguageId, QueryDialect } from "@libredb/provider-sdk/manifest";',
+    'import type { QueryTab } from "@/lib/types";',
+    'import type { DialectEditorEntry, EditorLanguageEntry, QueryDialectEntry } from "./projection";',
+    "",
+    ...renderedRecord(
+      "Each query dialect's row, `editor.dialect`, read by `QUERY_DIALECTS` (CONTRACT.md, M-77).",
+      "export const BUNDLED_QUERY_DIALECTS: Readonly<Record<QueryDialect, QueryDialectEntry>> =",
+      facts.queryDialects,
+    ),
+    "",
+    ...renderedRecord(
+      "Each tab type's editor language, `editor.language.monacoId`, read by `DIALECT_EDITORS` (CONTRACT.md, M-77).",
+      'export const BUNDLED_DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditorEntry>> =',
+      facts.dialectEditors,
+    ),
+    "",
+    ...renderedRecord(
+      "Each editor language's accent and console, `editor.language`, read by `EDITOR_LANGUAGES` (CONTRACT.md, M-77).",
+      "export const BUNDLED_EDITOR_LANGUAGES: Readonly<Record<MonacoLanguageId, EditorLanguageEntry>> =",
+      facts.editorLanguages,
+    ),
+    "",
+  ].join("\n");
+}
+
 /** The current text of `file`, or null when it does not exist. */
 function textOf(file: string): string | null {
   try {
@@ -591,6 +647,10 @@ function main(argv: readonly string[]): number {
       text: renderConnectionStrings(projectConnectionStrings(declarations)),
     },
     { file: fileOf(ENGINE_EDITOR_MODULE), text: renderEditorFacts(projectEditorFacts(declarations)) },
+    {
+      file: fileOf(ENGINE_QUERY_EDITOR_MODULE),
+      text: renderQueryEditorFacts(projectQueryEditorFacts(declarations)),
+    },
   ];
 
   if (mode === "--check") {

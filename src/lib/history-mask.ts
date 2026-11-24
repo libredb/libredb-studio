@@ -50,18 +50,23 @@ const MASK = "***";
  * line, or to the end of the text when a quote stays open. History then holds less than was typed, a statement
  * that may no longer parse, never a credential: masking only the value in place would need a second reader that
  * every spelling the command-line reader finds would have to pass again.
- * A declared language with no registered dialect, which is every SQL engine, has no mask.
+ * A declared language with no registered dialect, which is every SQL engine, has no mask, and neither has a dialect
+ * whose row states none.
  */
 export function historyMaskOf(
   capabilities: ProviderCapabilities | undefined,
   dialects: Readonly<Record<QueryDialect, DialectSpec>> = QUERY_DIALECTS,
 ): { readonly credentialFlags: readonly string[] } | undefined {
   if (capabilities === undefined) {
-    const flags = new Set(Object.values(dialects).flatMap((spec) => spec.historyMask?.credentialFlags ?? []));
+    const flags = new Set(
+      Object.values(dialects).flatMap((spec) => (spec.historyMask === null ? [] : spec.historyMask.credentialFlags)),
+    );
     return flags.size === 0 ? undefined : { credentialFlags: [...flags] };
   }
   const dialect = registeredDialect(capabilities);
-  return dialect === undefined ? undefined : dialects[dialect].historyMask;
+  if (dialect === undefined) return undefined;
+  const mask = dialects[dialect].historyMask;
+  return mask === null ? undefined : mask;
 }
 
 export function maskStatementForHistory(

@@ -15,12 +15,16 @@ const OFFERS_EVERYTHING: DialectSpec = {
   offersColumnProfiling: true,
   offersCodeGeneration: true,
   offersCountQuery: true,
+  offersSqlExport: true,
+  historyMask: null,
 };
 const OFFERS_NOTHING: DialectSpec = {
   tabType: "kafka",
   offersColumnProfiling: false,
   offersCodeGeneration: false,
   offersCountQuery: false,
+  offersSqlExport: true,
+  historyMask: null,
 };
 
 mock.module("@/lib/db/query-dialects", () => ({

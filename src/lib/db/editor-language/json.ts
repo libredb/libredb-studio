@@ -1,4 +1,4 @@
-import type { EditorLanguageContribution } from "./types";
+import type { EditorLanguageCode } from "./types";
 
 /**
  * JSON formatting, for MongoDB queries and every JSON read request alike (Kafka's, RabbitMQ's, the industrial
@@ -9,11 +9,10 @@ const formatJson = (text: string): string => JSON.stringify(JSON.parse(text), nu
 
 /**
  * Monaco's built-in `json`: MongoDB's query language and the language of every JSON read request. No one engine owns
- * it, so its formatter and accent are declared here, in the shared layer, and an engine's completion source joins the
- * row in the registry.
+ * it, so its formatter is declared here, in the shared layer, its accent is the one the declarations state in
+ * `editor.language.accent`, and an engine's completion source joins the row in the registry.
  */
-export const JSON_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>({
+export const JSON_EDITOR_LANGUAGE = Object.freeze<EditorLanguageCode>({
   monacoId: "json",
   format: formatJson,
-  accent: "border-hue-cyan/40",
 });

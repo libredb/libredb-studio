@@ -24,10 +24,10 @@ const KUBECTL: ProviderCapabilities = {
 };
 
 describe("the kubectl history mask", () => {
-  // The shared registry reads the six flags from the kubectl family module; this pins them to be that list.
+  // The kubernetes declaration states the six flags its dialect masks, and the kubectl family module lists the flags
+  // the console refuses: two statements of one list, which this test holds equal, flag by flag and in order.
   test("the dialect declares exactly the console's credential flags", () => {
     expect(QUERY_DIALECTS.kubectl.historyMask).toEqual({ credentialFlags: [...CREDENTIAL_FLAGS] });
-    expect(QUERY_DIALECTS.kubectl.historyMask?.credentialFlags).toBe(CREDENTIAL_FLAGS);
     expect(historyMaskOf(KUBECTL)).toEqual({ credentialFlags: [...CREDENTIAL_FLAGS] });
   });
 

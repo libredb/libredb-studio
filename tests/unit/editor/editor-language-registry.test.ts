@@ -9,13 +9,19 @@ import type * as Monaco from "monaco-editor";
 import { formatConsole } from "@/lib/db/console/format";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
+  composeEditorLanguages,
   EDITOR_LANGUAGES,
   type EditorLanguage,
   formatterForLanguage,
   registerEditorCompletions,
   registerEditorLanguages,
 } from "@/lib/db/editor-language";
-import type { EditorCompletionContext, EditorLanguageContribution } from "@/lib/db/editor-language/types";
+import type {
+  EditorCompletionContext,
+  EditorLanguageCode,
+  EditorLanguageContribution,
+} from "@/lib/db/editor-language/types";
+import { BUNDLED_EDITOR_LANGUAGES } from "@/lib/db/engine-catalog/query-editor.generated";
 import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
@@ -119,6 +125,80 @@ describe("EDITOR_LANGUAGES", () => {
     });
   });
 });
+
+describe("composeEditorLanguages", () => {
+  const register = (): void => {};
+  const format = (text: string): string => text.trim();
+  const milvusConsole = EDITOR_LANGUAGES.milvus.console;
+  if (milvusConsole === undefined) throw new Error("the milvus editor language is no console dialect");
+  const consoleOf = (id: string) => ({ ...milvusConsole, spec: { ...milvusConsole.spec, id } });
+  /** Studio's code for three planted languages, in an order that is not their ids' ascending order. */
+  const code: Readonly<Record<"gamma" | "alpha" | "beta", EditorLanguageCode>> = {
+    gamma: { monacoId: "gamma", console: consoleOf("gamma"), format },
+    alpha: { monacoId: "alpha", register },
+    beta: { monacoId: "beta" },
+  };
+  /** The accent and console the declarations state for each, keyed in ascending order as the projection keys them. */
+  const facts = {
+    alpha: { accent: "border-hue-blue/40", console: false },
+    beta: { accent: "border-hue-cyan/40", console: false },
+    gamma: { accent: "border-hue-teal/40", console: true },
+  };
+
+  test("composeEditorLanguages gives each of Studio's languages the accent and console the declarations state, in the code's order", () => {
+    const composed = composeEditorLanguages(facts, code);
+
+    expect(Object.keys(composed)).toEqual(["gamma", "alpha", "beta"]);
+    expect(composed.gamma).toEqual({ ...code.gamma, accent: "border-hue-teal/40" });
+    expect(composed.alpha).toEqual({ ...code.alpha, accent: "border-hue-blue/40" });
+    expect(composed.beta).toEqual({ monacoId: "beta", accent: "border-hue-cyan/40" });
+    // The code's functions and console by identity, every row frozen and a copy of the code's.
+    expect(composed.alpha.register).toBe(register);
+    expect(composed.gamma.format).toBe(format);
+    expect(composed.gamma.console).toBe(code.gamma.console);
+    expect(Object.isFrozen(composed)).toBe(true);
+    for (const row of Object.values(composed)) expect(Object.isFrozen(row)).toBe(true);
+    expect(composed.beta).not.toBe(code.beta);
+    // The registry is Studio's code composed with the generated record: each accent the declarations', in the code's
+    // order, which is not the record's ascending one.
+    for (const [key, row] of Object.entries(EDITOR_LANGUAGES)) {
+      expect(row.accent, key).toBe(BUNDLED_EDITOR_LANGUAGES[key as EditorLanguage].accent);
+      expect(row.console !== undefined, key).toBe(BUNDLED_EDITOR_LANGUAGES[key as EditorLanguage].console);
+    }
+    expect(Object.keys(EDITOR_LANGUAGES)).not.toEqual(Object.keys(BUNDLED_EDITOR_LANGUAGES));
+    expect(sortedKeys(EDITOR_LANGUAGES)).toEqual(sortedKeys(BUNDLED_EDITOR_LANGUAGES));
+  });
+
+  test("composeEditorLanguages refuses by name a stated language Studio holds no code for, a language no declaration states, and a console the code and the declarations disagree on", () => {
+    expect(() =>
+      composeEditorLanguages({ ...facts, delta: { accent: "border-hue-pink/40", console: false } }, code),
+    ).toThrow('The editor language "delta" is stated by an admitted declaration, and Studio holds no code for it.');
+    const unstated = Object.fromEntries(Object.entries(facts).filter(([key]) => key !== "beta"));
+    expect(() => composeEditorLanguages(unstated, code)).toThrow(
+      'Studio holds the editor language "beta", and no admitted declaration states its accent.',
+    );
+    expect(() => composeEditorLanguages({ ...facts, beta: { ...facts.beta, console: true } }, code)).toThrow(
+      'The editor language "beta" is stated as a console dialect, and Studio\'s code for it registers none.',
+    );
+    expect(() => composeEditorLanguages({ ...facts, gamma: { ...facts.gamma, console: false } }, code)).toThrow(
+      'The editor language "gamma" is stated as no console dialect, and Studio\'s code for it registers one.',
+    );
+  });
+
+  test("composeEditorLanguages refuses by name a code row or a console that names another Monaco id", () => {
+    expect(() => composeEditorLanguages(facts, { ...code, beta: { monacoId: "alpha" } })).toThrow(
+      'Studio\'s code for the editor language "beta" names the Monaco id "alpha".',
+    );
+    expect(() =>
+      composeEditorLanguages(facts, { ...code, gamma: { ...code.gamma, console: consoleOf("gamma-console") } }),
+    ).toThrow('Studio\'s console for the editor language "gamma" registers under "gamma-console", not its Monaco id.');
+  });
+});
+
+/** The keys of `record` in ascending code-unit order. */
+function sortedKeys(record: object): string[] {
+  return Object.keys(record).sort((a, b) => (a < b ? -1 : 1));
+}
 
 describe("the formatters", () => {
   test("only SQL, JSON and the Milvus, Qdrant and Weaviate consoles have a formatter", () => {
@@ -253,10 +333,11 @@ describe("the json row", () => {
   test("is declared in the shared layer, and MongoDB contributes its completion source alone", async () => {
     const { JSON_EDITOR_LANGUAGE } = await import("@/lib/db/editor-language/json");
     const { MONGODB_JSON_COMPLETIONS } = await import("@/lib/db/providers/document/mongodb/editor-language");
-    // Format and the accent are the shared row's: every JSON read request (Kafka's, MQTT's, the industrial engines')
-    // formats through it, so no engine's module may change them.
+    // Format is the shared row's: every JSON read request (Kafka's, MQTT's, the industrial engines') formats through
+    // it, so no engine's module may change it. The accent is the one the declarations state for json.
     expect(EDITOR_LANGUAGES.json.format).toBe(JSON_EDITOR_LANGUAGE.format);
-    expect(EDITOR_LANGUAGES.json.accent).toBe(JSON_EDITOR_LANGUAGE.accent);
+    expect(Object.hasOwn(JSON_EDITOR_LANGUAGE, "accent")).toBe(false);
+    expect(EDITOR_LANGUAGES.json.accent).toBe(BUNDLED_EDITOR_LANGUAGES.json.accent);
     expect(JSON_EDITOR_LANGUAGE.completions).toBeUndefined();
     expect(EDITOR_LANGUAGES.json.completions).toBe(MONGODB_JSON_COMPLETIONS);
   });

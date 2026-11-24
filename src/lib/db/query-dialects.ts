@@ -1,5 +1,5 @@
+import { BUNDLED_QUERY_DIALECTS } from "@/lib/db/engine-catalog/query-editor.generated";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { CREDENTIAL_FLAGS } from "@/lib/languages/kubectl/commands";
 import type { QueryTab } from "@/lib/types";
 
 /**
@@ -8,10 +8,11 @@ import type { QueryTab } from "@/lib/types";
  * A dialect is JSON or a command line that is not MongoDB's JSON (Redis, LibreDB, Kafka, etcd, Milvus, Qdrant, Weaviate, Oxia), so every reader
  * keyed on the language alone would treat its text as a MongoDB document, which is the #427 class. Before this
  * module each reader carried an arm per dialect, about twenty of them, and a missed arm made a tree click
- * auto-run a MongoDB `find`. Each dialect is now one record here, one in `DIALECT_EDITORS`
- * (`src/lib/editor/dialect-editors.ts`) and one in the query generators' `DIALECT_GENERATORS`, and each is a
- * `Record` over the union, so a new member of `ProviderCapabilities.queryDialect` does not compile until all three
- * exist. `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of the two fields to a closed
+ * auto-run a MongoDB `find`. Each dialect is now one record here and one in `DIALECT_EDITORS`
+ * (`src/lib/editor/dialect-editors.ts`), both projected from the `editor.dialect` and `editor.language` the engine
+ * declarations state (docs/providers/CONTRACT.md, clause M-77), and one in the query generators' `DIALECT_GENERATORS`,
+ * and each is a `Record` over the union, so a new member of `ProviderCapabilities.queryDialect` does not compile until
+ * all three exist. `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of the two fields to a closed
  * list with its owner.
  *
  * Pure and browser-safe: the row menus, the editor and the server routes all read it. Not published:
@@ -31,216 +32,23 @@ export interface DialectSpec {
   readonly offersCountQuery: boolean;
   /**
    * Whether the result export menu offers SQL `INSERT` and `CREATE TABLE` DDL (`offersSqlExport` in
-   * `src/lib/db/types.ts`). Absent means it does; Milvus's and Qdrant's records are the ones that decline them.
+   * `src/lib/db/types.ts`).
    */
-  readonly offersSqlExport?: boolean;
+  readonly offersSqlExport: boolean;
   /**
    * The flags whose values query history must never keep (`maskStatementForHistory` in `src/lib/history-mask.ts`).
-   * Absent means history keeps the statement as typed, which is every dialect's answer until one declares it.
+   * Null means history keeps the statement as typed.
    */
-  readonly historyMask?: { readonly credentialFlags: readonly string[] };
+  readonly historyMask: { readonly credentialFlags: readonly string[] } | null;
 }
 
 /**
- * Today's answers, each exactly what the per-dialect arms gave before the registry: Redis and LibreDB keep the
- * code generator because it names a row rather than addressing it (#427), Kafka's topic columns and etcd's group
- * columns are the fixed shape of a read result and model nothing an application stores (#1088, #1089), no
- * dialect has a profile statement in its grammar, and Firestore's alone has a count statement, written by its
- * `DIALECT_GENERATORS` record. Kafka renders in Monaco's built-in `json`
- * mode, which `DIALECT_EDITORS` says, and not here: this record is keyed by dialect, that one by tab type.
- *
- * The answers are Studio's: a declaration restates the row of the dialect it names, and Studio reads them from this
- * record, never from a declaration (docs/providers/CONTRACT.md, clause M-50).
+ * Each dialect's answers, the row every engine declaration that names the dialect states in its `editor.dialect`,
+ * projected from the admitted declarations into the generated query editor module (docs/providers/CONTRACT.md, clause
+ * M-77), which holds every declaration of one dialect to one row. Each engine's reasons for its row are in its provider
+ * document (`docs/providers/<type-id>.md`).
  */
-export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Object.freeze({
-  libredb: Object.freeze({
-    tabType: "libredb",
-    offersColumnProfiling: false,
-    offersCodeGeneration: true,
-    offersCountQuery: false,
-  }),
-  redis: Object.freeze({
-    tabType: "redis",
-    offersColumnProfiling: false,
-    offersCodeGeneration: true,
-    offersCountQuery: false,
-  }),
-  kafka: Object.freeze({
-    tabType: "kafka",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  etcd: Object.freeze({
-    tabType: "etcd",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // Milvus (vector-family spec 5.7): a collection's columns include vectors, so neither a profile, a model nor a
-  // count statement of its grammar applies (a count is the documented count(*) request), and neither SQL export
-  // format applies to its rows (`offersSqlExport`).
-  milvus: Object.freeze({
-    tabType: "milvus",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // Qdrant (vector-family spec 6.7): a collection's columns include vectors and sampled payload keys, so neither a
-  // profile, a model nor a count statement of its grammar applies (a count is the documented count request), and
-  // neither SQL export format applies to its rows (`offersSqlExport`, vector-family spec 3.10).
-  qdrant: Object.freeze({
-    tabType: "qdrant",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // Weaviate (#1566 spec 3.4): as Qdrant, a collection's columns include vectors, so neither a profile, a model nor a
-  // count statement of a SQL grammar applies (a count is the aggregate request), and neither SQL export format applies.
-  weaviate: Object.freeze({
-    tabType: "weaviate",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // Oxia (O10): a command line of the oxia client read verbs. Its rows are records of a fixed shape, so no
-  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
-  oxia: Object.freeze({
-    tabType: "oxia",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // S3: a command line of AWS CLI reads. Its rows are listings and fields of a fixed shape, so
-  // no profile, model or count statement applies, and neither SQL export format applies.
-  s3: Object.freeze({
-    tabType: "s3",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // MQTT (#1635). The provider has no query console: its surface is the Keys panel, and a broker has no
-  // query language to write in. The entry exists so a connection does not fall through to MongoDB's tab,
-  // which is the exact fault `queryDialect` was added for (#427): a provider declaring `queryLanguage: "json"`
-  // while speaking neither MongoDB JSON nor SQL, and silently receiving MongoDB commands.
-  mqtt: Object.freeze({
-    tabType: "mqtt",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // Firestore: one statement of a read-only Admin SDK query chain. A collection's columns are sampled field paths, so
-  // no profile statement or model applies, and its rows are documents rather than rows of a SQL table, so neither SQL
-  // export format applies. Generate Count Query writes `db.collection("<id>").count()` into a tab, which the user
-  // runs: one aggregation, which Firestore bills one read per 1,000 index entries it scans.
-  firestore: Object.freeze({
-    tabType: "firestore",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: true,
-    offersSqlExport: false,
-  }),
-  // RabbitMQ (#1656): a JSON read request of the provider's own schema. A stream's columns are the fixed shape of a
-  // read result, so no profile, model or count statement applies, and neither SQL export format does.
-  rabbitmq: Object.freeze({
-    tabType: "rabbitmq",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-  }),
-  // Kubernetes: one statement of a read-only kubectl subset. Its grids are the API server's own columns, so no
-  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
-  kubectl: Object.freeze({
-    tabType: "kubectl",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-    offersSqlExport: false,
-    // A line pasted from a shell may carry kubectl's credential flags or a Secret's values, which the console refuses;
-    // query history keeps none of their values. The flags are the kubectl family's `CREDENTIAL_FLAGS`
-    // (`src/lib/languages/kubectl/commands.ts`), the list the console refuses, read here so the mask and the refusals
-    // are one list; the test "the dialect declares exactly the console's credential flags" holds it.
-    historyMask: Object.freeze({ credentialFlags: CREDENTIAL_FLAGS }),
-  }),
-
-  // OPC UA: one JSON read request, either current values or raw history. Its grids are the server's own
-  // DataValues, so no profile, model or count statement of its grammar applies. The SQL export formats
-  // ARE kept, as MQTT's are: a value read answers one row per node with the same six columns every
-  // time, so exporting those rows as INSERT statements is as meaningful as it is for any other
-  // tabular answer - the engine has no table to write them back to, and an export is not a write.
-  // A request names node ids and no credential, so there is nothing for history to mask.
-  opcua: Object.freeze({
-    tabType: "opcua",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // MTConnect: one request line, a route from a closed table of nine. Its grids are the agent's own observations,
-  // so no profile, model or count statement of its grammar applies - there is no statement form at all, only a URL.
-  // The SQL export formats ARE kept, as OPC UA's and MQTT's are: a read answers one row per observation with the
-  // same columns every time, so exporting those rows is as meaningful as for any other tabular answer, and an
-  // export is not a write. A request line names a device, a route and query keys, and no credential, so there is
-  // nothing for history to mask.
-  mtconnect: Object.freeze({
-    tabType: "mtconnect",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // One JSON read request, in the Kafka style (#1723 section 3). No column profiling: a point is a
-  // value, not a column, and there is no statement to profile over. No count query: Modbus has no
-  // request that counts anything, and the number of points is the map's own, already on the tree.
-  modbus: Object.freeze({
-    tabType: "modbus",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // One JSON read request naming a datastore, a path and a limit (#1724). No column profiling: a
-  // YANG leaf is a value in a tree and the rows a read answers are built per entry, so there is no
-  // column to profile over. No code generation and no count query: this provider sends four read
-  // operations and a close and nothing else, and NETCONF has no request that counts what is below
-  // a path, so a generated statement would be one no device could run and a count would be a
-  // number nobody measured.
-  netconf: Object.freeze({
-    tabType: "netconf",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-  // Registered rather than left absent, and the measurement is why: with no dialect the registry
-  // fell back to MongoDB's tab, so a tree click on an SNMP object would have opened a MongoDB
-  // editor and the generator would have written a `find`. No profiling, because summarising a
-  // column means walking the subtree a second time with no statement the agent understands; no
-  // count, because an SNMP table is assembled by walking and there is nothing to count without
-  // doing it; no code generation, because the grammar is four words and a numbered name.
-  snmp: Object.freeze({
-    tabType: "snmp",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-
-  // FOUR FALSE ANSWERS, AND THE REGISTRY'S GOLDEN FILE IS WHAT MADE THEM VISIBLE. Without a record
-  // here a provider falls back to its query language, and `json` answers yes to three of these: the
-  // golden file recorded this engine as `tabType: "mongodb"` with column profiling, code generation
-  // and a count query all true, which are four things it cannot do. There is no count because a
-  // broker publishes none and a metric is not a table; no column profile because a column here is a
-  // metric a certificate declared rather than a sampled set of values; and no code generation
-  // because a read request names a group and a window rather than a statement to compose.
-  sparkplug: Object.freeze({
-    tabType: "sparkplug",
-    offersColumnProfiling: false,
-    offersCodeGeneration: false,
-    offersCountQuery: false,
-  }),
-});
+export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = BUNDLED_QUERY_DIALECTS;
 
 /**
  * The dialect a declaration names, when this registry has a record for it.

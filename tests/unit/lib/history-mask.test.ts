@@ -399,7 +399,7 @@ describe("historyMaskOf", () => {
     redis: { ...QUERY_DIALECTS.redis, historyMask: { credentialFlags: ["--token"] } },
     etcd: { ...QUERY_DIALECTS.etcd, historyMask: { credentialFlags: ["--token", "--password"] } },
     // The stand-in registry holds the two masks above alone, so the shipped kubectl record's own is left out of it.
-    kubectl: { ...QUERY_DIALECTS.kubectl, historyMask: undefined },
+    kubectl: { ...QUERY_DIALECTS.kubectl, historyMask: null },
   };
 
   test("a registered dialect answers its record's mask", () => {
