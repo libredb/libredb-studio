@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import type { CallContext } from "@libredb/provider-sdk/calls";
+import { connectBudgetFor } from "@/lib/db/connect-budget";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -13,6 +15,9 @@ import { logger } from "@/lib/logger";
 import type { DatabaseConnection, DatabaseType, QueryWarning } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { serverOnlyReach, valueImportClosure } from "../../../helpers/value-import-closure";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { HealthSession } from "@/lib/provider-host/core/monitoring";
+import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 /** Every step the core takes, in the order it took them, across the tunnel, the factory and the provider. */
 let steps: string[] = [];
@@ -58,6 +63,11 @@ mock.module("@/lib/db/factory", () => ({
 }));
 
 const { testConnection } = await import("@/lib/api/test-connection");
+
+// The health read goes through the process's host core (src/lib/provider-host/instance.ts), so this file composes its
+// own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 interface RecordingSteps {
   connect?: () => Promise<void>;
@@ -407,6 +417,27 @@ describe("testConnection", () => {
       expect(steps).toEqual(["tunnel open", "create", "connect", "getHealth", "disconnect", "tunnel close"]);
     });
 
+    test("a health read whose deadline passed before its timer fired answers the test's ConnectionError and reads no health", async () => {
+      const now = deadlineIn(30);
+      const deadline = now + connectBudgetFor("postgres");
+      // The connect holds the thread until the clock is past the deadline, and every later step runs as a microtask,
+      // so the deadline's timer has not fired when the health read starts: only the read's own refusal answers.
+      built = recording({
+        connect: async () => {
+          while (Date.now() <= deadline + 5) {
+            // Spins on the clock by design: a timer here would let the deadline's own timer fire first.
+          }
+        },
+      });
+
+      const caught = await testConnection(connection, execution, route, now).catch((error: unknown) => error);
+
+      expect(caught).toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toBe(SENTENCE(70));
+      expect(callsOf(built.getHealth)).toEqual([]);
+      expect(steps).toEqual(["tunnel open", "create", "connect", "disconnect", "tunnel close"]);
+    });
+
     test("the deadline names the engine's own budget", async () => {
       const pending = Promise.withResolvers<void>();
       built = recording({ connect: () => pending.promise });
@@ -420,6 +451,97 @@ describe("testConnection", () => {
       expect((caught as Error).message).toBe(SENTENCE(140));
       expect((caught as ConnectionError).provider).toBe("bigquery");
       pending.resolve();
+    });
+
+    test("the health read is one host core health call on the bridged session of the provider the test holds, under the test's own deadline", async () => {
+      const calls: { session: HealthSession; ctx: CallContext }[] = [];
+      const real = hostCore();
+      const spying: HostCore = {
+        ...real,
+        healthCall: (session, ctx, ports) => {
+          calls.push({ session, ctx });
+          return real.healthCall(session, ctx, ports);
+        },
+      };
+      const now = Date.now();
+      forgetHostCore();
+      installHostCore(spying, "test");
+      try {
+        built = recording();
+        const answer = await testConnection(connection, execution, route, now);
+        expect(answer).toEqual({ success: true, message: "Connection successful", latency: expect.any(Number) });
+        expect(callsOf(built.getHealth)).toEqual([[]]);
+
+        steps = [];
+        borrowed = recording();
+        const borrowedAnswer = await testConnection(connection, execution, route, now);
+        expect(borrowedAnswer.success).toBe(true);
+        expect(callsOf(borrowed.getHealth)).toEqual([[]]);
+        expect(steps).toEqual(["tunnel open", "getHealth", "tunnel close"]);
+      } finally {
+        forgetHostCore();
+        installHostCore(real, "test");
+      }
+
+      expect(calls).toHaveLength(2);
+      for (const { ctx } of calls) {
+        expect(ctx.deadline).toBe(now + connectBudgetFor("postgres"));
+        expect(ctx.signal).toBeInstanceOf(AbortSignal);
+        expect(ctx.signal.aborted).toBe(false);
+      }
+    });
+
+    test("a health failure after the test's deadline is logged by kind and code, never its text, and the answer stays the test's ConnectionError", async () => {
+      const secret = crypto.randomUUID();
+      const logged = Promise.withResolvers<unknown[]>();
+      const warned: unknown[][] = [];
+      const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+        warned.push(args);
+        logged.resolve(args);
+      });
+      try {
+        const pending = Promise.withResolvers<never>();
+        const close = closing();
+        built = recording({ getHealth: () => pending.promise, disconnect: close.disconnect });
+
+        const caught = await testConnection(connection, execution, route, deadlineIn(30)).catch(
+          (error: unknown) => error,
+        );
+        expect(caught).toBeInstanceOf(ConnectionError);
+        expect((caught as Error).message).toBe(SENTENCE(70));
+        expect(warned).toEqual([]);
+        pending.reject(new Error(secret));
+        await logged.promise;
+        await close.closed;
+      } finally {
+        warn.mockRestore();
+      }
+
+      expect(warned).toEqual([
+        [
+          "A monitoring read Studio stopped waiting for failed afterwards",
+          { route, facet: "health", kind: "internal", code: "INTERNAL_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warned)).not.toContain(secret);
+    });
+
+    test("a health read made before the host core is installed fails by name, never a degraded success, and the provider is closed", async () => {
+      const real = hostCore();
+      const close = closing();
+      built = recording({ disconnect: close.disconnect });
+      forgetHostCore();
+      let caught: unknown;
+      try {
+        caught = await testConnection(connection, execution, route).catch((error: unknown) => error);
+      } finally {
+        installHostCore(real, "test");
+      }
+
+      expect(caught).toBeInstanceOf(HostCoreBootOrderError);
+      await close.closed;
+      expect(callsOf(built.getHealth)).toEqual([]);
+      expect(steps).toEqual(["tunnel open", "create", "connect", "disconnect", "tunnel close"]);
     });
 
     test("a test that answers within its budget answers as before", async () => {
@@ -504,6 +626,8 @@ describe("the core's import closure stays free of Next", () => {
         "src/lib/db/factory.ts",
         "src/lib/db/errors.ts",
         "src/lib/logger.ts",
+        "src/lib/api/provider-monitoring.ts",
+        "src/lib/provider-host/instance.ts",
         "src/lib/db/providers/sql/postgres.ts",
       ]),
     );

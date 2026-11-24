@@ -15,7 +15,9 @@
  * holding a form of the connection's own secret, a refusal sentence included; the dialog never sends such a payload,
  * and the expected answer here is the dialog's sentence passed through the same scrub.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { connectionFieldRefusal, getDBConfig, RABBITMQ_FIELD_RULES } from "@/lib/db-ui-config";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -77,6 +79,11 @@ mock.module("@/lib/db/factory", () => ({
 }));
 
 const { POST } = await import("@/app/api/db/test-connection/route");
+
+// Test Connection reads health through the process's host core (src/lib/provider-host/instance.ts), so this file
+// composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The route's status and body for `connection`, posted as the dialog posts it. */
 async function routeAnswer(connection: unknown): Promise<{ status: number; body: Record<string, unknown> }> {

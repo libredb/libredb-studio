@@ -455,6 +455,10 @@ Detailed health check for a specific database connection.
 
 A body that is not a JSON object answers `400 { "error": "Invalid request body" }`, as on [`POST /api/db/query`](#post-apidbquery).
 
+The health is read through the host core, under its own wait: the connection's statement timeout plus 10 seconds, and the request itself.
+A request that leaves while the health read is pending answers `499 QUERY_CANCELLED` at once, with `outcome: "unknown"`, or `outcome: "not-sent"` when it left before the read started.
+A connection that does not answer within its statement timeout plus 10 seconds answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"`, naming the health read, the statement timeout and the 10 seconds.
+
 ---
 
 #### POST /api/db/query
@@ -2669,6 +2673,9 @@ Each connection is resolved the way the db routes resolve one: a managed seed by
 `status` is `healthy`, `degraded` (the check took over 5 s), `error`, or `not-checked`.
 `databaseSizeBytes` comes from the engine's overview panel, read only where the engine's `ENGINE_FACETS` row offers it; elsewhere the field is absent and no overview is read.
 It is also absent where the engine offers the overview but the overview read failed: the row does not report that failure, and its `status` still comes from the health read alone.
+Each health read and each overview read waits until the connection's statement timeout plus 10 seconds, and the request itself.
+A row whose health read does not answer within that wait is an `error` row whose `error` names the health read, the statement timeout and the 10 seconds; an overview read that does not answer within its own such wait is omitted like a failed one.
+A request that leaves ends every pending health read, and those rows answer `error` with "The query was cancelled.".
 A `not-checked` row is a connection whose provider declares `resumesBilledCompute`: the route reads that from an unconnected provider and answers with `latencyMs: 0`, caching no provider and sending no statement, since a check would resume compute the engine bills for (a suspended Databend Cloud warehouse).
 The admin Overview shows it as not checked and keeps it out of the health score and the average latency.
 
@@ -2735,6 +2742,9 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 >
 > Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED"}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
+>
+> A monitoring or pool statistics read answers `499` `QUERY_CANCELLED` when its request leaves, and `504` `TIMEOUT_ERROR` (`studio-timeout-refusal`) when no read answers within the connection's statement timeout plus 10 seconds; a monitoring panel stopped beside answered ones carries the sentence in its `errors` entry.
+> `POST /api/db/monitoring` answers `400` naming the option, before any connection resolves, for an `options.slowQueryLimit` or `options.sessionLimit` that is not a whole number of at least 1 and an `options.schemaFilter` that is not text naming a schema.
 >
 > `POST /api/db/disconnect` takes the connection as the other `/api/db/*` routes do, `{"connectionId": "seed:<id>"}` for a managed connection or `{"connection": {...}}` with the record of a connection of the user's own, and answers `{"success": true}`.
 > A body that names neither answers `400` with `{"success": false, "error": "Either connection or connectionId is required"}`.

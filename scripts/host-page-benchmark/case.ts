@@ -221,7 +221,12 @@ function legacyProvider(shape: Shape, rows: Record<string, unknown>[]): Database
     offset: options.offset ?? 0,
   });
   const result: QueryResult = { rows, fields: [...COLUMNS[shape]], rowCount: rows.length, executionTime: 12 };
-  return { config: CONNECTION, prepareQuery, query: async () => result } as unknown as DatabaseProvider;
+  return {
+    type: CONNECTION.type,
+    config: CONNECTION,
+    prepareQuery,
+    query: async () => result,
+  } as unknown as DatabaseProvider;
 }
 
 /** An answer's body as the route writes it: its rows, and the fields beside them. */

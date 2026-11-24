@@ -8,7 +8,9 @@ import {
   type ResultSource,
 } from "@libredb/provider-sdk/calls";
 import {
+  callContext,
   checkEditorQuery,
+  contextOn,
   type EditorQueryRefusal,
   EXECUTE_SLACK_MS,
   executeDeadline,
@@ -944,6 +946,9 @@ describe("runEditorQuery on the host core", () => {
         treeCall: real.treeCall,
         maintenanceRunCall: real.maintenanceRunCall,
         maintenancePreviewCall: real.maintenancePreviewCall,
+        panelCall: real.panelCall,
+        poolStatsCall: real.poolStatsCall,
+        healthCall: real.healthCall,
       },
       "test",
     );
@@ -994,6 +999,9 @@ describe("runEditorQuery on the host core", () => {
         treeCall: real.treeCall,
         maintenanceRunCall: real.maintenanceRunCall,
         maintenancePreviewCall: real.maintenancePreviewCall,
+        panelCall: real.panelCall,
+        poolStatsCall: real.poolStatsCall,
+        healthCall: real.healthCall,
       },
       "test",
     );
@@ -1308,6 +1316,30 @@ describe("the editor call's open wait", () => {
       throw own;
     }).catch((error: unknown) => error);
     expect(ownCaught).toBe(own);
+  });
+});
+
+describe("the call's context", () => {
+  test("contextOn carries the caller's own signal and deadline, and callContext is contextOn on a deadline signal of its own", () => {
+    const deadline = Date.now() + 60_000;
+    const held = new AbortController();
+    const on = contextOn(deadline, held.signal);
+    const caller = new AbortController();
+    const called = callContext(deadline, caller.signal);
+
+    expect(Object.keys(on).sort()).toEqual(["deadline", "env", "signal"]);
+    expect(on.deadline).toBe(deadline);
+    expect(on.signal).toBe(held.signal);
+    expect(() => on.env.get("ANY")).toThrow();
+    expect(Object.keys(called).sort()).toEqual(["deadline", "env", "signal"]);
+    expect(called.deadline).toBe(deadline);
+    expect(called.signal).not.toBe(caller.signal);
+    expect(called.env).toBe(on.env);
+    expect(called.signal.aborted).toBe(false);
+    const reason = new Error(crypto.randomUUID());
+    caller.abort(reason);
+    expect(called.signal.aborted).toBe(true);
+    expect(called.signal.reason).toBe(reason);
   });
 });
 

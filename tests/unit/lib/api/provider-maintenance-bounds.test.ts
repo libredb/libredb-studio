@@ -42,6 +42,7 @@ const child = boundedChild({
     const declared = { maintenanceOperations: ["vacuum"], maintenanceOperationSpecs: {} };
     // A provider whose maintenance run never settles.
     const provider = {
+      type: "postgres",
       config: { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout },
       getCapabilities: () => ({ supportsMaintenance: true, ...declared }),
       runMaintenance: () => new Promise<never>(() => {}),

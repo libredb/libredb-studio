@@ -1,4 +1,6 @@
-import { afterAll, afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -165,6 +167,11 @@ function providersBuilt(log: { mock: { calls: unknown[][] } }): number {
 afterAll(() => {
   rmSync(scratch, { recursive: true, force: true });
 });
+
+// Test Connection and fleet health read health through the process's host core (src/lib/provider-host/instance.ts), so
+// this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 describe("with ALLOW_CUSTOM_CONNECTIONS=false, no route builds a provider from a connection the caller supplied", () => {
   beforeEach(() => {

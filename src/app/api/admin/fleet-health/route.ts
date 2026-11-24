@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
-import { engineFacetsFor } from "@/lib/db/engine-facets";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
@@ -8,6 +7,7 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { providerMonitoring } from "@/lib/api/provider-monitoring";
 
 /**
  * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
@@ -112,22 +112,22 @@ export async function POST(request: Request) {
             };
           }
           const provider = await getOrCreateProvider(resolved, {}, execution);
-          const health = await provider.getHealth();
+          // Health and the overview are read through the monitoring facade and the host core (clause C-75), each
+          // under its own deadline, the statement timeout plus 10 s, and the request's signal.
+          const monitoring = providerMonitoring(provider, request.signal, "api/admin/fleet-health");
+          const health = await monitoring.readHealth();
           const latencyMs = Date.now() - start;
 
-          // Best-effort and outside the latency measurement above: getOverview() is a second
+          // Best-effort and outside the latency measurement above: the overview read is a second
           // round-trip this route did not previously make, and a provider that cannot answer it
           // (or has none of this data) must not turn a working connection into an error result.
-          // It is read only where the engine offers the overview panel (FND-4): elsewhere the
-          // overview is not a reading of the engine, so it is never asked for and no byte figure
-          // is carried.
-          const databaseSizeBytes =
-            engineFacetsFor(resolved.type).monitoring.overview === "offered"
-              ? await provider
-                  .getOverview()
-                  .then((overview) => overview.databaseSizeBytes)
-                  .catch(() => undefined)
-              : undefined;
+          // It is read only where the session's engine offers the overview panel (FND-4): elsewhere
+          // the overview is not a reading of the engine, so it is never asked for and no byte figure
+          // is carried. An overview read stopped at its deadline or by the request is dropped the same way.
+          const databaseSizeBytes = await monitoring
+            .readOverview()
+            .then((overview) => overview?.databaseSizeBytes)
+            .catch(() => undefined);
 
           return {
             connectionId: conn.id,

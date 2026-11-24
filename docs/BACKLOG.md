@@ -7754,7 +7754,7 @@ Found 2026-11-22 while reviewing the credential envelope's read path.
 
 ### U223. Fleet health drops a failed overview read and reports the row healthy
 
-`POST /api/admin/fleet-health` (`src/app/api/admin/fleet-health/route.ts`) reads `getOverview()` for the byte figure on an engine that offers the overview panel, and its `.catch(() => undefined)` turns any rejection into an absent `databaseSizeBytes`.
+`POST /api/admin/fleet-health` (`src/app/api/admin/fleet-health/route.ts`) reads the overview panel through the monitoring facade's `readOverview` (`src/lib/api/provider-monitoring.ts`) on an engine that offers it, and its `.catch(() => undefined)` turns any rejection into an absent `databaseSizeBytes`.
 The row still reads `healthy`, and nothing in the response says the overview read failed, so a refused read and an engine that reports no byte figure look the same.
 For example, a Redis user with `+info -dbsize` gets a healthy row with no `databaseSizeBytes`.
 The route's own comment states the exception, and `docs/API_DOCS.md` says the figure is absent when the read failed.

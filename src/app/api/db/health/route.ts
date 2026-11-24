@@ -8,6 +8,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { livenessResponse } from "@/lib/api/liveness";
+import { providerMonitoring } from "@/lib/api/provider-monitoring";
 
 /**
  * GET /api/db/health
@@ -21,7 +22,9 @@ export function GET() {
 
 /**
  * POST /api/db/health
- * Detailed health check for a specific database connection
+ * Detailed health check for a specific database connection. The health is read through the monitoring facade and the
+ * host core's health call (docs/providers/CONTRACT.md, clause C-75), under its own deadline, the statement timeout
+ * plus 10 s, and the request's signal.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -47,7 +50,7 @@ export async function POST(req: NextRequest) {
     }
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
-    const health = await provider.getHealth();
+    const health = await providerMonitoring(provider, req.signal, "api/db/health").readHealth();
 
     return NextResponse.json(health);
   } catch (error) {
