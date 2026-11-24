@@ -1642,12 +1642,18 @@ A census over Studio's own types holds this, one record over the connection's fi
 The census covers today's transaction surface too, the transaction methods the transaction route calls, begin's options and result and the arguments of a statement inside the transaction, each placed on the transaction facet's actions, its request and answer, or console execute, C-57.
 It covers today's object tree surface, the five provider members that list containers and objects, count them and describe them, each placed on an action of `objects.tree` and each argument on a member of that action's request, except the billed-read allowance, which stays with the host, C-61.
 The tree's answer shapes, the container, the object and its read range, the kind count, the column, index, foreign key and exclusion constraint and the object's detail and its batch, are each mutually assignable with Studio's own and have its keys, and each answer form's member is Studio's answer, a list compared by its items, since Studio's lists are mutable and the SDK's are not.
+It covers today's maintenance surface, the run and the preview the maintenance routes call, each placed on its maintenance facet and each argument on a member of that facet's request, and the engine principal the maintenance audit row names, placed on the open answer, C-67.
+The run's answer and the preview are mutually assignable with Studio's maintenance result and preview and have their keys, the run's rows and fields compared by their items, and the maintenance vocabulary is Studio's.
+A session's maintenance, narrowed by what its server accepts, is what Studio's `narrowMaintenance` answers for every committed engine declaration, every spec and every placement a server may accept, one operation at a time and all of an engine's at once, C-68.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's transaction surface has a place in the console calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's object tree surface has a place in the objects calls"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the object tree's answers are Studio's own shapes"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's maintenance surface has a place in the maintenance calls or the open answer"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the maintenance answers are Studio's own shapes"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
@@ -2781,6 +2787,7 @@ The host keeps the narrowed maintenance with the session, beside its calls.
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "sessionMaintenance withdraws what the server refuses and adds nothing, as narrowMaintenance does"
 - test `packages/provider-sdk/tests/calls/refinement.test.ts` "no maintenance narrowing refusal carries a value of the refinement"
 - test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
 
 ## Not yet in this contract
 

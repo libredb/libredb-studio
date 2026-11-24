@@ -1,8 +1,9 @@
 /**
  * Every input a provider is built with today, and every member of today's console request and answer, of today's
- * transaction surface and of today's object tree surface, has a place in the provider contract's calls, or a stated
- * reason it stays with the host (docs/providers/CONTRACT.md, clause C-7). So a provider moves onto the contract without
- * a behaviour change.
+ * transaction surface, of today's object tree surface and of today's maintenance surface, has a place in the provider
+ * contract's calls, or a stated reason it stays with the host (docs/providers/CONTRACT.md, clause C-7). So a provider
+ * moves onto the contract without a behaviour change. A session's maintenance, narrowed by what its server accepts, is
+ * what Studio's `narrowMaintenance` answers for every shipped spec (clause C-68).
  *
  * A provider is built from the connection's fields and from the marks core sets beside them under symbol keys: the
  * tunnel's far end and route, the literal seed-file mark (`ProviderConnection` in src/lib/db/provider-connection.ts),
@@ -15,8 +16,18 @@
  * time: a connection field is one the schema's field vocabulary names, and every reason is a sentence.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  type MaintenanceAccepted,
+  type MaintenanceFacet,
+  type MaintenancePreview as SdkMaintenancePreview,
+  type MaintenancePreviewRequest,
+  type MaintenanceRunAnswer,
+  type MaintenanceRunRequest,
+  type OpenAnswer,
+  sessionMaintenance,
+} from "@libredb/provider-sdk/calls";
 import type {
   CancelAnswer,
   Column,
@@ -55,7 +66,12 @@ import type {
   VectorColumnShape,
   Warning,
 } from "@libredb/provider-sdk/calls";
-import type { FieldName } from "@libredb/provider-sdk/manifest";
+import type {
+  EngineDeclaration,
+  FieldName,
+  MaintenanceSpec,
+  MaintenanceOperation as SdkMaintenanceOperation,
+} from "@libredb/provider-sdk/manifest";
 import type { ProviderConnection } from "@/lib/db/provider-connection";
 import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type {
@@ -67,6 +83,12 @@ import type {
   DescribeObjectsOptions,
   EgressDecision,
   KindCount,
+  MaintenanceDeclaration,
+  MaintenanceOperation,
+  MaintenanceOperationSpec,
+  MaintenancePreview,
+  MaintenanceResult,
+  MeasuredMaintenancePlacements,
   ObjectDetail,
   ObjectDetailBatch,
   ObjectReadOptions,
@@ -80,6 +102,7 @@ import type {
   TransactionProvider,
   TrustMaterial,
 } from "@/lib/db/types";
+import { narrowMaintenance } from "@/lib/db/types";
 import type { VectorColumn } from "@/lib/db/vector/types";
 import type {
   ColumnSchema,
@@ -147,6 +170,23 @@ type TreePlacement =
       };
     }[TreeAction]
   | { readonly where: "options"; readonly census: "ObjectReadOptions" | "DescribeObjectsOptions" }
+  | HostOnly;
+
+/** A member of today's maintenance surface, as the maintenance calls or the open answer carry it. */
+type MaintenancePlacement =
+  | { readonly where: "maintenance-call"; readonly call: MaintenanceFacet }
+  | {
+      readonly where: "maintenance-request";
+      readonly call: "run";
+      readonly member: keyof MaintenanceRunRequest;
+      readonly note?: string;
+    }
+  | {
+      readonly where: "maintenance-request";
+      readonly call: "preview";
+      readonly member: keyof MaintenancePreviewRequest;
+    }
+  | { readonly where: "open-answer"; readonly member: keyof OpenAnswer<unknown>; readonly note?: string }
   | HostOnly;
 
 /** The transaction request that opens a transaction, the one that carries begin's options. */
@@ -454,6 +494,112 @@ const DESCRIBE_OBJECTS_OPTIONS_CENSUS = {
   readAllowance: { where: "host", reason: READ_ALLOWANCE_REASON },
 } as const satisfies { readonly [K in keyof Required<DescribeObjectsOptions>]: TreePlacement };
 
+/**
+ * Today's maintenance surface: the two provider members the maintenance routes call and the engine principal the
+ * maintenance audit row names. `Pick` fails typecheck when one of them is renamed or removed.
+ */
+type MaintenanceProvider = Pick<DatabaseProvider, "runMaintenance" | "previewMaintenance" | "engineUser">;
+
+const MAINTENANCE_MEMBER_CENSUS = {
+  runMaintenance: { where: "maintenance-call", call: "run" },
+  previewMaintenance: { where: "maintenance-call", call: "preview" },
+  engineUser: {
+    where: "open-answer",
+    member: "engineUser",
+    note: "read once, at open, since a session acts as one principal",
+  },
+} as const satisfies { readonly [K in keyof Required<MaintenanceProvider>]: MaintenancePlacement };
+
+/** `runMaintenance`'s arguments, in order, each placed. */
+const RUN_MAINTENANCE_ARGUMENT_CENSUS = {
+  type: { where: "maintenance-request", call: "run", member: "operation" },
+  target: { where: "maintenance-request", call: "run", member: "target", note: "absent runs over the whole database" },
+  container: { where: "maintenance-request", call: "run", member: "container", note: "absent names none" },
+} as const satisfies Record<string, MaintenancePlacement>;
+
+/** `previewMaintenance`'s arguments, in order, each placed. */
+const PREVIEW_MAINTENANCE_ARGUMENT_CENSUS = {
+  type: { where: "maintenance-request", call: "preview", member: "operation" },
+  path: { where: "maintenance-request", call: "preview", member: "path" },
+} as const satisfies Record<string, MaintenancePlacement>;
+
+/** Each maintenance member's argument count, held to its census's length by the test. */
+const MAINTENANCE_ARGUMENT_COUNTS = {
+  runMaintenance: 3 satisfies Required<Parameters<MaintenanceProvider["runMaintenance"]>>["length"],
+  previewMaintenance: 2 satisfies Required<
+    Parameters<NonNullable<MaintenanceProvider["previewMaintenance"]>>
+  >["length"],
+};
+
+/** The committed engine declarations, each the declaration of one shipped type-id. */
+const DECLARATIONS_DIRECTORY = path.join(ROOT, "src/lib/db/engine-declarations");
+
+function engineDeclarations(): EngineDeclaration[] {
+  return readdirSync(DECLARATIONS_DIRECTORY)
+    .filter((name) => name.endsWith(".json"))
+    .sort()
+    .map((name) => JSON.parse(readFileSync(path.join(DECLARATIONS_DIRECTORY, name), "utf8")) as EngineDeclaration);
+}
+
+/** A declaration's spec in Studio's form, each member the declaration writes as null or false left out. */
+function studioSpec(spec: MaintenanceSpec): MaintenanceOperationSpec {
+  return {
+    label: spec.label,
+    perEntity: spec.perEntity,
+    global: spec.global,
+    ...(spec.title === null ? {} : { title: spec.title }),
+    ...(spec.description === null ? {} : { description: spec.description }),
+    ...(spec.confirmation === null ? {} : { confirmation: spec.confirmation }),
+    ...(spec.preview ? { preview: true as const } : {}),
+    ...(spec.kinds === null ? {} : { kinds: [...spec.kinds] }),
+  };
+}
+
+/** An engine's maintenance in Studio's form, as a connected provider declares it. */
+function studioMaintenance(facets: EngineDeclaration["facets"]): Required<MaintenanceDeclaration> {
+  return {
+    maintenanceOperations: [...facets.maintenance],
+    maintenanceOperationSpecs: Object.fromEntries(
+      facets.maintenanceSpecs.map((spec) => [spec.operation, studioSpec(spec)]),
+    ),
+  };
+}
+
+/** Studio's maintenance in the declaration's form, each member Studio leaves out written as null or false. */
+function declarationMaintenance(studio: Required<MaintenanceDeclaration>): {
+  readonly maintenance: readonly MaintenanceOperation[];
+  readonly maintenanceSpecs: readonly MaintenanceSpec[];
+} {
+  return {
+    maintenance: [...studio.maintenanceOperations],
+    maintenanceSpecs: studio.maintenanceOperations.flatMap((operation) => {
+      const spec = studio.maintenanceOperationSpecs[operation];
+      if (spec === undefined) return [];
+      return [
+        {
+          operation,
+          label: spec.label,
+          perEntity: spec.perEntity,
+          global: spec.global,
+          title: spec.title ?? null,
+          description: spec.description ?? null,
+          confirmation: spec.confirmation ?? null,
+          preview: spec.preview === true,
+          kinds: spec.kinds === undefined ? null : [...spec.kinds],
+        },
+      ];
+    }),
+  };
+}
+
+/** Each placement answer a server may give for one operation. */
+const PLACEMENT_ANSWERS: readonly MeasuredMaintenancePlacements[] = [
+  { perEntity: true, global: true },
+  { perEntity: true, global: false },
+  { perEntity: false, global: true },
+  { perEntity: false, global: false },
+];
+
 type Mutual<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 
 /** Whether two record types have the same keys, optional ones included, which `Mutual` alone does not hold. */
@@ -462,12 +608,12 @@ type SameKeys<A, B> = Mutual<keyof Required<A>, keyof Required<B>>;
 /** One answer form's list, element by element: a Studio list is a mutable array, the SDK's a readonly one. */
 type Element<List> = List extends readonly (infer Item)[] ? Item : never;
 
+/** A placement of any census. */
+type Placement = InputPlacement | ConsolePlacement | ConnectionField | TreePlacement | MaintenancePlacement;
+
 /** Every placement of every census, by census name and key. */
-function placements(): [string, string, InputPlacement | ConsolePlacement | ConnectionField | TreePlacement][] {
-  const censuses: Record<
-    string,
-    Record<PropertyKey, InputPlacement | ConsolePlacement | ConnectionField | TreePlacement>
-  > = {
+function placements(): [string, string, Placement][] {
+  const censuses: Record<string, Record<PropertyKey, Placement>> = {
     DatabaseConnection: CONNECTION_CENSUS,
     "connection marks": MARK_CENSUS,
     ProviderOptions: OPTIONS_CENSUS,
@@ -490,6 +636,9 @@ function placements(): [string, string, InputPlacement | ConsolePlacement | Conn
     "describeObjects arguments": DESCRIBE_OBJECTS_ARGUMENT_CENSUS,
     ObjectReadOptions: OBJECT_READ_OPTIONS_CENSUS,
     DescribeObjectsOptions: DESCRIBE_OBJECTS_OPTIONS_CENSUS,
+    maintenance: MAINTENANCE_MEMBER_CENSUS,
+    "runMaintenance arguments": RUN_MAINTENANCE_ARGUMENT_CENSUS,
+    "previewMaintenance arguments": PREVIEW_MAINTENANCE_ARGUMENT_CENSUS,
   };
   return Object.entries(censuses).flatMap(([census, entries]) =>
     Reflect.ownKeys(entries).map((key): [string, string, (typeof entries)[PropertyKey]] => [
@@ -696,6 +845,137 @@ describe("the call surface census", () => {
     expect(keys).toEqual([true, true, true, true, true, true, true, true]);
     expect(answers).toEqual([true, true, true, true, true]);
     expect(back).toEqual([containers, counts, objects, detail, batch]);
+  });
+
+  test("every member of today's maintenance surface has a place in the maintenance calls or the open answer", () => {
+    const maintenance = placements().filter(([census]) =>
+      ["maintenance", "runMaintenance arguments", "previewMaintenance arguments"].includes(census),
+    );
+
+    expect(maintenance.map(([census, key]) => `${census}.${key}`)).toEqual([
+      "maintenance.runMaintenance",
+      "maintenance.previewMaintenance",
+      "maintenance.engineUser",
+      "runMaintenance arguments.type",
+      "runMaintenance arguments.target",
+      "runMaintenance arguments.container",
+      "previewMaintenance arguments.type",
+      "previewMaintenance arguments.path",
+    ]);
+    expect(Object.keys(RUN_MAINTENANCE_ARGUMENT_CENSUS)).toHaveLength(MAINTENANCE_ARGUMENT_COUNTS.runMaintenance);
+    expect(Object.keys(PREVIEW_MAINTENANCE_ARGUMENT_CENSUS)).toHaveLength(
+      MAINTENANCE_ARGUMENT_COUNTS.previewMaintenance,
+    );
+    expect(MAINTENANCE_ARGUMENT_COUNTS).toEqual({ runMaintenance: 3, previewMaintenance: 2 });
+    for (const [census, call] of [
+      [RUN_MAINTENANCE_ARGUMENT_CENSUS, MAINTENANCE_MEMBER_CENSUS.runMaintenance.call],
+      [PREVIEW_MAINTENANCE_ARGUMENT_CENSUS, MAINTENANCE_MEMBER_CENSUS.previewMaintenance.call],
+    ] as const) {
+      for (const placement of Object.values(census)) expect(placement.call).toBe(call);
+    }
+    expect(maintenance.filter(([, , placement]) => placement.where === "host")).toEqual([]);
+  });
+
+  test("the maintenance answers are Studio's own shapes", () => {
+    const parity: [
+      Mutual<SdkMaintenanceOperation, MaintenanceOperation>,
+      Mutual<Omit<MaintenanceRunAnswer, "rows" | "fields">, Omit<MaintenanceResult, "rows" | "fields">>,
+      Mutual<Element<NonNullable<MaintenanceRunAnswer["rows"]>>, Element<NonNullable<MaintenanceResult["rows"]>>>,
+      Mutual<Element<NonNullable<MaintenanceRunAnswer["fields"]>>, Element<NonNullable<MaintenanceResult["fields"]>>>,
+      Mutual<SdkMaintenancePreview, MaintenancePreview>,
+      Mutual<MaintenanceRunRequest["operation"], Parameters<MaintenanceProvider["runMaintenance"]>[0]>,
+      Mutual<MaintenancePreviewRequest["path"], Parameters<NonNullable<MaintenanceProvider["previewMaintenance"]>>[1]>,
+      Mutual<
+        NonNullable<OpenAnswer<unknown>["engineUser"]>,
+        NonNullable<ReturnType<NonNullable<MaintenanceProvider["engineUser"]>>>
+      >,
+      Mutual<
+        MaintenanceAccepted["perEntity"] | MaintenanceAccepted["global"],
+        MeasuredMaintenancePlacements[keyof MeasuredMaintenancePlacements]
+      >,
+    ] = [true, true, true, true, true, true, true, true, true];
+    const keys: [
+      SameKeys<MaintenanceRunAnswer, MaintenanceResult>,
+      SameKeys<SdkMaintenancePreview, MaintenancePreview>,
+    ] = [true, true];
+
+    // A sample of each answer crosses both ways, Studio's mutable lists into the SDK's readonly ones and back by element.
+    const result: MaintenanceResult = {
+      success: true,
+      executionTime: 12,
+      message: "INFO answered 2 lines",
+      rows: [{ section: "server", key: "redis_version", value: "8.2.1" }],
+      fields: ["section", "key", "value"],
+    };
+    const preview: MaintenancePreview = {
+      summary: "Releasing orders frees its memory on every query node.",
+      facts: [{ label: "Loaded replicas", value: "2" }],
+      refusal: "orders is not loaded",
+      note: "as reported by the server",
+    };
+    const sdkResult: MaintenanceRunAnswer = result;
+    const sdkPreview: SdkMaintenancePreview = preview;
+    const back: [MaintenanceResult, MaintenancePreview] = [
+      {
+        ...sdkResult,
+        rows: sdkResult.rows?.map((row): Record<string, unknown> => row),
+        fields: sdkResult.fields?.map((name) => name),
+      },
+      sdkPreview,
+    ];
+
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true]);
+    expect(keys).toEqual([true, true]);
+    expect(back).toEqual([result, preview]);
+  });
+
+  test("a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts", () => {
+    const differing: string[] = [];
+    const vacuity = { runs: 0, withdrawsOperation: 0, withdrawsPlacement: 0, namesKill: 0 };
+    const compare = (declaration: EngineDeclaration, items: readonly MaintenanceAccepted[], label: string): void => {
+      vacuity.runs += 1;
+      const declared = {
+        maintenance: declaration.facets.maintenance,
+        maintenanceSpecs: declaration.facets.maintenanceSpecs,
+      };
+      const measured = Object.fromEntries(
+        items.map((item) => [item.operation, { perEntity: item.perEntity, global: item.global }]),
+      );
+      const studio = declarationMaintenance(narrowMaintenance(studioMaintenance(declaration.facets), measured));
+      const session = sessionMaintenance(declared, { maintenance: items });
+      if (JSON.stringify(session) !== JSON.stringify(studio)) differing.push(`${declaration.id} ${label}`);
+      if (session.maintenance.length < declared.maintenance.length) vacuity.withdrawsOperation += 1;
+      const placementWithdrawn = session.maintenanceSpecs.some((spec) => {
+        const before = declared.maintenanceSpecs.find((item) => item.operation === spec.operation);
+        return before !== undefined && (before.perEntity !== spec.perEntity || before.global !== spec.global);
+      });
+      if (placementWithdrawn) vacuity.withdrawsPlacement += 1;
+      if (items.some((item) => item.operation === "kill")) vacuity.namesKill += 1;
+    };
+
+    for (const declaration of engineDeclarations()) {
+      for (const answer of PLACEMENT_ANSWERS) {
+        const placed = `${answer.perEntity ? "row" : "no row"} and ${answer.global ? "whole database" : "no whole database"}`;
+        for (const spec of declaration.facets.maintenanceSpecs) {
+          compare(declaration, [{ operation: spec.operation, ...answer }], `${spec.operation} ${placed}`);
+        }
+        compare(
+          declaration,
+          declaration.facets.maintenance.map((operation) => ({
+            operation,
+            perEntity: answer.perEntity,
+            global: answer.global,
+          })),
+          `every operation ${placed}`,
+        );
+      }
+    }
+
+    expect(differing).toEqual([]);
+    expect(vacuity.runs).toBeGreaterThan(200);
+    expect(vacuity.withdrawsOperation).toBeGreaterThan(0);
+    expect(vacuity.withdrawsPlacement).toBeGreaterThan(0);
+    expect(vacuity.namesKill).toBeGreaterThan(0);
   });
 
   test("the context's shared shapes are Studio's own", () => {
