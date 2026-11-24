@@ -56,10 +56,13 @@ import {
   bridgedConsole,
   bridgedMaintenance,
   bridgedReadOnlyStatements,
+  bridgedScriptUnit,
 } from "@/lib/provider-host/legacy-bridge";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import type { QueryResult } from "@/lib/types";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type ExecutionUnit, splitExecutionUnits } from "@/lib/sql/statement-splitter";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -1521,6 +1524,183 @@ describe("bridgedComposedStatements", () => {
       bridgedComposedStatements(fake(rejection)).session.execute(composedRequest(marker()), contextOf()),
     );
     expect(failed).toBe(rejection);
+  });
+});
+
+/** The execution units of `sql` under `type`'s grammar, as the script route splits them. */
+function unitsOf(sql: string, type: DatabaseType): ExecutionUnit[] {
+  return splitExecutionUnits(sql, resolveSqlGrammar(type));
+}
+
+/** A request for a script's unit: its text, every row unless `over` names a page, and `over`'s members. */
+function unitRequest(statement: string, over: Partial<ExecuteRequest> = {}): ExecuteRequest {
+  return freezeData({ statement, page: { unlimited: true }, ...over });
+}
+
+describe("bridgedScriptUnit", () => {
+  test("a script unit session sends an earlier unit as written, with the run id only where the provider cancels and the request's scope, and never prepares or probes it", async () => {
+    const [unit] = unitsOf("SELECT * FROM t", "postgres");
+    const scope = marker();
+    const runId = marker();
+    const cancelling = fake(resultOf(rowsOf(2)), {
+      cancelQuery: mock(async () => true),
+      endOpenQueryTransaction: mock(async () => "none"),
+    });
+
+    await bridgedScriptUnit(cancelling, { unit }).session.execute(unitRequest(unit.sql, { runId, scope }), contextOf());
+
+    expect(callsOf(cancelling.query)).toEqual([["SELECT * FROM t", undefined, runId, scope]]);
+    expect(callsOf(cancelling.prepareQuery)).toEqual([]);
+
+    const plain = fake(resultOf([]));
+    await bridgedScriptUnit(plain, { unit }).session.execute(unitRequest(unit.sql, { runId }), contextOf());
+    expect(callsOf(plain.query)).toEqual([["SELECT * FROM t", undefined, undefined, undefined]]);
+    expect(callsOf(plain.prepareQuery)).toEqual([]);
+  });
+
+  test("the script's last unit has its last read statement bounded by the provider's prepare and spliced back, never probed, and a write or a module body is sent as written", async () => {
+    const options: QueryPrepareOptions = { limit: 50 };
+    const sent = async (sql: string, type: DatabaseType) => {
+      const [unit] = unitsOf(sql, type);
+      const provider = fake(resultOf([]), { type });
+      await bridgedScriptUnit(provider, { unit, tailBound: { dialect: type, options } }).session.execute(
+        unitRequest(unit.sql, { page: { limit: 50, offset: 0 } }),
+        contextOf(),
+      );
+      return { query: callsOf(provider.query)[0]?.[0], prepared: callsOf(provider.prepareQuery) };
+    };
+
+    const read = await sent("SELECT * FROM t", "postgres");
+    expect(read.query).toBe("SELECT * FROM t LIMIT 50 OFFSET 0");
+    expect(read.prepared).toEqual([["SELECT * FROM t", { limit: 50 }]]);
+    expect(read.prepared[0]?.[1]).not.toBe(options);
+
+    const batch = await sent("INSERT INTO t VALUES (1); SELECT * FROM t", "mssql");
+    expect(batch.query).toBe("INSERT INTO t VALUES (1); SELECT * FROM t LIMIT 50 OFFSET 0");
+    expect(batch.prepared).toEqual([["SELECT * FROM t", { limit: 50 }]]);
+
+    const moduleBody = await sent("CREATE PROCEDURE p AS SELECT 1; SELECT * FROM t", "mssql");
+    expect(moduleBody.query).toBe("CREATE PROCEDURE p AS SELECT 1; SELECT * FROM t");
+    expect(moduleBody.prepared).toEqual([]);
+
+    const write = await sent("INSERT INTO t VALUES (1)", "postgres");
+    expect(write.query).toBe("INSERT INTO t VALUES (1)");
+    expect(write.prepared).toEqual([]);
+  });
+
+  test("a script unit session offers execute honouring offset, and cancel and endScope as the console session offers them, and nothing else", async () => {
+    const [unit] = unitsOf("SELECT 1", "postgres");
+    const cancelQuery = mock<(runId: string) => Promise<boolean>>(async () => true);
+    const endOpenQueryTransaction = mock<(scope: string) => Promise<string>>(async () => "rolled-back");
+    const both = bridgedScriptUnit(fake(resultOf([]), { cancelQuery, endOpenQueryTransaction }), { unit });
+    const plain = bridgedScriptUnit(fake(resultOf([])), { unit });
+    const transactional = bridgedScriptUnit(transactionalFake().provider, { unit });
+
+    expect(both.session.calls).toEqual({
+      console: {
+        execute: { honours: ["offset"] },
+        cancel: "offered",
+        endScope: "offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    });
+    expect(plain.session.calls.console).toEqual({
+      execute: { honours: ["offset"] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "not-offered",
+    });
+    expect(transactional.session.calls.console.transaction).toBe("not-offered");
+    expect(both.session.readOnlyStatements).toBe(false);
+    expect(Object.isFrozen(both.session)).toBe(true);
+    expect(Object.keys(both.session).sort()).toEqual(["calls", "cancel", "endScope", "execute", "readOnlyStatements"]);
+    expect(Object.keys(plain.session).sort()).toEqual(["calls", "execute", "readOnlyStatements"]);
+
+    const runId = marker();
+    const scope = marker();
+    expect(both.cancelSent()).toBe(false);
+    expect(await both.session.cancel?.({ runId }, contextOf())).toEqual({ cancelled: true });
+    expect(both.cancelSent()).toBe(true);
+    expect(callsOf(cancelQuery)).toEqual([[runId]]);
+    expect(await both.session.endScope?.({ scope }, contextOf())).toEqual({ openTransaction: "rolled-back" });
+    expect(callsOf(endOpenQueryTransaction)).toEqual([[scope]]);
+  });
+
+  test("a script unit's failure that names the bound Studio added says so, and passes by reference", async () => {
+    const [last] = unitsOf("SELECT * FROM t", "postgres");
+    const bounded = new Error('syntax error at or near "LIMIT"');
+    const caught = await failure(() =>
+      bridgedScriptUnit(fake(bounded), {
+        unit: last,
+        tailBound: { dialect: "postgres", options: { limit: 50 } },
+      }).session.execute(unitRequest(last.sql), contextOf()),
+    );
+    expect(caught).toBe(bounded);
+    expect(bounded.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 50 OFFSET 0")}`);
+
+    const text = marker();
+    const earlier = new Error(text);
+    const plain = await failure(() =>
+      bridgedScriptUnit(fake(earlier), { unit: last }).session.execute(unitRequest(last.sql), contextOf()),
+    );
+    expect(plain).toBe(earlier);
+    expect(earlier.message).toBe(text);
+  });
+
+  test("a script unit answers one source per result set, its page applied exactly when the prepare bounded it, and its page's row limit is every row it returned", async () => {
+    const [read] = unitsOf("SELECT n FROM t", "postgres");
+    const result = resultOf(rowsOf(3), {
+      resultSets: [
+        { rows: rowsOf(3), fields: ["n"] },
+        { rows: [{ m: 9 }], fields: ["m"] },
+      ],
+    });
+    const bounded = bridgedScriptUnit(fake(result), { unit: read, tailBound: { dialect: "postgres", options: {} } });
+    const earlier = bridgedScriptUnit(fake(resultOf(rowsOf(7))), { unit: read });
+    const own = bridgedScriptUnit(fake(resultOf([])), {
+      unit: unitsOf("SELECT n FROM t LIMIT 9", "postgres")[0] as ExecutionUnit,
+      tailBound: { dialect: "postgres", options: {} },
+    });
+
+    expect(() => bounded.answered()).toThrow(
+      "The bridge's script unit run was read before its execute answered, a defect of the host.",
+    );
+    const boundedAnswer = await bounded.session.execute(unitRequest(read.sql), contextOf());
+    const earlierAnswer = await earlier.session.execute(unitRequest(read.sql), contextOf());
+    const ownAnswer = await own.session.execute(unitRequest("SELECT n FROM t LIMIT 9"), contextOf());
+
+    expect(boundedAnswer.results.map((source) => source.columns)).toEqual([[{ name: "n" }], [{ name: "m" }]]);
+    expect(boundedAnswer.pageApplied).toBe(true);
+    expect(earlierAnswer.pageApplied).toBe(false);
+    expect(ownAnswer.pageApplied).toBe(false);
+    expect(bounded.answered()).toBe(result);
+    expect(bounded.pumpLimits(boundedAnswer)).toEqual({
+      maxRows: 3,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+    expect(earlier.pumpLimits(earlierAnswer).maxRows).toBe(7);
+    expect(own.pumpLimits(ownAnswer).maxRows).toBe(1);
+  });
+
+  test("a script unit session sent a statement other than its unit's text is a host defect, named, and calls nothing", async () => {
+    const [unit] = unitsOf("SELECT * FROM t", "postgres");
+    const provider = fake(resultOf([]));
+    const caught = await failure(() =>
+      bridgedScriptUnit(provider, { unit, tailBound: { dialect: "postgres", options: {} } }).session.execute(
+        unitRequest(`SELECT ${marker()}`),
+        contextOf(),
+      ),
+    );
+
+    expect((caught as Error).message).toBe(
+      "The bridge's script unit session was sent a statement other than its unit's text, a defect of the host.",
+    );
+    expect(callsOf(provider.query)).toEqual([]);
+    expect(callsOf(provider.prepareQuery)).toEqual([]);
   });
 });
 

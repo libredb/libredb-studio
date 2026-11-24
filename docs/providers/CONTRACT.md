@@ -2772,7 +2772,19 @@ A statement Studio composed and its statement guard admitted, which must reach t
 Its calls offer execute alone, honouring no request field, and it is no read-only statement session.
 Its execute runs the provider's plain `query` with exactly one argument, the request's statement, and never the prepare, the probe, params, a run id or a scope, so no page bound is appended to the statement.
 It answers and limits its page as the read-only statement session does, and reads no engine row.
+Each unit of a script of `POST /api/db/multi-query` is served as a script unit session of its own, built per unit by its facade, opened with the unit and, for the script's last unit only, the dialect and the caller's page options its last statement is bounded with.
+Its execute takes only the unit's own text as the request's statement, and any other text is a defect of the host, thrown by name before anything is called.
+It sends the unit as the script route always sent it: every unit but the last as written, and the last with its last read statement bounded by the provider's prepare, on a fresh copy of the options, and spliced back in place, a write or a module body as written, and never the probe row past the page.
+It runs the provider's `query` with that text, no params, the run id only for a provider that can cancel a run, and the request's scope, and a failure that names the bound Studio added says so, passed by reference.
+Its calls offer execute honouring `offset`, and `console.cancel` and `console.endScope` exactly as the console session offers them, with the same members; it offers no transaction, tree, maintenance or monitoring facet and is no read-only statement session.
+It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and its page's row limit is every row the provider returned, at least one, within one page.
 
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sends an earlier unit as written, with the run id only where the provider cancels and the request's scope, and never prepares or probes it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the script's last unit has its last read statement bounded by the provider's prepare and spliced back, never probed, and a write or a module body is sent as written"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session offers execute honouring offset, and cancel and endScope as the console session offers them, and nothing else"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit's failure that names the bound Studio added says so, and passes by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit answers one source per result set, its page applied exactly when the prepare bounded it, and its page's row limit is every row it returned"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sent a statement other than its unit's text is a host defect, named, and calls nothing"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
