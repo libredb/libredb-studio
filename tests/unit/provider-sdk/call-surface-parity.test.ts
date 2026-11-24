@@ -1,7 +1,8 @@
 /**
  * Every input a provider is built with today, and every member of today's console request and answer, of today's
- * transaction surface, of today's object tree surface and of today's maintenance surface, has a place in the provider
- * contract's calls, or a stated reason it stays with the host (docs/providers/CONTRACT.md, clause C-7). So a provider
+ * transaction surface, of today's object tree surface, of today's maintenance surface and of today's monitoring, pool
+ * statistics and health surface, has a place in the provider contract's calls, or a stated reason it stays with the host
+ * (docs/providers/CONTRACT.md, clause C-7). So a provider
  * moves onto the contract without a behaviour change. A session's maintenance, narrowed by what its server accepts, is
  * what Studio's `narrowMaintenance` answers for every shipped spec (clause C-68), and so is the maintenance the legacy
  * bridge answers for a connected provider (clause C-50).
@@ -20,14 +21,29 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  type ActiveSessionDetails as SdkActiveSessionDetails,
+  type ActiveSession as SdkActiveSession,
+  type DatabaseOverview as SdkDatabaseOverview,
+  type HealthInfo as SdkHealthInfo,
+  type IndexStats as SdkIndexStats,
   type MaintenanceAccepted,
   type MaintenanceFacet,
   type MaintenancePreview as SdkMaintenancePreview,
   type MaintenancePreviewRequest,
   type MaintenanceRunAnswer,
   type MaintenanceRunRequest,
+  type MonitoringPanelAnswer,
+  type MonitoringPanelRequest,
+  type MonitoringPanel as SdkMonitoringPanel,
   type OpenAnswer,
+  type PerformanceMetrics as SdkPerformanceMetrics,
+  type PoolStats as SdkPoolStats,
+  type SessionActivity as SdkSessionActivity,
+  type SlowQuery as SdkSlowQuery,
+  type SlowQueryStats as SdkSlowQueryStats,
+  type StorageStats as SdkStorageStats,
   sessionMaintenance,
+  type TableStats as SdkTableStats,
 } from "@libredb/provider-sdk/calls";
 import type {
   CancelAnswer,
@@ -73,16 +89,25 @@ import type {
   MaintenanceSpec,
   MaintenanceOperation as SdkMaintenanceOperation,
 } from "@libredb/provider-sdk/manifest";
+import type { MonitoringPanel } from "@/lib/db/engine-facets/types";
 import type { ProviderConnection } from "@/lib/db/provider-connection";
+import type { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
+import type { OracleProvider } from "@/lib/db/providers/sql/oracle";
+import type { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import type { QueryCancelProvider } from "@/lib/db/query-cancel";
 import type {
+  ActiveSession,
+  ActiveSessionDetails,
   BeginTransactionOptions,
   BeginTransactionResult,
   Container,
   DatabaseObject,
+  DatabaseOverview,
   DatabaseProvider,
   DescribeObjectsOptions,
   EgressDecision,
+  HealthInfo,
+  IndexStats,
   KindCount,
   MaintenanceDeclaration,
   MaintenanceOperation,
@@ -90,16 +115,24 @@ import type {
   MaintenancePreview,
   MaintenanceResult,
   MeasuredMaintenancePlacements,
+  MonitoringData,
+  MonitoringOptions,
   ObjectDetail,
   ObjectDetailBatch,
   ObjectReadOptions,
   ObjectReadRange,
   OpenQueryTransactionOutcome,
+  PerformanceMetrics,
   PoolConfig,
   PreparedQuery,
   ProviderBuildContext,
   ProviderOptions,
   QueryPrepareOptions,
+  SessionActivity,
+  SlowQuery,
+  SlowQueryStats,
+  StorageStats,
+  TableStats,
   TransactionProvider,
   TrustMaterial,
 } from "@/lib/db/types";
@@ -189,6 +222,31 @@ type MaintenancePlacement =
       readonly member: keyof MaintenancePreviewRequest;
     }
   | { readonly where: "open-answer"; readonly member: keyof OpenAnswer<unknown>; readonly note?: string }
+  | HostOnly;
+
+/** One member of one panel's request, typed by that panel's request form. */
+type PanelRequestMember = {
+  readonly [Panel in SdkMonitoringPanel]: {
+    readonly panel: Panel;
+    readonly member: Exclude<keyof Extract<MonitoringPanelRequest, { readonly panel: Panel }>, "panel">;
+  };
+}[SdkMonitoringPanel];
+
+/** The panel whose answer form has the one key `Panel`. */
+type AnswerPanel = {
+  readonly [Panel in SdkMonitoringPanel]: Extract<MonitoringPanelAnswer, Readonly<Record<Panel, unknown>>> extends never
+    ? never
+    : Panel;
+}[SdkMonitoringPanel];
+
+/** A member of today's monitoring, pool statistics and health surface, as the monitoring calls or health carry it. */
+type MonitoringPlacement =
+  | { readonly where: "monitoring-call"; readonly call: "panel"; readonly panel: SdkMonitoringPanel }
+  | { readonly where: "monitoring-call"; readonly call: "poolStats" }
+  | ({ readonly where: "panel-request"; readonly note?: string } & PanelRequestMember)
+  | { readonly where: "panel-requests"; readonly requests: readonly PanelRequestMember[]; readonly note?: string }
+  | { readonly where: "panel-answer"; readonly panel: AnswerPanel }
+  | { readonly where: "mandatory-call"; readonly call: "health" }
   | HostOnly;
 
 /** The transaction request that opens a transaction, the one that carries begin's options. */
@@ -533,6 +591,152 @@ const MAINTENANCE_ARGUMENT_COUNTS = {
   >["length"],
 };
 
+/**
+ * Today's monitoring and health surface: the provider members the monitoring, health and fleet health routes, Test
+ * Connection and the agent call. `Pick` fails typecheck when one of them is renamed or removed.
+ */
+type MonitoringProvider = Pick<
+  DatabaseProvider,
+  | "getHealth"
+  | "getMonitoringData"
+  | "getOverview"
+  | "getPerformanceMetrics"
+  | "getSlowQueries"
+  | "getActiveSessions"
+  | "getTableStats"
+  | "getIndexStats"
+  | "getStorageStats"
+>;
+
+/**
+ * The pool statistics the pool-stats route reads by presence: no `DatabaseProvider` member declares it, so its census is
+ * typed over one implementer's own class, and the answer below is held to each implementer's.
+ */
+type PoolStatsReader = Pick<PostgresProvider, "getPoolStats">;
+
+/** Why the dashboard's orchestration of the panels stays with the host. */
+const PANEL_ORCHESTRATION_REASON =
+  "The host reads each offered, requested panel through monitoring.panel independently and assembles the dashboard's payload, its panels answered, failed, not requested or not offered.";
+
+const MONITORING_MEMBER_CENSUS = {
+  getHealth: { where: "mandatory-call", call: "health" },
+  getMonitoringData: { where: "host", reason: PANEL_ORCHESTRATION_REASON },
+  getOverview: { where: "monitoring-call", call: "panel", panel: "overview" },
+  getPerformanceMetrics: { where: "monitoring-call", call: "panel", panel: "performance" },
+  getSlowQueries: { where: "monitoring-call", call: "panel", panel: "slowQueries" },
+  getActiveSessions: { where: "monitoring-call", call: "panel", panel: "activeSessions" },
+  getTableStats: { where: "monitoring-call", call: "panel", panel: "tables" },
+  getIndexStats: { where: "monitoring-call", call: "panel", panel: "indexes" },
+  getStorageStats: { where: "monitoring-call", call: "panel", panel: "storage" },
+} as const satisfies { readonly [K in keyof MonitoringProvider]: MonitoringPlacement };
+
+const POOL_STATS_CENSUS = {
+  getPoolStats: { where: "monitoring-call", call: "poolStats" },
+} as const satisfies { readonly [K in keyof PoolStatsReader]: MonitoringPlacement };
+
+/** The options of `getSlowQueries` and `getActiveSessions`, each member placed. */
+const SLOW_QUERIES_OPTIONS_CENSUS = {
+  limit: {
+    where: "panel-request",
+    panel: "slowQueries",
+    member: "limit",
+    note: "required in the request, since the host resolves the default",
+  },
+} as const satisfies {
+  readonly [K in keyof Required<NonNullable<Parameters<MonitoringProvider["getSlowQueries"]>[0]>>]: MonitoringPlacement;
+};
+
+const ACTIVE_SESSIONS_OPTIONS_CENSUS = {
+  limit: {
+    where: "panel-request",
+    panel: "activeSessions",
+    member: "limit",
+    note: "required in the request, since the host resolves the default",
+  },
+} as const satisfies {
+  readonly [K in keyof Required<
+    NonNullable<Parameters<MonitoringProvider["getActiveSessions"]>[0]>
+  >]: MonitoringPlacement;
+};
+
+/** The options of `getTableStats` and `getIndexStats`, each member placed. */
+const TABLE_STATS_OPTIONS_CENSUS = {
+  schema: { where: "panel-request", panel: "tables", member: "schema", note: "absent for every user schema" },
+} as const satisfies {
+  readonly [K in keyof Required<NonNullable<Parameters<MonitoringProvider["getTableStats"]>[0]>>]: MonitoringPlacement;
+};
+
+const INDEX_STATS_OPTIONS_CENSUS = {
+  schema: { where: "panel-request", panel: "indexes", member: "schema", note: "absent for every user schema" },
+} as const satisfies {
+  readonly [K in keyof Required<NonNullable<Parameters<MonitoringProvider["getIndexStats"]>[0]>>]: MonitoringPlacement;
+};
+
+/** Each monitoring member's argument count, held to its census by the test. */
+const MONITORING_ARGUMENT_COUNTS = {
+  getHealth: 0 satisfies Required<Parameters<MonitoringProvider["getHealth"]>>["length"],
+  getMonitoringData: 1 satisfies Required<Parameters<MonitoringProvider["getMonitoringData"]>>["length"],
+  getOverview: 0 satisfies Required<Parameters<MonitoringProvider["getOverview"]>>["length"],
+  getPerformanceMetrics: 0 satisfies Required<Parameters<MonitoringProvider["getPerformanceMetrics"]>>["length"],
+  getSlowQueries: 1 satisfies Required<Parameters<MonitoringProvider["getSlowQueries"]>>["length"],
+  getActiveSessions: 1 satisfies Required<Parameters<MonitoringProvider["getActiveSessions"]>>["length"],
+  getTableStats: 1 satisfies Required<Parameters<MonitoringProvider["getTableStats"]>>["length"],
+  getIndexStats: 1 satisfies Required<Parameters<MonitoringProvider["getIndexStats"]>>["length"],
+  getStorageStats: 0 satisfies Required<Parameters<MonitoringProvider["getStorageStats"]>>["length"],
+  getPoolStats: 0 satisfies Required<Parameters<PoolStatsReader["getPoolStats"]>>["length"],
+} as const;
+
+/** Why the options that choose which panels are read stay with the host. */
+const PANEL_CHOICE_REASON = "Which panels a dashboard read asks is the host's choice, made before any panel call.";
+
+const MONITORING_OPTIONS_CENSUS = {
+  includeTables: { where: "host", reason: PANEL_CHOICE_REASON },
+  includeIndexes: { where: "host", reason: PANEL_CHOICE_REASON },
+  includeStorage: { where: "host", reason: PANEL_CHOICE_REASON },
+  slowQueryLimit: {
+    where: "panel-requests",
+    requests: [{ panel: "slowQueries", member: "limit" }],
+    note: "the host resolves the default, 10",
+  },
+  sessionLimit: {
+    where: "panel-requests",
+    requests: [{ panel: "activeSessions", member: "limit" }],
+    note: "the host resolves the default, 50",
+  },
+  schemaFilter: {
+    where: "panel-requests",
+    requests: [
+      { panel: "tables", member: "schema" },
+      { panel: "indexes", member: "schema" },
+    ],
+  },
+} as const satisfies { readonly [K in keyof Required<MonitoringOptions>]: MonitoringPlacement };
+
+const MONITORING_DATA_CENSUS = {
+  timestamp: { where: "host", reason: "The host stamps the dashboard payload when it assembles it." },
+  overview: { where: "panel-answer", panel: "overview" },
+  performance: { where: "panel-answer", panel: "performance" },
+  slowQueries: { where: "panel-answer", panel: "slowQueries" },
+  activeSessions: { where: "panel-answer", panel: "activeSessions" },
+  tables: { where: "panel-answer", panel: "tables" },
+  indexes: { where: "panel-answer", panel: "indexes" },
+  storage: { where: "panel-answer", panel: "storage" },
+  errors: {
+    where: "host",
+    reason: "A failed panel's sentence is the error its panel call raised, which the host lays under the panel's key.",
+  },
+  notOffered: {
+    where: "host",
+    reason:
+      "The panels the session's engine does not offer are the host's reading of the engine's declaration, never read.",
+  },
+  maintenance: {
+    where: "host",
+    reason:
+      "The connected provider's maintenance is the session's maintenance, which the host keeps beside the session.",
+  },
+} as const satisfies { readonly [K in keyof Required<MonitoringData>]: MonitoringPlacement };
+
 /** The committed engine declarations, each the declaration of one shipped type-id. */
 const DECLARATIONS_DIRECTORY = path.join(ROOT, "src/lib/db/engine-declarations");
 
@@ -611,7 +815,13 @@ type SameKeys<A, B> = Mutual<keyof Required<A>, keyof Required<B>>;
 type Element<List> = List extends readonly (infer Item)[] ? Item : never;
 
 /** A placement of any census. */
-type Placement = InputPlacement | ConsolePlacement | ConnectionField | TreePlacement | MaintenancePlacement;
+type Placement =
+  | InputPlacement
+  | ConsolePlacement
+  | ConnectionField
+  | TreePlacement
+  | MaintenancePlacement
+  | MonitoringPlacement;
 
 /** Every placement of every census, by census name and key. */
 function placements(): [string, string, Placement][] {
@@ -641,6 +851,14 @@ function placements(): [string, string, Placement][] {
     maintenance: MAINTENANCE_MEMBER_CENSUS,
     "runMaintenance arguments": RUN_MAINTENANCE_ARGUMENT_CENSUS,
     "previewMaintenance arguments": PREVIEW_MAINTENANCE_ARGUMENT_CENSUS,
+    monitoring: MONITORING_MEMBER_CENSUS,
+    "pool statistics": POOL_STATS_CENSUS,
+    "getSlowQueries options": SLOW_QUERIES_OPTIONS_CENSUS,
+    "getActiveSessions options": ACTIVE_SESSIONS_OPTIONS_CENSUS,
+    "getTableStats options": TABLE_STATS_OPTIONS_CENSUS,
+    "getIndexStats options": INDEX_STATS_OPTIONS_CENSUS,
+    MonitoringOptions: MONITORING_OPTIONS_CENSUS,
+    MonitoringData: MONITORING_DATA_CENSUS,
   };
   return Object.entries(censuses).flatMap(([census, entries]) =>
     Reflect.ownKeys(entries).map((key): [string, string, (typeof entries)[PropertyKey]] => [
@@ -929,6 +1147,300 @@ describe("the call surface census", () => {
     expect(parity).toEqual([true, true, true, true, true, true, true, true, true]);
     expect(keys).toEqual([true, true]);
     expect(back).toEqual([result, preview]);
+  });
+
+  test("every member of today's monitoring and health surface has a place in the monitoring calls, the health call or with the host", () => {
+    const optionCensuses = {
+      getSlowQueries: SLOW_QUERIES_OPTIONS_CENSUS,
+      getActiveSessions: ACTIVE_SESSIONS_OPTIONS_CENSUS,
+      getTableStats: TABLE_STATS_OPTIONS_CENSUS,
+      getIndexStats: INDEX_STATS_OPTIONS_CENSUS,
+    } as const;
+    const monitoring = placements().filter(([census]) =>
+      [
+        "monitoring",
+        "pool statistics",
+        "getSlowQueries options",
+        "getActiveSessions options",
+        "getTableStats options",
+        "getIndexStats options",
+        "MonitoringOptions",
+        "MonitoringData",
+      ].includes(census),
+    );
+    const panels: MonitoringPanel[] = [
+      "overview",
+      "performance",
+      "slowQueries",
+      "activeSessions",
+      "tables",
+      "indexes",
+      "storage",
+    ];
+
+    expect(monitoring.map(([census, key]) => `${census}.${key}`)).toEqual([
+      "monitoring.getHealth",
+      "monitoring.getMonitoringData",
+      "monitoring.getOverview",
+      "monitoring.getPerformanceMetrics",
+      "monitoring.getSlowQueries",
+      "monitoring.getActiveSessions",
+      "monitoring.getTableStats",
+      "monitoring.getIndexStats",
+      "monitoring.getStorageStats",
+      "pool statistics.getPoolStats",
+      "getSlowQueries options.limit",
+      "getActiveSessions options.limit",
+      "getTableStats options.schema",
+      "getIndexStats options.schema",
+      "MonitoringOptions.includeTables",
+      "MonitoringOptions.includeIndexes",
+      "MonitoringOptions.includeStorage",
+      "MonitoringOptions.slowQueryLimit",
+      "MonitoringOptions.sessionLimit",
+      "MonitoringOptions.schemaFilter",
+      "MonitoringData.timestamp",
+      "MonitoringData.overview",
+      "MonitoringData.performance",
+      "MonitoringData.slowQueries",
+      "MonitoringData.activeSessions",
+      "MonitoringData.tables",
+      "MonitoringData.indexes",
+      "MonitoringData.storage",
+      "MonitoringData.errors",
+      "MonitoringData.notOffered",
+      "MonitoringData.maintenance",
+    ]);
+    // Each panel is read by exactly one member, and each panel's answer fills the payload's member of the same name.
+    expect(
+      Object.values(MONITORING_MEMBER_CENSUS).flatMap((placement) => ("panel" in placement ? [placement.panel] : [])),
+    ).toEqual(panels);
+    expect(
+      Object.entries(MONITORING_DATA_CENSUS).flatMap(([key, placement]) =>
+        placement.where === "panel-answer" ? [[key, placement.panel]] : [],
+      ),
+    ).toEqual(panels.map((panel) => [panel, panel]));
+    // Each option a member takes is placed on a member of the request of the panel that member reads.
+    for (const [member, census] of Object.entries(optionCensuses)) {
+      const read = MONITORING_MEMBER_CENSUS[member as keyof typeof optionCensuses].panel;
+      for (const placement of Object.values(census)) expect([member, placement.panel]).toEqual([member, read]);
+      expect([member, Object.keys(census).length]).toEqual([
+        member,
+        MONITORING_ARGUMENT_COUNTS[member as keyof typeof optionCensuses],
+      ]);
+    }
+    expect(MONITORING_ARGUMENT_COUNTS).toEqual({
+      getHealth: 0,
+      getMonitoringData: 1,
+      getOverview: 0,
+      getPerformanceMetrics: 0,
+      getSlowQueries: 1,
+      getActiveSessions: 1,
+      getTableStats: 1,
+      getIndexStats: 1,
+      getStorageStats: 0,
+      getPoolStats: 0,
+    });
+    expect(
+      Object.values(MONITORING_OPTIONS_CENSUS).flatMap((placement) =>
+        placement.where === "panel-requests" ? placement.requests.map(({ panel, member }) => `${panel}.${member}`) : [],
+      ),
+    ).toEqual(["slowQueries.limit", "activeSessions.limit", "tables.schema", "indexes.schema"]);
+    expect(
+      monitoring.filter(([, , placement]) => placement.where === "host").map(([census, key]) => `${census}.${key}`),
+    ).toEqual([
+      "monitoring.getMonitoringData",
+      "MonitoringOptions.includeTables",
+      "MonitoringOptions.includeIndexes",
+      "MonitoringOptions.includeStorage",
+      "MonitoringData.timestamp",
+      "MonitoringData.errors",
+      "MonitoringData.notOffered",
+      "MonitoringData.maintenance",
+    ]);
+  });
+
+  test("the monitoring and health answers are Studio's own shapes", () => {
+    type Form<Panel extends SdkMonitoringPanel> = Extract<MonitoringPanelAnswer, Readonly<Record<Panel, unknown>>>;
+    const parity: [
+      Mutual<SdkMonitoringPanel, MonitoringPanel>,
+      Mutual<AnswerPanel, MonitoringPanel>,
+      Mutual<SdkDatabaseOverview, DatabaseOverview>,
+      Mutual<SdkPerformanceMetrics, PerformanceMetrics>,
+      Mutual<SdkSlowQueryStats, SlowQueryStats>,
+      Mutual<SdkSessionActivity, SessionActivity>,
+      Mutual<SdkActiveSessionDetails, ActiveSessionDetails>,
+      Mutual<SdkTableStats, TableStats>,
+      Mutual<SdkIndexStats, IndexStats>,
+      Mutual<SdkStorageStats, StorageStats>,
+      Mutual<SdkSlowQuery, SlowQuery>,
+      Mutual<SdkActiveSession, ActiveSession>,
+      Mutual<Omit<SdkHealthInfo, "slowQueries" | "activeSessions">, Omit<HealthInfo, "slowQueries" | "activeSessions">>,
+      Mutual<Element<SdkHealthInfo["slowQueries"]>, Element<HealthInfo["slowQueries"]>>,
+      Mutual<Element<SdkHealthInfo["activeSessions"]>, Element<HealthInfo["activeSessions"]>>,
+    ] = [true, true, true, true, true, true, true, true, true, true, true, true, true, true, true];
+    const keys: [
+      SameKeys<SdkDatabaseOverview, DatabaseOverview>,
+      SameKeys<SdkPerformanceMetrics, PerformanceMetrics>,
+      SameKeys<SdkSlowQueryStats, SlowQueryStats>,
+      SameKeys<SdkActiveSessionDetails, ActiveSessionDetails>,
+      SameKeys<SdkTableStats, TableStats>,
+      SameKeys<SdkIndexStats, IndexStats>,
+      SameKeys<SdkStorageStats, StorageStats>,
+      SameKeys<SdkSlowQuery, SlowQuery>,
+      SameKeys<SdkActiveSession, ActiveSession>,
+      SameKeys<SdkHealthInfo, HealthInfo>,
+    ] = [true, true, true, true, true, true, true, true, true, true];
+    const answers: [
+      Mutual<Form<"overview">["overview"], Awaited<ReturnType<MonitoringProvider["getOverview"]>>>,
+      Mutual<Form<"performance">["performance"], Awaited<ReturnType<MonitoringProvider["getPerformanceMetrics"]>>>,
+      Mutual<
+        Element<Form<"slowQueries">["slowQueries"]>,
+        Element<Awaited<ReturnType<MonitoringProvider["getSlowQueries"]>>>
+      >,
+      Mutual<
+        Element<Form<"activeSessions">["activeSessions"]>,
+        Element<Awaited<ReturnType<MonitoringProvider["getActiveSessions"]>>>
+      >,
+      Mutual<Element<Form<"tables">["tables"]>, Element<Awaited<ReturnType<MonitoringProvider["getTableStats"]>>>>,
+      Mutual<Element<Form<"indexes">["indexes"]>, Element<Awaited<ReturnType<MonitoringProvider["getIndexStats"]>>>>,
+      Mutual<Element<Form<"storage">["storage"]>, Element<Awaited<ReturnType<MonitoringProvider["getStorageStats"]>>>>,
+      Mutual<
+        SdkHealthInfo["activeConnections"],
+        Awaited<ReturnType<MonitoringProvider["getHealth"]>>["activeConnections"]
+      >,
+      Mutual<SdkPoolStats, ReturnType<PostgresProvider["getPoolStats"]>>,
+      Mutual<SdkPoolStats, ReturnType<MSSQLProvider["getPoolStats"]>>,
+      Mutual<SdkPoolStats, ReturnType<OracleProvider["getPoolStats"]>>,
+    ] = [true, true, true, true, true, true, true, true, true, true, true];
+    const requests: [
+      Mutual<
+        Extract<MonitoringPanelRequest, { readonly panel: "slowQueries" }>["limit"],
+        NonNullable<NonNullable<Parameters<MonitoringProvider["getSlowQueries"]>[0]>["limit"]>
+      >,
+      Mutual<
+        Extract<MonitoringPanelRequest, { readonly panel: "activeSessions" }>["limit"],
+        NonNullable<NonNullable<Parameters<MonitoringProvider["getActiveSessions"]>[0]>["limit"]>
+      >,
+      Mutual<
+        Extract<MonitoringPanelRequest, { readonly panel: "tables" }>["schema"],
+        NonNullable<Parameters<MonitoringProvider["getTableStats"]>[0]>["schema"]
+      >,
+      Mutual<
+        Extract<MonitoringPanelRequest, { readonly panel: "indexes" }>["schema"],
+        NonNullable<Parameters<MonitoringProvider["getIndexStats"]>[0]>["schema"]
+      >,
+    ] = [true, true, true, true];
+
+    // A sample of each answer crosses both ways, Studio's mutable lists into the SDK's readonly ones and back by element.
+    const overview: DatabaseOverview = {
+      version: "PostgreSQL 17.2",
+      uptime: "3 days",
+      startTime: new Date(1_700_000_000_000),
+      maxConnections: 100,
+      databaseSize: "8 MB",
+      tableCount: 12,
+      indexCount: 4,
+    };
+    const performance: PerformanceMetrics = { cacheHitRatio: 99.5, cacheHitAdvice: "Increase shared_buffers" };
+    const slowQueries: SlowQueryStats[] = [{ query: "select 1", calls: 3, totalTime: 30, avgTime: 10, rows: 3 }];
+    const activeSessions: ActiveSessionDetails[] = [
+      {
+        pid: 4711,
+        user: "app",
+        database: "orders",
+        state: "active",
+        activity: "active",
+        query: "select 1",
+        queryStart: new Date(1_700_000_001_000),
+        duration: "1s",
+        durationMs: 1000,
+      },
+    ];
+    const tables: TableStats[] = [
+      {
+        schemaName: "public",
+        tableName: "orders",
+        totalSize: "8 kB",
+        totalSizeBytes: 8192,
+        lastVacuum: new Date(1_700_000_002_000),
+      },
+    ];
+    const indexes: IndexStats[] = [
+      {
+        schemaName: "public",
+        tableName: "orders",
+        indexName: "orders_pkey",
+        columns: ["id"],
+        isUnique: true,
+        isPrimary: true,
+        indexSize: "8 kB",
+        scans: 3,
+      },
+    ];
+    const storage: StorageStats[] = [{ name: "pg_default", size: "8 MB", sizeBytes: 8_388_608 }];
+    const health: HealthInfo = {
+      databaseSize: "8 MB",
+      cacheHitRatio: "99.5%",
+      slowQueries: [{ query: "select 1", calls: 3, avgTime: "10 ms" }],
+      activeSessions: [
+        { pid: 4711, user: "app", database: "orders", state: "active", query: "select 1", duration: "1s" },
+      ],
+    };
+    const pool: ReturnType<PostgresProvider["getPoolStats"]> = { total: 5, max: 10, idle: 2, active: 3, waiting: 0 };
+    const sdkAnswers: [
+      Form<"overview">,
+      Form<"performance">,
+      Form<"slowQueries">,
+      Form<"activeSessions">,
+      Form<"tables">,
+      Form<"indexes">,
+      Form<"storage">,
+      SdkHealthInfo,
+      SdkPoolStats,
+    ] = [
+      { overview },
+      { performance },
+      { slowQueries },
+      { activeSessions },
+      { tables },
+      { indexes },
+      { storage },
+      health,
+      pool,
+    ];
+    const back: [
+      DatabaseOverview,
+      PerformanceMetrics,
+      SlowQueryStats[],
+      ActiveSessionDetails[],
+      TableStats[],
+      IndexStats[],
+      StorageStats[],
+      HealthInfo,
+      SdkPoolStats,
+    ] = [
+      sdkAnswers[0].overview,
+      sdkAnswers[1].performance,
+      sdkAnswers[2].slowQueries.map((item): SlowQueryStats => item),
+      sdkAnswers[3].activeSessions.map((item): ActiveSessionDetails => item),
+      sdkAnswers[4].tables.map((item): TableStats => item),
+      sdkAnswers[5].indexes.map((item): IndexStats => item),
+      sdkAnswers[6].storage.map((item): StorageStats => item),
+      {
+        ...sdkAnswers[7],
+        slowQueries: sdkAnswers[7].slowQueries.map((item): SlowQuery => item),
+        activeSessions: sdkAnswers[7].activeSessions.map((item): ActiveSession => item),
+      },
+      sdkAnswers[8],
+    ];
+
+    expect(parity).toEqual([true, true, true, true, true, true, true, true, true, true, true, true, true, true, true]);
+    expect(keys).toEqual([true, true, true, true, true, true, true, true, true, true]);
+    expect(answers).toEqual([true, true, true, true, true, true, true, true, true, true, true]);
+    expect(requests).toEqual([true, true, true, true]);
+    expect(back).toEqual([overview, performance, slowQueries, activeSessions, tables, indexes, storage, health, pool]);
+    expect(back[0].startTime).toBe(overview.startTime);
   });
 
   test("a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts", () => {

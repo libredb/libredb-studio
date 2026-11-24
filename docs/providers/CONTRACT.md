@@ -1728,6 +1728,8 @@ The tree's answer shapes, the container, the object and its read range, the kind
 It covers today's maintenance surface, the run and the preview the maintenance routes call, each placed on its maintenance facet and each argument on a member of that facet's request, and the engine principal the maintenance audit row names, placed on the open answer, C-67.
 The run's answer and the preview are mutually assignable with Studio's maintenance result and preview and have their keys, the run's rows and fields compared by their items, and the maintenance vocabulary is Studio's.
 A session's maintenance, narrowed by what its server accepts, is what Studio's `narrowMaintenance` answers for every committed engine declaration, every spec and every placement a server may accept, one operation at a time and all of an engine's at once, C-68.
+It covers today's monitoring, pool statistics and health surface: each panel read placed on `monitoring.panel` with its panel and each of its options on a member of that panel's request, the pool statistics the pool-stats route reads on `monitoring.poolStats`, the health read on `health`, and the dashboard's orchestration, its panel states and the options that choose which panels are read with the host, C-71 and C-72.
+The panel shapes, the pool statistics and the health answer are mutually assignable with Studio's own and have their keys, each answer form's member is the answer of the member that reads its panel, lists compared by their items, and the panel vocabulary is Studio's.
 
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
@@ -1737,6 +1739,8 @@ A session's maintenance, narrowed by what its server accepts, is what Studio's `
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's maintenance surface has a place in the maintenance calls or the open answer"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the maintenance answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's monitoring and health surface has a place in the monitoring calls, the health call or with the host"
+- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the monitoring and health answers are Studio's own shapes"
 - test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
 
 ### C-8 (informative): A provider never ignores a request field it does not honour
