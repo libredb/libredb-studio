@@ -1302,30 +1302,36 @@ Those three reach code and tests only; the four prose greps of the published blo
       `@libredb/provider-sdk/errors`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
       `mapDatabaseError` (`src/lib/db/map-database-error.ts`) reads that row, and neither it nor
       `src/lib/db/errors.ts` names a driver
-- [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`
-      under `src/lib/db/providers/` (or `<family>/<id>-sql-grammar.ts` beside a provider that is one
-      flat file), exporting `<ID>_SQL_GRAMMAR` with every fact of `SqlGrammarSpec`, and add its row to
-      `SQL_GRAMMAR` in `src/lib/db/sql-grammar/index.ts`, which the compiler holds total over
-      `DatabaseType`. **Two of its facts are decisions the compiler cannot make for you.** First,
-      `readsSqlText`: `true` declares the text SQL, and the confirmation gate then applies a SQL span
-      reader to it, which for a JSON or command-line grammar reports ordinary text as unreadable and
-      prompts on every run (#297); it must agree with the provider's `queryLanguage`, which
-      `tests/isolated/sql-grammar-reads-sql-text.test.ts` holds. Second, `grammar`: your own constant
-      with `#`, `[…]`, whether block comments nest and whether `q'…'` is a literal, or
-      `DEFAULT_SQL_GRAMMAR`, the compatibility default, which is SQL Server's bracket reading and
-      MySQL-ish everything else: fine where your engine agrees, a lost row bound or a false prompt
-      where it does not (that is what PostgreSQL's bracket row cost before it was established).
-      Establish each fact from your engine's own documentation or its driver's tokenizer, never from a
-      neighbouring dialect, and leave it at the default rather than guess. `redaction` says what a
-      redacted query event keeps: `sql` with the name quote, `command` with the module's own reader,
-      or `none`, which stores `?`. An engine on `DEFAULT_SQL_GRAMMAR` or with `readsSqlText: false`
-      takes `none` or `command`, never `sql`, because a reader guessing where a literal ends can store
-      the literal; `tests/unit/db/sql-grammar/census.test.ts` holds it. Then regenerate the golden file with
+- [ ] `sqlText` in your engine's declaration, `src/lib/db/engine-declarations/<id>.json`: author
+      `readsSqlText`, `grammar`, `updateTarget` and `completion`, from which Studio composes the
+      engine's row of `SQL_GRAMMAR` (`src/lib/db/sql-grammar/index.ts`; `docs/providers/CONTRACT.md`,
+      M-78), and run `bun run engines:generate`, which regenerates
+      `src/lib/db/engine-catalog/sql-text.generated.ts`. **Two of its facts are decisions the
+      schema cannot make for you.** First, `readsSqlText`: `true` declares the text SQL, and the
+      confirmation gate then applies a SQL span reader to it, which for a JSON or command-line
+      grammar reports ordinary text as unreadable and prompts on every run (#297); it must agree with
+      the provider's `queryLanguage`, which `tests/isolated/sql-grammar-reads-sql-text.test.ts`
+      holds. Second, `grammar`: every fact stated, `#`, `[…]`, whether block comments nest and
+      whether `q'…'` is a literal among them, each fact you have not established at the compatibility
+      default's value (`DEFAULT_SQL_GRAMMAR`, which is SQL Server's bracket reading and MySQL-ish
+      everything else: fine where your engine agrees, a lost row bound or a false prompt where it
+      does not, which is what PostgreSQL's bracket row cost before it was established), and each fact
+      the grammar may leave out at the reading its absence has (S-4). Establish each fact from your
+      engine's own documentation or its driver's tokenizer, never from a neighbouring dialect, and
+      leave it at the default rather than guess.
+      The redaction is a claim, so it is no authored member: add your engine's row to
+      `SQL_TEXT_REDACTION` (`src/lib/db/sql-grammar/redaction.ts`), `sql` with the name quote,
+      `command` with a reader's name, or `none`, which stores `?`, and the declaration generator
+      writes it into the declaration. An engine on the compatibility default's facts or with
+      `readsSqlText: false` takes `none` or `command`, never `sql`, because a reader guessing where
+      a literal ends can store the literal; `tests/unit/db/sql-grammar/census.test.ts` holds it.
+      Only where the declaration or the record names a function (a command redaction's reader, a
+      completion segment formatter or quoted qualifier reader) does a module beside your provider
+      export it, bound in `SQL_GRAMMAR_FUNCTIONS` under that name; any other name stops the
+      registry from loading. Then regenerate the golden file with
       `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/sql-grammar/golden.test.ts`, commit it,
-      and add the `SQL grammar` subsection to your provider doc, which
-      `tests/unit/db/sql-grammar/docs.test.ts` holds to the module.
-      Import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, the one place both are declared (`docs/providers/CONTRACT.md`, S-1).
-      The row is also the source of the engine declaration's `sqlText` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-3).
+      and add the `SQL grammar` subsection to your provider doc, naming your declaration, which
+      `tests/unit/db/sql-grammar/docs.test.ts` holds.
       `readsSqlText: false` and each `confirmExemptForms` form loosen the confirmation gate, so each needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written
 - [ ] `src/lib/db/types.ts`: `queryLanguage`, only when the engine's query text is neither SQL nor JSON.
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.

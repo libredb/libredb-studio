@@ -1158,7 +1158,7 @@ Its grammar is the declaration's `sqlText.grammar`, the one reading the statemen
 `#` is an identifier character and comments open on `--` and `/*` only, from node-oracledb's own SQL tokenizer (`lib/thin/statement.js`).
 Alternate quoting is on, and Oracle is the only row with it: the same tokenizer's `_parseQstring` opens a q-string at a `'` after `q` or `Q`, `nq'...'` included, with `[ ] { } ( ) < >` as paired delimiters, as Oracle's SQL Language Reference (checked 2026-08-05) gives it.
 Block comments are flat: the tokenizer stops at the first `*/`, and the PL/SQL Language Reference says one multiline comment cannot contain another.
-`//` is code, probed 2026-08-25 on Oracle Free through sqlplus: `SELECT 1 AS a // note FROM dual` is ORA-00923.
+`//` is code, probed 2026-08-25 on Oracle Free through sqlplus: `SELECT 1 AS a // note FROM dual` is ORA-00923, "FROM keyword not found where expected", with the caret under the slashes, so nothing on that line is hidden.
 A PL/SQL unit is one statement, ended by SQL*Plus's `/` line: measured on 26ai Free 23.26.3, a procedure cut at its inner `;` was stored INVALID with PLS-00103, and the unit is refused without the `;` after its `END`, so the splitter keeps that one.
 `[...]` is not established and stays at the fail-safe default.
 The update-target reader takes `MINUS` as a set operator here alone, since it is an ordinary column name on every other engine.

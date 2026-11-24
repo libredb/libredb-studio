@@ -143,7 +143,7 @@ MySQL's `BEGIN` alone is a transaction, as SQLite's is, so its rule is not Oracl
 ### S9. A CQL `BEGIN BATCH … APPLY BATCH` is cut at its inner `;`
 
 CQL's batch is one statement whose body holds a `;` after each inner write (`docs/providers/cassandra.md`, "`BEGIN BATCH … APPLY BATCH` is a single statement").
-The `cassandra` grammar row declares no body rule, `script: DEFAULT_SQL_GRAMMAR.script` (`src/lib/db/engine-declarations/cassandra.json`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
+The `cassandra` declaration states no body rule, the default `sqlText.grammar.script` (`src/lib/db/engine-declarations/cassandra.json`), so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at every code `;`.
 On this tree a two-insert batch comes back as three units: `BEGIN BATCH` with the first `INSERT`, the second `INSERT`, and `APPLY BATCH`.
 The multi-statement route runs those units one by one (`POST` in `src/app/api/db/multi-query/route.ts`), so the first fails with "line 0:-1 mismatched input <EOF> expecting K_APPLY" and the editor reports "Executed 0/81 statements" for a batch the splitter cut into 81 units, where the batch should have run as one statement.
 Neither `blocks` value fits: `pl-sql` and `trigger-body` read `BEGIN … END`, and a CQL batch closes with `APPLY BATCH`.

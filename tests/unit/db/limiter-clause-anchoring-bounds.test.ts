@@ -7,9 +7,10 @@
  * tried from every position of a whitespace run, in time quadratic in the run's length, and an earlier alternative that
  * does not end in `\s*$` would match in the middle of a statement and strip the text after it. Each child plants such a
  * clause on trino, whose shipped grammar declares none, as a declaration states it: through a stub of the generated SQL
- * text the SQL grammar is composed from, the shipped record with trino's clauses replaced. Without the whole-pattern anchor the first case reads a million spaces for minutes, so the spawn timeout kills
- * the child within seconds and the case fails by its exit, and the second answers a statement with ` = 1` dropped. The
- * child holds a referenced interval, so it cannot exit early (tests/helpers/bounded-node-child.ts).
+ * text the SQL grammar is composed from, the shipped record with trino's clauses replaced. Without the whole-pattern
+ * anchor the first case reads a million spaces for minutes, so the spawn timeout kills the child within seconds and the
+ * case fails by its exit, and the second answers a statement with ` = 1` dropped. The child holds a referenced
+ * interval, so it cannot exit early (tests/helpers/bounded-node-child.ts).
  *
  * Each case answers whether `applyQueryLimit` gave the statement as written with the bound appended after it, the
  * answer a statement gets where no declared clause matches it, and the answer's tail.
@@ -33,7 +34,9 @@ interface ClauseReport {
 
 const SOURCE = path.join(import.meta.dir, "..", "..", "..", "src");
 
-/** A stub of the generated SQL text: the shipped record with `source` as trino's one trailing limit clause, flags `i`. */
+/**
+ * A stub of the generated SQL text: the shipped record with `source` as trino's one trailing limit clause, flags `i`.
+ */
 function plantedTrino(source: string): string {
   const shipped = path.join(SOURCE, "lib", "db", "engine-catalog", "sql-text.generated.ts");
   const clause = JSON.stringify({ source, flags: "i" });

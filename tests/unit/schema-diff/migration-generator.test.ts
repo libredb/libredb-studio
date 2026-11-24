@@ -1701,7 +1701,7 @@ const TRANSACTION_WRAPPER_COVERAGE: Record<DatabaseType, "BEGIN;" | "BEGIN TRANS
   cassandra: false, // CQL has no BEGIN/COMMIT — measured on 5.0.9 (module docstring)
   // The remaining twenty-four each have a recorded reason for having no `BEGIN;` to emit, in the
   // engine's migration DDL module (its `refusal`, or a const such as `NO_COLUMN_MODIFICATION`), in
-  // each engine's declaration (`sqlText.readsSqlText: false`) or in the provider doc named on the line — this
+  // each engine's declaration (`sqlText.readsSqlText: false`) or in the provider doc named on the line: this
   // table applies those established facts to the wrapper fallback rather than asserting fresh ones,
   // so none of the twenty-four needs a new live probe. What none of them means is "the wrapper
   // bracketed nothing": see the added-table fixture below.

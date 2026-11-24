@@ -103,8 +103,8 @@ const QUERY_EDITOR_MEMBERS = ["editor.dialect", "editor.language"] as const;
 
 /**
  * The SQL text members the SQL text is projected from, M-78: authored members, M-15, its redaction, a claim, never
- * among them. `readsSqlText` and an exempt form of the grammar are the confirmation gate's claims, which the gate counts
- * only through `CONFIRMATION_CLAIM_REVIEW` (S-8), and every other reader reads as declared.
+ * among them. `readsSqlText` and an exempt form of the grammar are the confirmation gate's claims, which the gate
+ * counts only through `CONFIRMATION_CLAIM_REVIEW` (S-8), and every other reader reads as declared.
  */
 const SQL_TEXT_MEMBERS = [
   "sqlText.readsSqlText",

@@ -43,7 +43,8 @@
  * the names of its completion readers (`sqlText.readsSqlText`, `grammar`, `updateTarget` and `completion`), each as the
  * declaration states it: a clause as its source and flags, each word list a list, each function as its name, which
  * src/lib/db/sql-grammar/index.ts binds to Studio's own function when it composes each engine's grammar row. Its
- * `sqlText.redaction` is a claim, so it is never projected: src/lib/db/sql-grammar/redaction.ts is Studio's record of it.
+ * `sqlText.redaction` is a claim, so it is never projected: src/lib/db/sql-grammar/redaction.ts is Studio's record of
+ * it.
  *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
@@ -551,7 +552,8 @@ export function projectQueryEditorFacts(declarations: readonly AuthoredDeclarati
 /**
  * The SQL text of `declarations`, each entry read from `sqlText.readsSqlText`, `grammar`, `updateTarget` and
  * `completion`, members every declaration authors, the grammar in the declaration's own member order. No entry holds
- * the declaration's `sqlText.redaction`: it is a claim, and Studio's record of it is src/lib/db/sql-grammar/redaction.ts.
+ * the declaration's `sqlText.redaction`: it is a claim, and Studio's record of it is
+ * src/lib/db/sql-grammar/redaction.ts.
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */

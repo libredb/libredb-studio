@@ -138,15 +138,15 @@ describe("the plan-draft reader stays reachable from a browser", () => {
     const shared = fs.readFileSync(path.join(ROOT, "src/lib/db/sql-grammar/shared.ts"), "utf8");
     expect(specifiers(shared)).toEqual([]);
 
-    // The SQL grammar registry joined the closure when `grammar.ts` started reading each engine's row from it
-    // (engine contract spec 5.3). Its own closure is walked here, re-exports included and type-only lines left out:
-    // every module it reaches is the registry, the generated SQL text it composes each row from, the function table
-    // lookup, an engine's `sql-grammar` function module, or one of the two leaves an engine module may import, and
-    // those leaves import nothing at all (docs/providers/CONTRACT.md, clause M-78). The type-id check joined it with FND-1: the registry
-    // refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the compatibility
-    // table, the engine catalog it reads the shipped engines from, the connection flags module it reads three records
-    // from, the error classes and the error codes, each named below with its exact value imports. The SDK's SQL
-    // grammar facts joined it when the engine rows started importing the compatibility default from
+    // The SQL grammar registry joined the closure when `grammar.ts` started reading each engine's row from it (engine
+    // contract spec 5.3). Its own closure is walked here, re-exports included and type-only lines left out: every
+    // module it reaches is the registry, the generated SQL text it composes each row from, the function table lookup,
+    // an engine's `sql-grammar` function module, or one of the two leaves an engine module may import, and those leaves
+    // import nothing at all (docs/providers/CONTRACT.md, clause M-78). The type-id check joined it with FND-1: the
+    // registry refuses a value outside the type-id union through `typeIdRow`, and the check reaches only the
+    // compatibility table, the engine catalog it reads the shipped engines from, the connection flags module it reads
+    // three records from, the error classes and the error codes, each named below with its exact value imports. The
+    // SDK's SQL grammar facts joined it when the engine rows started importing the compatibility default from
     // `@libredb/provider-sdk/sql`: the specifier resolves through the package's `exports`, and each file it reaches
     // value-imports only files of its own directory.
     const valueSpecifiers = (source: string): readonly string[] =>

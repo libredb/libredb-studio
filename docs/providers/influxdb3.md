@@ -485,9 +485,10 @@ For the Charts tab, order by `time` ascending and choose `time` as the x axis: t
 
 How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/influxdb3.json`](../../src/lib/db/engine-declarations/influxdb3.json), from which the `influxdb3` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
-Every fact is Apache DataFusion as InfluxDB 3.12.0 Core parses it, each a statement the server answered through `POST /api/v3/query_sql` with the body the provider sends, re-run 2026-10-04.
+Every fact is Apache DataFusion as InfluxDB 3.12.0 Core parses it, each a statement the server answered through `POST /api/v3/query_sql` with the body the provider sends, `{"db":"home","q":<text>,"format":"jsonl"}`, re-run 2026-10-04.
+Three more measured facts are no grammar facts and are carried where the repository keeps them: a string doubles its quote (`''`) and gives a backslash no meaning (the standard literal rule in `values.ts`), a name is quoted with `"` and doubles it (`""`), and an unquoted name folds to lower case (the default branch of `quoteIdentifier`).
 `#` opens nothing: `SELECT 1 AS x # c` is HTTP 400, `ParserError("Expected: end of statement, found: # at Line: 1, Column: 15")`.
-`[` is a subscript and an array literal that nests, never a name quote: `SELECT [1,2][1] AS x` answers 1, `SELECT [[1,2],[3,4]][2][1] AS x` answers 3, `SELECT ['a]b'][1] AS x` answers `a]b`, and `SELECT [room] FROM home` answers an array column named `make_array(home.room)`.
+`[` is a subscript and an array literal that nests, never a name quote: `SELECT [1,2] AS a` answers `[1,2]`, `SELECT [1,2][1] AS x` answers 1, `SELECT [[1,2],[3,4]][2][1] AS x` answers 3, `SELECT ['a]b'][1] AS x` answers `a]b`, and `SELECT [room] FROM home` answers an array column named `make_array(home.room)`.
 Block comments nest: `SELECT 1 /* a /* b */ c */ AS x` answers `{"x":1}`.
 `SELECT q'[x]' AS x` and `SELECT 1 AS x // c` are each HTTP 400 `ParserError`, so there is no alternate quoting and no `//` comment.
 `readsSqlText` is `true`, for the search pair's reason: its text is SQL and its provider extends `SQLBaseProvider`, so the SQL gate reads it and will prompt on a `DELETE` or `DROP` the provider then refuses, a documented cost.

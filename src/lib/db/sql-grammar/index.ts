@@ -9,11 +9,11 @@
  * - Studio's grammar function table, `SQL_GRAMMAR_FUNCTIONS`, which binds each function name a declaration or the
  *   record gives to the function Studio's own source holds for that engine at that slot.
  *
- * The grammar is the declaration's facts in its member order, each fact a declaration states at the reading its
- * absence has left out (clause S-4), so a reader that reads an absent fact through `=== undefined` reads it as it always
- * has, and each trailing limit clause is compiled once, here. A declaration's grammar facts, its update target words and
- * its completion readers' names are therefore edited in its file under src/lib/db/engine-declarations and regenerated
- * with `bun run engines:generate`; its redaction is edited in ./redaction.ts.
+ * The grammar is the declaration's facts in its member order, each fact a declaration states at the reading its absence
+ * has left out (clause S-4), so a reader that reads an absent fact through `=== undefined` reads it as it always has,
+ * and each trailing limit clause is compiled once, here. A declaration's grammar facts, its update target words and its
+ * completion readers' names are therefore edited in its file under src/lib/db/engine-declarations and regenerated with
+ * `bun run engines:generate`; its redaction is edited in ./redaction.ts.
  */
 import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";

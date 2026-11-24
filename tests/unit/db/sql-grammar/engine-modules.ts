@@ -85,7 +85,9 @@ export function resolveSpecifier(specifier: string, fromPath: string): string | 
   throw new Error(`${specifier} imported by ${fromPath} resolves to no file`);
 }
 
-/** The suffixes of the bindings the registry imports from a function module, one per slot kind of its function table. */
+/**
+ * The suffixes of the bindings the registry imports from a function module, one per slot kind of its function table.
+ */
 const FUNCTION_SUFFIXES = ["_REDACTION_READER", "_FORMAT_SEGMENT", "_READ_QUOTED_QUALIFIER"] as const;
 
 /**

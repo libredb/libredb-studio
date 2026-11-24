@@ -114,7 +114,9 @@ export const ENGINE_EDITOR_MODULE = "src/lib/db/engine-catalog/editor.generated.
  */
 export const ENGINE_QUERY_EDITOR_MODULE = "src/lib/db/engine-catalog/query-editor.generated.ts";
 
-/** The generated SQL text module in the repository: each engine's SQL text, which src/lib/db/sql-grammar/index.ts reads. */
+/**
+ * The generated SQL text module in the repository: each engine's SQL text, which src/lib/db/sql-grammar/index.ts reads.
+ */
 export const ENGINE_SQL_TEXT_MODULE = "src/lib/db/engine-catalog/sql-text.generated.ts";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..");

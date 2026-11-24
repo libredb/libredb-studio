@@ -375,9 +375,9 @@ A backslash inside `"..."` is part of the name, so `"a\b"` names the column `a\b
 How this engine's statement text is read is declared once, in the `sqlText` segment of its declaration, [`src/lib/db/engine-declarations/snowflake.json`](../../src/lib/db/engine-declarations/snowflake.json), from which the `snowflake` row of the SQL grammar registry in `src/lib/db/sql-grammar/` is composed.
 Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 The lexical facts were measured on the trial capture of 2026-10-12 (Snowflake 10.37.100), each recorded in `tests/fixtures/snowflake/trial-2026-10-12-v10.37.100/`; the rest are read off Snowflake's SQL reference.
-`#` is code: the trial refused `SELECT 3 # 2` at the `#`.
+`#` is code: the trial refused `SELECT 3 # 2` at the `#` ("unexpected '# '"), and ran `X''` as a binary value, which the reader reads as a name and an ordinary string.
 `[` is a subscript into a semi-structured value, and names are quoted with `"` only.
-Block comments are flat: the trial ran `SELECT /* a /* b */ 1` and refused the same text with a second `*/`.
+Block comments are flat: the trial ran `SELECT /* a /* b */ 1` and refused the same text with a second `*/` ("unexpected '/'").
 `//` is a line comment: the trial ran `SELECT 1 AS c // a comment`.
 A backslash escapes inside `'...'` but not inside `"..."` (a column named from `"a\b"` is `a\b`), and a `$` that would open a tagged run is code (`SELECT 1 AS a$b$c` ran as the name `A$B$C`).
 The trial also ran `'a\<line feed>b'` as a three-character string, which the shared reader leaves unterminated, the fail-safe direction.
@@ -667,7 +667,7 @@ The absence is `snowflake`'s entry in `EXPECTED_EDIT_ABSTAINERS` (`tests/helpers
 
 ### 8.7 Editor
 
-Format uses sql-formatter's Snowflake language (the grammar's `formatterLanguage`), so `QUALIFY` stays a clause on its own line; text that language cannot read, such as a `@stage` reference, is left as written.
+Format uses sql-formatter's Snowflake language (the grammar's `formatterLanguage`), so `QUALIFY` stays a clause on its own line (formatted as PostgreSQL, `QUALIFY` was lower-cased and joined to the `GROUP BY` list and `@stage` became `@ stage`); text that language cannot read, such as a `@stage` reference, is left as written.
 Completion offers Snowflake's own clauses and functions (the grammar's `completionWords`, among them `QUALIFY`, `ARRAY_AGG`, `PARSE_JSON`, `FLATTEN`, `CURRENT_ROLE` and `CURRENT_WAREHOUSE`) beside the shared SQL lists, a function inserted as a call; no `SYSTEM$` function is offered.
 
 ### 8.8 SQL writing

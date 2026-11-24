@@ -810,6 +810,15 @@ bound stands where the grammar places it, and a bound that already stands before
 than doubled past it (#1981). MySQL's spellings are `FOR UPDATE` and `FOR SHARE`, each optionally
 `OF tbl[, tbl]`, `NOWAIT` or `SKIP LOCKED`; both engines also take `LOCK IN SHARE MODE`, and MariaDB
 additionally accepts `WAIT n` there.
+Each declared clause pattern takes one clause of the run, so a statement carrying several, such as
+`FOR SHARE OF t1 FOR UPDATE OF t2`, keeps them in the order they were written; `SKIP LOCKED`, `NOWAIT`,
+`WAIT n` and the `OF` list are options of the clause, since a pattern that took `SKIP LOCKED` off on its
+own would re-attach it before `FOR UPDATE`.
+A name in the `OF` list is a bare token, a backtick-quoted name or a double-quoted one, a quote inside
+either doubled; the bare token excludes quotes, brackets and commas, so a literal or a quoted name that
+merely ends in the clause words (`WHERE note = "x FOR UPDATE OF t"`) is not stripped and the bound keeps
+its place at the end, and it excludes `)`, so a locking clause inside a subquery is never the statement's
+own tail.
 Default page size `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
 MySQL's `#` line comment is skipped when the statement type is read, alongside `--` and `/* … */`
@@ -966,9 +975,11 @@ How this engine's statement text is read is declared once, in the `sqlText` segm
 Its grammar is the declaration's `sqlText.grammar`, the one reading the statement splitter, the row limiter, the confirmation gate and query-event redaction share, so they cannot disagree about where a literal or a comment ends.
 `#` to end of line is MySQL's and MariaDB's second comment form, pinned in the MySQL provider suite (#275).
 Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026-08-05) states nested comments are not supported and are deprecated.
-`//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064.
+It adds that they "might be permitted" under some conditions and that users should avoid them, which is a reason to read the first `*/` as the end rather than to guess at a second reading.
+`//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064, "check the manual ... near '// note'", so nothing on that line is hidden.
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
 `[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+`[...]` is no name quote, since MySQL gives it no meaning outside a JSON path written inside a string, but there is no subscript rule to read it under instead, and one dialect's rule is not read off another's behaviour; the name reading costs a bound on a nested bracket run and can never misplace one, since a run it cannot close is undeterminable and an undeterminable end is not cut.
 The confirmation gate asks before the INSERT-shaped statements whose text changes rows already there, as it asks before `UPDATE` and `DELETE`.
 `REPLACE` (`confirmForms`) deletes the row a new one collides with on a primary or unique key; its `INTO` is optional, so every statement led by the word asks.
 `ON DUPLICATE KEY UPDATE` (`confirmCodeForms`) asks wherever it is in the statement's code, after `VALUES`, `SET` or `SELECT`.
