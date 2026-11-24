@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
-import { checkEditorQuery, runEditorQuery } from "@/lib/api/editor-query";
+import { checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -17,6 +19,8 @@ import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
+import { gateRun } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   queryEventRequest,
@@ -103,8 +107,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    // The page bounds and the console text bound, before any provider resolves (`src/lib/api/editor-query.ts`).
-    const refusal = checkEditorQuery({ statement: sql, type: connection.type, options });
+    // The page bounds, the connection's statement timeout and the console text bound, before any provider resolves
+    // (`src/lib/api/editor-query.ts`).
+    const refusal = checkEditorQuery({
+      statement: sql,
+      type: connection.type,
+      options,
+      queryTimeout: connection.queryTimeout,
+    });
     if (refusal !== null) {
       return NextResponse.json({ error: refusal.error }, { status: refusal.status });
     }
@@ -186,13 +196,18 @@ export async function POST(req: NextRequest) {
        * operator-pinned `database` with no walk to justify it, so it is refused here in words rather
        * than quietly honoured or quietly ignored.
        *
-       * READ FROM THE DECLARATION, BEFORE ANY SOCKET. Capabilities are type-driven, so the
-       * unconnected provider `POST /api/db/provider-meta` reads them from (#457) answers the same
-       * question. Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
+       * READ FROM THE DECLARATION, BEFORE ANY SOCKET. Capabilities are type-driven, so
+       * `readProviderDeclarations`, the read `POST /api/db/provider-meta` takes (#457), answers the same
+       * question without connecting and without opening the connection's tunnel (FND-2 slice 5). Checked after `getOrCreateProvider`, an unreachable Postgres answered 503 for a
        * request that was never valid, and a reachable one was connected only to be refused.
+       *
+       * Built under the session's editor posture, as provider-meta builds it, so a connection the
+       * posture denies file access is refused here before Studio reads the path it names.
        */
-      const declared = await createDatabaseProvider(connection);
-      const capabilities = declared.getCapabilities();
+      const { capabilities } = await readProviderDeclarations(
+        connection,
+        editorExecutionContext(guard.session, connection),
+      );
       if (capabilities.keyScan === undefined) {
         return NextResponse.json(
           {
@@ -223,6 +238,21 @@ export async function POST(req: NextRequest) {
       connection = { ...connection, database: String(database) };
     }
 
+    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"): after every field check and
+    // after the database override, so a token binds the connection that runs, and before the admission gate and any
+    // provider, so a request it answers opens nothing, runs nothing and records no query event.
+    const gate = await gateRun({
+      route: "query",
+      issuer: runConfirmationIssuerForSession(guard.session),
+      connection,
+      catalog: requestCatalog(body),
+      sql,
+      params: bound.params,
+      confirmation: body.confirmation,
+      explain: explain.explain !== undefined,
+    });
+    if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+
     // Before the provider: a request the gate refuses opens nothing and runs nothing.
     stage = "admission";
     admitQueryExecution();
@@ -231,7 +261,13 @@ export async function POST(req: NextRequest) {
     // The DuckDB editor file-access posture rides on the server-derived execution context: an
     // admin keeps the full editor reach, every other role opens with external access off, and so
     // does every role on a seed a non-admin role can use, whose one handle they share (non-admin DuckDB file access).
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The open is waited for within its engine's connect budget and while the request stays (`openWithinCall`): a wait
+    // that ends answers 504 or 499, not-sent, and the open goes on for the next request.
+    // `resolved` holds the connection narrowed for the callback, which TypeScript does not narrow `connection` in.
+    const resolved = connection;
+    const provider = await openWithinCall(req.signal, resolved.type, (wait) =>
+      editorProvider(guard.session, resolved, requestCatalog(body), wait),
+    );
 
     // The statement that actually runs. For an explain request it is the one the
     // CONNECTED provider's strategy builds, never the caller's own SQL: falling
@@ -272,6 +308,7 @@ export async function POST(req: NextRequest) {
       queryId,
       signal: req.signal,
       route: "api/db/query",
+      scrub: providerTextScrub(connection, "any"),
     });
     recordExecutedUnit(events, {
       connection,
@@ -280,7 +317,11 @@ export async function POST(req: NextRequest) {
       explain: explainMode,
       ended: { rowCount: answered.rowCount },
     });
-    return NextResponse.json({ ...answered, ...(explainFormat !== undefined && { explainFormat }) });
+    return NextResponse.json({
+      ...answered,
+      ...(explainFormat !== undefined && { explainFormat }),
+      ...(gate.unconfirmed && { confirmation: "unconfirmed" }),
+    });
   } catch (error) {
     if (stage === "execution") {
       recordExecutedUnit(events, {
@@ -293,6 +334,10 @@ export async function POST(req: NextRequest) {
     } else if (stage === "admission" || (connection === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection, statement: submitted, started, error });
     }
-    return createErrorResponse(error, { route: "api/db/query" });
+    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
+    return createErrorResponse(error, {
+      route: "api/db/query",
+      scrub: connection === undefined ? undefined : providerTextScrub(connection, "any"),
+    });
   }
 }

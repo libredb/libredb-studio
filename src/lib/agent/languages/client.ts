@@ -56,11 +56,24 @@ export const DEFAULT_STATEMENT_LANGUAGE = "sql" as const satisfies AgentStatemen
 
 /**
  * The family a run reads: its persisted language, or `DEFAULT_STATEMENT_LANGUAGE` when the record holds none. The one
- * place an absent language is read. The id is not validated, so an unknown one fails where its resolver names it.
+ * place an absent language is read. The id is not validated here: a ledger whose header names a language this build
+ * does not hold is refused when it is read (`runHeaderRefusal` in `run-ledger-ids.ts`), so such an id never reaches a
+ * record, and a caller that passes one fails where its resolver names it.
  */
 export function statementFamilyOf(language: AgentStatementLanguageId | undefined): AgentStatementLanguageId {
   return language ?? DEFAULT_STATEMENT_LANGUAGE;
 }
+
+/**
+ * The statement languages Studio has retired: ids a run header may carry from an earlier release, whose pack this build
+ * no longer holds. A header naming one is refused when its ledger is read, as retired rather than as unknown.
+ *
+ * Retiring a language means removing its pack while its id stays here, so the ledgers that name it keep being named.
+ * A change that removes a language's pack adds its id to this set in the same change; the census in
+ * `tests/unit/lib/agent/run-ledger-ids.test.ts` fails until it does. No language has been retired yet (measured over
+ * the history of `AgentStatementLanguageId`), so the set is empty.
+ */
+export const RETIRED_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set<string>();
 
 const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClientPack>> = Object.freeze({
   sql: SQL_CLIENT_PACK,
@@ -88,6 +101,13 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   mqttread: MQTTREAD_CLIENT_PACK,
   sparkplugread: SPARKPLUGREAD_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
+
+const LIVE_STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(Object.keys(CLIENT_PACKS));
+
+/** Whether `value` is exactly one of the statement languages this build holds a pack for. A prototype key is not one. */
+export function isAgentStatementLanguage(value: string): value is AgentStatementLanguageId {
+  return LIVE_STATEMENT_LANGUAGES.has(value);
+}
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
 export function languageClientPack(language: AgentStatementLanguageId): AgentLanguageClientPack {

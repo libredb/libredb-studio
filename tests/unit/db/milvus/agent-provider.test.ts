@@ -22,6 +22,7 @@ import {
   scopeMilvusWire,
 } from "../../../helpers/milvus-agent";
 import { okStatus, type RecordedMilvusAnswer, type RecordedMilvusWire } from "../../../helpers/milvus-wire";
+import { errorKind } from "@/lib/db/error-record";
 
 const PASSWORD = "not-a-real-password";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -225,6 +226,7 @@ describe("an agent request", () => {
     const { provider } = await connected();
     const error = await rejection(provider.queryReadOnly(request("collections/list"), { ...BUDGET, maxResultRows: 1 }));
     expect(error).toBeInstanceOf(QueryError);
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a request still unanswered at its deadline is the time budget's refusal", async () => {
@@ -234,6 +236,7 @@ describe("an agent request", () => {
     );
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toContain("50ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a close while the request waits ends it, worded as a cancel", async () => {

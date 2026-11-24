@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { providerCacheKey } from "@/lib/db/provider-cache-key";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { providerCacheKey, providerOwner } from "@/lib/db/provider-cache-key";
 import {
   CONNECTION_FIELDS,
   type FieldClass,
@@ -9,7 +10,8 @@ import {
   SSH_TUNNEL_FIELDS,
   SSL_FIELDS,
 } from "@/lib/storage/connection-secrets";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, LITERAL_SEED_FILE, type WithLiteralSeedFile } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy, shapeOfRefusal } from "../../../helpers/outside-the-union";
 
 /**
  * The read-only mode in the provider cache key, and in nothing else (#1089).
@@ -249,6 +251,7 @@ describe("providerCacheKey frames every public field that decides who a connecti
     ],
     ["role", { ...base, role: "STUDIO_RO" }, { ...base, role: "STUDIO_RW" }],
     ["authMethod", { ...base, authMethod: "keypair" }, { ...base, authMethod: "pat" }],
+    ["managed", { ...base, managed: true }, base],
     [
       "sshTunnel.authMethod",
       { ...base, sshTunnel: { ...tunnel, authMethod: "privateKey" } },
@@ -271,6 +274,76 @@ describe("providerCacheKey frames every public field that decides who a connecti
 
   test("an empty region and an absent one answer the same key, because both mean us-east-1", async () => {
     expect(await providerCacheKey({ ...base, region: "" })).toBe(await providerCacheKey(base));
+  });
+});
+
+/**
+ * The operator's grant. `managed: true` decides whom an empty credential signs in as: BigQuery and Firestore sign a
+ * keyless connection in with the server's own identity only under it. A seed demoted to `managed: false` keeps its id,
+ * server and empty credential, so without the grant in the key it was handed the provider opened as the server
+ * (tests/api/db/demoted-seed.test.ts reproduces it through POST /api/db/query).
+ */
+describe("providerCacheKey frames the operator's managed grant", () => {
+  const today =
+    "7:cluster64:e2db789313b86b9d6312f61cf097d28ccb162834df6429c22d049c2d64f138c564:a955208a182148bc3f483b9983aab19b4d188b568948e46de77efd445e57d7c210:read-write";
+
+  test("two records that differ only in managed answer different keys", async () => {
+    expect(await providerCacheKey({ ...base, managed: true })).not.toBe(
+      await providerCacheKey({ ...base, managed: false }),
+    );
+  });
+
+  test("a record without managed and one with managed: false keep today's key, byte for byte", async () => {
+    expect(await providerCacheKey(base)).toBe(today);
+    expect(await providerCacheKey({ ...base, managed: false })).toBe(today);
+  });
+
+  test("a governed-shape keyless BigQuery seed and its demoted copy never share an entry", async () => {
+    const seeded: DatabaseConnection = {
+      id: "seed:bq",
+      name: "Demo BigQuery",
+      type: "bigquery",
+      database: "demo-project",
+      password: "",
+      managed: true,
+      createdAt: new Date(0),
+    };
+    const demoted: DatabaseConnection = { ...seeded, managed: false };
+    expect(await providerCacheKey(seeded)).not.toBe(await providerCacheKey(demoted));
+    expect(await providerCacheKey(seeded, undefined, "alice-subject")).not.toBe(
+      await providerCacheKey(demoted, undefined, "alice-subject"),
+    );
+  });
+});
+
+/**
+ * The literal-mode marker. A seed-file row read in literal mode (SEED_LITERAL_VALUES) carries LITERAL_SEED_FILE, and
+ * such a row is not server-written, so it never signs in with the server's own identity. The operator loader reads
+ * the mode on every call, so the same record can arrive with and without the marker; a provider opened without it must
+ * never be handed to the record carrying it. Framed last and only when set, so every other key stays byte for byte.
+ */
+describe("providerCacheKey frames the literal-mode seed-file marker", () => {
+  const seeded: DatabaseConnection & WithLiteralSeedFile = {
+    id: "seed:bq",
+    name: "Demo BigQuery",
+    type: "bigquery",
+    database: "demo-project",
+    password: "",
+    managed: true,
+    createdAt: new Date(0),
+  };
+  const today =
+    "7:seed:bq64:739c7337b3e9ca314d6f2972d0962962bc250329bdbce39c19cfe440640d597b64:e418ef0ce22bc6e06582a93c1f496129e56c82f0f40e5891a880559a71b3ff6e10:read-write";
+
+  test("the same record with and without the marker answers different keys", async () => {
+    expect(await providerCacheKey({ ...seeded, [LITERAL_SEED_FILE]: true })).not.toBe(await providerCacheKey(seeded));
+    expect(await providerCacheKey({ ...seeded, [LITERAL_SEED_FILE]: true }, undefined, "alice-subject")).not.toBe(
+      await providerCacheKey(seeded, undefined, "alice-subject"),
+    );
+  });
+
+  test("a record without the marker keeps today's key, byte for byte", async () => {
+    expect(await providerCacheKey(seeded)).toBe(today);
   });
 });
 
@@ -326,6 +399,44 @@ describe("providerCacheKey frames the owner of a per-user provider", () => {
         );
       }
     }
+  });
+});
+
+describe("a type outside the union is refused by name, never read as another engine's row (FND-1)", () => {
+  const typed = (value: unknown): DatabaseConnection => ({ ...base, type: value as DatabaseType });
+
+  /** The shape of the `UnknownProviderError` `call` rejects with, or "returned" when it settles with a key. */
+  const refusalRejectedBy = async (call: () => Promise<unknown>) => {
+    try {
+      await call();
+    } catch (error) {
+      if (error instanceof UnknownProviderError) return shapeOfRefusal(error);
+      throw error;
+    }
+    return "returned";
+  };
+
+  test.each(OUTSIDE_THE_UNION)("providerOwner refuses %s", (_label, value) => {
+    expect(refusalThrownBy(() => providerOwner(typed(value), "alice-subject"))).toEqual(refusalOf(value));
+  });
+
+  /** Each value outside the union under each file-access posture a caller can pass. */
+  const underEachPosture = OUTSIDE_THE_UNION.flatMap(([label, value]) =>
+    [undefined, true, false].map((posture) => [label, value, posture] as const),
+  );
+
+  test.each(underEachPosture)(
+    "providerCacheKey refuses %s with posture %s before it frames anything",
+    async (_label, value, posture) => {
+      expect(await refusalRejectedBy(() => providerCacheKey(typed(value), posture, "alice-subject"))).toEqual(
+        refusalOf(value),
+      );
+    },
+  );
+
+  test("a type id keeps its owner and its key", async () => {
+    expect(providerOwner(base, "alice-subject")).toBe("alice-subject");
+    expect(await refusalRejectedBy(() => providerCacheKey(base, false, "alice-subject"))).toBe("returned");
   });
 });
 

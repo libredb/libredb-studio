@@ -57,12 +57,15 @@ import { randomBytes } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   OffsetUnsupportedError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -94,7 +97,8 @@ import {
   type TableStats,
 } from "@/lib/db/types";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "@/lib/sql/spans";
 import {
   assertReadOnlyBudget,
@@ -102,7 +106,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { cassandraAgentStatementRefusal, verifyCassandraAgentProfile } from "./agent-boundary";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
 import {
@@ -312,9 +316,9 @@ export class CassandraProvider extends SQLBaseProvider {
       // pastes.
       supportsConnectionString: false,
       defaultPort: CASSANDRA_DEFAULT_PORT,
-      // `identifierQuoting` is deliberately ABSENT: the field exists for engines whose
-      // port cannot answer for their dialect, and 9042 is Cassandra's alone. The
-      // generators' default branch is already measured-correct here - `SELECT "id"
+      // `identifierQuoting` is deliberately ABSENT: Cassandra has no row of its own in
+      // `SQL_ENGINE_GENERATORS`, and the generators' default branch is already
+      // measured-correct here - `SELECT "id"
       // FROM probe.customers` returns the column and the bare form works too.
       //
       // `statementTerminator` is absent for the same reason: measured, `SELECT id FROM
@@ -363,10 +367,6 @@ export class CassandraProvider extends SQLBaseProvider {
       // error here (each measured). The two search engines declare this field for the
       // same reason.
       statementLanguage: "CQL (Cassandra Query Language) - no JOIN, no subquery, no OFFSET",
-      // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
-      // ALWAYS empty on Cassandra - and it used to name a PostgreSQL extension (#463).
-      slowQueriesEmptyState:
-        "Cassandra keeps no aggregate of finished statements: the slow-query threshold writes to the node's log file rather than to a table.",
     };
   }
 
@@ -703,7 +703,7 @@ export class CassandraProvider extends SQLBaseProvider {
             })
             .catch((error: unknown) => {
               if (error instanceof CassandraTransportError && error.category === "client-timeout") {
-                throw new QueryError(
+                throw new TimeBudgetRefusal(
                   `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
                   this.type,
                   sql,
@@ -752,7 +752,7 @@ export class CassandraProvider extends SQLBaseProvider {
   ): QueryResult {
     const rows = result.rows;
     if (rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), this.type, sql);
     }
     if (result.pageState !== null) {
       throw new QueryError(
@@ -763,7 +763,7 @@ export class CassandraProvider extends SQLBaseProvider {
     }
     const bytes = measureResultBytes(rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return {
       rows,
@@ -915,10 +915,8 @@ export class CassandraProvider extends SQLBaseProvider {
   /**
    * Empty, and it asks the cluster nothing: there is no slow-query log to read.
    *
-   * The one always-empty panel that stays empty. `QueriesTab` renders
-   * `ProviderLabels.slowQueriesEmptyState` in its place, and this provider declares one
-   * (`getLabels()` above), so Cassandra's own sentence already reaches the user here -
-   * which is the thing the absence mechanism exists to deliver.
+   * The Queries panel is not offered (`ENGINE_FACETS`), so core never reads this and
+   * nothing draws it.
    */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
     return Promise.resolve(readSlowQueries());

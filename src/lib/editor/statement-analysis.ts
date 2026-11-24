@@ -5,7 +5,7 @@ import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type RunTargetRange, runnableTarget } from "@/lib/sql/run-target";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
-import type { DatabaseType } from "@/lib/types";
+import type { ConnectionEnvironment, DatabaseType } from "@/lib/types";
 
 /**
  * What Run does with the editor's text, decided as the web editor decides it, in parts that hold no component, no React
@@ -69,6 +69,11 @@ export interface StatementAnalysisInput {
   capabilities: ProviderCapabilities;
   /** The connection's name, which a typed confirmation of the connection asks for. */
   connectionName: string | undefined;
+  /**
+   * The connection's environment. On `production` every statement the gate asks about is confirmed by typing the
+   * connection's name (`escalatedAsk`); absent reads as any other environment.
+   */
+  connectionEnvironment?: ConnectionEnvironment;
 }
 
 /**
@@ -150,7 +155,7 @@ export function typedConfirmationExpected(
  * Throws the run target's `RunTargetRangeError` on offsets it cannot honour.
  */
 export function analyzeStatement(input: StatementAnalysisInput): StatementAnalysis {
-  const { text, selection, cursor, databaseType, capabilities, connectionName } = input;
+  const { text, selection, cursor, databaseType, capabilities, connectionName, connectionEnvironment } = input;
   const target = runnableTarget({
     text,
     selection,
@@ -169,24 +174,106 @@ export function analyzeStatement(input: StatementAnalysisInput): StatementAnalys
   const route: StatementRoute = runsAsScript(statement, databaseType, capabilities.queryLanguage)
     ? "multi-query"
     : "query";
-  if (!isDangerousQuery(statement, databaseType)) return { decision: "run", statement, range, route };
-
-  const ask = vocabularyTypedConfirmation(databaseType, statement);
-  let typedConfirmation: TypedConfirmation | null = null;
-  if (ask !== undefined) {
-    const expected = typedConfirmationExpected(ask, connectionName);
-    if (expected === undefined) return { decision: "refuse", statement, range, refusal: TYPED_NAME_MISSING_REFUSAL };
-    typedConfirmation =
-      ask.type === "text"
-        ? { type: "text", expected }
-        : { type: "connection-name", expected, targets: [...ask.targets] };
-  }
+  const verdict = confirmationVerdict(statement, databaseType, connectionName, connectionEnvironment);
+  if (verdict.decision === "run") return { decision: "run", statement, range, route };
+  if (verdict.decision === "refuse") return { decision: "refuse", statement, range, refusal: verdict.refusal };
   return {
     decision: "confirm",
     statement,
     range,
     route,
-    unreadable: hasUnreadableRun(statement, databaseType),
-    typedConfirmation,
+    unreadable: verdict.unreadable,
+    typedConfirmation: verdict.typedConfirmation,
   };
+}
+
+/**
+ * Whether the confirmation gate asks about this statement before it runs, and what it asks: steps 4 and 5 of
+ * `analyzeStatement`, apart from the target, the route and the row refusal.
+ *
+ * - `run`: the gate does not ask.
+ * - `confirm`: the statement runs once it is confirmed, by typing the expected value where `typedConfirmation` is not
+ *   null; `unreadable` says part of it could not be read, which is a reason the gate asks.
+ * - `refuse`: the statement is confirmed by typing the connection's name, and the connection has none
+ *   (`TYPED_NAME_MISSING_REFUSAL`).
+ *
+ * The connection's environment changes only what is typed, never whether the gate asks: on `production` every
+ * statement the gate asks about is confirmed by typing the connection's name (`typedConfirmationFor`), and a read
+ * still runs.
+ *
+ * One implementation for every reader: `analyzeStatement` composes it, and the run routes classify a submitted
+ * statement with it (`src/lib/api/run-confirmation.ts`). It reads the text with the gate's own readers,
+ * `isDangerousQuery`, `vocabularyTypedConfirmation` and `hasUnreadableRun`, and throws whatever they throw.
+ */
+export type ConfirmationVerdict =
+  | { decision: "run" }
+  | { decision: "confirm"; unreadable: boolean; typedConfirmation: TypedConfirmation | null }
+  | { decision: "refuse"; refusal: string };
+
+export function confirmationVerdict(
+  statement: string,
+  databaseType: DatabaseType,
+  connectionName: string | undefined,
+  connectionEnvironment?: ConnectionEnvironment,
+): ConfirmationVerdict {
+  if (!isDangerousQuery(statement, databaseType)) return { decision: "run" };
+
+  const typedConfirmation = typedConfirmationFor(statement, databaseType, connectionName, connectionEnvironment);
+  if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
+  return { decision: "confirm", unreadable: hasUnreadableRun(statement, databaseType), typedConfirmation };
+}
+
+/**
+ * What the person types before a statement the gate asks about runs on a connection in this environment (BACKLOG U217,
+ * FND-5 slice 6c).
+ *
+ * On a `production` connection every such statement is confirmed by typing the connection's name: a row's name ask
+ * keeps its targets, a row's text ask (the prefix, start key or lease id the statement reaches) becomes the one target
+ * of the name ask, and a statement the row asks nothing about asks the name with no target. On any other environment,
+ * or none, the row's own ask is answered unchanged, `undefined` where the row asks nothing.
+ *
+ * It reads no statement: the caller hands it the row's ask, or `undefined` where there is none or the reader threw.
+ */
+export function escalatedAsk(
+  ask: TypedConfirmationAsk | undefined,
+  connectionEnvironment: ConnectionEnvironment | undefined,
+): TypedConfirmationAsk | undefined {
+  if (connectionEnvironment !== "production") return ask;
+  if (ask === undefined) return { type: "connection-name", targets: [] };
+  if (ask.type === "text") return { type: "connection-name", targets: [ask.text] };
+  return ask;
+}
+
+/**
+ * An ask resolved against the connection's name: null where there is no ask, undefined where the ask is the name and
+ * the connection has none (`TYPED_NAME_MISSING_REFUSAL`).
+ */
+export function resolvedTypedConfirmation(
+  ask: TypedConfirmationAsk | undefined,
+  connectionName: string | undefined,
+): TypedConfirmation | null | undefined {
+  if (ask === undefined) return null;
+  const expected = typedConfirmationExpected(ask, connectionName);
+  if (expected === undefined) return undefined;
+  return ask.type === "text"
+    ? { type: "text", expected }
+    : { type: "connection-name", expected, targets: [...ask.targets] };
+}
+
+/**
+ * The typed confirmation of a statement the gate asks about: the row's ask (`vocabularyTypedConfirmation`), escalated
+ * for the connection's environment (`escalatedAsk`) and resolved against its name. Null where nothing is typed, and
+ * undefined where the name is asked and the connection has none, which `confirmationVerdict` refuses.
+ *
+ * The web editor's local gate reads it for the statement its dialog asks about, so the dialog asks what the server's
+ * verdict asks.
+ */
+export function typedConfirmationFor(
+  statement: string,
+  databaseType: DatabaseType,
+  connectionName: string | undefined,
+  connectionEnvironment: ConnectionEnvironment | undefined,
+): TypedConfirmation | null | undefined {
+  const ask = escalatedAsk(vocabularyTypedConfirmation(databaseType, statement), connectionEnvironment);
+  return resolvedTypedConfirmation(ask, connectionName);
 }

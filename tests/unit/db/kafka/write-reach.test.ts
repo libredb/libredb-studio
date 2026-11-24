@@ -483,7 +483,8 @@ const LIBRARY_RECEIVERS = new Set(["admin", "consumer", "connection", "fetchPool
 /**
  * Every library call the adapter may make, and the APIs it sends: the client's own reads, each the request the
  * library builds for it (dist/clients/admin/admin.js and dist/clients/consumer/consumer.js in 2.14.0), and the
- * connection's version and authentication exchange, which a connection or a pooled one sends when it opens.
+ * connection's version and authentication exchange, which a connection or a pooled one sends when it opens. A
+ * connection's error listener sends nothing.
  */
 const MEMBER_APIS: Readonly<Record<string, readonly (keyof typeof KAFKA_READ_APIS)[]>> = {
   "admin.metadata": ["Metadata"],
@@ -503,6 +504,7 @@ const MEMBER_APIS: Readonly<Record<string, readonly (keyof typeof KAFKA_READ_API
   "consumer.close": [],
   "connection.close": [],
   "fetchPool.close": [],
+  "connection.on": [],
   "lib.fetchV13.api.async": ["Fetch"],
   "lib.consumerGroupDescribeV0.api.async": ["ConsumerGroupDescribe"],
 };

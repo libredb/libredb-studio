@@ -9,6 +9,8 @@ once against the fixture broker, once against a port with nothing on it. The ser
 `query` rate-limit bucket per account per process (120 requests a minute), and the shared
 project's specs spend it in file order.
 
+Superseded: `playwright.config.ts` now raises that bucket to 10000 on the main server as well, so the move below is no longer needed.
+
 Two files change, both shared surfaces, so neither is edited here.
 
 ## 1. `playwright.config.ts`

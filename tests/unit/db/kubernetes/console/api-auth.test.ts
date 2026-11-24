@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { apiResources, apiVersions, version } from "@/lib/db/providers/platform/kubernetes/console/api";
 import { canI, whoami } from "@/lib/db/providers/platform/kubernetes/console/auth";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { consoleContext, routes } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
 

@@ -4,7 +4,7 @@
  *
  * Pure, and shipped to the browser: the confirmation gate reads the text with this parser and an empty context
  * (`guard.ts`), and the provider reads it again on the server with the connection's endpoint, region, pinned bucket
- * and read-only mode before any request (Oxia's split, `src/lib/db/providers/keyvalue/oxia/guard.ts`), so what the
+ * and read-only mode before any request (Oxia's split, `src/lib/languages/oxiacli/guard.ts`), so what the
  * editor accepts and what runs are one parse. Flags are read as the AWS CLI reads a shell-split argv where that is
  * safe and refused where it is not: a repeated or abbreviated flag, a separate value that begins with -, `--`, and a
  * value or path that names a local file.

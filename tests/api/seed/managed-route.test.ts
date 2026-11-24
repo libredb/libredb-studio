@@ -24,11 +24,21 @@ import { GET } from "@/app/api/connections/managed/route";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import { getSession } from "@/lib/auth";
-import { setSqliteSampleSeedState, SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates, setSampleSeedState, unavailableSentence } from "@/lib/seed/samples";
+import { seedSamples } from "../../helpers/sample-seeding";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
 import { admittedConnection, grantedSnapshot, WRITE_CREDENTIAL } from "../../helpers/governance/granted-snapshot";
+
+/*
+  A sample path that runs through a regular file is a path the admission cannot check on POSIX, which reports it as
+  ENOTDIR, so the sample is refused target-unreadable. Windows reports the same path as absent (ENOENT), so the
+  admission lets it through and its copy fails at the mkdir instead, as copy-failed; the test names SEED_ASSETS_DIR, so
+  the copy gets that far rather than stopping as asset-directory-unset. Both are a failed sample listed unavailable with
+  its reason while the listing still answers, which is what the test below holds.
+*/
+const UNCHECKABLE_PATH_REASON = process.platform === "win32" ? "copy-failed" : "target-unreadable";
 
 describe("GET /api/connections/managed", () => {
   beforeEach(() => {
@@ -98,6 +108,49 @@ describe("GET /api/connections/managed", () => {
       const data = await res.json();
       expect(data.connections.map((conn: { seedId: string }) => conn.seedId)).toEqual(["plant-a", "plant-b"]);
       for (const conn of data.connections) expect(conn).not.toHaveProperty("agentReadRoots");
+    } finally {
+      process.env.SEED_CONFIG_PATH = origPath;
+      resetCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // The policy URI and the client certificate and key paths are seed-only fields a connection a browser supplies cannot
+  // set, so the browser's copy never holds them and a Duplicate of an unmanaged seed never carries them inline.
+  it("never lists an OPC UA seed's policy URI, certificate path or key path, managed or unmanaged", async () => {
+    const origPath = process.env.SEED_CONFIG_PATH;
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-identity-"));
+    const file = path.join(dir, "seed-connections.json");
+    const plant = {
+      type: "opcua",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      roles: ["*"],
+      securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256",
+      clientCertificatePath: path.join(dir, "client.pem"),
+      clientPrivateKeyPath: path.join(dir, "client.key"),
+    };
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { ...plant, id: "plant-a", name: "Plant A" },
+          { ...plant, id: "plant-b", name: "Plant B", managed: false },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+    try {
+      const res = await GET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.connections.map((conn: { seedId: string }) => conn.seedId)).toEqual(["plant-a", "plant-b"]);
+      for (const conn of data.connections) {
+        for (const field of ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath"]) {
+          expect([conn.seedId, field, field in conn]).toEqual([conn.seedId, field, false]);
+        }
+      }
     } finally {
       process.env.SEED_CONFIG_PATH = origPath;
       resetCache();
@@ -410,14 +463,123 @@ describe("GET /api/connections/managed", () => {
     });
   });
 
-  it("advertises the sqlite sample while its async seed is in flight", async () => {
-    setSqliteSampleSeedState("seeding");
+  it("pendingSeeds lists both samples while they copy", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-pending-samples-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
     try {
+      await seedSamples();
+      setSampleSeedState("sqlite-embedded-sample", { phase: "seeding" });
+      setSampleSeedState("libredb-embedded-sample", { phase: "seeding" });
       const res = await GET();
       const data = await res.json();
-      expect(data.pendingSeeds).toEqual([SQLITE_SAMPLE_SEED_ID]);
+      expect(data.pendingSeeds).toEqual(["sqlite-embedded-sample", "libredb-embedded-sample"]);
+      expect(data.unavailableSamples).toEqual([]);
     } finally {
-      setSqliteSampleSeedState("idle");
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("answers unavailableSamples for the session's roles", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unavailable-samples-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
+    // An empty assets directory: both copies fail as asset-missing.
+    const assets = mkdtempSync(path.join(tmpdir(), "libredb-no-assets-"));
+    process.env.SEED_ASSETS_DIR = assets;
+    const sentence = unavailableSentence("asset-missing");
+    try {
+      await seedSamples();
+      const admin = await (await GET()).json();
+      expect(admin.unavailableSamples).toEqual([
+        {
+          seedId: "sqlite-embedded-sample",
+          name: "Sample (Employees)",
+          reason: "asset-missing",
+          sentence,
+        },
+        {
+          seedId: "libredb-embedded-sample",
+          name: "Sample (LibreDB)",
+          reason: "asset-missing",
+          sentence,
+        },
+      ]);
+      expect(admin.connections.map((c: { seedId: string }) => c.seedId)).not.toContain("sqlite-embedded-sample");
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await (await GET()).json();
+      expect(user.unavailableSamples.map((s: { seedId: string }) => s.seedId)).toEqual(["libredb-embedded-sample"]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      delete process.env.SEED_ASSETS_DIR;
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(assets, { recursive: true, force: true });
+    }
+  });
+
+  it("answers asset-directory-unset in unavailableSamples for the roles each sample is offered to when SEED_ASSETS_DIR is unset", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unset-assets-"));
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(dir, "sample.libredb");
+    const savedAssets = process.env.SEED_ASSETS_DIR;
+    delete process.env.SEED_ASSETS_DIR;
+    const sentence = unavailableSentence("asset-directory-unset");
+    try {
+      await seedSamples();
+      const admin = await (await GET()).json();
+      expect(admin.unavailableSamples).toEqual([
+        { seedId: "sqlite-embedded-sample", name: "Sample (Employees)", reason: "asset-directory-unset", sentence },
+        { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-directory-unset", sentence },
+      ]);
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await (await GET()).json();
+      expect(user.unavailableSamples).toEqual([
+        { seedId: "libredb-embedded-sample", name: "Sample (LibreDB)", reason: "asset-directory-unset", sentence },
+      ]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
+      if (savedAssets === undefined) delete process.env.SEED_ASSETS_DIR;
+      else process.env.SEED_ASSETS_DIR = savedAssets;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("a sample whose path cannot be checked never fails the listing: the operator's connections still answer for every role", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-unreadable-sample-"));
+    const blocker = path.join(dir, "a-regular-file");
+    writeFileSync(blocker, "");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(blocker, "sample-employees.db");
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SEED_ASSETS_DIR = path.resolve(__dirname, "../../../seed-assets");
+    try {
+      await seedSamples();
+      const admin = await GET();
+      expect(admin.status).toBe(200);
+      const adminData = await admin.json();
+      expect(adminData.connections.map((c: { seedId: string }) => c.seedId)).toContain("everyone");
+      expect(adminData.unavailableSamples.map((s: { reason: string }) => s.reason)).toEqual([UNCHECKABLE_PATH_REASON]);
+
+      (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+      const user = await GET();
+      expect(user.status).toBe(200);
+      const userData = await user.json();
+      expect(userData.connections.map((c: { seedId: string }) => c.seedId)).toContain("everyone");
+      expect(userData.unavailableSamples).toEqual([]);
+    } finally {
+      resetSampleSeedStates();
+      delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+      delete process.env.SEED_ASSETS_DIR;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
@@ -483,7 +645,7 @@ describe("GET /api/connections/managed", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.connections.map((c: { seedId: string }) => c.seedId)).toEqual([
         "admin-only",
         "everyone",
@@ -552,10 +714,10 @@ describe("GET /api/connections/managed", () => {
       expect(JSON.stringify(data)).not.toContain(CANARY);
     });
 
-    it("keeps the response shape: connections, cacheHint and pendingSeeds, nothing else", async () => {
+    it("keeps the response shape: connections, cacheHint, pendingSeeds and unavailableSamples, nothing else", async () => {
       const res = await GET();
       const data = await res.json();
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.cacheHint).toBe(60000);
       expect(data.pendingSeeds).toEqual([]);
     });
@@ -588,6 +750,100 @@ describe("GET /api/connections/managed", () => {
       delete process.env.SEED_LITERAL_VALUES;
       resetCache();
     }
+  });
+});
+
+/*
+  A seed entry whose type names no provider this Studio has (FND-1) refuses only itself: the file's other entries are
+  listed as before, and the entry is listed after them as a managed connection of the type it names, with only the
+  fields Studio reads from it, for the roles it names. The browser reads its availability from the type.
+*/
+describe("a seed entry whose type names no provider (FND-1)", () => {
+  const origPath = process.env.SEED_CONFIG_PATH;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), "libredb-seed-unknown-type-"));
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "admin", username: "admin@test.com" }));
+  });
+
+  afterEach(() => {
+    process.env.SEED_CONFIG_PATH = origPath;
+    resetCache();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeSeed(connections: object[]): void {
+    const file = path.join(dir, "seed-connections.json");
+    writeFileSync(file, JSON.stringify({ version: "1", connections }));
+    process.env.SEED_CONFIG_PATH = file;
+    resetCache();
+  }
+
+  const acme = {
+    id: "acme",
+    name: "Acme Store",
+    type: "acmefoo",
+    host: "acme.example",
+    password: "CANARY-7f3a",
+    roles: ["*"],
+    mcp: true,
+  };
+  const pg = { id: "pg", name: "PG", type: "postgres", host: "pg.internal", roles: ["*"] };
+
+  it("lists a seed entry whose type names no provider as an unavailable managed connection, with only the fields Studio reads, beside the file's other entries", async () => {
+    writeSeed([acme, pg]);
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("CANARY");
+    expect(text).not.toContain("acme.example");
+    const data = JSON.parse(text);
+    expect(data.connections.map((conn: { id: string }) => conn.id)).toEqual(["seed:pg", "seed:acme"]);
+    expect(data.connections[1]).toEqual({
+      id: "seed:acme",
+      name: "Acme Store",
+      type: "acmefoo",
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+      createdAt: expect.any(String),
+      mcp: true,
+    });
+  });
+
+  it("lists it managed when the file says managed: false", async () => {
+    writeSeed([{ ...acme, managed: false }, pg]);
+
+    const data = await (await GET()).json();
+
+    expect(data.connections.find((conn: { id: string }) => conn.id === "seed:acme")?.managed).toBe(true);
+  });
+
+  it("lists it only for the roles it names", async () => {
+    writeSeed([{ ...acme, roles: ["admin"] }, pg]);
+    (getSession as ReturnType<typeof mock>).mockImplementation(() => ({ role: "user", username: "user@test.com" }));
+
+    const data = await (await GET()).json();
+
+    expect(data.connections.map((conn: { id: string }) => conn.id)).toEqual(["seed:pg"]);
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["not text", 5],
+  ])("still fails the whole file for a type that is %s", async (_label, type) => {
+    writeSeed([{ ...acme, type }, pg]);
+
+    const res = await GET();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({
+      error: "Failed to load managed connections",
+      reason: SEED_CONFIG_UNREADABLE_REASON,
+    });
   });
 });
 
@@ -645,7 +901,7 @@ describe("GET /api/connections/managed under governance", () => {
       expect(res.status).toBe(200);
       const data = await res.json();
 
-      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds"]);
+      expect(Object.keys(data).sort()).toEqual(["cacheHint", "connections", "pendingSeeds", "unavailableSamples"]);
       expect(data.cacheHint).toBe(10000);
       expect(data.pendingSeeds).toEqual([]);
       // By name, the admin's own two and not the connection granted to another subject.

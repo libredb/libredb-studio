@@ -9,7 +9,7 @@
  */
 import type { IndexedResource } from "../discovery";
 import { byCodeUnit, type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type ApiResourcesStatement = Extract<KubectlStatement, { readonly command: "api-resources" }>;
 

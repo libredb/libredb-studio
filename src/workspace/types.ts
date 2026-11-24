@@ -24,6 +24,15 @@ import type {
 export interface WorkspaceConnection {
   id: string;
   name: string;
+  /**
+   * The connection's type id. A host may pass a connection whose type names no provider in this version of the
+   * package, such as one its own backend has a provider for, or one with no type. The workspace lists such a
+   * connection as unavailable with the reason, never opens it, and refuses a pick of it on a line of its own. A host
+   * list that gives the open connection such a type closes it without opening another, and the same line says why,
+   * also below the mobile breakpoint, where no sidebar is drawn. Below that breakpoint the workspace draws no connection
+   * picker either, so a host that wants the workspace to move on from such a connection drops it from its list; the
+   * workspace then opens the first listed connection a provider can open.
+   */
   type: DatabaseType;
   /**
    * What this connection's provider can do, as `getCapabilities()` reports it.
@@ -47,6 +56,8 @@ export interface WorkspaceConnection {
    * its `onQueryExecute` really applies a positive `offset`, and a control that re-fetches
    * page one is worse than none. Declare it `true` once your implementation pages, and
    * report `pagination.hasMore` honestly: the control also requires `hasMore: true`.
+   *
+   * The SQL forms a tree click and Generate Query write follow `type`; the `defaultPort` declared here does not choose them.
    */
   capabilities?: ProviderCapabilities;
   /** This provider's UI wording, as `getLabels()` reports it. See `capabilities`. */

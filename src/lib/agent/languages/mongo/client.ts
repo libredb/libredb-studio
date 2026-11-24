@@ -3,10 +3,9 @@
  * browser bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on MongoDB: the boundary is a user the server holds to read privileges on this
@@ -18,12 +17,10 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
  * `maxTimeMS` and the privilege read, not a read-only transaction, because MongoDB has none
  * to name. It says "per command" because that is what the language calls one unit.
  */
-function mongoReadsPosture(bounds: StatementBudgets): AgentPosture {
+function mongoReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per command, enforced by the server`,
     title: "Agent mode reads, under a boundary the server enforces",
     body: `Agent mode runs commands it wrote itself, bounded to ${rows} rows and ${seconds} seconds each: maxTimeMS is the server's own deadline, and Studio ends a command the server does not. On the server, find and aggregate stop one row past the budget. Before the first model turn of a run that sends commands, the server must report that this connection's user holds only read privileges on this database and must refuse a write from it: a user that can write, a server without authentication, or a server that is not MongoDB ends that run there. The fence refuses writes, write stages, server-side JavaScript and diagnostic stages before the engine is reached. Nothing reaches your editor.`,
@@ -141,7 +138,6 @@ export const MONGO_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: mongoReadsPosture,
-    widened: mongoReadsPosture,
     handoverTerms: () =>
       "A MongoDB answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

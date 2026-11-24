@@ -24,6 +24,8 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -36,8 +38,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 const PLAINTEXT =
@@ -54,8 +55,13 @@ function connection(type: InfluxType, overrides: Record<string, unknown> = {}): 
   } as unknown as DatabaseConnection;
 }
 
-const build = (type: InfluxType, overrides: Record<string, unknown> = {}, queryTimeout = QUERY_TIMEOUT) =>
-  buildInfluxConnectionOptions(connection(type, overrides), { type, queryTimeout });
+// An allowing decision unless a case hands another, so the origin's literal check is the subject only where it says so.
+const build = (
+  type: InfluxType,
+  overrides: Record<string, unknown> = {},
+  queryTimeout = QUERY_TIMEOUT,
+  egress = ALLOWS_PRIVATE_HOSTS,
+) => buildInfluxConnectionOptions(connection(type, overrides), { type, queryTimeout, egress });
 
 function tunnelled(type: InfluxType, overrides: Record<string, unknown>, farEnd: { host: string; port: number }) {
   return buildInfluxConnectionOptions(
@@ -63,7 +69,7 @@ function tunnelled(type: InfluxType, overrides: Record<string, unknown>, farEnd:
       ...connection(type, { host: "127.0.0.1", port: 41_001, sshTunnel: { enabled: true }, ...overrides }),
       [TUNNEL_FAR_END]: farEnd,
     },
-    { type, queryTimeout: QUERY_TIMEOUT },
+    { type, queryTimeout: QUERY_TIMEOUT, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -129,10 +135,13 @@ describe("the endpoint is exactly what it claims", () => {
     expect(refusal("influxdb", { port }).message).toBe("Invalid port: expected an integer from 1 to 65535");
   });
 
-  test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    process.env[FLAG] = "true";
-    expect(refusal("influxdb3", { host: "10.0.0.5", user: TEST_USER }).message).toBe(BLOCKED_HOST);
-    expect(build("influxdb3", REMOTE).origin.host).toBe("influx.example.com");
+  test("with a blocking egress decision, a private literal host is refused before anything else is read, while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    const blocked = refused("influxdb3", () =>
+      build("influxdb3", { host: "10.0.0.5", user: TEST_USER }, QUERY_TIMEOUT, BLOCKS_PRIVATE_HOSTS),
+    );
+    expect(blocked.message).toBe(BLOCKED_HOST);
+    expect(build("influxdb3", REMOTE, QUERY_TIMEOUT, BLOCKS_PRIVATE_HOSTS).origin.host).toBe("influx.example.com");
   });
 
   test("through a tunnel the origin is the local forward and the endpoint the far end", () => {
@@ -150,21 +159,14 @@ describe("the endpoint is exactly what it claims", () => {
     ).toStartWith("Invalid port");
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so InfluxDB is never dialled past it", () => {
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
     for (const type of TYPES) {
-      expect(refusal(type, { sshTunnel: { enabled: true } }).message).toBe(
-        "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so InfluxDB was not dialled directly: the tunnel opens only when both Host and Port are set.",
-      );
+      for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, {}, "on", []]) {
+        expect(build(type, { sshTunnel }).origin.host).toBe("influx.test");
+      }
     }
-    expect(build("influxdb", { sshTunnel: { enabled: false } }).origin.host).toBe("influx.test");
-    expect(build("influxdb", { sshTunnel: null }).origin.host).toBe("influx.test");
-    expect(build("influxdb", { sshTunnel: {} }).origin.host).toBe("influx.test");
-    const notAnObject = "The connection's sshTunnel must be an object; nothing was sent.";
-    expect(refusal("influxdb", { sshTunnel: "on" }).message).toBe(notAnObject);
-    expect(refusal("influxdb", { sshTunnel: [] }).message).toBe(notAnObject);
-    expect(refusal("influxdb", { sshTunnel: { enabled: "yes" } }).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
   });
 });
 
@@ -197,17 +199,12 @@ describe("I6: AUTHORIZATION_BY_TYPE, one Authorization header or none", () => {
     }
   });
 
-  test("influxdb3: Bearer with a token, none with nothing, and a user refused whatever the password", () => {
+  test("influxdb3: Bearer with a token, none with nothing", () => {
+    // A user never reaches it: core refuses one on influxdb3 before the provider is built.
     const row = AUTHORIZATION_BY_TYPE.influxdb3;
     expect(row({ password: TEST_PASSWORD })).toBe(`Bearer ${TEST_PASSWORD}`);
     expect(row({ user: "", password: TEST_PASSWORD })).toBe(`Bearer ${TEST_PASSWORD}`);
     expect(row({})).toBeUndefined();
-    for (const credential of [{ user: TEST_USER }, { user: TEST_USER, password: TEST_PASSWORD }]) {
-      const error = refused("influxdb3", () => row(credential));
-      expect(error.message).toBe("InfluxDB 3 has no user name: clear User and put the token in Token.");
-      expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.influxdb3User);
-      expect(error.message).not.toContain(TEST_USER);
-    }
   });
 
   test("the built options carry exactly one lower-case authorization header, or none", () => {
@@ -225,9 +222,6 @@ describe("I6: AUTHORIZATION_BY_TYPE, one Authorization header or none", () => {
       expect(build(type, { user: null, password: null }).headers).toEqual({});
       expect(build(type, { user: "", password: "" }).headers).toEqual({});
     }
-    expect(refusal("influxdb3", { ...LOCAL, user: TEST_USER, password: TEST_PASSWORD }).message).toBe(
-      INFLUX_CONNECTION_SENTENCES.influxdb3User,
-    );
   });
 
   test("hasUser and hasSecret say what is configured", () => {

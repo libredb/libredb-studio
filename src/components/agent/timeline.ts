@@ -96,6 +96,9 @@ const GUIDANCE_HEADLINE: Record<Extract<AgentRunEvent, { kind: "guidance-issued"
   // Named for what the reader can see happened rather than for the limit that did it: the turn
   // produced nothing and the run kept going.
   "turn-cut-off": "A turn ran long and was cut; asked again",
+  // The same shape and the same wording, for the other limit: this turn produced nothing because
+  // the answer itself was too long, and the run kept going.
+  "model-output-limit": "An answer was cut at its length limit; asked again",
   "report-reserve": "Told this is its last turn",
   "plan-bar": "Told what the report is judged on",
   "usage-bar": "Told what the report is judged on",
@@ -538,6 +541,7 @@ const FAILURE_SENTENCES = {
   "profile-target-unsupported":
     "Agent mode runs on this engine, but not against this server or target: a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database. Plan mode and the operations workflow still work.",
   "connection-unresolvable": "This run's database connection no longer resolves on the server.",
+  "provider-unknown": "No provider for this run's connection type is installed in this LibreDB Studio.",
   internal: "The server could not carry this run. The reason is in the server log.",
 } as const satisfies Record<AgentRunFailureReason, string>;
 
@@ -837,6 +841,10 @@ const AGENT_STOP_SENTENCES = {
   "deadline-exceeded": "The run reached its time limit before it finished.",
   "model-timeout": "The model did not answer in time. Starting the run again is reasonable.",
   "turn-limit": `${TURN_LIMIT_SENTENCE} What it had gathered is above.`,
+  // Names the limit that did it, because the reader's next question is why an answer stopped
+  // mid-sentence, and says it is the answer's LENGTH rather than the run's clock: a run read as
+  // out of time would be restarted for the wrong reason.
+  "model-output-limit": "The model's answer was cut at the model server's length limit for one reply.",
 } as const satisfies Record<AgentRunStopReason, string | null>;
 
 /**

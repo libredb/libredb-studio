@@ -1320,12 +1320,16 @@ export const AgentRail = React.memo(function AgentRail({
    * reintroduced in front of the same button. An abort lands in the `catch` below, so
    * it reaches the fallback every other failure reaches.
    */
-  const classifyObjective = async (text: string, onConnection: string): Promise<AgentWorkflowClassification> => {
+  const classifyObjective = async (
+    text: string,
+    onConnection: string,
+    inMode: AgentRunMode,
+  ): Promise<AgentWorkflowClassification> => {
     try {
       const res = await appFetch("/api/agent/classify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective: text, connectionId: onConnection }),
+        body: JSON.stringify({ objective: text, connectionId: onConnection, mode: inMode }),
         signal: AbortSignal.timeout(CLASSIFY_REQUEST_TIMEOUT_MS),
       });
       const body = (await res.json()) as { workflowType?: unknown; outcome?: unknown };
@@ -1392,8 +1396,10 @@ export const AgentRail = React.memo(function AgentRail({
     }
 
     setClassifying(true);
-    // The connection the run is opened on, so the objective is classified in that engine's own terms.
-    const classification = await classifyObjective(asked, connection.id);
+    // The connection the run is opened on, so the objective is classified in that engine's own terms, and the mode
+    // taken at this click, so it is classified only into a workflow that opens there in that mode. The mode axis is
+    // frozen while the start is held, so the open request carries the same mode.
+    const classification = await classifyObjective(asked, connection.id, mode);
     setClassifying(false);
     hold({
       workflowType: classification.workflowType,
@@ -1909,7 +1915,7 @@ export const AgentRail = React.memo(function AgentRail({
     not read it, the button stays live, and the run this rail opens is refused by the
     server exactly as it was. A notice that also disabled Start would be this surface
     deciding a question the server decides — and it would be wrong for the operations
-    workflow, which runs on every engine because it sends no statement at all.
+    workflow, which runs without a statement path because it sends no statement at all.
 
     `null` is not one of these engines: nothing has been resolved, so which engine this
     is has not been established, and an amber card about an engine nobody named would be

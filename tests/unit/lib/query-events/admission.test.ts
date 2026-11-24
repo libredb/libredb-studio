@@ -16,9 +16,8 @@ const realPg = await import("pg");
 mock.module("pg", () => ({ Pool: FakePool, Client: realPg.Client, types: realPg.types }));
 
 const { admitQueryExecution } = await import("@/lib/query-events/admission");
-const { QUERY_EVENT_QUEUE_CAPACITY, queryEventSinkState, recordQueryEvent, resetQueryEventSink } = await import(
-  "@/lib/query-events/sink"
-);
+const { QUERY_EVENT_QUEUE_CAPACITY, flushQueryEvents, queryEventSinkState, recordQueryEvent, resetQueryEventSink } =
+  await import("@/lib/query-events/sink");
 const { createErrorResponse } = await import("@/lib/api/errors");
 const { API_CODES, QUERY_EVENT_COLUMNS } = await import("@/lib/governance/contract");
 const { closeGovernancePool } = await import("@/lib/governance/db");
@@ -160,6 +159,20 @@ describe("admitQueryExecution", () => {
     await queueUpTo(9000);
     expect(queryEventSinkState()).toMatchObject({ queued: 9000, backingOff: false });
     expect(refusal()).toMatchObject({ message: REFUSAL_MESSAGE, statusCode: 503, code: "AUDIT_UNAVAILABLE" });
+  });
+
+  test("refuse mode throws 503 AUDIT_UNAVAILABLE once the shutdown flush has closed the sink, which sends no later event", async () => {
+    onSinkFailure("refuse");
+    recordQueryEvent(queryEventInput());
+    expect(refusal()).toBeUndefined();
+
+    await flushQueryEvents();
+
+    // The flush sent every event, so the sink neither backs off nor holds a queue; only the close refuses.
+    expect(queryEventSinkState()).toMatchObject({ queued: 0, backingOff: false });
+    expect(refusal()).toMatchObject({ message: REFUSAL_MESSAGE, statusCode: 503, code: "AUDIT_UNAVAILABLE" });
+    onSinkFailure("continue");
+    expect(refusal()).toBeUndefined();
   });
 
   test("refuse mode admits when only permanent rejections occurred", async () => {

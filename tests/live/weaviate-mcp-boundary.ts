@@ -58,6 +58,7 @@ import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -151,6 +152,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -171,6 +173,7 @@ async function inspect(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -334,13 +337,13 @@ async function theOpen(): Promise<void> {
   ];
   for (const [who, connection, says] of refused) {
     const { result } = await mcp(connection, { statement: "GET /v1/schema" });
-    const text = textOf(result);
+    const text = providerRefusalText(result, "weaviate");
     check(
       result.isError === true &&
         text.startsWith("run_weaviate_read cannot run on this connection: ") &&
         text.endsWith(ENGINES) &&
         text.includes(says),
-      `open: ${who} is refused through MCP -> ${text}`,
+      `open: ${who} is refused through MCP -> ${textOf(result)}`,
     );
   }
 }
@@ -380,14 +383,14 @@ async function theBoundary(): Promise<void> {
   for (const statement of BYPASSED) {
     const fenced = await mcp(viewer, { statement });
     const bypassed = await mcp(viewer, { statement }, UNFENCED);
-    const text = textOf(bypassed.result);
+    const text = providerRefusalText(bypassed.result, "weaviate");
     check(
       fenced.result.isError === true &&
         fenced.acquired.length === 0 &&
         textOf(fenced.result).startsWith("The request was refused before it reached the server") &&
         bypassed.result.isError === true &&
         text.startsWith("The statement was refused before it reached the database: "),
-      `boundary: ${statement.split(" ", 2).join(" ")} is refused by the MCP fence, and bypassed, by the provider's reader before it is sent -> ${text.slice(0, 160)}`,
+      `boundary: ${statement.split(" ", 2).join(" ")} is refused by the MCP fence, and bypassed, by the provider's reader before it is sent -> ${textOf(bypassed.result).slice(0, 400)}`,
     );
   }
   for (const write of RAW_WRITES) {

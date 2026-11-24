@@ -37,25 +37,26 @@ import {
 } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { answerFailure, type QdrantErrorContext, toProviderError } from "@/lib/db/providers/vector/qdrant/errors";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
+import type { EgressDecision } from "@/lib/db/types";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
 import {
   closeAll,
-  countingListener,
   eventually,
   httpListener,
   httpsListener,
   jsonAnswer,
   type Listener,
   makeCertificates,
+  proxyListener,
   streamingAnswer,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
 import { QDRANT_FIXTURE_ROUTES, QDRANT_SAMPLE_REQUESTS } from "../../../helpers/qdrant-routes";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
 const WITHHELD = "(the server's text was withheld because it contained the configured credential)";
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const PROXY_VARIABLES = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY"];
 
 let certificates: TransportCertificates;
@@ -85,7 +86,11 @@ afterEach(async () => {
 
 const ok = jsonAnswer(200, '{"result":{"collections":[]},"status":"ok","time":0}');
 
-function options(port: number, overrides: Record<string, unknown> = {}): QdrantConnectionOptions {
+function options(
+  port: number,
+  overrides: Record<string, unknown> = {},
+  egress: EgressDecision = ALLOWS_PRIVATE_HOSTS,
+): QdrantConnectionOptions {
   return buildQdrantConnectionOptions(
     {
       id: "c1",
@@ -97,7 +102,7 @@ function options(port: number, overrides: Record<string, unknown> = {}): QdrantC
       createdAt: new Date(0),
       ...overrides,
     } as unknown as DatabaseConnection,
-    { executionReadOnly: false, queryTimeout: 30_000 },
+    { executionReadOnly: false, queryTimeout: 30_000, egress },
   );
 }
 
@@ -220,20 +225,20 @@ describe("what reaches the wire (QE2, QE4)", () => {
   });
 
   test("proxy variables naming a listener carry nothing to it", async () => {
-    const proxy = await countingListener();
+    const proxy = await proxyListener();
     for (const name of PROXY_VARIABLES) setEnvironment(name, `http://127.0.0.1:${proxy.port}`);
     setEnvironment("NODE_USE_ENV_PROXY", "1");
     const listener = await httpListener(ok);
     const answer = await connect(options(listener.port)).send(request("get_collections"), deadline());
     expect(answer.status).toBe(200);
     expect(listener.seen).toHaveLength(1);
-    expect(proxy.accepted()).toBe(0);
+    expect(proxy.requests).toEqual([]);
   });
 
   test("with the egress guard on, a name that resolves to this machine is refused before any socket", async () => {
     const listener = await httpListener(ok);
-    setEnvironment(FLAG, "true");
-    const connection = options(listener.port, { host: "localhost" });
+    // A blocking decision, which the connection options carry to the node transport; the variable is not written.
+    const connection = options(listener.port, { host: "localhost" }, BLOCKS_PRIVATE_HOSTS);
     const error = await failure(() => connect(connection).send(request("get_collections"), deadline()));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect((error as Error).message).toContain("blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS");
@@ -487,7 +492,7 @@ describe("TLS through the connection's SSL / TLS panel (QE6)", () => {
           createdAt: new Date(0),
           [TUNNEL_FAR_END]: { host: farHost, port: 6333 },
         } as unknown as DatabaseConnection,
-        { executionReadOnly: false, queryTimeout: 30_000 },
+        { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
       );
       // oxlint-disable-next-line no-await-in-loop -- the listener's one request.
       expect((await get(connection)).status).toBe(200);

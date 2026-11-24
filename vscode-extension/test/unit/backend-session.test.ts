@@ -9,7 +9,7 @@ import { backendForkOptions } from "../../src/host/fork-options";
 import { type BackendSession, openSession } from "../backend-session";
 
 const ANSWER = {
-  protocolVersion: 1,
+  protocolVersion: 2,
   runtime: { node: "24.21.0", electron: null, modules: "148", platform: "linux", arch: "x64" },
   enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
 };

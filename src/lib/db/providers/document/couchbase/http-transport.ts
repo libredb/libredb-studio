@@ -26,9 +26,10 @@
 import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
+import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
+import { guardedNodeOptions, httpTransportFetch, requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
 import {
   createNodeTransport,
@@ -36,7 +37,7 @@ import {
   type NodeTransportOptions,
   nodeTlsMaterial,
 } from "@/lib/db/http/node-transport";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { quoteIdentifier } from "./keyspace";
@@ -64,6 +65,13 @@ const DEFAULT_QUERY_TLS_PORT = 18093;
 const QUERY_PATH = "/query/service";
 const NODE_SERVICES_PATH = "/pools/default/nodeServices";
 const WHOAMI_PATH = "/whoami";
+
+/**
+ * The most bytes one answer outside the agent path may hold: 16 MiB, the cap the Qdrant, InfluxDB and Databend
+ * transports put on one answer. Past it the answer is refused by name and its socket closed, so no more of it is read,
+ * and every answer that is decoded is far below the longest string the runtime can build.
+ */
+export const COUCHBASE_RESPONSE_CAP_BYTES = 16 * 1024 * 1024;
 
 /** Sockets an agent transport may hold open to one origin: agent calls run one at a time. */
 const AGENT_MAX_SOCKETS = 4;
@@ -133,6 +141,7 @@ export type SecureJsonRequest = (
   url: string,
   init: JsonRequestInit,
   tls: CouchbaseTlsMaterial,
+  egress: EgressDecision,
 ) => Promise<JsonResponse>;
 
 export type SrvResolver = (hostname: string) => Promise<SrvRecord[]>;
@@ -284,6 +293,25 @@ function networkError(error: unknown, url: string): CouchbaseError {
   return new CouchbaseError(`Couchbase request failed: ${describeFetchFailure(error, url)}`, 0, true);
 }
 
+/** Not retriable: the same request draws the same answer, so it needs a narrower statement, not another attempt. */
+function answerTooLargeError(): CouchbaseError {
+  return new CouchbaseError(
+    `Couchbase answered with more than ${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB, so the answer was not read further`,
+    0,
+    false,
+  );
+}
+
+/** A network fault like any other: the connection went away before the answer was complete. */
+function answerEndedEarlyError(): CouchbaseError {
+  return new CouchbaseError("Couchbase request failed: the server ended the answer before it was complete", 0, true);
+}
+
+/** A network fault like any other: the server answered with another protocol, which this transport does not read. */
+function switchedProtocolsError(): CouchbaseError {
+  return new CouchbaseError("Couchbase request failed: the server switched protocols instead of answering", 0, true);
+}
+
 function throwIfFailed(response: JsonResponse): void {
   const failure = payloadError(response.payload);
   if (failure) throw failure;
@@ -313,21 +341,28 @@ function buildTlsMaterial(ssl: SSLConfig | undefined): CouchbaseTlsMaterial | nu
 // Request paths
 // ============================================================================
 
-async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonResponse> {
+async function fetchJson(url: string, init: JsonRequestInit, egress: EgressDecision): Promise<JsonResponse> {
   let response: Response;
+  let text: string;
   try {
     // A followed redirect would carry the credential to wherever it points.
-    response = await httpTransportFetch(url, {
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-      redirect: "manual",
-    });
+    response = await httpTransportFetch(
+      url,
+      {
+        method: init.method,
+        headers: init.headers,
+        body: init.body,
+        redirect: "manual",
+      },
+      egress,
+    );
+    // Read under the cap and inside this try, so a body that passes the cap or stops mid-read is a named failure.
+    text = await readBoundedText(response, COUCHBASE_RESPONSE_CAP_BYTES);
   } catch (error) {
     if (error instanceof DatabaseConfigError) throw error;
+    if (error instanceof BodyLimitExceededError) throw answerTooLargeError();
     throw networkError(error, url);
   }
-  const text = await response.text();
   rejectRedirect(response, url);
   return { httpCode: response.status, payload: parseJsonBody(text) };
 }
@@ -335,13 +370,25 @@ async function fetchJson(url: string, init: JsonRequestInit): Promise<JsonRespon
 /**
  * TLS-capable request over the Node built-ins. Exported so the TLS path is
  * exercised directly against a local server instead of being mocked away.
+ *
+ * The body is counted as it arrives: past COUCHBASE_RESPONSE_CAP_BYTES the request is destroyed, which closes the
+ * socket, and the call fails by name. An answer whose connection closes or resets before it is complete fails as a
+ * network fault: node:http then emits no "end", only "close" on a message that is not complete. A 101 answer that
+ * switches protocols fails as a network fault too, and its socket is destroyed. The body is decoded and parsed in a
+ * promise continuation, so nothing in that step can throw out of an event handler. `egress` is the decision the
+ * provider was built with, which the guard's options follow.
  */
-export function nodeRequestJson(url: string, init: JsonRequestInit, tls: CouchbaseTlsMaterial): Promise<JsonResponse> {
+export function nodeRequestJson(
+  url: string,
+  init: JsonRequestInit,
+  tls: CouchbaseTlsMaterial,
+  egress: EgressDecision,
+): Promise<JsonResponse> {
   const target = new URL(url);
   const options: HttpsRequestOptions = {
     protocol: target.protocol,
     hostname: target.hostname,
-    ...guardedNodeOptions(target.hostname),
+    ...guardedNodeOptions(target.hostname, egress),
     port: target.port,
     path: `${target.pathname}${target.search}`,
     method: init.method,
@@ -352,15 +399,24 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
     rejectUnauthorized: tls.rejectUnauthorized,
   };
 
-  return new Promise<JsonResponse>((resolve, reject) => {
+  const received = new Promise<{ httpCode: number; body: Buffer }>((resolve, reject) => {
     const onResponse = (response: import("node:http").IncomingMessage) => {
       const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () => {
-        resolve({
-          httpCode: response.statusCode ?? 0,
-          payload: parseJsonBody(Buffer.concat(chunks).toString("utf8")),
-        });
+      let bytes = 0;
+      response.on("data", (chunk: Buffer) => {
+        bytes += chunk.length;
+        if (bytes > COUCHBASE_RESPONSE_CAP_BYTES) {
+          clientRequest.destroy();
+          reject(answerTooLargeError());
+          return;
+        }
+        chunks.push(chunk);
+      });
+      response.on("end", () => resolve({ httpCode: response.statusCode ?? 0, body: Buffer.concat(chunks) }));
+      // After "end" this is a no-op; after a refusal above, or a reset the request already reported, the promise has
+      // settled and this rejection is ignored.
+      response.on("close", () => {
+        if (!response.complete) reject(answerEndedEarlyError());
       });
     };
 
@@ -372,9 +428,17 @@ export function nodeRequestJson(url: string, init: JsonRequestInit, tls: Couchba
     clientRequest.on("error", (error: Error) =>
       reject(error instanceof DatabaseConfigError ? error : networkError(error, target.href)),
     );
+    // node:http hands a 101 with Connection: upgrade and an Upgrade header to this event, never to onResponse, and
+    // without a listener the request never settles. The switched socket is no longer the request's, so it is destroyed here.
+    clientRequest.on("upgrade", (_answer: import("node:http").IncomingMessage, socket: import("node:net").Socket) => {
+      socket.destroy();
+      reject(switchedProtocolsError());
+    });
     if (init.body !== undefined) clientRequest.write(init.body);
     clientRequest.end();
   });
+
+  return received.then(({ httpCode, body }) => ({ httpCode, payload: parseJsonBody(body.toString("utf8")) }));
 }
 
 // ============================================================================
@@ -396,6 +460,8 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly ssl: SSLConfig | undefined;
   /** `default:<bucket>`, or undefined when the connection pins no bucket. */
   private readonly queryContext: string | undefined;
+  /** The egress decision the provider was built with, handed to both request paths of `send`. */
+  private readonly egress: EgressDecision;
 
   // The in-flight promise is cached, not just its value: concurrent queries on a
   // fresh transport would otherwise each run their own discovery round-trip.
@@ -405,7 +471,12 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly agentTransports = new Map<string, NodeTransport>();
   private agentQueryOrigin: HttpOrigin | null = null;
 
-  constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps = {}) {
+  /**
+   * `deps` is a test's seam (the provider passes its own, empty unless a test set them); `egress` is the decision the
+   * provider was built with, last, as at every other guarded transport, so a call that omits it is refused by name.
+   */
+  constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps, egress: EgressDecision) {
+    this.egress = requireEgressDecision(egress);
     this.host = config.host ?? DEFAULT_HOST;
     this.explicitPort = config.port;
     this.tls = buildTlsMaterial(config.ssl);
@@ -414,7 +485,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
     // Validated now so a bad host or port is refused before any lookup or request.
     // Every URL is built through the same check again, because the host that is
     // finally used may come from an SRV record or from the cluster itself.
-    httpOrigin(this.scheme, this.host, this.managementPort);
+    httpOrigin(this.scheme, this.host, this.managementPort, this.egress);
     this.authorization = `Basic ${Buffer.from(`${config.user ?? ""}:${config.password ?? ""}`).toString("base64")}`;
     this.resolveSrv = deps.resolveSrv ?? dns.resolveSrv.bind(dns);
     this.requestJson = deps.requestJson ?? nodeRequestJson;
@@ -454,10 +525,13 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   public async manage<T>(path: string): Promise<T> {
     const host = await this.getHost();
-    const response = await this.send(endpointUrl(httpOrigin(this.scheme, host, this.managementPort), path), {
-      method: "GET",
-      headers: this.baseHeaders(),
-    });
+    const response = await this.send(
+      endpointUrl(httpOrigin(this.scheme, host, this.managementPort, this.egress), path),
+      {
+        method: "GET",
+        headers: this.baseHeaders(),
+      },
+    );
     throwIfFailed(response);
     return response.payload as T;
   }
@@ -507,7 +581,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   /** A management read on the agent path. */
   private async agentManage(path: string, o: AgentRequestOpts): Promise<unknown> {
-    const origin = httpOrigin(this.scheme, await this.getHost(), this.managementPort);
+    const origin = httpOrigin(this.scheme, await this.getHost(), this.managementPort, this.egress);
     const response = await this.agentTransport(origin).request({
       method: "GET",
       url: endpointUrl(origin, path),
@@ -528,6 +602,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
         origin,
         tls: this.tls ? nodeTlsMaterial(this.ssl, origin.host) : null,
         maxSockets: AGENT_MAX_SOCKETS,
+        egress: this.egress,
         headers: { accept: "application/json", authorization: this.authorization },
       });
       this.agentTransports.set(key, transport);
@@ -546,7 +621,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   }
 
   private send(url: string, init: JsonRequestInit): Promise<JsonResponse> {
-    return this.tls ? this.requestJson(url, init, this.tls) : fetchJson(url, init);
+    return this.tls ? this.requestJson(url, init, this.tls, this.egress) : fetchJson(url, init, this.egress);
   }
 
   /**
@@ -600,13 +675,13 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
       const external = node.alternateAddresses?.external;
       const externalPort = external?.ports?.[serviceKey];
       if (typeof externalPort === "number") {
-        return httpOrigin(this.scheme, external?.hostname ?? node.hostname ?? host, externalPort);
+        return httpOrigin(this.scheme, external?.hostname ?? node.hostname ?? host, externalPort, this.egress);
       }
 
       const port = node.services?.[serviceKey];
-      if (typeof port === "number") return httpOrigin(this.scheme, node.hostname ?? host, port);
+      if (typeof port === "number") return httpOrigin(this.scheme, node.hostname ?? host, port, this.egress);
     }
 
-    return httpOrigin(this.scheme, host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT);
+    return httpOrigin(this.scheme, host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT, this.egress);
   }
 }

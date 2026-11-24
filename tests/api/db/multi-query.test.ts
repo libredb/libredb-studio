@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { type CallContext, CLEANUP_DEADLINE_MS, type EndScopeRequest } from "@libredb/provider-sdk/calls";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
@@ -17,11 +18,34 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
+import * as admission from "@/lib/query-events/admission";
+import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
+import { forgetUsedRunConfirmations } from "@/lib/api/run-confirmation-token";
+import type { EndScopeRecord } from "@/lib/provider-host/core/console";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The script's end reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
+/** Runs `body` with `core` installed in place of the file's own, and puts the file's own back after it. */
+async function withCore<T>(core: HostCore, body: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(core, "test");
+  try {
+    return await body();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -90,7 +114,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 
@@ -192,6 +215,81 @@ describe("POST /api/db/multi-query", () => {
     expect(data.fields).toBeDefined();
   });
 
+  // #2271: the script's last successful statement is the main result, even with no rows.
+  test("a script ending in an empty SELECT shows that statement, not the rows before it (#2271)", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 5 }
+        : { rows: [], fields: ["n"], rowCount: 0, executionTime: 5 };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT id FROM t; SELECT n FROM u WHERE 1 = 0" },
+    });
+
+    const data = await parseResponseJSON<{
+      rows: unknown[];
+      fields: string[];
+      rowCount: number;
+      statements: { status: string }[];
+    }>(await POST(req as never));
+
+    expect(data.rows).toEqual([]);
+    expect(data.fields).toEqual(["n"]);
+    expect(data.rowCount).toBe(0);
+    expect(data.statements).toHaveLength(2);
+    expect(data.statements.every((s) => s.status === "success")).toBe(true);
+  });
+
+  test("keeps the last statement's columns when every statement of the script is empty (#2271)", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [], fields: ["a"], rowCount: 0, executionTime: 5 }
+        : { rows: [], fields: ["n"], rowCount: 0, executionTime: 5 };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT a FROM x WHERE 1 = 0; SELECT n FROM b WHERE 1 = 0" },
+    });
+
+    const data = await parseResponseJSON<{ rows: unknown[]; fields: string[]; rowCount: number }>(
+      await POST(req as never),
+    );
+
+    expect(data.rows).toEqual([]);
+    expect(data.fields).toEqual(["n"]);
+    expect(data.rowCount).toBe(0);
+  });
+
+  test("a script ending in a write shows the write's count, not the SELECT before it (#2271)", async () => {
+    let call = 0;
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      call++;
+      return call === 1
+        ? { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 5 }
+        : { rows: [], fields: [], rowCount: 7, executionTime: 5 };
+    });
+
+    const req = createMockRequest("/api/db/multi-query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT id FROM t; UPDATE t SET a = 1" },
+    });
+
+    const data = await parseResponseJSON<{ rows: unknown[]; fields: string[]; rowCount: number }>(
+      await POST(req as never),
+    );
+
+    expect(data.rows).toEqual([]);
+    expect(data.fields).toEqual([]);
+    expect(data.rowCount).toBe(7);
+  });
+
   // `JSON.stringify` writes NaN and both infinities as `null`; the main result and the
   // statement it came from both carry them as words.
   test("answers NaN and the infinities as words on the main result and its statement", async () => {
@@ -254,8 +352,8 @@ describe("POST /api/db/multi-query", () => {
     expect(data.statements[1].columnTypes).toEqual({ id: "INTEGER" });
   });
 
-  test("the main result carries the channels of the statement whose rows it shows", async () => {
-    // The main result is the last statement that returned rows, so those rows and
+  test("the main result carries the channels of the statement it shows", async () => {
+    // The main result is the last successful statement, so its rows and
     // these notices come from the same run. Merging every statement's warnings
     // would attribute one statement's notice to another's rows.
     let call = 0;
@@ -716,7 +814,10 @@ describe("POST /api/db/multi-query", () => {
       expect(executed()).toEqual(["SELECT 1; DELETE FROM t"]);
     });
 
-    test("a batch with several result sets shows the last one with rows", async () => {
+    test.each<[string, unknown[], number]>([
+      ["empty", [], 0],
+      ["with rows", [{ c: 4 }, { c: 5 }, { c: 6 }], 3],
+    ])("a batch with several result sets shows the last one, %s (#2286)", async (_label, lastRows, rowCount) => {
       (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
         rows: [{ a: 1 }],
         fields: ["a"],
@@ -725,7 +826,7 @@ describe("POST /api/db/multi-query", () => {
         resultSets: [
           { rows: [{ a: 1 }], fields: ["a"] },
           { rows: [{ b: 2 }, { b: 3 }], fields: ["b"], columnTypes: { b: "int" } },
-          { rows: [], fields: ["c"] },
+          { rows: lastRows, fields: ["c"], columnTypes: { c: "int" } },
         ],
       }));
       const req = createMockRequest("/api/db/multi-query", {
@@ -737,13 +838,40 @@ describe("POST /api/db/multi-query", () => {
         rows: unknown[];
         fields: string[];
         rowCount: number;
+        columnTypes?: Record<string, string>;
         statements: { columnTypes?: Record<string, string> }[];
       }>(await POST(req as never));
 
-      expect(data.rows).toEqual([{ b: 2 }, { b: 3 }]);
-      expect(data.fields).toEqual(["b"]);
-      expect(data.rowCount).toBe(2);
-      expect(data.statements[0].columnTypes).toEqual({ b: "int" });
+      expect(data.rows).toEqual(lastRows);
+      expect(data.fields).toEqual(["c"]);
+      expect(data.rowCount).toBe(rowCount);
+      expect(data.columnTypes).toEqual({ c: "int" });
+      expect(data.statements[0].columnTypes).toEqual({ c: "int" });
+    });
+
+    test("a batch ending in a write still shows its last result set (#2286)", async () => {
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+        rows: [{ a: 1 }],
+        fields: ["a"],
+        rowCount: 1,
+        executionTime: 1,
+        resultSets: [
+          { rows: [{ a: 1 }], fields: ["a"] },
+          { rows: [], fields: ["c"], columnTypes: { c: "int" } },
+        ],
+      }));
+      const req = createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: mssql, sql: "SELECT 1 AS a; SELECT c FROM empty; DELETE FROM t" },
+      });
+
+      const data = await parseResponseJSON<{ rows: unknown[]; fields: string[]; rowCount: number }>(
+        await POST(req as never),
+      );
+
+      expect(data.rows).toEqual([]);
+      expect(data.fields).toEqual(["c"]);
+      expect(data.rowCount).toBe(0);
     });
 
     test.each<[string, Record<string, unknown>, number]>([
@@ -931,6 +1059,108 @@ describe("POST /api/db/multi-query", () => {
     });
   });
 
+  test("a statement's error that holds the connection's credential is withheld and the earlier statements are unchanged", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    for (const [thrown, expected] of [
+      [new QueryError(`syntax error near ${password}`, "postgres"), withheldErrorMessage("QueryError")],
+      [new QueryError("syntax error near FORM", "postgres"), "syntax error near FORM"],
+    ] as const) {
+      let call = 0;
+      (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+        call++;
+        if (call === 2) throw thrown;
+        return { rows: [{ id: 1 }], fields: ["id"], rowCount: 1, executionTime: 1 };
+      });
+      // oxlint-disable-next-line no-await-in-loop -- each case installs the provider's query mock that the next case replaces, so the cases run in order.
+      const res = await POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection, sql: "SELECT 1; SELECT 2" },
+        }) as never,
+      );
+      // oxlint-disable-next-line no-await-in-loop -- each case installs the provider's query mock that the next case replaces, so the cases run in order.
+      const data = await parseResponseJSON<{ statements: Array<{ status: string; error?: string; rows?: unknown[] }> }>(
+        res,
+      );
+      expect(res.status).toBe(200);
+      expect(data.statements[0]).toMatchObject({ status: "success", rows: [{ id: 1 }] });
+      expect(data.statements[1]).toMatchObject({ status: "error", error: expected });
+      expect(JSON.stringify(data)).not.toContain(password);
+    }
+  });
+
+  test("a statement's warnings and the main result's warnings that hold the credential are withheld", async () => {
+    const password = crypto.randomUUID();
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows: [{ id: 1 }],
+      fields: ["id"],
+      rowCount: 1,
+      executionTime: 1,
+      warnings: [
+        { message: `a notice about ${password}`, code: 7, severity: "NOTICE" },
+        { message: "a clean notice", code: "01000" },
+      ],
+    }));
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1; SELECT 2" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ warnings?: unknown[]; statements: Array<{ warnings?: unknown[] }> }>(res);
+    const expected = [
+      { message: PROVIDER_TEXT_WITHHELD, code: 7, severity: "NOTICE" },
+      { message: "a clean notice", code: "01000" },
+    ];
+    expect(data.statements[0].warnings).toEqual(expected);
+    expect(data.statements[1].warnings).toEqual(expected);
+    expect(data.warnings).toEqual(expected);
+    expect(JSON.stringify(data)).not.toContain(password);
+  });
+
+  test("an error answer that holds the credential keeps its status and code", async () => {
+    const password = crypto.randomUUID();
+    mockGetOrCreateProvider.mockImplementation(async () => {
+      throw new ConnectionError(`could not connect as ${password}`, "postgres");
+    });
+    const res = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+    expect(res.status).toBe(503);
+    expect(data).toMatchObject({
+      error: withheldErrorMessage("ConnectionError"),
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+    });
+    expect(JSON.stringify(data)).not.toContain(password);
+
+    mockGetOrCreateProvider.mockImplementation(
+      async () =>
+        ({
+          ...mockProvider,
+          endOpenQueryTransaction: mock(async () => {
+            throw new QueryError(`rollback failed for ${password}`, "postgres");
+          }),
+        }) as never,
+    );
+    const ended = await POST(
+      createMockRequest("/api/db/multi-query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    expect(ended.status).toBe(400);
+    const endedBody = await parseResponseJSON<Record<string, unknown>>(ended);
+    expect(endedBody).toMatchObject({ error: withheldErrorMessage("QueryError"), code: "QUERY_ERROR" });
+    expect(JSON.stringify(endedBody)).not.toContain(password);
+  });
+
   test("QueryError from getOrCreateProvider returns 400", async () => {
     mockGetOrCreateProvider.mockImplementation(async () => {
       throw new QueryError("Bad query", "postgres");
@@ -1075,6 +1305,157 @@ describe("POST /api/db/multi-query", () => {
     const second = (mockProvider.query as ReturnType<typeof mock>).mock.calls[0][3];
     expect(second).not.toBe(scopes[0]);
     expect(endOpenQueryTransaction).toHaveBeenLastCalledWith(second);
+  });
+
+  /** A request to this route that the test can abort. */
+  function leavingRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+    return new Request("http://localhost:3000/api/db/multi-query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  test("the script's scope is ended once through the host core's console.endScope, under a cleanup context the request's leaving does not end", async () => {
+    const real = hostCore();
+    const ends: { request: EndScopeRequest; ctx: CallContext; record: EndScopeRecord }[] = [];
+    const spying: HostCore = {
+      ...real,
+      endScopeCall: async (session, request, ctx, ports) => {
+        const record = await real.endScopeCall(session, request, ctx, ports);
+        ends.push({ request, ctx, record });
+        return record;
+      },
+    };
+    const endOpenQueryTransaction = providerEndingTransactions("rolled-back");
+    const controller = new AbortController();
+
+    const before = Date.now();
+    const res = await withCore(spying, () =>
+      POST(
+        leavingRequest(
+          { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1)" },
+          controller.signal,
+        ) as never,
+      ),
+    );
+    const after = Date.now();
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.openTransaction).toBe("rolled-back");
+    const scopes = (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    expect(new Set(scopes).size).toBe(1);
+    expect(endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    expect(endOpenQueryTransaction).toHaveBeenCalledWith(scopes[0]);
+    expect(ends).toHaveLength(1);
+    const [end] = ends;
+    expect(end?.request).toEqual({ scope: scopes[0] as string });
+    expect(end?.record).toEqual({ kind: "answered", openTransaction: "rolled-back" });
+    expect(end?.ctx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(end?.ctx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(end?.ctx.signal.aborted).toBe(false);
+
+    // A provider without the ender: the host refuses the end as not offered, and the body says nothing.
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    const plain = await withCore(spying, () =>
+      POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1" },
+        }) as never,
+      ),
+    );
+    expect(plain.status).toBe(200);
+    expect("openTransaction" in (await parseResponseJSON<Record<string, unknown>>(plain))).toBe(false);
+    expect(ends[1]?.record).toEqual({
+      kind: "refused",
+      called: false,
+      refusals: [{ rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" }],
+    });
+  });
+
+  test("a script whose end does not answer within 10 s answers 504 naming the end", async () => {
+    const real = hostCore();
+    providerEndingTransactions("rolled-back");
+
+    const res = await withCore(
+      {
+        ...real,
+        endScopeCall: async () => ({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: Promise.resolve(),
+        }),
+      },
+      () =>
+        POST(
+          createMockRequest("/api/db/multi-query", {
+            method: "POST",
+            body: { connection: validConnection, sql: "BEGIN; INSERT INTO t VALUES (1)" },
+          }) as never,
+        ),
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(504);
+    expect(data).toMatchObject({
+      error:
+        "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it.",
+      code: "TIMEOUT_ERROR",
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+    });
+    expect("statements" in data).toBe(false);
+  });
+
+  test("a script the request leaves still ends its scope once the statement in flight settled", async () => {
+    const real = hostCore();
+    const order: string[] = [];
+    let endCalls = 0;
+    const counting: HostCore = {
+      ...real,
+      endScopeCall: (...args) => {
+        endCalls += 1;
+        return real.endScopeCall(...args);
+      },
+    };
+    const started = Promise.withResolvers<void>();
+    const statement = Promise.withResolvers<void>();
+    const provider = createMockProvider();
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      started.resolve();
+      await statement.promise;
+      order.push("statement settled");
+      return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
+    });
+    const endOpenQueryTransaction = mock(async () => {
+      order.push("end");
+      return "rolled-back" as const;
+    });
+    Object.assign(provider, { endOpenQueryTransaction });
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    const controller = new AbortController();
+
+    const answered = withCore(counting, async () => {
+      const answer = POST(
+        leavingRequest({ connection: validConnection, sql: "BEGIN; SELECT 2; SELECT 3" }, controller.signal) as never,
+      );
+      await started.promise;
+      controller.abort(new DOMException("The request went away.", "AbortError"));
+      expect(order).toEqual([]);
+      statement.resolve();
+      return answer;
+    });
+    await answered;
+
+    const calls = (provider.query as ReturnType<typeof mock>).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(order).toEqual(["statement settled", "end"]);
+    expect(endOpenQueryTransaction).toHaveBeenCalledWith(calls[0]?.[3]);
+    expect(endCalls).toBe(1);
   });
 
   test("a provider that cannot end one is asked nothing and answers as before", async () => {
@@ -1452,6 +1833,26 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
   });
 
+  test("governance: a failed unit's query event records the withheld sentence", async () => {
+    const password = crypto.randomUUID();
+    resolveConnectionOverride = async () => ({ ...governedConnection, password });
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`syntax error near ${password}`, "postgres");
+    });
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1" });
+
+    expect(res.status).toBe(200);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(events)).not.toContain(password);
+  });
+
   test("governance: one event per executed unit and none after the first error", async () => {
     const res = await run({
       connectionId: "seed:orders",
@@ -1574,6 +1975,18 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     expect(await recordedEvents()).toEqual([]);
   });
 
+  test("governance: a script that writes on a production connection with no confirmation field is asked in advisory and records nothing", async () => {
+    resolveConnectionOverride = async () => ({ ...governedConnection, environment: "production" });
+    // A signed session carries its issue time, which the 428's token binds.
+    mockGetSession.mockImplementation(async () => ({ ...governedSession, iat: 1_700_000_000 }));
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1; DELETE FROM orders" });
+
+    expect(res.status).toBe(428);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(await recordedEvents()).toEqual([]);
+  });
+
   test("with governance off the route records nothing", async () => {
     process.env.GOVERNANCE_SOURCE = "";
 
@@ -1607,5 +2020,207 @@ describe("POST /api/db/multi-query: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The server's confirmation of a run (FND-5) ─────────────────────────────
+describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
+  const SCRIPT = "SELECT 1; DROP TABLE t";
+  let warn: ReturnType<typeof spyOn>;
+  let admit: ReturnType<typeof spyOn>;
+
+  function run(body: Record<string, unknown>) {
+    return POST(createMockRequest("/api/db/multi-query", { method: "POST", body }) as never);
+  }
+
+  function nothingRan(): void {
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    clearRateLimitState();
+    forgetUsedRunConfirmations();
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockImplementation(async () => session);
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+    admit = spyOn(admission, "admitQueryExecution");
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    admit.mockRestore();
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  describe("server confirmation, advisory", () => {
+    test("a script that writes, sent without the field, runs and its answer says unconfirmed", async () => {
+      const res = await run({ connection: validConnection, sql: SCRIPT });
+      expect(res.status).toBe(200);
+      const body = await parseResponseJSON<{ confirmation?: string; executedCount: number }>(res);
+      expect(body.confirmation).toBe("unconfirmed");
+      expect(body.executedCount).toBe(2);
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/multi-query",
+        ),
+      ).toEqual([
+        [
+          "A statement that needs a confirmation ran without one",
+          { route: "api/db/multi-query", type: "postgres", user: "alice" },
+        ],
+      ]);
+    });
+
+    test("a script of reads runs with no field in its answer", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT 1; SELECT 2" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+    });
+  });
+
+  describe("server confirmation, ask", () => {
+    test.each(["advisory", "required"])("a script that writes and asks is answered 428 in %s mode", async (mode) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: "ask" });
+      expect(res.status).toBe(428);
+      expect(await parseResponseJSON(res)).toMatchObject({ code: "CONFIRMATION_REQUIRED" });
+      nothingRan();
+    });
+
+    test("a malformed field is refused before anything is built", async () => {
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: ["ask"] });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({ error: CONFIRMATION_FIELD_MESSAGE });
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, required", () => {
+    beforeEach(() => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    });
+
+    test("the 428's token runs the script once, and a second use is refused", async () => {
+      const asked = await run({ connection: validConnection, sql: SCRIPT });
+      expect(asked.status).toBe(428);
+      const { token } = (await parseResponseJSON<{ confirmation: { token: string } }>(asked)).confirmation;
+      const confirmed = { connection: validConnection, sql: SCRIPT, confirmation: { token } };
+      const ran = await run(confirmed);
+      expect(ran.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(ran)).not.toHaveProperty("confirmation");
+      const again = await run(confirmed);
+      expect(again.status).toBe(400);
+      expect(await parseResponseJSON(again)).toEqual({
+        error: "this confirmation has already been used",
+        code: "CONFIRMATION_INVALID",
+      });
+    });
+
+    test("a token issued for the single-statement route is refused here", async () => {
+      // The same statement, asked on POST /api/db/query's route name, through the token module itself.
+      const { mintRunConfirmation, runConfirmationIssuerForSession } = await import("@/lib/api/run-confirmation-token");
+      const issued = await mintRunConfirmation({
+        issuer: runConfirmationIssuerForSession(session),
+        connection: validConnection as never,
+        catalog: undefined,
+        route: "query",
+        statement: SCRIPT,
+        params: undefined,
+        verdict: { decision: "confirm", unreadable: false, typedConfirmation: null, classificationFailed: false },
+      });
+      const res = await run({ connection: validConnection, sql: SCRIPT, confirmation: { token: issued.token } });
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "this confirmation was issued for another route",
+      );
+    });
+  });
+
+  describe("server confirmation, a statement the client let through", () => {
+    test("required answers 428 for a script whose second statement is the write, and runs nothing", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run({ connection: validConnection, sql: SCRIPT });
+      expect(res.status).toBe(428);
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, order", () => {
+    test.each([
+      ["a missing statement", { connection: validConnection, confirmation: "ask" }],
+      ["bad page bounds", { connection: validConnection, sql: SCRIPT, options: { offset: -1 }, confirmation: "ask" }],
+      ["a statement that is not text", { connection: validConnection, sql: 7, confirmation: "ask" }],
+    ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run(body as Record<string, unknown>);
+      expect(res.status).toBe(400);
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, production", () => {
+    test("advisory asks a script that writes on production and sends no field, and nothing runs", async () => {
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      const res = await run({ connection: production, sql: "SELECT 1; DELETE FROM t" });
+      expect(res.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(res);
+      expect(confirmation.token).toEqual(expect.any(String));
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      nothingRan();
+    });
+
+    test("advisory still runs a script that writes with no field off production, marked unconfirmed", async () => {
+      const staging = { ...validConnection, name: crypto.randomUUID(), environment: "staging" };
+      const res = await run({ connection: staging, sql: "SELECT 1; DELETE FROM t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+    });
+
+    test("advisory runs a read script on production with no field", async () => {
+      const production = { ...validConnection, name: crypto.randomUUID(), environment: "production" };
+      const res = await run({ connection: production, sql: "SELECT 1; SELECT 2" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+    });
+
+    test("a script that writes on production asks for the name, and runs once with it", async () => {
+      const name = crypto.randomUUID();
+      const production = { ...validConnection, name, environment: "production" };
+      const script = "SELECT 1; DELETE FROM t";
+      const asked = await run({ connection: production, sql: script, confirmation: "ask" });
+      expect(asked.status).toBe(428);
+      const { confirmation } = await parseResponseJSON<{
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(asked);
+      expect(confirmation.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+      const tokenOnly = await run({ connection: production, sql: script, confirmation: { token: confirmation.token } });
+      expect(tokenOnly.status).toBe(428);
+      const wrong = await run({
+        connection: production,
+        sql: script,
+        confirmation: { token: confirmation.token, typed: crypto.randomUUID() },
+      });
+      expect(wrong.status).toBe(400);
+      nothingRan();
+      const ran = await run({
+        connection: production,
+        sql: script,
+        confirmation: { token: confirmation.token, typed: name },
+      });
+      expect(ran.status).toBe(200);
+      expect(await parseResponseJSON<{ executedCount: number }>(ran)).toMatchObject({ executedCount: 2 });
+    });
   });
 });

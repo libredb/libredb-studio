@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes } from "@/lib/db/read-only-budget";
 import { type QdrantAnswer, QdrantError, type QdrantProbe } from "@/lib/db/providers/vector/qdrant/client";
 import type { QdrantAnswered } from "@/lib/db/providers/vector/qdrant/execute";
 import {
@@ -26,6 +26,7 @@ import {
 import { QDRANT_AGENT_OPS, readQdrantAgentStatement } from "@/lib/db/providers/vector/qdrant/metadata-request";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { agentAnswer, agentCapture } from "../../../helpers/qdrant-agent";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 65_536 };
 const STORED = /stored-|written|0\.4/;
@@ -70,6 +71,16 @@ const withheld = (statement: string, text: string): QueryError => {
   }
   throw new Error("answered");
 };
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 describe("the read-only proof, from what 1.19.1 answered", () => {
   test("every read-only principal is refused both no-op writes", () => {
@@ -586,6 +597,7 @@ describe("the budgets", () => {
       throw new Error("answered");
     })();
     expect(error.message).toContain("3 rows");
+    expect(errorKind(error)).toBe("row-budget-refusal");
     expect(shape("GET /collections", list, { ...BUDGET, maxResultRows: 3 }).rowCount).toBe(3);
   });
 
@@ -593,6 +605,9 @@ describe("the budgets", () => {
     const bytes = measureResultBytes([{ collection: "a" }, { collection: "b" }, { collection: "c" }]);
     expect(shape("GET /collections", list, { ...BUDGET, maxResultBytes: bytes }).rowCount).toBe(3);
     expect(() => shape("GET /collections", list, { ...BUDGET, maxResultBytes: bytes - 1 })).toThrow(QueryError);
+    expect(kindOf(() => shape("GET /collections", list, { ...BUDGET, maxResultBytes: bytes - 1 }))).toBe(
+      "byte-budget-refusal",
+    );
   });
 });
 
@@ -616,6 +631,7 @@ describe("the agent's wording of a failure", () => {
       expect(qdrantAgentFailure(error, BUDGET, STATEMENT)?.message).toBe(
         "Read-only execution exceeded the time budget: no answer within 5000ms",
       );
+      expect(errorKind(qdrantAgentFailure(error, BUDGET, STATEMENT))).toBe("time-budget-refusal");
     }
   });
 

@@ -19,6 +19,7 @@ import {
   makeCertificates,
   type TransportCertificates,
 } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 let certificates: TransportCertificates;
 beforeAll(() => {
@@ -36,11 +37,12 @@ const KEY_HEADER = "tls-secret-key";
 
 /** One GET through a new connection to `host` on the listener's port, with the panel `ssl` and the identity `identity`. */
 async function call(host: string, listener: Listener, ssl: SSLConfig, identity = host, path = "/") {
-  const origin = httpOrigin("https", host, listener.port);
+  const origin = httpOrigin("https", host, listener.port, ALLOWS_PRIVATE_HOSTS);
   const transport = createNodeTransport({
     origin,
     tls: nodeTlsMaterial(ssl, identity),
     maxSockets: 2,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: { "api-key": KEY_HEADER },
   });
   transports.push(transport);

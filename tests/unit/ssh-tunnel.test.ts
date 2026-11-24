@@ -1,7 +1,8 @@
 import "../setup";
-import { mock, describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { mock, describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { EventEmitter } from "events";
 import type { SSHTunnelConfig } from "@/lib/types";
+import { logger } from "@/lib/logger";
 
 // --- Mock ssh2 Client ---
 // CI rests on this mock's FIDELITY to ssh2, and nothing here measures it. The handshake
@@ -24,6 +25,16 @@ class MockSSHClient extends EventEmitter {
     // ssh2 emits 'connect' once its TCP socket is up, before key exchange
     // (node_modules/ssh2/lib/client.js, the socket's own 'connect' handler).
     setTimeout(() => this.emit("connect"), 0);
+    if (sessionEndsBeforeReady) {
+      // A bastion that closes the TCP connection with a FIN before the handshake completes: ssh2
+      // reports 'end' and 'close' and no 'error' (node_modules/ssh2/lib/client.js, the socket's
+      // own 'end' and 'close' handlers).
+      setTimeout(() => {
+        this.emit("end");
+        this.emit("close");
+      }, 0);
+      return;
+    }
     // Mirror ssh2's own handshake ordering: the verifier is called with the raw K_S blob
     // during key exchange, and returning false fails the handshake with exactly this
     // error (node_modules/ssh2/lib/protocol/kex.js: "Host denied (verification failed)").
@@ -82,11 +93,17 @@ const FINGERPRINT_B = "SHA256:HNXfCNN9oifxQTL0zxPKCgu0TYROxoRatYNEXsmJUkc";
 /** Which host key the fake bastion offers on the next connect. */
 let serverHostKey: Buffer | null = null;
 
+/** Whether the fake bastion ends the next session before the handshake completes. */
+let sessionEndsBeforeReady = false;
+
 let mockSSHInstance: MockSSHClient;
+/** How many SSH clients the tunnel has constructed, one per SSH connection it dials. */
+let sshClientsCreated = 0;
 
 mock.module("ssh2", () => ({
   Client: class {
     constructor() {
+      sshClientsCreated += 1;
       mockSSHInstance = new MockSSHClient();
       return mockSSHInstance;
     }
@@ -136,9 +153,15 @@ mock.module("net", () => ({
 }));
 
 // Dynamic import after mocks
-const { createSSHTunnel, closeSSHTunnel, hasTunnel, getTunnelInfo, clearSSHHostKeyPin } = await import(
-  "@/lib/ssh/tunnel"
-);
+const {
+  createSSHTunnel,
+  closeSSHTunnel,
+  hasTunnel,
+  getTunnelInfo,
+  clearSSHHostKeyPin,
+  releaseUnopenedTunnel,
+  tunnelProviderOpened,
+} = await import("@/lib/ssh/tunnel");
 
 const BASTION: SSHTunnelConfig = {
   enabled: true,
@@ -157,6 +180,7 @@ describe("SSH Tunnel", () => {
   beforeEach(() => {
     lastConnectionId = null;
     serverHostKey = HOST_KEY_A;
+    sessionEndsBeforeReady = false;
   });
 
   afterEach(async () => {
@@ -307,6 +331,135 @@ describe("SSH Tunnel", () => {
 
       expect(tunnel2).toBe(tunnel1);
       expect(tunnel2.localPort).toBe(tunnel1.localPort);
+    });
+
+    test("concurrent calls for one forward share one SSH connection", async () => {
+      const connId = "test-concurrent-share-" + Date.now();
+      const before = sshClientsCreated;
+
+      const [first, second] = await Promise.all([
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+      ]);
+
+      expect(second).toBe(first);
+      expect(sshClientsCreated - before).toBe(1);
+      expect(getTunnelInfo(connId)).toBe(first);
+
+      await closeSSHTunnel(connId);
+
+      expect(hasTunnel(connId)).toBe(false);
+      expect(mockSSHInstance.ended).toBe(true);
+      expect(mockServerInstance.closed).toBe(true);
+    });
+
+    test("a dial that fails rejects every concurrent caller with its error, and the next call dials again", async () => {
+      const connId = "test-concurrent-failed-" + Date.now();
+      lastConnectionId = connId;
+      const before = sshClientsCreated;
+
+      const first = createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      const second = createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      mockSSHInstance.removeAllListeners("ready");
+      setTimeout(() => mockSSHInstance.emit("error", new Error("Connection refused")), 5);
+
+      // Settled together, so neither caller's rejection is left unobserved while the other is awaited.
+      const results = await Promise.allSettled([first, second]);
+      expect(results.map((result) => (result.status === "rejected" ? String(result.reason) : result.status))).toEqual([
+        "Error: SSH connection error: Connection refused",
+        "Error: SSH connection error: Connection refused",
+      ]);
+      expect(sshClientsCreated - before).toBe(1);
+      expect(hasTunnel(connId)).toBe(false);
+
+      const next = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      expect(sshClientsCreated - before).toBe(2);
+      expect(getTunnelInfo(connId)).toBe(next);
+    });
+
+    test("concurrent one-shot calls each open a tunnel of their own", async () => {
+      const connId = "test-concurrent-oneshot-" + Date.now();
+      const before = sshClientsCreated;
+
+      const [first, second] = await Promise.all([
+        createSSHTunnel(connId, BASTION, "db.internal", 5432, { shared: false }),
+        createSSHTunnel(connId, BASTION, "db.internal", 5432, { shared: false }),
+      ]);
+
+      expect(second).not.toBe(first);
+      expect(sshClientsCreated - before).toBe(2);
+      expect(hasTunnel(connId)).toBe(false);
+      await Promise.all([first.close(), second.close()]);
+    });
+
+    // Every caller of one forward is handed the one forward, so whether a caller whose provider did not
+    // open may close it depends on the others: one still connecting through it, or a provider opened on it,
+    // keeps it open.
+    test("a forward released by one concurrent caller stays open while another is still connecting", async () => {
+      const connId = "test-claims-concurrent-" + Date.now();
+      lastConnectionId = connId;
+
+      const [first, second] = await Promise.all([
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+      ]);
+      await releaseUnopenedTunnel(first);
+
+      expect(hasTunnel(connId)).toBe(true);
+      expect(mockServerInstance.closed).toBe(false);
+      expect(mockSSHInstance.ended).toBe(false);
+
+      // The last caller still connecting fails too, and nothing opened on the forward, so it closes.
+      await releaseUnopenedTunnel(second);
+
+      expect(hasTunnel(connId)).toBe(false);
+      expect(mockServerInstance.closed).toBe(true);
+      expect(mockSSHInstance.ended).toBe(true);
+    });
+
+    test("a forward a provider opened on stays open when a concurrent caller releases it", async () => {
+      const connId = "test-claims-opened-" + Date.now();
+      lastConnectionId = connId;
+
+      const [first, second] = await Promise.all([
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+        createSSHTunnel(connId, BASTION, "db.internal", 5432),
+      ]);
+      tunnelProviderOpened(first);
+      await releaseUnopenedTunnel(second);
+
+      expect(hasTunnel(connId)).toBe(true);
+      expect(mockServerInstance.closed).toBe(false);
+      expect(mockSSHInstance.ended).toBe(false);
+    });
+
+    test("a caller served the pooled forward counts as connecting through it", async () => {
+      const connId = "test-claims-pooled-" + Date.now();
+      lastConnectionId = connId;
+
+      const dialled = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      const pooled = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      expect(pooled).toBe(dialled);
+      await releaseUnopenedTunnel(dialled);
+
+      expect(hasTunnel(connId)).toBe(true);
+      expect(mockServerInstance.closed).toBe(false);
+
+      await releaseUnopenedTunnel(pooled);
+
+      expect(hasTunnel(connId)).toBe(false);
+      expect(mockServerInstance.closed).toBe(true);
+    });
+
+    test("a one-shot tunnel holds no claim, so reporting on it is refused by name", async () => {
+      const connId = "test-claims-oneshot-" + Date.now();
+      const oneShot = await createSSHTunnel(connId, BASTION, "db.internal", 5432, { shared: false });
+      const refusal = "The SSH tunnel to db.internal:5432 is not pooled, so no connect holds a claim on it";
+
+      expect(() => tunnelProviderOpened(oneShot)).toThrow(refusal);
+      await expect(releaseUnopenedTunnel(oneShot)).rejects.toThrow(refusal);
+      expect(mockServerInstance.closed).toBe(false);
+      await oneShot.close();
     });
 
     test("does not serve a pooled tunnel when the caller asks for a different far end", async () => {
@@ -562,7 +715,7 @@ describe("SSH Tunnel", () => {
       });
     });
 
-    test("ends the local socket when forwardOut fails", async () => {
+    test("destroys the local socket with the bastion's refusal and logs it once", async () => {
       const connId = "test-fwderr-" + Date.now();
       lastConnectionId = connId;
 
@@ -588,16 +741,117 @@ describe("SSH Tunnel", () => {
         _port: number,
         cb: (err: Error | null, stream: unknown) => void,
       ) => {
-        cb(new Error("Channel open failure"), null);
+        cb(new Error("(SSH) Channel open failure: Connection refused"), null);
+      };
+
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const mockSocket = new MockDuplexStream();
+        const destroyedWith: unknown[] = [];
+        (mockSocket as unknown as { destroy: (error?: Error) => void }).destroy = (error?: Error) => {
+          destroyedWith.push(error);
+          // net.Socket#destroy(error) emits the error on the socket, which is why its listener comes first.
+          if (error) mockSocket.emit("error", error);
+        };
+        mockServerInstance.connectionHandler!(mockSocket);
+
+        expect(destroyedWith).toHaveLength(1);
+        expect(String(destroyedWith[0])).toContain("Channel open failure: Connection refused");
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("db.internal:5432");
+        expect(String(warn.mock.calls[0][0])).toContain("Channel open failure: Connection refused");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a forwardOut that throws destroys that socket with the error and takes the forward out of the pool", async () => {
+      const connId = "test-fwdthrow-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+
+      // What ssh2 1.17.0 does when its socket is no longer writable (node_modules/ssh2/lib/client.js, forwardOut).
+      mockSSHInstance.forwardOut = () => {
+        throw new Error("Not connected");
+      };
+
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const mockSocket = new MockDuplexStream();
+        const destroyedWith: unknown[] = [];
+        (mockSocket as unknown as { destroy: (error?: Error) => void }).destroy = (error?: Error) => {
+          destroyedWith.push(error);
+          if (error) mockSocket.emit("error", error);
+        };
+
+        expect(() => mockServerInstance.connectionHandler!(mockSocket)).not.toThrow();
+        expect(destroyedWith.map(String)).toEqual(["Error: Not connected"]);
+        // The session cannot open channels any more, so the forward leaves the pool and its listener closes,
+        // and the next request for it opens a new session instead of being handed this one again.
+        expect(hasTunnel(connId)).toBe(false);
+        expect(mockServerInstance.closed).toBe(true);
+        expect(warn).toHaveBeenCalledTimes(2);
+        expect(String(warn.mock.calls[0][0])).toContain("could not open a channel to db.internal:5432: Not connected");
+        expect(String(warn.mock.calls[1][0])).toContain(`SSH tunnel for ${connId} to db.internal:5432 closed`);
+        expect(String(warn.mock.calls[1][0])).toContain("Not connected");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a loopback socket that fails while its channel open is pending is handled on that socket", async () => {
+      const connId = "test-pending-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+
+      // The bastion has not answered the channel open yet, so the callback has not run.
+      mockSSHInstance.forwardOut = () => mockSSHInstance;
+
+      const mockSocket = new MockDuplexStream();
+      mockServerInstance.connectionHandler!(mockSocket);
+
+      // An EventEmitter with no 'error' listener throws what it is handed, as a net.Socket does.
+      expect(() => mockSocket.emit("error", new Error("read ECONNRESET"))).not.toThrow();
+    });
+
+    test("a channel the bastion confirms after its loopback socket failed is closed at once", async () => {
+      const connId = "test-late-confirm-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+
+      let confirm: ((err: Error | null, stream: unknown) => void) | null = null;
+      mockSSHInstance.forwardOut = (
+        _bindAddr: string,
+        _bindPort: number,
+        _host: string,
+        _port: number,
+        cb: (err: Error | null, stream: unknown) => void,
+      ) => {
+        confirm = cb;
+        return mockSSHInstance;
       };
 
       const mockSocket = new MockDuplexStream();
-      let ended = false;
-      (mockSocket as unknown as { end: () => void }).end = () => {
-        ended = true;
-      };
       mockServerInstance.connectionHandler!(mockSocket);
-      expect(ended).toBe(true);
+      // A reset destroys the socket without an 'end', so piping into a late channel would never end it.
+      (mockSocket as unknown as { destroyed: boolean }).destroyed = true;
+      mockSocket.emit("error", new Error("read ECONNRESET"));
+
+      const stream = new MockDuplexStream();
+      let streamClosed = false;
+      let piped = false;
+      (stream as unknown as { close: () => void }).close = () => {
+        streamClosed = true;
+      };
+      (mockSocket as unknown as { pipe: () => unknown }).pipe = () => {
+        piped = true;
+        return stream;
+      };
+      confirm!(null, stream);
+
+      expect(streamClosed).toBe(true);
+      expect(piped).toBe(false);
+      expect(hasTunnel(connId)).toBe(true);
     });
 
     test("destroys the socket on stream error and closes the stream on socket error", async () => {
@@ -650,6 +904,102 @@ describe("SSH Tunnel", () => {
 
       mockSocket.emit("error", new Error("socket broke"));
       expect(streamClosed).toBe(true);
+    });
+  });
+
+  describe("the SSH session ending", () => {
+    test.each(["end", "close"])(
+      "ssh2 '%s' takes the forward out of the pool, closes its loopback listener and logs the loss once",
+      async (event) => {
+        const connId = `test-session-${event}-` + Date.now();
+        lastConnectionId = connId;
+        await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+        const warn = spyOn(logger, "warn").mockImplementation(() => {});
+        try {
+          mockSSHInstance.emit(event);
+
+          // Asserted before the 'close' that ssh2 sends after 'end', so this event alone does the work.
+          expect(hasTunnel(connId)).toBe(false);
+          expect(mockServerInstance.closed).toBe(true);
+          expect(mockSSHInstance.ended).toBe(true);
+          expect(warn).toHaveBeenCalledTimes(1);
+          expect(String(warn.mock.calls[0][0])).toContain(connId);
+          expect(String(warn.mock.calls[0][0])).toContain("the bastion ended the SSH session");
+
+          // ssh2 follows 'end' with 'close'; the second one finds the tunnel already gone and logs nothing more.
+          mockSSHInstance.emit("close");
+          expect(warn).toHaveBeenCalledTimes(1);
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
+    test("an SSH error after the tunnel is open logs the loss once, naming the error", async () => {
+      const connId = "test-session-error-" + Date.now();
+      lastConnectionId = connId;
+      await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        mockSSHInstance.emit("error", new Error("read ECONNRESET"));
+        mockSSHInstance.emit("close");
+
+        expect(hasTunnel(connId)).toBe(false);
+        expect(mockServerInstance.closed).toBe(true);
+        expect(warn).toHaveBeenCalledTimes(1);
+        expect(String(warn.mock.calls[0][0])).toContain("read ECONNRESET");
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a tunnel its owner closed logs no loss when ssh2 then reports the session's end", async () => {
+      const connId = "test-session-owner-" + Date.now();
+      const tunnel = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        await tunnel.close();
+        mockSSHInstance.emit("end");
+        mockSSHInstance.emit("close");
+
+        expect(hasTunnel(connId)).toBe(false);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a late session end does not take a newer forward of the same key out of the pool", async () => {
+      const connId = "test-session-late-" + Date.now();
+      lastConnectionId = connId;
+      const first = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      const firstClient = mockSSHInstance;
+      await first.close();
+
+      const second = await createSSHTunnel(connId, BASTION, "db.internal", 5432);
+      firstClient.emit("close");
+
+      expect(getTunnelInfo(connId)).toBe(second);
+    });
+
+    test("a session that ends before the handshake completes rejects naming the bastion", async () => {
+      sessionEndsBeforeReady = true;
+      const connId = "test-session-early-" + Date.now();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        // Raced against a timer so the defect this pins, a promise that never settles, fails the test by name.
+        const unsettled = new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new Error("createSSHTunnel did not settle")), 1000),
+        );
+        await expect(Promise.race([createSSHTunnel(connId, BASTION, "db.internal", 5432), unsettled])).rejects.toThrow(
+          "SSH connection to bastion.example.com:22 closed before the tunnel was ready",
+        );
+        expect(hasTunnel(connId)).toBe(false);
+        // The rejection is the whole report: a tunnel never handed out has no loss to log.
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 

@@ -82,6 +82,7 @@ import { nodeSocketPort, nodeSshPort } from "@/lib/db/providers/network/netconf/
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import type { KindCount, ObjectSourceDocument } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const DEFAULT_TARGET = "127.0.0.1:1830";
 const RUNTIME = typeof Bun === "undefined" ? `node ${process.versions.node}` : `bun ${Bun.version}`;
@@ -234,7 +235,7 @@ function connectionWith(over: Record<string, unknown> = {}): DatabaseConnection 
  * bundle for the Node run; the default path is checked separately, under Bun, so that it is not
  * simply unexercised.
  */
-const livePorts = { xml: netconfXmlPort, ssh: nodeSshPort, socket: nodeSocketPort };
+const livePorts = { xml: netconfXmlPort, ssh: nodeSshPort, socket: nodeSocketPort, egress: egressDecision() };
 
 function providerWith(connection: DatabaseConnection): NetconfProvider {
   return new NetconfProvider(connection, {}, {}, async (config) => openNetconfReader(config, livePorts));
@@ -656,7 +657,7 @@ if (typeof Bun === "undefined") {
     // Every check above names the ports, which is what lets this file bundle for Node. The
     // application does not: it takes `index.ts`'s dynamic import. Without this check that path is
     // exercised by nothing here.
-    const provider = new NetconfProvider(connectionWith());
+    const provider = new NetconfProvider(connectionWith(), {}, { egress: egressDecision() });
     await provider.connect();
     try {
       const overview = await provider.getOverview();

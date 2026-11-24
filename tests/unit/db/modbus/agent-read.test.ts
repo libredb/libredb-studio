@@ -2,7 +2,7 @@
  * The agent read's own rules, below the provider: the remaining failure categories, the turn that comes exactly at
  * the deadline, and the cost each shape is charged.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import type { ModbusDevicePacer } from "@/lib/db/providers/industrial/modbus/agent-pacing";
 import {
@@ -15,21 +15,14 @@ import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/
 import { parseRegisterMap } from "@/lib/db/providers/industrial/modbus/register-map";
 import type { ReadRequest } from "@/lib/db/providers/industrial/modbus/request";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import type { EgressDecision, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { fakeModbusDevice, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[FLAG];
 const closers: Array<() => Promise<void>> = [];
-
-beforeEach(() => {
-  delete process.env[FLAG];
-});
 
 afterEach(async () => {
   for (const close of closers.splice(0)) await close();
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
 });
 
 const MAP = parseRegisterMap(
@@ -94,9 +87,18 @@ function run(
   plan: ReadRequest,
   overrides: Partial<ReadOnlyStatementBudget> = {},
   startedAt = performance.now(),
+  // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+  egress: EgressDecision = ALLOWS_PRIVATE_HOSTS,
 ) {
   return runModbusAgentRead(
-    { plan, map: MAP, endpoint: { host: "127.0.0.1", port }, unitId: 1, budget: budget(overrides), startedAt },
+    {
+      plan,
+      map: MAP,
+      endpoint: { host: "127.0.0.1", port, egress },
+      unitId: 1,
+      budget: budget(overrides),
+      startedAt,
+    },
     { dial: dialModbus, pacer: immediate },
   );
 }
@@ -139,9 +141,9 @@ describe("failures by category", () => {
   });
 
   test("an address the egress rule refuses is the connection's settings, and nothing is sent", async () => {
-    process.env[FLAG] = "true";
     const dev = await device();
-    expect(await message(run(dev.port, { kind: "range", unitId: 1, table: "coil", address: 0, count: 1 }))).toBe(
+    const plan = { kind: "range", unitId: 1, table: "coil", address: 0, count: 1 } as const;
+    expect(await message(run(dev.port, plan, {}, performance.now(), BLOCKS_PRIVATE_HOSTS))).toBe(
       MODBUS_AGENT_FAILURE_SENTENCES.settings,
     );
     expect(dev.connections).toHaveLength(0);

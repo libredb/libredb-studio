@@ -15,6 +15,7 @@
  * The failure is never cached and drops the previous load, so the next call reads again. A fill that resetCache()
  * or a fill for the other literal mode superseded while it ran stores neither its load nor its status.
  */
+import { quoteTypeId, unknownTypeSentence } from "@/lib/db/type-id";
 import { logger } from "@/lib/logger";
 import { resolveConnectionCredentials, seedValuesAreLiteral, UndefinedSeedVariableError } from "./credential-resolver";
 import { seedConfigPath } from "./sources/file";
@@ -25,11 +26,13 @@ import {
   type OperatorSkip,
   type OperatorSourceName,
   type OperatorSourceReport,
+  type OperatorUnavailableEntry,
 } from "./sources/types";
 
 const ROUTE = "seed/operator-loader";
 const DEFAULT_CACHE_TTL_MS = 60_000;
 const SKIPPED_MESSAGE = "Seed connection skipped due to credential resolution failure";
+const UNAVAILABLE_MESSAGE = "Seed connection listed as unavailable: no provider for its type";
 
 const duplicateIdMessage = (id: string, first: string, second: string): string =>
   `Seed connection id "${id}" is declared by both ${first} and ${second}`;
@@ -37,9 +40,14 @@ const duplicateIdMessage = (id: string, first: string, second: string): string =
 export interface OperatorLoad {
   /** Resolved entries in source order; literal ones untouched by resolution. */
   readonly entries: readonly OperatorEntry[];
+  /**
+   * The entries whose type names no provider this Studio has (FND-1), in source order: listed as unavailable, opened by
+   * no route, and never resolved, since they carry no field a reference could be in.
+   */
+  readonly unavailable: readonly OperatorUnavailableEntry[];
   /** Resolution skips of this fill plus every source's own skips. */
   readonly skips: readonly OperatorSkip[];
-  /** Every id any source declared, kept, skipped by a source or dropped by resolution. */
+  /** Every id any source declared, kept, unavailable, skipped by a source or dropped by resolution. */
   readonly declaredIds: ReadonlySet<string>;
   readonly reports: readonly OperatorSourceReport[];
 }
@@ -80,6 +88,7 @@ function errorReport(
     connected: [],
     skipped: [],
     notes: [],
+    unavailable: [],
   };
 }
 
@@ -152,6 +161,7 @@ function resolveEntry(entry: OperatorEntry, skips: OperatorSkip[]): OperatorEntr
 async function runFill(fill: Fill, now: number): Promise<OperatorLoad> {
   const checkedAt = new Date(now).toISOString();
   const entries: OperatorEntry[] = [];
+  const unavailable: OperatorUnavailableEntry[] = [];
   const skips: OperatorSkip[] = [];
   const declaredIds = new Set<string>();
   const origins = new Map<string, string>();
@@ -165,20 +175,32 @@ async function runFill(fill: Fill, now: number): Promise<OperatorLoad> {
       // oxlint-disable-next-line no-await-in-loop -- the sources run in their fixed order, one after the other.
       const result = await source.load({ literalValues: fill.literalValues });
       for (const skip of result.skips) declaredIds.add(skip.id);
+      const declare = (id: string, origin: string): void => {
+        const first = origins.get(id);
+        if (first !== undefined) throw new OperatorSourceError("duplicate-id", duplicateIdMessage(id, first, origin));
+        origins.set(id, origin);
+        declaredIds.add(id);
+      };
       const kept: OperatorEntry[] = [];
       const resolutionSkips: OperatorSkip[] = [];
       for (const entry of result.entries) {
-        const id = entry.connection.id;
-        const first = origins.get(id);
-        if (first !== undefined) {
-          throw new OperatorSourceError("duplicate-id", duplicateIdMessage(id, first, entry.origin));
-        }
-        origins.set(id, entry.origin);
-        declaredIds.add(id);
+        declare(entry.connection.id, entry.origin);
         const resolved = entry.literal ? entry : resolveEntry(entry, resolutionSkips);
         if (resolved !== null) kept.push(resolved);
       }
-      const state = kept.length > 0 ? "ok" : result.status.state === "missing" ? "missing" : "empty";
+      // Declared like any operator entry, so a repeated id is refused and a discovered connection with its id is
+      // dropped; logged once per fill with names and the quoted type only, never another field of the entry.
+      for (const item of result.unavailable) {
+        declare(item.entry.id, item.origin);
+        logger.warn(UNAVAILABLE_MESSAGE, {
+          route: ROUTE,
+          connectionId: item.entry.id,
+          origin: item.origin,
+          type: quoteTypeId(item.entry.type),
+        });
+      }
+      const listed = kept.length > 0 || result.unavailable.length > 0;
+      const state = listed ? "ok" : result.status.state === "missing" ? "missing" : "empty";
       const connected = kept.map(({ connection }) => ({
         id: connection.id,
         name: connection.name,
@@ -194,8 +216,16 @@ async function runFill(fill: Fill, now: number): Promise<OperatorLoad> {
         connected,
         skipped,
         notes: result.notes,
+        unavailable: result.unavailable.map(({ entry, origin }) => ({
+          id: entry.id,
+          name: entry.name,
+          type: entry.type,
+          origin,
+          reason: unknownTypeSentence(entry.type),
+        })),
       });
       entries.push(...kept);
+      unavailable.push(...result.unavailable);
       skips.push(...skipped);
     } catch (err) {
       reports.push(errorReport(source.name, location, checkedAt, err));
@@ -215,7 +245,7 @@ async function runFill(fill: Fill, now: number): Promise<OperatorLoad> {
     throw failure.error;
   }
 
-  const load: OperatorLoad = { entries, skips, declaredIds, reports };
+  const load: OperatorLoad = { entries, unavailable, skips, declaredIds, reports };
   if (inflight === fill) {
     cache = { load, filledAt: now, literalValues: fill.literalValues };
     statusCache = reports;

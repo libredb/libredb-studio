@@ -17,6 +17,7 @@ import {
   type WeaviateScenario,
   type WeaviateStep,
 } from "../live/weaviate-scenarios";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 /** The credential values a scenario's connection carries. A replay uses stand-ins, a live run the real keys. */
 export interface WeaviateSecrets {
@@ -147,7 +148,7 @@ export function scenarioProvider(
   connection: DatabaseConnection,
   transport: (options: NodeTransportOptions) => NodeTransport,
 ): WeaviateProvider {
-  return new WeaviateProvider(connection, {}, {}, (options, routes) =>
+  return new WeaviateProvider(connection, {}, { egress: ALLOWS_PRIVATE_HOSTS }, (options, routes) =>
     createRestWeaviateClient(options, routes, transport),
   );
 }

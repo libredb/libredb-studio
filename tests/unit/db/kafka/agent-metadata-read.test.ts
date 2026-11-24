@@ -12,7 +12,7 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
-import type { KafkaAgentPlan } from "@/lib/db/providers/stream/kafka/agent-statement";
+import type { KafkaAgentPlan } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   type KafkaClusterMetadata,
@@ -21,8 +21,9 @@ import {
   type KafkaOffsetPosition,
   type KafkaTopicMetadata,
 } from "@/lib/db/providers/stream/kafka/client";
-import { BYTE_BUDGET_PREFIX, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 1_000_000, statementTimeoutMs: 10_000 };
 const B = (n: number) => BigInt(n);
@@ -323,6 +324,13 @@ describe("budgets and the deadline", () => {
     const { client } = clientOver({ names: ["a", "b"], topics: [topic("a", 1), topic("b", 1)] });
     const answer = await run(client, { op: "topics", limit: 50 });
     expect(() => kafkaAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, "s", 0)).toThrow(BYTE_BUDGET_PREFIX);
+    let refused: unknown;
+    try {
+      kafkaAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, "s", 0);
+    } catch (error) {
+      refused = error;
+    }
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a read that outlives the deadline is the time budget's refusal", async () => {
@@ -333,6 +341,7 @@ describe("budgets and the deadline", () => {
     };
     const error = await runKafkaAgentRead(client, { op: "brokers", limit: 1 }, 5).catch((thrown: unknown) => thrown);
     expect(kafkaAgentFailure(error, 5, "s")?.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 5ms`);
+    expect(errorKind(kafkaAgentFailure(error, 5, "s"))).toBe("time-budget-refusal");
   });
 
   test("a read that fails after the deadline won leaves no unhandled rejection", async () => {
@@ -383,6 +392,8 @@ describe("failures, worded by category alone", () => {
     expect(failure?.message).not.toContain("secret");
     if (category === "timeout") expect(failure?.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 2500ms`);
     else expect(failure?.message).toEndWith("since they can name a broker's address.");
+    // The broker's timeout is the time budget's refusal; every other category is the read's failure.
+    expect(errorKind(failure)).toBe(category === "timeout" ? "time-budget-refusal" : "query");
   });
 
   test("a missing topic says nothing was created", () => {

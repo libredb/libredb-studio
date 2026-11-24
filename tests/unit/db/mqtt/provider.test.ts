@@ -26,12 +26,17 @@ import {
 } from "@/lib/db/providers/keyvalue/mqtt/objects";
 import { encodeString, encodeVariableByteInteger } from "@/lib/db/providers/keyvalue/mqtt/encoder";
 import {
+  type MqttSessionOptions,
   type MqttTopicRow,
   type MqttTransport,
   type MqttTransportFactory,
 } from "@/lib/db/providers/keyvalue/mqtt/session";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
-import type { DatabaseConnection, SSLMode } from "@/lib/types";
+import { TUNNEL_FAR_END, type DatabaseConnection, type SSLMode } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+
+/** A fabricated credential, so a test that checks where a password goes never carries a real one. */
+const CANARY = `canary-${crypto.randomUUID()}`;
 
 const CONNACK = Buffer.from([0x20, 0x03, 0x00, 0x00, 0x00]);
 const SUBACK = Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x00]);
@@ -485,7 +490,7 @@ describe("the real transport, against a loopback server", () => {
    */
   test("a plain TCP dial reaches a listening server", async () => {
     const port = await silentServer();
-    const provider = new MqttProvider(connection({ port }));
+    const provider = new MqttProvider(connection({ port }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     // The dial succeeds and the server then says nothing, which must fail rather than resolve an empty
     // tree: a broker that never sent CONNACK never agreed to speak MQTT, and "no topics" would be a wrong
     // answer rather than an empty one.
@@ -497,7 +502,7 @@ describe("the real transport, against a loopback server", () => {
     await new Promise<void>((resolve) => {
       servers[servers.length - 1]!.close(() => resolve());
     });
-    const provider = new MqttProvider(connection({ port }));
+    const provider = new MqttProvider(connection({ port }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await expect(provider.connect()).rejects.toThrow(/could not be reached/);
   }, 20_000);
 
@@ -548,7 +553,11 @@ describe("the real transport, against a loopback server", () => {
    */
   test("a TLS dial that never completes its handshake fails on the clock, it does not hang", async () => {
     const port = await silentServer();
-    const provider = new MqttProvider(connection({ port, ssl: { mode: "require" } }));
+    const provider = new MqttProvider(
+      connection({ port, ssl: { mode: "require" } }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     const started = Date.now();
     await expect(provider.connect()).rejects.toThrow(/did not finish the TLS handshake/);
     // Bounded by the connect timeout, not by the caller giving up.
@@ -626,12 +635,88 @@ describe("a password without TLS", () => {
     ).rejects.toThrow(reached);
     // TLS: the password is encrypted.
     await expect(open({ password: "s3cret", ssl: { mode: "require" } }).connect()).rejects.toThrow(reached);
-    // A tunnel carries it.
+    // A tunnel carries it: one the factory opened, which it says by handing on the far end.
     await expect(
-      open({ password: "s3cret", ssl: { mode: "disable" }, sshTunnel: { enabled: true } }).connect(),
+      open({
+        password: CANARY,
+        ssl: { mode: "disable" },
+        sshTunnel: { enabled: true },
+        [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+      }).connect(),
     ).rejects.toThrow(reached);
     // And with no password there is nothing to protect.
     await expect(open({ ssl: { mode: "disable" } }).connect()).rejects.toThrow(reached);
+  });
+});
+
+/**
+ * The tunnel a record asks for and the tunnel core opened are two facts, and the provider reads the second.
+ *
+ * Core decides the tunnel before any provider is built: it opens one that is on, hands the far end on under
+ * `TUNNEL_FAR_END`, and refuses a tunnel that is on and was not opened, or whose switch is not a boolean
+ * (tests/security/provider-tunnel-decisions.test.ts, tests/isolated/factory.test.ts). MQTT reads whether a tunnel was
+ * opened from that far end alone, as the other providers do.
+ */
+describe("an SSH tunnel", () => {
+  const BASTION = { enabled: true, host: "bastion.example.net", port: 22, username: "jump", authMethod: "password" };
+
+  const counted = (
+    over: Record<string, unknown>,
+  ): { provider: MqttProvider; dials: () => number; dialled: () => MqttSessionOptions[] } => {
+    const seen: MqttSessionOptions[] = [];
+    const counting: MqttTransportFactory = (options) => {
+      seen.push(options);
+      throw new QueryError("the dial is refused once it has been reached", "mqtt");
+    };
+    return {
+      provider: new MqttProvider(connection(over), {}, {}, counting),
+      dials: () => seen.length,
+      dialled: () => seen,
+    };
+  };
+
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", async () => {
+    for (const sshTunnel of [BASTION, { ...BASTION, enabled: "true" }, { ...BASTION, enabled: 1 }, null]) {
+      const { provider, dials } = counted({ host: "broker.example.net", sshTunnel });
+      await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+      expect(dials()).toBe(1);
+    }
+  });
+
+  test("that is off is dialled directly, and a password without TLS is refused as for any remote broker", async () => {
+    const off = { ...BASTION, enabled: false };
+    const plain = counted({ host: "broker.example.net", sshTunnel: off });
+    await expect(plain.provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+    expect(plain.dials()).toBe(1);
+    const secret = counted({ host: "broker.example.net", password: CANARY, ssl: { mode: "disable" }, sshTunnel: off });
+    await expect(secret.provider.connect()).rejects.toThrow(/without TLS to a host that is not this machine/);
+    expect(secret.dials()).toBe(0);
+  });
+
+  /** The far end is the one fact read: a record that carries one is tunnelled whatever its switch says. */
+  test("is read from the far end the factory hands on, not from the switch", async () => {
+    const { provider, dials } = counted({
+      host: "broker.example.net",
+      password: CANARY,
+      ssl: { mode: "disable" },
+      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+    });
+    await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+    expect(dials()).toBe(1);
+  });
+
+  test("that the factory opened is dialled at the local end it handed on", async () => {
+    const { provider, dialled } = counted({
+      host: "127.0.0.1",
+      port: 40_001,
+      password: CANARY,
+      ssl: { mode: "disable" },
+      sshTunnel: BASTION,
+      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+    });
+    await expect(provider.connect()).rejects.toThrow(/the dial is refused once it has been reached/);
+    expect(dialled()).toHaveLength(1);
+    expect(dialled()[0]).toMatchObject({ host: "127.0.0.1", port: 40_001, tlsIdentity: "broker.example.net" });
   });
 });
 

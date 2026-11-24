@@ -16,9 +16,11 @@ import {
   planExecutableLength,
 } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { providerConnection } from "@/lib/db/provider-connection";
 import { requireEditableKind } from "@/lib/db/object-kinds";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { recordedProviderCode, scrubObjectEditOutcome, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { clientAddress } from "@/lib/api/client-address";
 import type { GovernedConnection } from "@/lib/governance/visible";
 import { admitQueryExecution } from "@/lib/query-events/admission";
@@ -103,8 +105,14 @@ export async function POST(req: NextRequest) {
       //    fingerprint is recomputed here and never taken from the plan, which is the whole of the
       //    different-server check: a plan is bound to a SERVER and never to `connection.id`, and
       //    MEASURED, `resolveConnection` returns an inline connection object verbatim, id included,
-      //    so an id check is satisfied by a caller typing the id it wants.
-      const verdict = await verifyPlanToken(planToken, plan, await connectionFingerprint(context.connection));
+      //    so an id check is satisfied by a caller typing the id it wants. Framed on `providerConnection`
+      //    of it, the copy the provider was built from, so the plan's seal and this one digest the same
+      //    fields (FND-2 slice 6).
+      const verdict = await verifyPlanToken(
+        planToken,
+        plan,
+        await connectionFingerprint(providerConnection(context.connection)),
+      );
       if (!verdict.valid) {
         // ONE event, and no provider call. A refused plan is a decision this route made about a
         // write that never happened, and it is the one an operator most needs to see.
@@ -180,7 +188,7 @@ export async function POST(req: NextRequest) {
       try {
         outcome = await applyEdit.call(provider, plan);
       } catch (error) {
-        logger.error("Object edit apply threw", error, { route: ROUTE });
+        logger.error("Object edit apply threw", withholdProviderError(context.scrub, error), { route: ROUTE });
         outcome = interrupted(Date.now() - started);
       }
       if (!isObjectEditOutcomeShape(outcome)) {
@@ -191,11 +199,16 @@ export async function POST(req: NextRequest) {
         outcome = interrupted(Date.now() - started);
       }
 
-      // 9. THE QUERY EVENT, once the outcome is known, with the engine's code of a refusal that gave one.
-      //    `recordQueryEvent` never throws, so it needs no try/catch of its own.
+      // The outcome the caller reads, its sentences and engine codes through the connection's scrub. The events
+      // below read the outcome's classes, never its text.
+      const answered = scrubObjectEditOutcome(context.scrub, outcome);
+
+      // 9. THE QUERY EVENT, once the outcome is known, with the engine's code of a refusal that gave one, and no code
+      //    when that code holds a credential of the connection. `recordQueryEvent` never throws, so it needs no
+      //    try/catch of its own.
       recordEditEvent(
         auditReadingFor(outcome).result === "success" ? "success" : "error",
-        outcome.outcome === "refused" ? outcome.refusal.code : undefined,
+        outcome.outcome === "refused" ? recordedProviderCode(context.scrub, outcome.refusal.code) : undefined,
       );
 
       // 10. THE OUTCOME EVENT, in its OWN try/catch.
@@ -212,7 +225,7 @@ export async function POST(req: NextRequest) {
         logger.error("Failed to record object edit outcome audit event", auditError, { route: ROUTE });
       }
 
-      return outcome;
+      return answered;
     },
     { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );

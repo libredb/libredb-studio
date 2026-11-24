@@ -28,14 +28,21 @@
  *
  * Pure: it receives the answers and never a client.
  */
-import { ExecutionProfileError, QueryError, TimeoutError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -425,11 +432,11 @@ export function shapeQdrantAgentAnswer(
     throw error;
   }
   if (projected.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "qdrant", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(projected.rows.length, budget.maxResultRows), "qdrant", statement);
   }
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "qdrant", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "qdrant", statement);
   }
   return {
     fields: projected.fields,
@@ -457,7 +464,7 @@ export function qdrantAgentFailure(
     );
   }
   if ((error instanceof TransportError && error.kind === "timeout") || error instanceof TimeoutError) {
-    return new QueryError(
+    return new TimeBudgetRefusal(
       `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
       "qdrant",
       statement,

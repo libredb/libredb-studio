@@ -19,6 +19,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentInventory } from "@/lib/agent/types";
 import { QueryError } from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, providerAuthor } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -29,11 +30,15 @@ import type {
   DatabaseObject,
   DatabaseProvider,
   KindCount,
+  ObjectDetailBatch,
   ObjectKindSpec,
   ProviderCapabilities,
 } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("kubernetes");
 
 const frozenClock = () => 1_000;
 
@@ -73,6 +78,10 @@ interface Stub {
   readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
   /** Declares `inventoryNeedsConfiguration`, answering this; absent leaves the method undeclared. */
   readonly needs?: { readonly reason: string | undefined };
+  /** Fields the run's connection carries beyond the fixture's, such as a password. */
+  readonly connection?: Partial<AgentToolContext["connection"]>;
+  /** The bulk description of one folder; absent answers no detail. */
+  readonly describe?: (container: readonly string[], kind: string) => ObjectDetailBatch;
 }
 
 function stub(options: Stub = {}) {
@@ -96,9 +105,10 @@ function stub(options: Stub = {}) {
         { path: ["shop"], name: "shop", level: 0 },
       ],
   );
-  const describeObjects = mock(async (_container: readonly string[], _kind: string, ..._rest: unknown[]) => ({
-    details: [],
-  }));
+  const describeObjects = mock(
+    async (container: readonly string[], kind: string, ..._rest: unknown[]): Promise<ObjectDetailBatch> =>
+      options.describe?.(container, kind) ?? { details: [] },
+  );
   const inventoryNeedsConfiguration = mock(async () => options.needs?.reason);
   const provider = {
     listObjects,
@@ -113,7 +123,7 @@ function stub(options: Stub = {}) {
     mode: "planning",
     workflowType: "investigation",
     actor: { sessionId: "session-1", role: "user" },
-    connection: { id: "conn-1", name: "Cluster", type: "mongodb", createdAt: new Date(0) },
+    connection: { id: "conn-1", name: "Cluster", type: "mongodb", createdAt: new Date(0), ...options.connection },
     capabilities: {
       ...BASE,
       objectKinds: options.kinds ?? [POD, SECRET],
@@ -142,8 +152,8 @@ async function captured(
 }
 
 const packings = (snapshot: AgentContextSnapshot): readonly string[] => [
-  packContextForTask(snapshot, "why do pods restart"),
-  packOperationsInventory(snapshot),
+  packContextForTask(snapshot, "why do pods restart", RELAYED_BY),
+  packOperationsInventory(snapshot, RELAYED_BY),
 ];
 
 describe("a kind whose names are withheld", () => {
@@ -173,6 +183,19 @@ describe("a kind whose names are withheld", () => {
     const secrets = snapshot.kinds?.find((kind) => kind.id === "secrets");
     expect(secrets?.unavailable).toBe(refusal);
     expect(secrets?.withheldCount).toBeUndefined();
+  });
+
+  test("a refused count whose sentence carries the connection's credential is withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      containers: [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }],
+      counts: () => ({ pods: { count: 1 }, secrets: { unavailable: `forbidden for the login ${password}` } }),
+      connection: { password },
+    });
+
+    expect(snapshot.kinds?.find((kind) => kind.id === "secrets")?.unavailable).toBe(PROVIDER_TEXT_WITHHELD);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
   });
 
   test("a sampled count is said as a floor", async () => {
@@ -231,6 +254,100 @@ describe("a kind whose names are withheld", () => {
   });
 });
 
+describe("a provider's sentence that carries the connection's credential", () => {
+  const DEFAULT_ONLY: readonly Container[] = [{ path: ["default"], name: "default", level: 0, isSessionDefault: true }];
+
+  /** The capture holds no form of `password`, and neither packing does. */
+  function expectAbsent(snapshot: AgentContextSnapshot, password: string): void {
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
+  }
+
+  test("a countIsListing kind's refused count is withheld, and its listing is never sent", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot, harness } = await captured({
+      kinds: [POD, { ...POD, id: "leases", label: "Lease", labelPlural: "Leases", countIsListing: true }],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 }, leases: { unavailable: `permission denied for ${password}` } }),
+      connection: { password },
+    });
+
+    expect(harness.listObjects.mock.calls.map((call) => call[1])).toEqual(["pods"]);
+    expect(snapshot.kinds?.find((kind) => kind.id === "leases")?.unavailable).toBe(PROVIDER_TEXT_WITHHELD);
+    expectAbsent(snapshot, password);
+  });
+
+  test("an index read the provider refused is withheld on the object", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: (container) => ({
+        details: [
+          {
+            path: [...container, "pod/web"],
+            columns: [],
+            indexes: { unavailable: `Code: 497. ${password}: Not enough privileges (ACCESS_DENIED)` },
+            foreignKeys: [],
+          },
+        ],
+      }),
+      connection: { password },
+    });
+
+    expect(snapshot.objects[0]?.indexes).toEqual({ unavailable: PROVIDER_TEXT_WITHHELD });
+    expect(packOperationsInventory(snapshot, RELAYED_BY)).toContain(`indexes unavailable (${PROVIDER_TEXT_WITHHELD})`);
+    expectAbsent(snapshot, password);
+  });
+
+  test("an index read the provider refused keeps its sentence when it holds no credential", async () => {
+    const sentence = "Not enough privileges to read the index list";
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: (container) => ({
+        details: [
+          { path: [...container, "pod/web"], columns: [], indexes: { unavailable: sentence }, foreignKeys: [] },
+        ],
+      }),
+      connection: { password: crypto.randomUUID() },
+    });
+
+    expect(snapshot.objects[0]?.indexes).toEqual({ unavailable: sentence });
+  });
+
+  test("a sampled count's sentence is withheld, on a listed kind and on one whose names are withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      containers: DEFAULT_ONLY,
+      counts: () => ({
+        pods: { count: 1, sampledFrom: `one walk as ${password}` },
+        secrets: { count: 2, sampledFrom: `one walk as ${password}` },
+      }),
+      connection: { password },
+    });
+
+    expect(snapshot.kinds?.map((kind) => kind.sampledFrom)).toEqual([PROVIDER_TEXT_WITHHELD, PROVIDER_TEXT_WITHHELD]);
+    expectAbsent(snapshot, password);
+  });
+
+  test("the reason a provider gives for a bounded description is withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      kinds: [POD],
+      containers: DEFAULT_ONLY,
+      counts: () => ({ pods: { count: 1 } }),
+      describe: () => ({ details: [], truncated: { limit: 1, reason: `bounded for ${password}` } }),
+      connection: { password },
+    });
+
+    expect(snapshot.truncated).toEqual({ limit: 1, reason: PROVIDER_TEXT_WITHHELD });
+    expectAbsent(snapshot, password);
+  });
+});
+
 /**
  * U189: a provider whose inventory cannot be listed without configuration the connection lacks says so, and the walk
  * asks it nothing more. Every kind carries the provider's sentence as `unavailable`, the note a refused kind already
@@ -238,6 +355,14 @@ describe("a kind whose names are withheld", () => {
  */
 describe("an inventory its provider cannot list without configuration", () => {
   const reason = "this connection keeps no map, so none of its objects can be listed";
+
+  test("a reason that carries the connection's credential is withheld on every kind", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({ needs: { reason: `no map for ${password}` }, connection: { password } });
+
+    expect(snapshot.kinds?.map((kind) => kind.unavailable)).toEqual([PROVIDER_TEXT_WITHHELD, PROVIDER_TEXT_WITHHELD]);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+  });
 
   test("is read from the provider's declaration, lists nothing and carries the reason on every kind", async () => {
     const { snapshot, harness } = await captured({ needs: { reason } });
@@ -609,6 +734,26 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
     }
   });
 
+  test("a parent the walk could not list is named with its reason withheld", async () => {
+    const password = crypto.randomUUID();
+    const { snapshot } = await captured({
+      ...walk(
+        {
+          spark_catalog: ["default"],
+          studio_unloaded: new QueryError(`catalog login failed with ${password}`, "spark"),
+        },
+        scoped,
+      ),
+      connection: { password },
+    });
+
+    expect(snapshot.unreadContainers?.unlistedParents).toStrictEqual([
+      { path: "studio_unloaded", label: "Catalog", reason: PROVIDER_TEXT_WITHHELD },
+    ]);
+    expect(JSON.stringify(snapshot)).not.toContain(password);
+    for (const packed of packings(snapshot)) expect(packed).not.toContain(password);
+  });
+
   test("where the failed catalog is all the walk left out, the note names it alone", async () => {
     const { snapshot } = await captured(walk({ spark_catalog: ["default"], studio_unloaded: notLoaded() }, scoped));
 
@@ -912,7 +1057,7 @@ describe("an object with no columns", () => {
           : [{ path: [...container, "pod/web"], name: "pod/web", kind }],
     });
     // The task packer's lines: the operations packer lists names and indexes only, never columns.
-    const lines = packContextForTask(snapshot, "why do pods restart").split("\n");
+    const lines = packContextForTask(snapshot, "why do pods restart", RELAYED_BY).split("\n");
     expect(lines.find((line) => line.includes("pod/web"))).toMatch(/pod\/web \(Pod\)$/);
     expect(lines.find((line) => line.includes("orders"))).toMatch(
       /orders \(Table\): no columns derivable from the stored definition$/,

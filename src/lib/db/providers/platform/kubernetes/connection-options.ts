@@ -8,7 +8,9 @@
  * read. Server code: it imports the node transport and the egress policy, so the browser never imports it. The dialog
  * checks only the default namespace and the Namespaces list, with copies of these patterns in `KUBERNETES_FIELD_RULES`
  * that tests/unit/lib/db-ui-config.test.ts holds to this module; the API path, the TLS server name and the token are
- * checked here alone, at Test Connection, and a seed or an API call never passes the dialog.
+ * checked here alone, at Test Connection, and a seed or an API call never passes the dialog. A user name is refused by
+ * core before the provider is built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), since basic
+ * authentication is not taken, so this module never receives one.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
@@ -18,15 +20,9 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { assertNotLinkLocalLiteral } from "@/lib/db/http/egress-policy";
 import { type HttpOrigin, httpOrigin, isLoopbackHost, validateHost, validatePort } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  type SSLConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type SSLConfig, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import {
   KUBERNETES_DEFAULT_PORT,
   KUBERNETES_MAX_IN_FLIGHT,
@@ -57,6 +53,8 @@ export interface ClusterEndpoint {
   readonly defaultNamespace: string;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The connection's query timeout, which caps every request's deadline. */
   readonly callTimeoutMs: number;
   /** `secretForms` of the token: empty with none. */
@@ -65,6 +63,8 @@ export interface ClusterEndpoint {
 
 export interface ClusterEndpointContext {
   readonly queryTimeout: number;
+  /** The egress decision the provider was built with, which the dialled origin's address literal is checked against. */
+  readonly egress: EgressDecision;
   /** The build's version for the user-agent; undefined reads `getAppVersion()`, null writes no version. */
   readonly appVersion?: string | null;
 }
@@ -95,8 +95,6 @@ const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
 /** Every fixed sentence this module throws, so the dialog and the provider doc can be held to the same words. */
 export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
-  userNotTaken:
-    "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
   bearerPrefix: 'The Token starts with "Bearer": remove that word, because Studio adds it. Nothing was sent.',
   tokenNotVisible:
     "The Token holds a space, a line break or another character outside visible ASCII; paste the token alone. Nothing was sent.",
@@ -120,8 +118,6 @@ export const KUBERNETES_CONNECTION_SENTENCES = Object.freeze({
     "Plain HTTP to this machine (kubectl proxy) is off on this server: the operator turns it on with KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT=true, which the npx and desktop launchers set when Studio listens on this machine only. Nothing was sent.",
   insecureTlsOff:
     "SSL mode require, or a certificate check turned off, would send the token to a server whose certificate is not checked, which this server refuses unless the operator sets KUBERNETES_ALLOW_INSECURE_TLS=true. Choose verify-full with the cluster's CA, or verify-system. Nothing was sent.",
-  tunnelNotOpened:
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the API server was not dialled directly. Nothing was sent.",
   tunnelLinkLocal:
     "The SSH tunnel's far end is a link-local or instance metadata address, which Studio never reaches. Nothing was sent.",
   queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
@@ -158,7 +154,13 @@ export function parseNamespaceList(value: string): readonly string[] | { readonl
   return entries;
 }
 
-/** Reads a flag the way DB_HTTP_BLOCK_PRIVATE_HOSTS is read: off when unset, refused when it is neither on nor off. */
+/**
+ * Reads a flag with the spellings DB_HTTP_BLOCK_PRIVATE_HOSTS accepts, trimmed and in any case: off when unset, empty,
+ * `false`, `off` or `0`, on for `true`, `on` or `1`, and refused by name otherwise. Only the spellings are shared:
+ * DB_HTTP_BLOCK_PRIVATE_HOSTS is read once per process (src/lib/db/egress-decision.ts) and a standalone server refuses
+ * to boot on a value it cannot read, while this reads its variable on every call and refuses only the call that reads
+ * it.
+ */
 function flag(name: string): boolean {
   const value = process.env[name]?.trim().toLowerCase();
   if (value === undefined || value === "" || value === "false" || value === "off" || value === "0") return false;
@@ -171,8 +173,8 @@ export function readClusterEndpoint(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: ClusterEndpointContext,
 ): ClusterEndpoint {
-  const farEnd = tunnelFarEnd(config);
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT));
+  const farEnd = config[TUNNEL_FAR_END];
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? KUBERNETES_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }
@@ -184,7 +186,6 @@ export function readClusterEndpoint(
       throw configError(S.tunnelLinkLocal);
     }
   }
-  if (optionalText(config.user, "user") !== undefined) throw configError(S.userNotTaken);
   const token = tokenOf(config);
   const apiPath = apiPathOf(config);
   const tlsServerName = tlsServerNameOf(config);
@@ -206,17 +207,10 @@ export function readClusterEndpoint(
     namespaces,
     defaultNamespace,
     maxSockets: KUBERNETES_MAX_IN_FLIGHT,
+    egress: context.egress,
     callTimeoutMs: callTimeout(context.queryTimeout),
     secretForms: secretForms(token === undefined ? [] : [token]),
   };
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(S.tunnelNotOpened);
-  return farEnd;
 }
 
 function tokenOf(config: DatabaseConnection): string | undefined {
@@ -297,21 +291,9 @@ function shared<T>(validate: () => T): T {
   }
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

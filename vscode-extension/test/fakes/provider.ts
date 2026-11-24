@@ -57,6 +57,8 @@ export function fakeProvider(over: ProviderSurface = {}): FakeProvider {
   const calls: unknown[][] = [];
   const surface: Record<string, unknown> = {
     type: "postgres",
+    // What the provider was built from: the host reads its statement timeout, the connection's or Studio's default.
+    config: { id: "fake", name: "Fake", type: "postgres", createdAt: new Date(0) },
     getCapabilities: () => CAPS,
     getLabels: () => LABELS,
     prepareQuery: limiter,

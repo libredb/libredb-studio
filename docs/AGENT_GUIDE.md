@@ -89,14 +89,13 @@ objective unless you say otherwise**.
 **Investigate**, **Optimize**, **Assess**, **Operate**, **Analyze** — offered in both modes, because
 "how would you make this faster?" is an ordinary thing to ask a plan for.
 
-**Automatic is what the rail opens on, and it means the server reads your objective.** Pressing
-Start posts the objective to `POST /api/agent/classify`, which asks the model to name one of the
-five; the rail says *"Reading your objective to choose a workflow."* while it waits, and opens the
-run for whatever came back. The row used to sit above the objective box, asking you to classify a
-question you had not written yet.
+**Automatic is what the rail opens on, and it means the server reads your objective.**
+Pressing Start posts the objective, the connection and the mode to `POST /api/agent/classify`, which asks the model to name one of the workflows that open on that connection in that mode; the rail says *"Reading your objective to choose a workflow."* while it waits, and opens the run for whatever came back.
+The row used to sit above the objective box, asking you to classify a question you had not written yet.
 
 Three consequences worth knowing before you rely on it:
 
+- **The model is offered only what Start opens.** In agent mode a run on an engine with no curated operations reading is never classified as Operate, no statement workflow is offered on an engine with no statement language, an engine whose language lacks a workflow is never classified into it, and plan mode offers all five.
 - **Naming one yourself skips the reading entirely.** No classification request is made, no model
   tokens are spent on it, and the run opens as the workflow you picked. If you know what you want,
   Advanced is both faster and cheaper.
@@ -242,9 +241,9 @@ one. It can be **bounded**, as Redis's scan of 1000 keys is, so it is what the
 inspection found and not proof that nothing else exists, and the plan is told so. And on the document
 engines it works out a collection's fields from a **sample of your own documents**: no value from
 them is kept, but the existence of a field there is derived from your data rather than read from a
-catalog. The **estimated statistics** below are PostgreSQL's, SQLite's and SQL Server's alone; on the other
-forty the plan is told that this engine holds none it knows how to read, which means it has an
-inventory and no sizes — the ordinary case now rather than a rare one.
+catalog.
+The **estimated statistics** below are PostgreSQL's, SQLite's, libSQL's and SQL Server's alone; on the other thirty-nine the plan is told that this engine holds none it knows how to read, which means it has an inventory and no sizes.
+That is the ordinary case now rather than a rare one.
 
 On an engine that speaks no SQL, a Plan run is asked for one statement or command **in that engine's
 own language** — a MongoDB aggregation rather than a SELECT — still in a block tagged with the
@@ -398,14 +397,16 @@ For how the database is **running right now** — the slowest queries, who is co
 blocked, the biggest tables, the unused indexes, storage pressure. It is the one workflow that
 **sends no SQL at all**: the only tool that reaches the database is `inspect_operations`, and you
 name a *reading* rather than a statement — `sessions`, `slow-queries`, `table-stats`, `index-stats`,
-`storage` or `health`. The server calls the engine's own reporting interface and stores the answer
+`storage` or `health`, of those your engine offers agent mode. The server calls the engine's own reporting interface and stores the answer
 as an ordinary citable result.
+Each engine offers only the readings it actually answers: its provider document lists them under `Agent readings offered`, the run is offered those alone, and any other kind is refused by name before Studio reaches the engine.
 
 Two consequences you will notice:
 
-- **It runs on every engine.** The other workflows need a read-only statement path the provider implements,
+- **It runs on every engine that offers agent mode a reading.** The other workflows need a read-only statement path the provider implements,
   which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino have; this one needs none, so a run opened on
   Oracle, Cassandra or Redis works rather than ending `engine-unsupported`.
+  MQTT, Sparkplug B, OPC UA and MTConnect offer Operate no reading, so it is refused there at Start with the reason, and plan mode still drafts.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
   to discover it. What it is given instead is an inventory of your table names and the indexes on
@@ -445,7 +446,7 @@ It is one of the readings below and not a mood, and the qualifier beside the pil
 
 | The pill says | Beside it | When |
 | --- | --- | --- |
-| *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine but Modbus, Prometheus and OPC UA, production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
+| *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine but Modbus, MQTT, Sparkplug B, Prometheus and OPC UA, production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
 | *Executes nothing it drafts* | *the register map grounds it; opening the connection dials the device, and no request is sent to it* | **Plan** mode on Modbus. The draft is grounded on the connection's register map, which sends the device nothing; opening the connection dials the device's port and closes it again |
 | *Executes nothing it drafts* | *no topic is listed for it; opening the connection is a handshake that subscribes to nothing* | **Plan** mode on MQTT. MQTT has no command that lists topics and topic names are withheld, so no inventory grounds the plan, which is prose; opening the connection is a connect and a disconnect, and nothing is subscribed to |
 | *Executes nothing it drafts* | *no group, edge node or device is listed for it; opening the connection is a handshake that subscribes to nothing* | **Plan** mode on Sparkplug B. Sparkplug has no command that lists edge nodes or devices and their ids are withheld, so no inventory grounds the plan, which is prose; opening the connection is a connect and a disconnect, and nothing is subscribed to |
@@ -479,6 +480,7 @@ It is one of the readings below and not a mood, and the qualifier beside the pil
 | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. A run whose workflow sends a statement is refused when it is started, before a run is opened |
 | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | **Agent** mode with no connection resolved. Nothing has been read, so the panel does not claim to know which engine you are on |
 | *Refused on this connection* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode after a run on this connection was refused for the connection itself, for example a user that holds writes or a server with authorization off. The popover says why; switch to another connection and the strip goes back to what its engine does |
+| *Refused on this connection* | *plan mode drafts here* | The same, on an engine where Operate does not open in agent mode because the engine offers agent mode no reading |
 
 Those two figures are the ones the server is enforcing, and they are the same on every workflow — the
 strip is shown before a run has one, so it states the pair every workflow row shares rather than
@@ -772,7 +774,7 @@ And when the run failed for a reason that is not about the answer at all, that s
 both, and also appears next to the Start button so you can fix it before starting another
 (`FAILURE_SENTENCES`, `timeline.ts`; rendered at `AgentRail` in `AgentRail.tsx`): the model
 provider not being configured or reachable, limiting this key's requests, rejecting the credentials,
-an engine with no read-only execution profile, a connection that no longer resolves, or an internal
+an engine with no read-only execution profile, a connection that no longer resolves, a connection whose type no provider in this Studio serves, or an internal
 failure whose reason is in the server log.
 
 ---
@@ -844,6 +846,16 @@ short of every figure on the meter is usually a run that took that offer, and it
 partial answer rather than a missing one. The bar does not move when it happens: a claim still has to
 cite something the run read, so a forced report is a cited report or it is no report at all. Nothing
 is asked of a **Plan** run, which has no report tool to call. The meter says this under the ceilings.
+
+**A run whose answer was cut ran out of length, not of time.** A model server may stop a single reply
+at the length it allows, which is a limit this build does not set and cannot raise. When that happens
+to an agent run, nothing from that turn is kept and none of the tool calls it carried are run, and the
+run is told once, in this server's words, what happened and asked for one short move. A run cut a
+second time ends there, and the line under the timeline says the answer was cut at the model server's
+length limit rather than that the run used its time. The two are repaired in opposite ways, one by
+waiting less and the other by writing less, so a run read as out of time would be restarted for the
+wrong reason. A **Plan** run is not told and needs nothing: its prose is what the plan check reads, so
+a plan cut mid-block is judged as having drafted no statement.
 
 Then the caveat, which is the part worth reading twice — behind the **What is counted** ⓘ, beside the
 gauges it is about:
@@ -963,6 +975,10 @@ count, whether it answered and when it ended.
   deletion — a run you can still name by id is still openable.
 - **History is the index, not the record.** A reopened report reads the run's own ledger, so the
   listing can never contradict what the run actually recorded.
+- **A run recorded in a statement language or judged by a goal rule this Studio does not have, or opened for a workflow it does not offer on that language, is listed, and opening it says so.**
+  Instead of its report you read a sentence that names the language, the workflow or the rule, for example a run recorded by a newer Studio.
+  The run is kept as it was, and a Studio that has that language, workflow or rule opens it.
+  A run opened for a workflow this Studio does not have at all is left out of the list, because its history entry reads as absent, while opening it by its id still answers with the sentence.
 
 ---
 
@@ -998,12 +1014,10 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   server-side row bound, and a transaction that is always rolled back.
   MongoDB has no read-only session or transaction either, so there the boundary is the connection's user: before a run that sends commands reaches its first model turn, the server must report that the user holds only read privileges on the bound database and must refuse a write from it, and a user that can write, a server without authorization or a server that is not MongoDB ends the run there.
   To give agent mode a MongoDB connection, seed one whose own user holds `read` on one database, on a server with authorization on ([`docs/providers/mongodb.md`](./providers/mongodb.md#setting-up-the-agents-user)).
-  Acquiring a profiled provider for any other engine raises `PROFILE_UNSUPPORTED_BY_PROVIDER`
-  (`src/lib/db/factory.ts`), which the runtime reports as `engine-unsupported`
-  (`src/lib/agent/runtime.ts`) — the rail says so in as many words
-  (`src/components/agent/timeline.ts`).
+  Acquiring the `agent-read-only` or `agent-handover` profile for any other engine raises `PROFILE_ENGINE_NOT_REVIEWED` (`src/lib/db/factory.ts`) before anything is built, because Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`) does not list it, whatever its provider implements.
+  The runtime reports that refusal as `engine-unsupported` (`src/lib/agent/runtime.ts`), and the rail says so in as many words (`src/components/agent/timeline.ts`).
   So on every other id in the `DatabaseType` union (`src/lib/types.ts`) an Agent-mode run cannot read anything.
-  The bundled **LibreDB sample** connection runs the investigation and data-analysis workflows on its own command language (`src/lib/db/providers/embedded/libredb.ts`), and the bundled **SQLite sample** is the seeded connection to try every workflow against (`src/lib/seed/sqlite-sample.ts`).
+  The bundled **LibreDB sample** connection runs the investigation and data-analysis workflows on its own command language (`src/lib/db/providers/embedded/libredb.ts`), and the bundled **SQLite sample** is the seeded connection to try every workflow against (`src/lib/seed/samples.ts`).
   **Plan** mode still opens on
   every connection — the model is toolless there, so no profile has to be acquired for it — and since
   #414 its **grounding** no longer takes this path at all on the other forty-one: it asks the provider to
@@ -1033,9 +1047,11 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   the run's own record names — and cannot be exported from any of them, because Export writes the
   tab's own rows (B34).
 - **An interrupted run is picked up on its own, eventually.** A sweep finds runs a dead process left
-  `running` and drives each one again — but only AFTER its claim expires, so this is eventual resume,
-  not immediate. It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
+  `running` and drives each one again, but only AFTER its claim expires, so this is eventual resume,
+  not immediate.
+  It is guaranteed on the `local` backend only; the multi-replica Postgres world is out
   of scope until B16 lands.
+  A run whose ledger names a statement language, workflow or goal rule this Studio does not have is the exception: it is left as it is, for a Studio that has it.
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement
   guard and the role's own grants are the whole boundary on out-of-scope reads
   (`docs/BACKLOG.md`, "Agent M1 deferrals", A3).

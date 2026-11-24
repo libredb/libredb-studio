@@ -237,6 +237,43 @@ describe("storage: saved queries", () => {
   });
 });
 
+// A saved query whose type names no provider (FND-1) is the user's record, not this Studio's: it is listed as
+// unavailable by the UI, and storage never drops it, rewrites it or writes its availability into it.
+describe("a stored saved query whose connection type names no provider (FND-1)", () => {
+  const unknown = { ...makeSavedQuery({ id: "acme", name: "Acme query" }), connectionType: "acmefoo" };
+  const untyped: Record<string, unknown> = { ...makeSavedQuery({ id: "untyped", name: "Untyped query" }) };
+  Reflect.deleteProperty(untyped, "connectionType");
+
+  function storeBoth() {
+    localStorage.setItem("libredb_saved_queries", JSON.stringify([unknown, untyped]));
+  }
+
+  test("is read back as stored", () => {
+    storeBoth();
+    const read = storage.getSavedQueries();
+    expect(read).toEqual([unknown, untyped] as unknown as SavedQuery[]);
+    expect("connectionType" in read[1]).toBe(false);
+  });
+
+  test("is kept as stored when another query is saved, deleted or imported", () => {
+    storeBoth();
+    storage.saveQuery(makeSavedQuery({ id: "pg" }));
+    storage.deleteSavedQuery("pg");
+    storage.importSavedQueries([makeSavedQuery({ id: "imported" })]);
+
+    const read = storage.getSavedQueries();
+    expect(read.slice(0, 2)).toEqual([unknown, untyped] as unknown as SavedQuery[]);
+    expect("connectionType" in read[1]).toBe(false);
+    expect(read.map((query) => query.id)).toEqual(["acme", "untyped", "imported"]);
+  });
+
+  test("deleting one removes only it", () => {
+    storeBoth();
+    storage.deleteSavedQuery("acme");
+    expect(storage.getSavedQueries()).toEqual([untyped] as unknown as SavedQuery[]);
+  });
+});
+
 // ============================================================================
 // Schema Snapshots
 // ============================================================================

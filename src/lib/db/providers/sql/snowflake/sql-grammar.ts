@@ -1,5 +1,7 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
+import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * Snowflake. The lexical facts were measured on the trial capture of 2026-10-12 (Snowflake 10.37.100), each named on

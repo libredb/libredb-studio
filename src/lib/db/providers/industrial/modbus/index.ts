@@ -51,7 +51,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -70,7 +70,7 @@ import {
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { deviceKey, MODBUS_AGENT_PACER, ModbusPacingTimeout } from "./agent-pacing";
 import { modbusAgentResult, runModbusAgentRead, type ModbusAgentReadSeams } from "./agent-read";
 import { readModbusAgentStatement } from "./agent-statement";
@@ -244,7 +244,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     agentSeams: Partial<ModbusAgentReadSeams> = {},
   ) {
     super(config, options);
@@ -556,7 +556,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
    */
   /** The dial target, read from the connection by `connection-options.ts`. */
   private endpoint(): Endpoint {
-    return modbusEndpoint(this.config);
+    const endpoint = modbusEndpoint(this.config);
+    return this.execution.egress === undefined ? endpoint : { ...endpoint, egress: this.execution.egress };
   }
 
   /**

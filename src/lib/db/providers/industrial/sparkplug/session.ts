@@ -15,7 +15,8 @@
  * starts dropping messages for.
  *
  * THE DIAL USES THE SHARED EGRESS RULE AND WRITES NO ADDRESS CHECK OF ITS OWN. `socketEgress`
- * refuses a blocked or link-local literal before the dial and returns the lookup that refuses a
+ * decides by the egress decision the provider was built with (`SessionOptions.egress`; without one
+ * the dial is refused by name before any socket). It refuses a blocked or link-local literal before the dial and returns the lookup that refuses a
  * blocked answer, which is the same function the shared node transport uses. A provider that wrote
  * its own address check would be a second implementation of a security rule, and the two would
  * drift.
@@ -23,7 +24,8 @@
 import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 import { QueryError } from "@/lib/db/errors";
-import { socketEgress } from "@/lib/db/http/egress-policy";
+import { requireEgressDecision, socketEgress } from "@/lib/db/http/egress-policy";
+import type { EgressDecision } from "@/lib/db/types";
 import { type NodeTlsMaterial, nodeTlsConnectOptions } from "@/lib/db/http/node-transport";
 import {
   CLIENT_ID_PREFIX,
@@ -134,6 +136,8 @@ export interface SessionOptions {
    * nothing it carries. `filters` is not read, and no SUBSCRIBE or UNSUBSCRIBE is written.
    */
   readonly handshakeOnly?: boolean;
+  /** The egress decision the provider was built with; the product's dial refuses without one. */
+  readonly egress?: EgressDecision;
 }
 
 /** What the session needs of a socket, which is less than a socket. */
@@ -235,7 +239,7 @@ async function newParser(): Promise<ParserLike> {
 
 /** Open a socket, with the shared egress rule and no address check of this module's own. */
 function openSocket(options: SessionOptions): { transport: Transport; readyEvent: string } {
-  const lookup = socketEgress(options.host, { refusesLinkLocal: true });
+  const lookup = socketEgress(options.host, { refusesLinkLocal: true }, requireEgressDecision(options.egress));
   const common = { host: options.host, port: options.port, ...(lookup === undefined ? {} : { lookup }) };
   const tls = options.tls ?? null;
   const socket: Socket =

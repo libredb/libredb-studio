@@ -1,8 +1,9 @@
 /**
  * Maps an Apache Spark connection to the options its gRPC channel opens with. No socket opens
  * here: every refusal is a DatabaseConfigError raised before any channel is built, and none repeats the value it
- * refuses (the Milvus rule). The checks run in one fixed order, and the first refusal answers: the tunnel, Host, Port,
- * User, Token, Catalog, Namespace, the SSL / TLS panel, the token's plaintext rule, then the query timeout.
+ * refuses (the Milvus rule). The checks run in one fixed order, and the first refusal answers: Host, Port,
+ * Token, Catalog, Namespace, the SSL / TLS panel, the token's plaintext rule, then the query timeout. The SSH tunnel is
+ * core's to decide before the provider is built; here only its far end (`TUNNEL_FAR_END`) is read.
  *
  * The target is `dns:` and the validated host and port. The TLS identity is the tunnel's far end when a tunnel carries
  * the connection, else the host; an IP identity is checked through SPARK_IP_SERVER_NAME. A token is never sent without
@@ -12,12 +13,12 @@
  * Host, Catalog and Namespace read as blank when they are absent, null, empty or only white space. Host and Namespace
  * are otherwise checked and used as written, as the dialog checks them, and the dialog refuses a padded Namespace.
  * Catalog is trimmed before it is checked: Spark looks the catalog name up literally in SET CATALOG, and the dialog
- * accepts both spellings. User takes no value at all: anything but an
- * absent, null or empty User is refused with userNotTaken, whatever its type.
+ * accepts both spellings. User takes no value at all: core refuses a connection that sets one before the provider is
+ * built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives it.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
- * provider reads by the `config.<field>` pattern, and this file reads config.host, config.port, config.user,
- * config.password, config.database and config.schema as written.
+ * provider reads by the `config.<field>` pattern, and this file reads config.host, config.port, config.password,
+ * config.database and config.schema as written.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
@@ -30,13 +31,7 @@ import {
 } from "@/lib/db/grpc/tls";
 import { plaintextSecretRefusal, validatePort } from "@/lib/db/http/endpoint";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { SPARK_DEFAULT_PORT, SPARK_IP_SERVER_NAME } from "./constants";
 import type { SparkErrorConnection } from "./errors";
 import { parseNamespaceSpelling, SPARK_CATALOG_PATTERN, SPARK_TOKEN_PATTERN } from "./namespace";
@@ -57,7 +52,7 @@ export interface SparkConnectionOptions {
 }
 
 /**
- * The field refusals; hostEmpty, tokenCharacters, catalogFormat, namespaceFormat and userNotTaken end with
+ * The field refusals; hostEmpty, tokenCharacters, catalogFormat and namespaceFormat end with
  * "Nothing was sent.". src/lib/db/connection-form.ts copies
  * hostEmpty, tokenCharacters, catalogFormat and namespaceFormat literally into SPARK_FIELD_RULES, and
  * tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
@@ -70,10 +65,6 @@ export const SPARK_FIELD_SENTENCES = Object.freeze({
   catalogFormat: "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
   namespaceFormat:
     "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.",
-  userNotTaken:
-    "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
-  tunnelNotOpened:
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Apache Spark was not dialled directly: the tunnel opens only when both Host and Port are set.",
   queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
 });
 
@@ -86,7 +77,7 @@ export function buildSparkConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly queryTimeout: number },
 ): SparkConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   if (
     config.host === undefined ||
     config.host === null ||
@@ -100,10 +91,6 @@ export function buildSparkConnectionOptions(
     farEnd === undefined
       ? { host: targetHost, port: targetPort }
       : { host: grpcEndpointHost(farEnd.host, WORDS), port: shared(() => validatePort(farEnd.port)) };
-  // Any User but an absent, null or empty one, whatever its type: Spark Connect's identity is fixed.
-  if (config.user !== undefined && config.user !== null && config.user !== "") {
-    throw configError(SPARK_FIELD_SENTENCES.userNotTaken);
-  }
   const token = optionalText(config.password, "password");
   if (token !== undefined && !SPARK_TOKEN_PATTERN.test(token)) throw configError(SPARK_FIELD_SENTENCES.tokenCharacters);
   const catalog = optionalName(config.database, "database")?.trim();
@@ -142,14 +129,6 @@ export function sparkErrorConnection(options: SparkConnectionOptions): SparkErro
   return { host: options.endpoint.host, port: options.endpoint.port, secretForms: options.secretForms };
 }
 
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(SPARK_FIELD_SENTENCES.tunnelNotOpened);
-  return farEnd;
-}
-
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as Spark's. */
 function shared<T>(validate: () => T): T {
   try {
@@ -177,18 +156,6 @@ function optionalText(value: unknown, field: string): string | undefined {
 function optionalName(value: unknown, field: string): string | undefined {
   const text = optionalText(value, field);
   return text === undefined || text.trim() === "" ? undefined : text;
-}
-
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
-  return value;
 }
 
 function wrongType(field: string, expected: string): DatabaseConfigError {

@@ -133,7 +133,8 @@ interface XTransport {
 A new provider that speaks HTTP builds the HTTP side of its transport seam on `createNodeTransport` in [`node-transport.ts`](../src/lib/db/http/node-transport.ts), so the provider's own transport file is a thin adapter.
 It dials through `node:http` or `node:https` with one keep-alive Agent per connection, `maxSockets` set to the provider's in-flight bound and an idle socket closed after 4 s (below a server keep-alive such as Qdrant's 5 s, #1419), so no proxy variable can route a request, no redirect is followed, a request whose answer was lost is never sent again, and an answer stops at the byte cap the provider passes.
 It maps the SSL / TLS panel through `nodeTlsMaterial`, the one TLS mapping a new provider takes, and checks the certificate against the far end of an SSH tunnel rather than the local forward.
-With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
+It takes the egress decision the provider was built with in `egress`, and refuses by name when built without one.
+When that decision blocks private destinations, the egress guard's lookup runs on that Agent, so pooled sockets stay guarded.
 A provider that needs headers per request lists their lower-case names in `requestHeaderNames` and passes them in `NodeRequest.headers`; a name the transport or the connection owns is refused when the transport is built.
 A provider that reads stored objects instead of statement results builds on `createNodeByteTransport` in the same file.
 It sends GET and HEAD only, to an exact request target built with `rfc3986Path` and `rfc3986Query` from [`endpoint.ts`](../src/lib/db/http/endpoint.ts), and returns the body as bytes, never decoded, with an optional `truncateAt` that keeps the first bytes and says so.
@@ -141,8 +142,19 @@ Besides `contentType`, `contentEncoding` and `retryAfter`, it returns only the r
 A `signer` is called once per request just before it is written, with the exact method, Host, path, query and headers, and adds only the header names it lists.
 Its connection headers meet the rule a request's own headers meet, so `authorization` comes from the signer alone.
 It never reaches a link-local address or AWS's IPv6 instance metadata address, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
-`createNodeTransport` takes both of the byte transport's refusals on request, each off when absent: `refusesLinkLocal: true` keeps a text transport off those addresses the same way, a literal when the transport is built and a DNS answer at the lookup, and `refusesUpgrade: true` fails a 101 answer at once instead of leaving the request to its deadline.
+`createNodeTransport` takes both of the byte transport's refusals on request, each off when absent: `refusesLinkLocal: true` keeps a text transport off those addresses the same way, a literal when the transport is built and a DNS answer at the lookup, and `refusesUpgrade: true` fails a 101 answer without the upgrade headers at once instead of returning it as an answer of status 101.
+A 101 that announces an upgrade, with `Connection: upgrade` and an `Upgrade` header, fails at once as a network failure on every text transport, asked or not.
+It also takes the byte transport's `signer`, off when absent: the signer is handed the exact method, Host, path, query, headers and payload text of each POST or GET just before it is written, and the transport then sets Host itself, so the Host signed is the Host sent.
+A signer's header values may be up to 8192 bytes, so an AWS session token fits, while a request's own headers stay at 1024.
+`jsonContentType` picks the type a JSON body is sent under: one of `application/json` (the default when absent), `application/x-amz-json-1.0` or `application/x-amz-json-1.1`, and any other value is refused when the transport is built.
+A connection header named in two spellings is refused, as the byte transport refuses one.
 The older HTTP providers keep their own transports until D37 in [`BACKLOG.md`](BACKLOG.md) moves them.
+
+**Sign in to a cloud through `src/lib/db/auth`.**
+A provider that signs in to a cloud service with a credential (Google's token endpoint or metadata server) uses the shared layer described in [`DB_AUTH.md`](DB_AUTH.md) and never writes a second copy of its mechanism.
+It declares a rules object in its own `credential-policy.ts`: the kinds it accepts, its quota-project rule, and its server-identity gate, an opt-in variable ending in `_SERVER_CREDENTIALS` with its three refusal sentences (`unmanaged`, `literalSeedFile`, `withoutOptIn`).
+It resolves the connection's credential with `resolveGoogleCredential`, builds a token source with `createGoogleTokenSource` over its own transport factory, and feeds `googleCredentialSecrets` to `secretForms` for its error mapping.
+A new server-identity opt-in also needs its row in `src/lib/governance/preflight.ts`, which `tests/unit/lib/governance/preflight.test.ts` holds.
 
 **Send gRPC calls through the shared gRPC transport.**
 A new provider that speaks gRPC opens its channel with `openGrpcChannel` in [`channel.ts`](../src/lib/db/grpc/channel.ts) and reads its SSL / TLS panel with `readGrpcTlsPanel` and `grpcTlsIdentity` in [`tls.ts`](../src/lib/db/grpc/tls.ts), so its adapter holds only its RPC table, descriptor, metadata and error mapping.
@@ -281,6 +293,9 @@ Create the file under the right family folder, named by the canonical **type-id*
 `src/lib/db/providers/sql/<type-id>.ts` for SQL, `src/lib/db/providers/<family>/<type-id>.ts`
 (e.g. `document/`, `keyvalue/`) for non-SQL.
 
+A new provider is written in this legacy layout, because the factory imports providers from `src/lib/db/providers/` only.
+The workspace package layout a provider can later move to is in `packages/README.md`, "Provider packages", and in CLAUDE.md's provider triad rule.
+
 **Start from the closest existing provider — it is the authoritative, code-verified template** (and
 is kept in sync with its per-provider doc). Don't copy a skeleton from this guide; copy a real file:
 
@@ -394,7 +409,9 @@ stand in for, because both read the WHOLE fleet at once:
 Wrap native driver errors with `mapDatabaseError(err, '<type-id>', query)` — the 3rd argument is the
 raw query string (SQL **or** JSON, per `src/lib/db/errors.ts`) — so they normalise onto the shared
 error classes. What your driver's own code fields and words mean is a row of `DRIVER_ERROR_CLASSIFIERS`
-(`src/lib/db/driver-errors/index.ts`), declared beside the provider; the shared mapping names no driver. For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
+(`src/lib/db/driver-errors/index.ts`), declared beside the provider; the shared mapping names no driver.
+The row's contract is `DriverErrorClassifier` from `@libredb/provider-sdk/errors`, and the error kind each answer maps to is clause E-7 of [`docs/providers/CONTRACT.md`](providers/CONTRACT.md#errors).
+For the exact DTO shapes see [Reference: Interface Contracts](#reference-interface-contracts);
 for worked, code-verified examples see each provider's **Design decisions** section in
 [`docs/providers/`](./providers/README.md).
 
@@ -405,6 +422,7 @@ An operation that runs on one object, and that an admin should see described bef
 
 - Add it to `maintenanceOperations`, and give it a `maintenanceOperationSpecs` entry with `perEntity: true` and `global: false`.
   An operation outside the six of `MaintenanceType` then gets a control of its own on the Operations tab, the monitoring Tables tab and both row menus, after their own controls, in declaration order, under the spec's `label` and a generic icon; `declaredEntityOperations()` in `src/lib/db/types.ts` is its one reader.
+  Every operation in `maintenanceOperations` needs a `maintenanceOperationSpecs` entry, the source of the declaration's `facets.maintenanceSpecs`, so run `bun run engines:generate` after changing one and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-64); the validator refuses a spec that places its operation nowhere, other than `kill`'s, and a confirmation or preview declared outside the placements M-65 admits it on.
 - `confirmation: "typed-target"` makes that control ask for the object's own name, typed exactly and case-sensitively, before it sends anything.
   `tests/unit/db/maintenance-confirmation-capability.test.ts` holds such a spec to `perEntity: true` and `global: false`.
 - `preview: true` makes the control's dialog read `POST /api/db/maintenance/preview` and show the answer before it offers the confirm button.
@@ -442,7 +460,7 @@ Declare neither when your engine has nothing to caution about; `POST /api/db/tes
 | Method | What it does |
 |--------|-------------|
 | `isConnected()` | Returns `this.state.connected` |
-| `getMonitoringData()` | Orchestrates `getOverview`, `getPerformanceMetrics`, etc. |
+| `getMonitoringData()` | Reads the panels the engine's `ENGINE_FACETS` row offers (`getOverview`, `getPerformanceMetrics`, etc.) and lists the others in `notOffered`, never calling them |
 | `validate()` | Checks that `config.type` and `config.id` exist |
 | `ensureConnected()` | Throws if not connected |
 | `trackQuery()` | Increments/decrements active query counter |
@@ -474,6 +492,7 @@ Besides those two and the contract's `types.ts`, it imports only its own `typed-
 Add its row to `SQL_WRITING`, which the compiler holds complete, then run `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/sql-writing/golden.test.ts` to write the engine's golden file, read it, and run the test again without the variable.
 The module also states `inlineEdit`: the three key-column type name sets, `instantTypeNames`, `float64TypeNames` and `exactDecimalTypeNames`, each the shared `INSTANT_TYPE_NAMES`, `FLOAT64_TYPE_NAMES` or `EXACT_DECIMAL_TYPE_NAMES` by name, or the module's own where the engine's type words mean something else (SQLite's, for one), and `boundEdit` only where an edit needs a wrapper around its bind (SQL Server, Oracle).
 The provider doc gets a `SQL writing` subsection naming the module's literal, identifier and placeholder building blocks and its `inlineEdit` sets and `boundEdit`, and an `export` paragraph naming its binary literal form, each export fact by the shared constant it holds or by its field name, every export hook it defines and its `typed-literals` sibling, which `tests/unit/db/sql-writing/docs.test.ts` holds to the module.
+The row is also the source of the engine declaration's `sqlWriting` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-11).
 
 ## Step 3: Register in the Factory
 
@@ -484,14 +503,16 @@ Add a `case` to the `switch` statement:
 ```typescript
 export async function createDatabaseProvider(
   connection: DatabaseConnection,
-  options: ProviderOptions = {}
+  options: ProviderOptions = {},
+  execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
+  // ... the checks, then `context`: a copy of `execution` with core's egress decision added ...
   switch (connection.type) {
     // ... existing cases ...
 
     case 'cockroachdb': {
       const { CockroachDBProvider } = await import('./providers/sql/cockroachdb');
-      return new CockroachDBProvider(connection, options);
+      return new CockroachDBProvider(connection, options, context);
     }
 
     // ...
@@ -500,6 +521,32 @@ export async function createDatabaseProvider(
 ```
 
 > **Important:** Use dynamic `import()` to keep the initial bundle small.
+
+This import and the new type-id's row modules in the registry indexes are the one growth the provider import allowlist takes before PR 11 and PR 12 of the provider plugin program: add each pair to `tests/unit/lib/db/provider-imports/inward-allowlist.ts` and update the module counts of those files in [`PROVIDER_IMPORTS.md`](./PROVIDER_IMPORTS.md#the-rule), whose test fails until both match the source.
+A provider module that imports a core module the record's outward table does not list fails the same test until the module gets a row there with its destination.
+
+The `connection` your constructor receives is the one `providerConnection` (`src/lib/db/provider-connection.ts`) builds: it carries no `sshTunnel`, because Studio opens the tunnel itself ([what a provider receives of the tunnel](providers/README.md#ssh-tunnels-bastion-host-key-verification)).
+It carries the tunnel's far end under `TUNNEL_FAR_END` when Studio opened one, and the tunnel's route under `TUNNEL_ROUTE`; a provider that needs the route, for a key that tells two bastions apart, reads it through `requireTunnelRoute` in `src/lib/db/utils/require-tunnel-route.ts` and never frames one itself.
+The connection holds only the fields your engine declares, and nothing else of the record: the type's rows of `CONNECTION_FIELDS` and `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts`, `connectionString` where `CONNECTION_STRING_ACCEPTED` is true, `ssl` where the form offers the TLS panel, `host` and `port` where the engine takes an SSH tunnel, and Studio's own `PROVIDER_CORE_FIELDS` (`providerFields` in `src/lib/db/provider-connection.ts` composes them).
+A field your provider reads must be declared there: `tests/unit/lib/db/provider-field-census.test.ts` reads every provider module with the type checker and fails on a read of a connection field its engine does not declare.
+Studio also decides the tunnel before it builds your provider: a provider that is built from a connection whose tunnel is on was given an opened tunnel, with the local endpoint in `host` and `port` and the far end under `TUNNEL_FAR_END`, so your provider dials `host` and `port` and never reads `sshTunnel.enabled` or refuses a tunnel itself.
+
+The third argument is the build context, `ProviderBuildContext` in `src/lib/db/types.ts`: a copy of the caller's execution context and `egress`, the egress decision core took from `DB_HTTP_BLOCK_PRIVATE_HOSTS`.
+The factory copies only plain data: an execution context that is a class instance, or holds a getter, an inherited field or a field that is not enumerable, is refused with a `DatabaseConfigError` and nothing is built.
+A provider whose connections pass the shared egress guard keeps that context and, when it builds its transport or dial, hands `requireEgressDecision(context.egress)` from `src/lib/db/http/egress-policy.ts` to the guard as the last argument; built without a decision, it refuses by name and dials nothing.
+A provider that builds an HTTP origin hands `httpOrigin` in `src/lib/db/http/endpoint.ts` the same decision as its last argument when `connect()` builds the origin, so an address literal the decision blocks is refused before any request; a helper that builds the provider's origin takes the decision from its caller and never reads it.
+A provider that dials its own socket carries `egress` from the context in its dial input, and its dial hands `requireEgressDecision(input.egress)` to `socketEgress` in `src/lib/db/http/egress-policy.ts` as the last argument, so a test seam that replaces the dial needs no decision.
+A provider built on `createNodeTransport` or `createNodeByteTransport` (`src/lib/db/http/node-transport.ts`) hands each transport the same decision in its options' `egress`, as it hands its origin; a transport built without one refuses by name and opens nothing.
+A provider that hands the decision to its guard also joins the engines of `tests/security/provider-egress-decision.test.ts`, which holds that the factory hands it the decision.
+A provider never reads `DB_HTTP_BLOCK_PRIVATE_HOSTS` and never imports `src/lib/db/egress-decision.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
+
+The build context also carries `trust`, the trust material core read once from the file `NODE_EXTRA_CA_CERTS` names (`TrustMaterial` in `src/lib/db/types.ts`: the certificate blocks in the file's order), for an engine whose `READS_TRUST_MATERIAL` row in `src/lib/db/compatibility.ts` is true, and `undefined` for every other.
+Set that row only for a provider whose TLS library does not read Node.js's trust store, such as a native addon with a TLS stack of its own: Node.js adds the `NODE_EXTRA_CA_CERTS` certificates to every TLS connection it opens without a `ca`, so a provider on `node:tls`, `node:https`, `fetch` or a driver built on them needs nothing.
+Such a provider hands `requireTrustMaterial(context.trust)` from `src/lib/db/utils/require-trust-material.ts` to its TLS wherever a connection verifies against the system trust store, so built without it the provider refuses by name and dials nothing; `tests/security/provider-trust-material.test.ts` holds its row against what it holds.
+A provider never reads `NODE_EXTRA_CA_CERTS` or the file it names, and never imports `src/lib/db/trust-material.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
+
+A provider whose engine opens a file on Studio's host (`OPENS_LOCAL_FILE` in `src/lib/db/compatibility.ts`) opens the file the factory admitted, `requireAdmittedFile(connection, type)` from `src/lib/db/utils/admitted-file.ts`, and never resolves the connection's `database` or connection string itself: the factory has resolved it against the working directory and refused Studio's own storage files before it builds the provider.
+Such a provider never reads `STORAGE_SQLITE_PATH` and never imports `src/lib/data-dir.ts`; `tests/unit/lib/db/provider-environment-scan.test.ts` holds it.
 
 ## Step 4: Add UI Configuration
 
@@ -572,6 +619,11 @@ The dialog loads the parser only when the import opens, offers it only for a new
 The import keeps the user's choices about how to connect (read-only, the object scan and the query timeout) and resets every server-scoped field before it fills.
 The parser runs in the browser: it imports no `node:` module and no provider, never throws, and never keeps or prints a parser error, which can quote a credential.
 A declaring type is listed in `DECLARING` in `tests/unit/lib/connection-import-declaration.test.ts`.
+
+A secret your provider cannot sign in without is a `fieldRules` entry with `required` on a field the storage classification (`src/lib/storage/secret-fields.ts`) calls secret.
+Its sentence names the field as the dialog labels it, and `tests/unit/lib/db-ui-config.test.ts` pins the set of such declarations.
+Where it depends on another field, declare `fieldShownWhen`, and declare the other field's `fieldDefaults`: the value your provider reads when that field is absent.
+A value that is absent, not text or only whitespace is blank: the dialog refuses it before Test connection and Save, `createDatabaseProvider` refuses it before your provider is built, and your provider keeps its own refusal for a provider built directly.
 
 ## Step 5: Install the Driver
 
@@ -777,6 +829,7 @@ control that only emits invalid input. That is the defect class
 The same honesty rule governs monitoring: **a source the connected user cannot read returns empty,
 it never throws.** Monitoring catalogs are frequently permission-gated, so a denial is the normal
 case for a restricted user and must not break an otherwise working connection.
+A panel the engine cannot read at all is a different case: it is declared not offered in the engine's `ENGINE_FACETS` row rather than answered empty, a constant or a refusal, so `getMonitoringData` never calls its method and no surface draws it.
 
 ### The `createTable` grammar
 
@@ -957,10 +1010,10 @@ comment. Three surfaces read labels today, plus the agent's prompt layer:
 | `reindexGlobalTitle` (optional) | Admin Operations tab, reindex card title. Absent = the hardcoded *"Rebuild Indexes"* |
 | `reindexGlobalDesc` (optional) | Admin Operations tab, reindex card description paragraph. Absent = the hardcoded *"Reconstructs all indexes in the database."* Declare the triad wherever that sentence is false — on SQLite `reindex` is a bare `REINDEX`, which rebuilds every index in the file rather than reconstructing them per table (#464). Declaring it is pointless where the card cannot render: Couchbase's `reindex` spec sets `global: false`, so its triad reaches nothing |
 | `statementLanguage` (optional) | The agent's plan contract (`src/lib/agent/investigation.ts`), stated verbatim to the model. No UI surface reads it. Declared only where the engine's own name misleads a model about what a "statement" is here |
-| `slowQueriesEmptyState` (optional) | Monitoring **Queries** tab, the "Slowest Queries" empty state. Absent = PostgreSQL's *"Enable pg_stat_statements extension to see query stats."*, which is what the component hardcoded for every engine until #463. Declare it wherever that sentence is false, and the panel drops the `pg_stat_statements required` badge as well |
+| `slowQueriesEmptyState` (optional) | Monitoring **Queries** tab, the sentence under *"No query statistics available."* when an offered "Slowest Queries" list is empty. Absent = that line alone. PostgreSQL declares its *"Enable pg_stat_statements extension to see query stats."* here. Declare it only where the engine offers `slowQueries`: nothing draws the panel elsewhere, and the monitoring panels census fails on a sentence for a panel the engine does not offer |
 | `vacuumActionOperation` (optional) | Specifies which maintenance operation the `vacuumAction` label refers to. Absent = `vacuum`. |
-| `sessionsEmptyState` (optional) | Monitoring Sessions tab and admin Operations session list empty-state message. Absent = "No active sessions found." |
-| `tableStatsCaption` (optional) | Caption explaining when the table statistics list represents a subset of the database's tables. Absent = no caption. |
+| `sessionsEmptyState` (optional) | Monitoring Sessions tab and admin Operations session list empty-state message, for an offered list whose empty answer "No active sessions found." would misdescribe (Snowflake lists running statements). Absent = that sentence. Declare it only where the engine offers `activeSessions`: the monitoring panels census fails on a sentence for a panel the engine does not offer |
+| `tableStatsCaption` (optional) | Caption explaining when the table statistics list represents a subset of the database's tables. Absent = no caption. Declare it only where the engine offers `tables`, as the monitoring panels census holds |
 
 The `*Global*` triads reach only the card, never the per-table button, and only where the card
 renders: the analyze card is gated on `analyze`, the vacuum card on the **literal** `vacuum`, the
@@ -1108,21 +1161,38 @@ The integration points, all of which need an entry. This is the list the Strateg
 
 - [ ] `src/lib/types.ts` — add to the `DatabaseType` union
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
+- [ ] `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`: **new:** the other two legs of the provider triad, which `tests/unit/db/provider-triad.test.ts` requires for every type-id
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import
 - [ ] `src/lib/db/connection-form.ts`: the type's `CONNECTION_FORM` entry, with its label, default port and fields
 - [ ] `src/lib/db-ui-config.ts`: the icon and colour, as `branded(CONNECTION_FORM.<type>, <Icon>, "<colour>")`
-- [ ] `src/lib/db/connection-fields.ts`: the type's row of `CONNECTION_FIELDS`, which the entry's `connectionFields` reads by reference, and its row of `SEED_ONLY_FIELDS`, which is `null` unless only this engine's provider reads a field
+- [ ] `src/lib/db/connection-fields.ts`: the type's row of `CONNECTION_FIELDS`, which the entry's `connectionFields` reads by reference, and its row of `SEED_ONLY_FIELDS`, which is `null` unless only this engine's provider reads a field, and its row of `REFUSED_CONNECTION_FIELDS`, which maps each field the engine does not take and refuses by name to the sentence it is refused with, empty for most engines (core refuses a connection that sets one before the build, so the provider never reads it, and the engine's provider doc quotes each sentence); `tests/unit/lib/db/provider-field-census.test.ts` fails on a provider module that reads a connection field the engine does not declare.
+      Its row of `AGENT_CREDENTIAL_FORM` is the form its provider's `agentCredential` declares, or null where it declares none, and every agent acquisition reads that row in place of the provider's own declaration (docs/providers/CONTRACT.md, clause M-57); `tests/unit/db/agent-credential-capability.test.ts` holds the two equal.
+      The row is also the source of the engine declaration's `policy.agentCredentialForm`, `pair` where it is null, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-58).
 - [ ] `src/lib/db/providers/<family>/<type-id>/connection-string.ts` (or `<type-id>-connection-string.ts` beside a flat provider file): **new:** the type's `ConnectionStringSpec`, with its scheme, `readTls`, `paste` and `validateSeed`, each `null` when the engine has none; add its row to `CONNECTION_STRING` in `src/lib/db/connection-string/index.ts`. A `paste` claims only the engine's own spellings, names the ones `detectConnectionStringType` reports, parses them, and lists in `formats` the forms the Paste URL box names for it; list its type in `CONNECTION_STRING_PASTE_ORDER` in the same file, where `tests/unit/db/connection-string/paste.test.ts` refuses a row that claims another engine's text unless the pair is declared in `CONNECTION_STRING_PASTE_OVERLAPS` beside it. Neither `src/lib/connection-string-parser.ts` nor `src/lib/connection-paste-formats.ts` is edited. Run `UPDATE_GOLDEN=1` for `tests/unit/db/connection-string/golden.test.ts` and `tests/unit/db/connection-form/golden.test.tsx`
 - [ ] `src/lib/db/providers/<family>/<type-id>/execution-ui.ts` (or `<type-id>-execution-ui.ts` beside a flat provider file): **new:** the type's `ExecutionUiSpec`, its `commitKeyword` (`SQL_COMMIT_KEYWORD` unless the engine keeps a transaction with another keyword) and `consentDeadline` (`null` unless a long read ends differently on it); add its row to `EXECUTION_UI` in `src/lib/db/execution-ui/index.ts` and run `UPDATE_GOLDEN=1` for `tests/unit/db/execution-ui/golden.test.tsx`
+- [ ] `src/lib/db/providers/<family>/<type-id>/engine-facets.ts` (or `<type-id>-engine-facets.ts` beside a flat provider file): **new:** the type's `EngineFacets`, stating each of the seven monitoring panels `"offered"` where its read asks the engine, now or from what the engine said at connect, and `"not-offered"` where it would answer a stub empty, a constant or a refusal, its `maintenance` operations, equal to the provider's `maintenanceOperations` before connect (`tests/isolated/maintenance-facets-census.test.ts`), and its `agentReadings`, the curated `inspect_operations` kinds of the offered panels whose reads the agent handle answers plus `health` unless the agent handle withholds it, measured on the agent handle; add its row to `ENGINE_FACETS` in `src/lib/db/engine-facets/index.ts`, its expectations to `EXPECTED_OFFERED` and `EXPECTED_AGENT_READINGS` in `tests/unit/db/engine-facets/census.test.ts`, and the `Engine facets` subsection, with its `Maintenance operations offered:` and `Agent readings offered:` lines, to its provider doc
 - [ ] `src/lib/db/connection-form.ts`: **append** to `CONNECTION_PICKER_ORDER` (do not retype the array)
+- [ ] `src/lib/db/engine-declarations/<type-id>.json`: **generated**, never written by hand: run `bun run engines:generate` once the type's rows exist and its provider builds from its census connection (`tests/helpers/census-connection.ts`), and commit the new declaration.
+      `tests/unit/db/engine-declarations.test.ts` fails on a shipped type-id with no declaration, on a declaration that differs from its rows, and on one the provider manifest schema refuses (docs/providers/CONTRACT.md, clause M-15).
+      Any later change to a row it reads is regenerated the same way.
 - [ ] `src/components/icons/db-icons.tsx` — the engine's mark (`strokeWidth={1.5}`, no HTML size attrs)
-- [ ] `src/lib/seed/types.ts` — the seed-config `type` enum, or seeded connections fail validation
 - [ ] `src/lib/db/compatibility.ts` — the `SHIPPED` record. It is an exhaustive
       `Record<DatabaseType, true>`, so the compiler refuses the omission rather than letting the
       published engine count silently undercount; it is listed here because the count in `README.md`
       and `docs/BRAND_MESSAGING.md` is derived from it and has to move in the same PR
 - [ ] `src/lib/db/compatibility.ts`: the new id's `WRITE_REACH` entry, `none`, `guarded` or `open`, which `READ_ONLY_ENFORCED` is derived from.
       A provider whose reach is not `open` declares `writeReach` on all four write paths, naming its gate or proof by an exported symbol, and its doc carries the `| **Write reach** |` header row with the same value; `tests/unit/db/write-reach-capability.test.ts`, `tests/unit/db/write-reach-proofs.test.ts` and `tests/unit/db/write-reach-docs.test.ts` hold the three equal
+      The provider's `writeReach`, `metadataOnly` and `inlineEditRefusedColumns` are the source of the engine declaration's `safeguards` segment, a provider that declares no `writeReach` written open on every path, so run `bun run engines:generate` after changing one and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-60 and M-61).
+      `WRITE_REACH` and the other claim records of `compatibility.ts` (`READS_FILE_ACCESS_POSTURE`, `REFUSES_DENIED_FILE_ACCESS`, `SINGLE_WRITER_FILE`, `READ_ROOTS_REQUIRED` and the four `MCP_` claim records) are the source of the engine declaration's `policy` and `mcp` segments, each Studio's review record of its claim (`docs/providers/CONTRACT.md`, M-52), so run `bun run engines:generate` after writing or changing one and commit the regenerated declaration.
+      `OPENS_LOCAL_FILE`, `HOST_PATH_FIELDS`, `OPENS_SERVER_LEVEL_WITHOUT_DATABASE`, `SSH_TUNNEL_REFUSAL`, `SEED_AGENT_CREDENTIAL`, `AGENT_STATEMENT_LANGUAGE` and the `agentReadings` and `redaction` members of the facet and grammar rows are Studio's review records of claims too (`docs/providers/CONTRACT.md`, M-52 and M-53), and a row beside a provider stays in Studio's source (M-54).
+      `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` also bounds `catalogSessions`: Studio honours a caller's choice of database only where the engine's row is true and the connection names no database and no connection string (`catalogChoice` in `src/lib/db/catalog-scope.ts`, `docs/providers/CONTRACT.md`, M-57), so a provider that declares `catalogSessions` needs its engine's row true.
+- [ ] `docs/providers/<type-id>.md`: the `| **Failed statement outcome** |` header row right after the Write reach row, `checkout-not-sent` when the provider's execute takes its connection or session through `checkoutPhase` before it sends, otherwise `unknown`, with one sentence naming the call; `tests/unit/db/statement-outcome-docs.test.ts` holds the value to the provider code (`docs/providers/CONTRACT.md`, E-5)
+- [ ] `src/lib/db/compatibility.ts`: the new id's `READS_TRUST_MATERIAL` entry, `true` only when its TLS library does not read Node.js's trust store (Step 3).
+      The entry is also the source of the engine declaration's `connection.readsTrustMaterial`, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-56).
+- [ ] `src/lib/db/compatibility.ts`: the new id's `SSH_TUNNEL_REFUSAL` entry, `null` when its connections may run through an SSH tunnel, otherwise the whole sentence Studio refuses a tunnelled connection with, saying why (the client reaches addresses the server advertises, a second port, several vendor hosts, a datagram transport, a file with no address); core refuses such a tunnel before it dials anything, and the dialog and `buildConnection` read the same row through `offersSshTunnel`, so the provider never checks a tunnel itself.
+- [ ] `src/lib/db/compatibility.ts`: the new id's `MASKING_EXEMPT_COLUMNS` entry, `null` unless its provider declares `maskingExemptColumns`, then that declaration written out, its column pattern anchored.
+      Studio's producers of client capabilities answer this row in place of the provider's own (`docs/providers/CONTRACT.md`, M-57), and `tests/unit/db/masking-exemption-guard.test.ts` holds the two equal and fails until its `REACH` names the protected names the pattern reaches.
+      The row is also the source of the engine declaration's `policy.maskingExemptColumns`, whose column pattern the validator refuses unless it matches whole column names only, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-59).
 - [ ] `package.json` — the driver, **if** it needs one. A driver-free provider leaves it untouched, and
       twenty-one shipped ids do: `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`,
       `libsql`, `sqlite`, `prometheus`, `qdrant`, `weaviate`, `milvus`, `influxdb`, `influxdb3`, `oxia`, `databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`
@@ -1156,17 +1226,19 @@ Those three reach code and tests only; the four prose greps of the published blo
 **Also always, and not named above until the Kafka provider found them (#1088):** each is a record, a population or a pinned list no search above prints by itself.
 
 - [ ] `src/lib/db/destructive-commands.ts`: `NON_SQL_DESTRUCTIVE_VOCABULARY`, a row for every id whose grammar module declares `readsSqlText: false`, which `tests/unit/db/destructive-commands.test.ts` holds to exactly those ids.
-      The row is declared beside the provider, in its own `destructive.ts` module, and the table only imports it; the same test fails on a row written inline.
+      The row is declared in its statement language's family module, `destructive.ts` under `src/lib/languages/<language>/` (or `src/lib/db/graph/cypher/` for Cypher), and the table only imports it; the same test fails on a row written inline or taken from another language's family module.
+      A new row in a provider directory is refused by the provider import guard, because `src/lib/db/destructive-commands.ts` is not one of the collector entries that may grow ([`docs/PROVIDER_IMPORTS.md`](PROVIDER_IMPORTS.md), "The rule").
       A text that cannot write takes the row that names no operation and decides alone, the Prometheus and Kafka shape.
+      A row that decides alone needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written.
 - [ ] `src/lib/db/migration-ddl/index.ts`: the new id's row in `MIGRATION_DDL`, which the compiler holds complete.
       Write the row's module beside the provider at the placement rule, `<family>/<id>-migration-ddl.ts` for a flat provider or `<family>/<id>/migration-ddl.ts` for a directory one, as a `MigrationDdlSpec`: `tableDdl: "refused"` with its one `refusal` line for an engine whose diff gets no table DDL at all, or `"written"` with every statement kind and a `transactionWrapper` decision (#284), sharing PostgreSQL's spelling only by importing a named building block from `shared.ts` (#269).
       Give the provider doc its `Migration DDL` section, which `tests/unit/db/migration-ddl/docs.test.ts` holds to the module, then run `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/migration-ddl/golden.test.ts` and read the new golden file before committing it.
       Add the new id to `PLACEMENT` in `tests/unit/db/migration-ddl/census.test.ts`, which the compiler holds complete, and, when the module refuses table DDL, to its `REFUSED` list, a plain list the compiler does not hold.
+      The row is also the source of the engine declaration's `migrationDdl` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-17).
 - [ ] `tests/unit/lib/db-ui-config.test.ts`: `FIELD_CHECKLIST`, when the new id's connection fields include one the checklist does not hold.
 - [ ] The pinned lists and per-dialect pins: `tests/components/ConnectionModal.test.tsx` (its mocks and its `SHIPPED` census), `tests/components/rich-text.test.tsx` and `tests/unit/lib/sql/fence-tags.test.ts` (the hand lists of canonical tags), `tests/unit/aws-listing-fields.test.ts` (`productNames`), `tests/unit/db/object-edit-expectation.test.ts` (the census counts), `tests/unit/lib/export/result-export.test.ts` and `tests/unit/sql/values.test.ts` (the literal and placeholder pins).
 - [ ] `docs/API_DOCS.md`: the `type DatabaseType` line names every type-id.
 - [ ] The `factory.ts` line citations that `tests/unit/lib/db/connection-fingerprint.test.ts` holds to the lines their anchors sit on: a new factory `case` moves every line below it.
-- [ ] The untyped `Supported types:` string of `createDatabaseProvider` in `src/lib/db/factory.ts`, which no compiler checks: add the type-id to it.
 - [ ] The `<!-- engines:N -->` marker of `deploy/aws/listing/listing-fields.md`, which `tests/unit/aws-listing-fields.test.ts` counts against `EXTERNAL_DATABASE_TYPES`.
 - [ ] An E2E spec that drives Test Connection runs on the second Playwright server: add it to `SECOND_SERVER_SPECS` in `tests/unit/e2e-project-servers.test.ts`, to the `chromium` project's `testIgnore`, and to a project of its own on `offlinePort` in `playwright.config.ts`.
 - [ ] The identity colour: `src/styles/theme.css` declares a finite set of hues, `tests/unit/lib/db-ui-config.test.ts` requires every engine's colour to differ, and a second step of a used hue must pass the separation test of `tests/unit/theme-accent-contrast.test.ts` by joining `IDENTITY_ALTS`, or be a new token with its theme and contrast entries.
@@ -1181,6 +1253,7 @@ Those three reach code and tests only; the four prose greps of the published blo
       A console whose grammar takes credential flags declares them as `historyMask` on the record, so query history stores their values masked (`src/lib/history-mask.ts`).
 - [ ] `src/lib/editor/dialect-editors.ts`: a record in `DIALECT_EDITORS` for the dialect's tab type, the Monaco language it renders in.
       A language of its own also takes an `editor-language.ts` row beside the provider and a key in `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`), which carries its formatter, if it has one.
+      The two rows are also the source of the engine declaration's `editor.language`, so run `bun run engines:generate` after writing or changing either and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-23).
 - [ ] `generators.ts` beside the provider: the dialect's `DialectGenerators` row, what a tree click and Generate Query write, and its key in `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`), read before the `json` language's row, or a tree click auto-executes a MongoDB document.
       `docs/providers/kafka.md` section 3.1 is the worked case.
 - [ ] `src/lib/db/providers/document/mongodb/editor-language.ts`: the MongoDB completion source of the shared `json` row (`src/lib/db/editor-language/json.ts`) registers only where the declared capabilities name no JSON dialect.
@@ -1196,11 +1269,12 @@ Those three reach code and tests only; the four prose greps of the published blo
 - [ ] `src/lib/seed/credential-resolver.ts`: `RESOLVABLE_FIELDS`, when the field is a credential or an address a deployment keeps out of the seed file; a name such as a SASL mechanism is neither, and takes a literal.
 - [ ] `src/lib/db/provider-cache-key.ts`: `credentialDigest`, a hand-kept list of every field that changes who a connection authenticates as, so two connections that differ only in that field never share a cached provider.
 - [ ] `docs/API_DOCS.md`: the `DatabaseConnection` block, which `tests/unit/api-docs-types.test.ts` compares with the interface as an ordered list of field names, so the field goes in at the same position in both.
-- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select, and `showSshTunnel: false`, when the engine cannot run through a tunnel; the dialog and `buildConnection` both read the latter through `offersSshTunnel`, one rule for both readers.
+- [ ] `src/lib/db/connection-form.ts`: `fieldOptions`, when the field is a choice the dialog renders as a select.
 
 **For agent mode (#1821):**
 
 - [ ] `src/lib/agent/agent-manifest.ts`: the `AGENT_STATEMENT_LANGUAGE` row, null unless the provider joins agent mode; a non-null row requires the agent leg of the triad in `CLAUDE.md` and the steps in [`docs/AGENT.md`](AGENT.md#language-packs), "How to add an engine to a statement-language family".
+  A non-null row's server overlay is the source of the engine declaration's `agent.overlay`, so run `bun run engines:generate` after changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, M-67).
 
 **Conditionally, and each one is easy to miss because the code still compiles without it:**
 
@@ -1208,12 +1282,11 @@ Those three reach code and tests only; the four prose greps of the published blo
       The `Record<ExplainFormat, …>` registry is exhaustive, so this and the next item must land
       together or neither compiles
 - [ ] `src/lib/explain/index.ts` — register the strategy
-- [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, a
-      `SqlPortGenerators` row beside the provider, keyed by its default port; the default is
-      PostgreSQL-shaped, so check before assuming it fits
+- [ ] `src/lib/db/query-generators/index.ts`: only if the engine needs its own forms or quoting, an `SqlEngineGenerators` row beside the provider, under its type id in `SQL_ENGINE_GENERATORS`; the default is PostgreSQL-shaped, so check before assuming it fits
+      The row is also the source of the engine declaration's `sqlGenerators` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-20).
 - [ ] `src/lib/db/driver-errors/index.ts`: only if the driver's errors carry code fields or words of their own,
       a `<provider>-driver-errors.ts` row beside the provider (`DriverErrorClassifier`,
-      `src/lib/db/driver-errors/types.ts`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
+      `@libredb/provider-sdk/errors`), added to `DRIVER_ERROR_CLASSIFIERS` in its fixed order;
       `mapDatabaseError` (`src/lib/db/map-database-error.ts`) reads that row, and neither it nor
       `src/lib/db/errors.ts` names a driver
 - [ ] `src/lib/db/sql-grammar/`: write your engine's grammar module, `<family>/<id>/sql-grammar.ts`
@@ -1237,7 +1310,10 @@ Those three reach code and tests only; the four prose greps of the published blo
       the literal; `tests/unit/db/sql-grammar/census.test.ts` holds it. Then regenerate the golden file with
       `UPDATE_GOLDEN=1 bun tests/run-tests.ts tests/unit/db/sql-grammar/golden.test.ts`, commit it,
       and add the `SQL grammar` subsection to your provider doc, which
-      `tests/unit/db/sql-grammar/docs.test.ts` holds to the module
+      `tests/unit/db/sql-grammar/docs.test.ts` holds to the module.
+      Import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, the one place both are declared (`docs/providers/CONTRACT.md`, S-1).
+      The row is also the source of the engine declaration's `sqlText` segment, so run `bun run engines:generate` after writing or changing it and commit the regenerated declaration (`docs/providers/CONTRACT.md`, S-3).
+      `readsSqlText: false` and each `confirmExemptForms` form loosen the confirmation gate, so each needs its claim in `CONFIRMATION_CLAIM_REVIEW` (`src/lib/db/confirmation-claim-review.ts`), with the reason it holds, in the same PR: the gate reads an unlisted claim as if it were not made, and `tests/unit/lib/db/confirmation-claim-review.test.ts` fails until the entry is written
 - [ ] `src/lib/db/types.ts`: `queryLanguage`, only when the engine's query text is neither SQL nor JSON.
       A new member is not neutral: a reader written `=== "json"` sends it into its SQL branch and one written `!== "sql"` into its MongoDB branch, so every reader needs an explicit arm or a test pinning that its branch is right.
       `grep -rn queryLanguage src` is not the whole population: `src/components/agent/AnswerCard.tsx` reads it through `editorLanguageForTabType`.

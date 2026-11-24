@@ -70,6 +70,7 @@ import { useFavoriteConnections } from "@/hooks/use-favorite-connections";
 import { storage } from "@/lib/storage";
 import { applyConnectionOrder } from "@/lib/connection-order";
 import { connectionAllowed, connectionsUnderPolicy, mergeVisibleOrder } from "@/lib/connection-policy";
+import { isDatabaseType } from "@/lib/db/type-id";
 import {
   type MaskingConfig,
   loadMaskingConfig,
@@ -617,6 +618,11 @@ export default function Studio() {
   const [showDiagram, setShowDiagram] = useState(false);
   const handleShowDiagram = useCallback(() => setShowDiagram(true), []);
   const handleHideDiagram = useCallback(() => setShowDiagram(false), []);
+  // The diagram draws a failed catalog read with Try again, which reads the active connection again.
+  const { activeConnection, fetchSchema } = conn;
+  const handleRetrySchema = useCallback(() => {
+    if (activeConnection) void fetchSchema(activeConnection);
+  }, [activeConnection, fetchSchema]);
   const [isSaveQueryModalOpen, setIsSaveQueryModalOpen] = useState(false);
   const openSaveQuery = useCallback(() => setIsSaveQueryModalOpen(true), []);
   const [savedKey, setSavedKey] = useState(0);
@@ -845,9 +851,13 @@ export default function Studio() {
   const closeSaveQuery = useCallback(() => setIsSaveQueryModalOpen(false), []);
   const closeImport = useCallback(() => setIsImportModalOpen(false), []);
   const closeSafety = useCallback(() => queryExec.setSafetyCheckQuery(null), [queryExec.setSafetyCheckQuery]);
-  const proceedSafety = useCallback(() => {
-    if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery);
-  }, [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery]);
+  // `typed` is what the person typed where the dialog asked for a value, sent beside the server's token (FND-5 6c).
+  const proceedSafety = useCallback(
+    (typed?: string) => {
+      if (queryExec.safetyCheckQuery) queryExec.forceExecuteQuery(queryExec.safetyCheckQuery, typed);
+    },
+    [queryExec.safetyCheckQuery, queryExec.forceExecuteQuery],
+  );
   const closeProfiler = useCallback(() => setProfilerPath(null), []);
   const closeCodeGen = useCallback(() => setCodeGenPath(null), []);
   const closeTestData = useCallback(() => setTestDataPath(null), []);
@@ -1291,9 +1301,11 @@ export default function Studio() {
     // Rebuilt from storage, `updated` still holds the connections the server refuses while custom
     // connections are off, so the next selection is the first connection the lists show. The page
     // chooses it, not the person, so it is not counted as used: one whose requests resume billed
-    // compute is held until the person uses it (CL-CORE-2).
+    // compute is held until the person uses it (CL-CORE-2). A connection whose type names no provider is listed but
+    // never made active (FND-1), so the fallback is the first one listed that a provider can open.
     const listed = connectionsUnderPolicy(updated, { customConnections: conn.customConnections });
-    if (conn.activeConnection?.id === id) conn.activateFallback(listed[0] ?? null);
+    const fallback = listed.find((c) => isDatabaseType(c.type)) ?? null;
+    if (conn.activeConnection?.id === id) conn.activateFallback(fallback);
   };
 
   const confirmDeleteConnection = () => {
@@ -1401,6 +1413,7 @@ export default function Studio() {
                 onAddConnection={addConnectionAction}
                 governed={conn.governance}
                 connectionAccessUnavailable={conn.connectionAccessUnavailable}
+                unavailableSamples={conn.unavailableSamples}
                 onObjectClick={onObjectClick}
                 onOpenKey={onOpenKey}
                 objectActions={objectActions}
@@ -1498,6 +1511,9 @@ export default function Studio() {
                     <SchemaDiagram
                       schema={conn.schema}
                       capabilities={metadata?.capabilities}
+                      schemaError={conn.schemaError}
+                      isLoadingSchema={conn.isLoadingSchema}
+                      onRetrySchema={handleRetrySchema}
                       onClose={handleHideDiagram}
                     />
                   </React.Suspense>
@@ -1524,8 +1540,8 @@ export default function Studio() {
                     connections={conn.connections}
                     activeConnection={conn.activeConnection}
                     onSelectConnection={(c) => {
-                      conn.setActiveConnection(c);
-                      setActiveMobileTab("editor");
+                      // A refused pick (FND-1) leaves the list open, where the refusal was made.
+                      if (conn.setActiveConnection(c)) setActiveMobileTab("editor");
                     }}
                     onDeleteConnection={requestDeleteConnection}
                     onDuplicateConnection={duplicateConnectionAction}
@@ -1537,6 +1553,7 @@ export default function Studio() {
                     onAddConnection={addConnectionAction}
                     governed={conn.governance}
                     accessUnavailable={conn.connectionAccessUnavailable}
+                    unavailableSamples={conn.unavailableSamples}
                   />
                 </div>
               )}
@@ -1809,6 +1826,7 @@ export default function Studio() {
         onCloseImport={closeImport}
         onImport={runImport}
         safetyCheckQuery={queryExec.safetyCheckQuery}
+        safetyCheckTypedConfirmation={queryExec.safetyCheckTypedConfirmation}
         onCloseSafety={closeSafety}
         onProceedSafety={proceedSafety}
         showCodeGenerator

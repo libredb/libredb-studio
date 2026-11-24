@@ -38,27 +38,14 @@ export const OPCUA_LABELS: ProviderLabels = Object.freeze({
     "Maintenance would be a write, and this provider has no code that can write to a server: its " +
     "client exposes GetEndpoints, CreateSession, ActivateSession, Browse, BrowseNext, Read, " +
     "HistoryRead and CloseSession, and nothing else.",
-  /*
-   * WHY THE TWO MONITORING PANELS ARE EMPTY, in this engine's own terms (#518). Both default to a
-   * sentence written for a SQL server, and a browser pass found what that means here: the Queries
-   * panel told an OPC UA reader to install `pg_stat_statements`, a PostgreSQL extension, and the
-   * Sessions panel said "No active sessions found." against a server that was holding this very
-   * session. Ten other providers set these two keys; this one had skipped them.
-   */
-  slowQueriesEmptyState:
-    "An OPC UA server answers services rather than queries, so it keeps no query log and has no slow " +
-    "queries to report.",
-  sessionsEmptyState:
-    "An OPC UA server publishes a session COUNT (`CurrentSessionCount`) rather than a session list, and " +
-    "not every server answers even that, so no session table can be read from it.",
 });
 
 /**
  * Why the Tables, Indexes and Storage panels have nothing to draw, in this engine's own terms.
  *
  * Those three have no label of their own to fall back on, so the provider REJECTS their reads and
- * this sentence travels as the rejection: `base-provider.ts` settles each panel separately and the
- * dashboard draws a refused one with the engine's words. An empty array there was drawn as a
+ * this sentence travels as the rejection to a direct caller; none of the three panels is offered in
+ * OPC UA's `ENGINE_FACETS` row, so `getMonitoringData` never reads them. An empty array there was drawn as a
  * measurement instead - "0 tables, 0 rows, 0 B" and "No tables found." against a server whose own
  * tree lists nine root folders, found by looking at the panel in a browser.
  */

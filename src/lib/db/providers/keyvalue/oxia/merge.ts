@@ -6,7 +6,7 @@
  * `RangeError`, which `walks.ts` reports as a malformed answer.
  */
 import type { OxiaComparison, OxiaRecord, OxiaShard } from "./client";
-import { OXIA_INTERNAL_PREFIX } from "./constants";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
 import { compareBytes, encodeHierarchical, encodeNatural, type KeyOrder, keyComparator } from "./order";
 
 export interface ShardKeys {

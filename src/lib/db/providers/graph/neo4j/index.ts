@@ -25,7 +25,7 @@
 import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import type { GraphClientFactory } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
-import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, ExecutionProfileError, RefusedBeforeSendError, RowBudgetRefusal } from "@/lib/db/errors";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
 import { type GraphEngineProfile, GraphBaseProvider, toQueryResult } from "@/lib/db/graph/graph-base-provider";
 import {
@@ -33,7 +33,7 @@ import {
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { GRAPH_CONTAINER_LEVELS, GRAPH_OBJECT_KINDS } from "@/lib/db/graph/objects";
 import type {
   ActiveSessionDetails,
@@ -239,7 +239,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       );
       if (result.truncated) {
         const atLeast = budget.maxResultRows + 1;
-        throw new QueryError(
+        throw new RowBudgetRefusal(
           `${rowBudgetSentence(atLeast, budget.maxResultRows)}; the read stops one row past the budget, so at least ${atLeast} rows match and the total is not known: narrow the statement`,
           this.type,
           statement,
@@ -247,7 +247,7 @@ export class Neo4jProvider extends GraphBaseProvider {
       }
       const bytes = measureResultBytes([...result.rows]);
       if (bytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, statement);
+        throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, statement);
       }
       return toQueryResult(result, executionTime);
     });
@@ -279,7 +279,7 @@ export class Neo4jProvider extends GraphBaseProvider {
     return {};
   }
 
-  /** Empty: Community keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: Community keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];

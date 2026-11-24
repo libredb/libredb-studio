@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RowBudgetRefusal } from "@/lib/db/errors";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import {
@@ -221,7 +221,7 @@ describe("a refused capture records why it was refused", () => {
       mode: "planning",
       objective: "Which department has the most employees?",
       catalogAnswer: () => {
-        throw new QueryError("Read-only execution exceeded the row budget: 536 rows > 200 allowed", "postgres");
+        throw new RowBudgetRefusal("Read-only execution exceeded the row budget: 536 rows > 200 allowed", "postgres");
       },
     });
     runs.push(run);
@@ -240,6 +240,24 @@ describe("a refused capture records why it was refused", () => {
     expect(event).not.toHaveProperty("tableCount");
     expect(event).not.toHaveProperty("fingerprint");
     expect(drive.status).toBe("succeeded");
+  });
+
+  test("postgres: a capture refused with the row sentence in an engine error records no pair", async () => {
+    const run = await openEvalRun({
+      engine: "postgres",
+      mode: "planning",
+      objective: "Which department has the most employees?",
+      catalogAnswer: () => {
+        throw new QueryError("Read-only execution exceeded the row budget: 536 rows > 200 allowed", "postgres");
+      },
+    });
+    runs.push(run);
+
+    const drive = await run.drive(PLAN);
+
+    const event = eventOfKind(drive, "context-unavailable");
+    expect(event).toMatchObject({ reasonCode: "CATALOG_READ_REFUSED" });
+    expect(event).not.toHaveProperty("rowBudget");
   });
 
   test("mysql: a provider that cannot describe itself records the reason and states no budget", async () => {

@@ -26,6 +26,7 @@ import { S3_RESPONSE_HEADERS } from "@/lib/db/providers/objectstore/s3/headers";
 import type { ProviderLimiter } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
 import { s3Connection } from "./s3-connection";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 export interface FakeS3Answer {
   readonly status?: number;
@@ -60,6 +61,7 @@ export const TEST_TRANSPORT_OPTIONS: NodeByteTransportOptions = {
   origin: { scheme: "http", host: "localhost", port: 9000 },
   tls: null,
   maxSockets: 4,
+  egress: ALLOWS_PRIVATE_HOSTS,
   headers: {},
   requestHeaderNames: ["range"],
   responseHeaders: S3_RESPONSE_HEADERS,
@@ -127,6 +129,7 @@ export function fakeS3Transport(handler: FakeS3Handler): FakeS3Transport {
           path: request.target.path,
           query: request.target.query,
           headers: Object.freeze({ ...base }),
+          body: "",
         };
         const signing = options.signer === undefined ? null : { input, headers: options.signer.sign(input) };
         exchanges.push({ request, signing });
@@ -164,6 +167,7 @@ export function fakeS3Surface(
   const options = buildS3ConnectionOptions(s3Connection(overrides) as DatabaseConnection & WithTunnelFarEnd, {
     executionReadOnly: false,
     queryTimeout: 30_000,
+    egress: ALLOWS_PRIVATE_HOSTS,
   });
   const fake = fakeS3Transport(handler);
   const raw = createS3Client(

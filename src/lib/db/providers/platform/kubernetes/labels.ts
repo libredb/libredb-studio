@@ -7,7 +7,7 @@
  * command table and cannot drift from what the parser takes.
  */
 import type { ProviderLabels } from "@/lib/db/types";
-import { KUBECTL_COMMAND_TABLE } from "./console/commands";
+import { KUBECTL_COMMAND_TABLE } from "@/lib/languages/kubectl/commands";
 
 /** Two statements the sentence gives as examples: a list, and one object's description. */
 export const KUBECTL_STATEMENT_EXAMPLES: readonly [string, string] = Object.freeze([
@@ -47,8 +47,4 @@ export const KUBERNETES_LABELS: ProviderLabels = Object.freeze({
   vacuumGlobalTitle: "Not available",
   vacuumGlobalDesc: "Studio sends a Kubernetes cluster no maintenance and no write.",
   statementLanguage: kubectlStatementLanguage(),
-  slowQueriesEmptyState: "Kubernetes keeps no query log",
-  sessionsEmptyState: "Kubernetes does not list client sessions",
-  tableStatsCaption:
-    "Kubernetes has no tables: the tree lists objects per kind and namespace, and the console reads them with get.",
 });

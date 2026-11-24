@@ -49,15 +49,15 @@ export function mcpUrlFor(hostname, port) {
  *
  * - SEED_CONFIG_PATH: src/lib/seed/sources/file.ts
  * - SEED_DISCOVERY_PATH: src/lib/seed/discovery-loader.ts
- * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts and the sqlite storage provider
- * - SQLITE_EMBEDDED_SAMPLE_PATH, SQLITE_EMBEDDED_SAMPLE_TEMPLATE: src/lib/seed/sqlite-sample.ts
- * - LIBREDB_EMBEDDED_SAMPLE_PATH: src/lib/seed/libredb-sample.ts
+ * - STORAGE_SQLITE_PATH: src/lib/data-dir.ts, which the sqlite storage provider reads it through
+ * - SQLITE_EMBEDDED_SAMPLE_PATH, LIBREDB_EMBEDDED_SAMPLE_PATH, SEED_ASSETS_DIR: src/lib/seed/samples.ts
  * - VAULT_K8S_TOKEN_PATH: src/lib/seed/vault-client.ts
  * - WORKFLOW_LOCAL_DATA_DIR, AGENT_MODEL_TUNING_PATH: src/lib/agent/config.ts
  * - ORACLE_CLIENT_LIB_DIR: src/lib/db/providers/sql/oracle/index.ts (Thick mode libDir)
- * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts, and checked at boot by src/lib/config/ca-bundle-preflight.ts (docs/OIDC.md)
- * - GOOGLE_APPLICATION_CREDENTIALS: src/lib/db/providers/document/firestore/google-credentials.ts and
- *   src/lib/db/providers/sql/bigquery/auth.ts, each read only on its server-credentials opt-in
+ * - NODE_EXTRA_CA_CERTS: read by Node itself when server.js starts, and by src/lib/db/trust-material.ts, which the boot
+ *   check src/lib/config/ca-bundle-preflight.ts runs and which keeps its CA certificates for Db2 (docs/OIDC.md)
+ * - GOOGLE_APPLICATION_CREDENTIALS: src/lib/db/auth/google/credentials.ts, read only on a provider's
+ *   server-credentials opt-in
  * - GOVERNANCE_PRIVATE_KEYS_FILE: src/lib/governance/keyring.ts, read only under governance
  * - KUBERNETES_ACCESS_REVIEW_TOKEN_PATH, KUBERNETES_ACCESS_REVIEW_CA_PATH: src/lib/kubernetes-access/config.ts, read
  *   only with the Kubernetes access review on
@@ -72,8 +72,8 @@ export const PATH_VARIABLES = Object.freeze([
   "SEED_DISCOVERY_PATH",
   "STORAGE_SQLITE_PATH",
   "SQLITE_EMBEDDED_SAMPLE_PATH",
-  "SQLITE_EMBEDDED_SAMPLE_TEMPLATE",
   "LIBREDB_EMBEDDED_SAMPLE_PATH",
+  "SEED_ASSETS_DIR",
   "VAULT_K8S_TOKEN_PATH",
   "WORKFLOW_LOCAL_DATA_DIR",
   "AGENT_MODEL_TUNING_PATH",
@@ -212,6 +212,50 @@ export function isLoopbackBind(hostname) {
 export function loopbackPlaintextEnv(hostname, current) {
   if (envText(current) !== "" || !isLoopbackBind(hostname)) return {};
   return { [LOOPBACK_PLAINTEXT_FLAG]: "true" };
+}
+
+/**
+ * The seed assets directory the launcher hands the server (docs/DISTRIBUTION.md, "Built-in sample assets"): the
+ * payload's own `seed-assets`, unless the operator set a value. An empty or whitespace-only value counts as unset. The
+ * value is always absolute: server.js changes into its own directory before it reads SEED_ASSETS_DIR, so a relative
+ * payload directory (a relative HOME) is resolved here against the launcher's working directory, the same directory
+ * spawn resolves the server's cwd against.
+ *
+ * Two launchers use it. bin/studio.js passes a value under the exact name SEED_ASSETS_DIR that resolvePathVariables
+ * has already made absolute; on Windows, where environment names ignore letter case, a value under the name in another
+ * letter case is passed on as given. scripts/next-with-seed-assets.mjs passes the checkout for `bun dev` and
+ * `bun start`, and the value Next.js's own loader finds in the shell or a .env file, which it leaves for Next.js to
+ * read.
+ *
+ * @param {string} payloadDir the directory that holds `seed-assets`: the payload server.js runs from, or the checkout;
+ *   absolute or relative to the launcher's cwd
+ * @param {unknown} current the variable's value in the launcher's environment
+ * @returns {Record<string, string>}
+ */
+export function seedAssetsEnv(payloadDir, current) {
+  if (envText(current) !== "") return {};
+  return { SEED_ASSETS_DIR: path.resolve(payloadDir, "seed-assets") };
+}
+
+/** The variable that, set to `true`, gives Studio's shutdown handler the exit (src/lib/shutdown-handler.ts reads it). */
+export const MANUAL_SIGNAL_HANDLING_VARIABLE = "NEXT_MANUAL_SIG_HANDLE";
+
+/**
+ * The environment a launcher adds so that Studio's shutdown handler ends the server it starts
+ * (docs/DISTRIBUTION.md, "Stopping the server"): `true` when the server runs on Node.js and the
+ * operator set no value, nothing otherwise. The server runs on the launcher's own runtime, since
+ * both launchers spawn process.execPath, so `versions` is the launcher's process.versions: on Bun
+ * the server refuses `true` at boot, because its request drain sees nothing there. Presence decides,
+ * not content: an empty value is the operator's choice of Next.js's handler, and any other value is
+ * passed on for the server to accept or refuse by name. Pure.
+ *
+ * @param {{ readonly node: string, readonly bun?: string }} versions
+ * @param {string | undefined} current the variable in the launcher's environment, read from process.env
+ * @returns {Record<string, string>}
+ */
+export function manualSignalHandlingEnv(versions, current) {
+  if (current !== undefined || typeof versions.bun === "string") return {};
+  return { [MANUAL_SIGNAL_HANDLING_VARIABLE]: "true" };
 }
 
 /**

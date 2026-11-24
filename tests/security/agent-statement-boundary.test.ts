@@ -15,6 +15,7 @@ import {
   executeWithPolicy,
 } from "@/lib/db/operations/policy";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import type { ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -296,8 +297,15 @@ const AGENT_BUDGET: ReadOnlyStatementBudget = {
 describe("agent statement boundary — layer (b): SQLite refuses the same statements with the pipeline bypassed", () => {
   let profile: SQLiteProvider;
 
+  // Admitted as Studio's provider factory admits it, so the provider opens the file core decided (FND-2 slice 3).
   function config(database: string): DatabaseConnection {
-    return { id: "conn-security", name: "Security SQLite", type: "sqlite", database, createdAt: new Date() };
+    return admittedFileConnection({
+      id: "conn-security",
+      name: "Security SQLite",
+      type: "sqlite",
+      database,
+      createdAt: new Date(),
+    });
   }
 
   async function tableState(): Promise<Record<string, unknown>[]> {

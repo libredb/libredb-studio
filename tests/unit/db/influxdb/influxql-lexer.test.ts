@@ -21,7 +21,7 @@ import {
   lexInfluxql,
   normaliseInfluxqlNewlines,
   tokenizeInfluxqlLine,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+} from "@/lib/languages/influxql/lexer";
 
 const KEYWORD_FIXTURE = path.resolve(import.meta.dir, "../../../fixtures/influxdb/influxql-v1.4.1-keywords.json");
 

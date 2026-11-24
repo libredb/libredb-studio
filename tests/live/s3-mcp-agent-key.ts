@@ -41,7 +41,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { posix } from "node:path";
-import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
+import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 
 function env(name: string): string {
   const value = process.env[name];

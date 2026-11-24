@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
-import { getPendingSeeds, KUBERNETES_REVIEWED_ROLE, type ManagedConnection } from "@/lib/seed";
+import {
+  getPendingSeeds,
+  getUnavailableSamples,
+  KUBERNETES_REVIEWED_ROLE,
+  type ManagedConnection,
+  seedRolesOf,
+} from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
@@ -30,7 +36,10 @@ const OPENSHIFT_CACHE_HINT_MS = 10_000;
  * sets a connection apart for that review, so a reviewed connection reaches the browser with no role, and the grant
  * level (src/lib/governance/visible.ts) which credential a governed record carries, and an OPC UA seed's read roots
  * (`agentReadRoots`), which bound agent and MCP reads and are resolved from the file on the server, so the browser's
- * copy never holds them and a Duplicate never copies them into a connection of the user's own. The audience marker
+ * copy never holds them and a Duplicate never copies them into a connection of the user's own; the same holds for an
+ * OPC UA seed's policy URI and client certificate and private key paths, the other seed-only fields
+ * (`SEED_ONLY_FIELD_NAMES` in src/lib/db/connection-fields.ts), which a connection the browser supplies inline cannot
+ * set. The audience marker
  * (`sharedWithNonAdminRoles`, src/lib/seed/types.ts) is whom the operator offers a seed to, which the server decides
  * the seed's file-access posture from and which the roles sent here deliberately leave out. The level itself is no
  * secret and goes out as `access`, so a client can say a connection is read only before a write fails.
@@ -41,6 +50,9 @@ function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
   delete copy.kubernetesSecret;
   delete copy.sharedWithNonAdminRoles;
   delete copy.agentReadRoots;
+  delete copy.securityPolicyUri;
+  delete copy.clientCertificatePath;
+  delete copy.clientPrivateKeyPath;
   copy.roles = copy.roles.filter((role) => role !== KUBERNETES_REVIEWED_ROLE);
   return grantLevel === undefined ? copy : { ...copy, access: grantLevel };
 }
@@ -101,11 +113,16 @@ export async function GET() {
       .map(withoutServerMarkers)
       .map((conn) => (conn.managed || session.channel === "bearer" ? withoutSecretFields(conn) : conn));
 
-    // Seed ids still being seeded asynchronously (e.g. the SQLite sample file
-    // copy at boot) — clients poll while non-empty so the sample appears
-    // without a page refresh. Always [] when embedded in platform, and under
-    // governance, where no sample is seeded.
-    return NextResponse.json({ connections: sanitized, cacheHint: cacheHintMs(), pendingSeeds: getPendingSeeds() });
+    // Seed ids of the built-in samples still being copied at boot: clients poll while non-empty so each sample
+    // appears without a page refresh. The samples these roles are offered whose copy failed, each with its reason
+    // and the sentence a client shows; never in `connections`. Both are always [] when embedded in platform, and
+    // under governance, where no sample is seeded.
+    return NextResponse.json({
+      connections: sanitized,
+      cacheHint: cacheHintMs(),
+      pendingSeeds: getPendingSeeds(),
+      unavailableSamples: getUnavailableSamples(seedRolesOf(session)),
+    });
   } catch (error) {
     logger.error("Failed to load managed connections", error, {
       route: "GET /api/connections/managed",

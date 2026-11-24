@@ -15,7 +15,7 @@ import {
   WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_PROOF_SENTENCES,
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
-import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/languages/weaviateapi/metadata-request";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
@@ -29,6 +29,8 @@ import {
 } from "../../../helpers/weaviate-agent";
 import { rejection, WEAVIATE_TEST_CONNECTION } from "../../../helpers/weaviate-surface";
 import { type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 const KEY = "not-a-real-key";
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -45,7 +47,7 @@ function agentProvider(
   const provider = new WeaviateProvider(
     { ...WEAVIATE_TEST_CONNECTION, ...connection } as DatabaseConnection,
     {},
-    execution,
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
     (options, routes) => createRestWeaviateClient(options, routes, wire.factory),
   );
   return { provider, wire };
@@ -404,9 +406,11 @@ describe("one agent request", () => {
         request.signal?.addEventListener("abort", () => reject(request.signal?.reason), { once: true });
       });
     });
-    await expect(provider.queryReadOnly("GET /v1/aliases", { ...BUDGET, statementTimeoutMs: 30 })).rejects.toThrow(
-      "Read-only execution exceeded the time budget: no answer within 30ms",
-    );
+    const refused = await provider
+      .queryReadOnly("GET /v1/aliases", { ...BUDGET, statementTimeoutMs: 30 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 30ms");
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("an estimating plan is refused, as is a budget that is no budget", async () => {
@@ -422,9 +426,11 @@ describe("one agent request", () => {
     const { provider } = await connected(
       agentServer("viewer", { "GET /v1/schema/Tenanted": agentCollectionAnswer("Tenanted") }),
     );
-    await expect(
-      provider.queryReadOnly("GET /v1/schema/Tenanted/tenants", { ...BUDGET, maxResultRows: 1 }),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    const refused = await provider
+      .queryReadOnly("GET /v1/schema/Tenanted/tenants", { ...BUDGET, maxResultRows: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("an aggregate on a server with no REST search goes over GraphQL, and the count is projected", async () => {

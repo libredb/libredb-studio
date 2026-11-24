@@ -47,7 +47,7 @@ import {
   type ObjectSourceDocument,
   type PerformanceMetrics,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryResult,
@@ -57,14 +57,17 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryError,
+  TimeBudgetRefusal,
 } from "@/lib/db/errors";
-import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   assertAgentConnection,
   assertReadOnlyClaims,
@@ -211,10 +214,14 @@ export class LibSQLProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
     this.connection = resolveConnection(config);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -278,13 +285,13 @@ export class LibSQLProvider extends SQLBaseProvider {
   }
 
   /**
-   * The two labels the engine's own gaps require, and no others: `tables` and
-   * `rows` are the right words for SQLite.
+   * The global reindex wording, and no other label: `tables` and `rows` are the right
+   * words for SQLite, and libSQL offers no monitoring Queries panel a sentence could
+   * explain.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState: "libSQL keeps no statistics about finished statements, so there is nothing to enable.",
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs bare REINDEX, rebuilding every index in the database.",
@@ -325,7 +332,7 @@ export class LibSQLProvider extends SQLBaseProvider {
       }
     }
 
-    const transport = new LibSQLHranaTransport(this.connection);
+    const transport = new LibSQLHranaTransport(this.connection, requireEgressDecision(this.egress));
 
     try {
       await transport.execute(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
@@ -425,10 +432,10 @@ export class LibSQLProvider extends SQLBaseProvider {
   /** A failure on the agent's path as the shared refusal it is, or as the error every other path maps it to. */
   private agentReadFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string): Error {
     if (error instanceof LibSQLBodyLimitError) {
-      return new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+      return new ByteBudgetRefusal(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
     }
     if (error instanceof LibSQLDeadlineError) {
-      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${error.timeoutMs}ms`, this.type, sql);
+      return new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: no answer within ${error.timeoutMs}ms`, this.type, sql);
     }
     if (error instanceof LibSQLTransportError && error.status === WRITE_FORBIDDEN_STATUS) {
       return new QueryError(error.message, this.type, sql);

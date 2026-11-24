@@ -1,0 +1,433 @@
+{
+  "id": "databend",
+  "displayName": "Databend",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "warehouse",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 8000
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": "databend",
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "databend://"
+        ]
+      },
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "warehouse",
+          "text": "Warehouse"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A host name or address, or a pasted https:// address, which is split into Host and Port. Databend Cloud: the host from Connect in the Cloud console, on port 443 with SSL mode verify-system. Self-hosted: the query node, port 8000 unless http_handler_port was changed."
+        },
+        {
+          "field": "user",
+          "text": "A SQL user. On Databend Cloud: cloudapp, or a user created with CREATE USER; the email you sign in to the Cloud console with is not a SQL user."
+        },
+        {
+          "field": "database",
+          "text": "The current database for names a statement does not qualify. Empty means default."
+        },
+        {
+          "field": "warehouse",
+          "text": "Databend Cloud: the warehouse= value of the DSN from Connect. A suspended warehouse resumes on the first statement, opening the connection included, because it reads the object tree, and is billed while it runs; with Warehouse set, Studio sends no background health checks. Self-hosted: leave empty unless your cluster routes requests by warehouse."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, the password crosses the network in cleartext to this host. Databend Cloud never needs this: it serves HTTPS on port 443."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "pair",
+        "user": "root",
+        "password": "",
+        "message": "Signing in as root with no password works only when the server's root user has no password, and such a user accepts any password or none, so anyone who can reach the server signs in as its administrator. Set a password for root on the server, or connect as a user of your own."
+      }
+    ],
+    "fieldRules": [
+      {
+        "field": "user",
+        "required": "User is required: Databend signs in every request as a SQL user, root on a fresh self-hosted node. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "warehouse",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9_-]{1,63}$",
+            "flags": ""
+          },
+          "sentence": "Warehouse must be 1 to 63 letters, digits, hyphens or underscores, as the warehouse is named in Databend Cloud. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [
+      "kill"
+    ],
+    "maintenanceSpecs": [
+      {
+        "operation": "kill",
+        "label": "Kill Query",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": null,
+    "overlay": null
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "databend-text",
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": true,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+FORMAT\\s+\\w+\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [
+        {
+          "form": [
+            "REPLACE"
+          ],
+          "when": "ON"
+        }
+      ],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "VARCHAR",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BINARY"
+      },
+      "standsAlone": [
+        "varchar",
+        "timestamp",
+        "binary"
+      ],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "'NaN'::FLOAT",
+        "Infinity": "'inf'::DOUBLE",
+        "-Infinity": "'-inf'::FLOAT"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": "typedLiteral",
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "Databend has ALTER TABLE ... MODIFY COLUMN, but the MySQL spelling this generator writes fails NOT NULL on an empty table and silently drops an existing default it does not restate; write the change by hand.",
+      "Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.",
+      "The engine has no foreign-key constraint.",
+      "Databend's CREATE TABLE has no primary-key constraint."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": true,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

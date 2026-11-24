@@ -46,7 +46,7 @@
  * before the record existed.
  */
 
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * What kind of non-code run a span is.
@@ -758,6 +758,44 @@ export function hasLoneCarriageReturnInLineComment(sql: string, grammar: SqlGram
     }
     if (span.kind === "line-comment" && /\r(?!\n)[ \t\r\f\v]*[^ \t\r\n\f\v]/.test(sql.slice(i, span.end))) return true;
     i = span.end;
+  }
+
+  return false;
+}
+
+/**
+ * Whether a character of `characters` stands at a code position of this text under `grammar`: outside every span
+ * `readSqlSpan` reads there, with the contents of a subscript read as code. ASCII white space is itself a span, so it
+ * is never such a character. `characters` is tested against one UTF-16 code unit at a time, and a global or sticky
+ * class is refused, since its `test` would carry `lastIndex` from one character to the next.
+ *
+ * It is the question behind the provider refusals of a character the engine reads differently from Studio's readers,
+ * such as a Unicode space the engine reads as a space where every reader here sees a code character: the Spark and
+ * DuckDB providers each name the characters they measured and ask this.
+ *
+ * Under a row whose `[` opens a subscript, a `[` reads as code without a call to `readSqlSpan`, the one character the
+ * walk does not hand it: `readSqlSpan` reads a subscript to the matching `]`, or to the end of the text when none
+ * closes it, and stepping over that span would skip code, while stepping one character into it would read the rest of
+ * the text again at each nested or unclosed `[`, quadratic in them. Under a row whose `[` opens a name, the name is a
+ * span like any other quoted name.
+ *
+ * @throws {Error} When `characters` is global or sticky.
+ */
+export function hasCodeCharacter(sql: string, grammar: SqlGrammar, characters: RegExp): boolean {
+  if (characters.global || characters.sticky) {
+    throw new Error(`hasCodeCharacter takes a class that is neither global nor sticky, not ${String(characters)}`);
+  }
+  const subscripts = grammar.bracket === "subscript";
+  let i = 0;
+
+  while (i < sql.length) {
+    const span = subscripts && sql[i] === "[" ? null : readSqlSpan(sql, i, grammar);
+    if (span !== null) {
+      i = span.end;
+      continue;
+    }
+    if (characters.test(sql[i])) return true;
+    i++;
   }
 
   return false;

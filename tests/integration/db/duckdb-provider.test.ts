@@ -40,6 +40,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { DuckDBProvider, assertReadOnlyStatementIsBounded } from "@/lib/db/providers/sql/duckdb";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import type { ObjectKindSpec, ObjectSourceForm, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   FUNCTION_TYPE_RULES,
@@ -55,6 +57,7 @@ import {
 } from "@/lib/db/providers/sql/duckdb/objects";
 import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
 import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
+import { DUCKDB_UNICODE_SPACE_SENTENCE } from "@/lib/db/providers/sql/duckdb/statement-shape";
 import {
   ConnectionError,
   DatabaseConfigError,
@@ -81,6 +84,7 @@ import {
   removeDatabaseFile,
   warehouseSibling,
 } from "../../../docker/duckdb-init/build-fixture";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Helpers
@@ -123,15 +127,19 @@ const relativeWorkDir = mkdtempSync(join(RELATIVE_WORK_PARENT, "libredb-duckdb-r
  */
 const BARE_SCAN_CSV = join(workDir, "bare-scan.csv");
 
+/**
+ * A DuckDB connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided (FND-2 slice 3).
+ */
 function makeConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
-  return {
+  return admittedFileConnection({
     id: "test-duckdb",
     name: "Test DuckDB",
     type: "duckdb",
     database: ":memory:",
     createdAt: new Date(),
     ...overrides,
-  };
+  });
 }
 
 const GENEROUS_BUDGET: ReadOnlyStatementBudget = {
@@ -230,9 +238,9 @@ describe("DuckDBProvider capabilities", () => {
     expect(pageTwo.wasLimited).toBe(true);
   });
 
-  test("declares double-quote identifier quoting rather than relying on the null-port heuristic", () => {
-    // `defaultPort: null` is shared with sqlite, and query-generators.ts derives the
-    // dialect from the port unless the capability is declared.
+  test("declares double-quote identifier quoting rather than relying on the generators' default", () => {
+    // DuckDB has no row of its own in `SQL_ENGINE_GENERATORS`, so the declaration is
+    // what pins its quoting against a later edit of the default.
     expect(capabilities.identifierQuoting).toBe("double");
   });
 
@@ -263,16 +271,11 @@ describe("DuckDBProvider capabilities", () => {
 describe("DuckDBProvider labels", () => {
   const labels = new DuckDBProvider(makeConfig()).getLabels();
 
-  test("the slow-query panel says why it is empty instead of naming a PostgreSQL extension", () => {
-    // #U12: the default sentence tells the reader to install pg_stat_statements.
-    expect(labels.slowQueriesEmptyState).toContain("duckdb_queries()");
-    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
-  });
-
-  test("the sessions panel says the list can never have a row, not that none is running", () => {
-    // #D48: the default "No active sessions found." reads as "nothing is running right
-    // now", and duckdb_connections() does not exist, so no row can ever appear.
-    expect(labels.sessionsEmptyState).toContain("duckdb_connections()");
+  test("declares no empty-state sentence, because DuckDB offers neither the Queries nor the Sessions panel", () => {
+    // duckdb_queries() and duckdb_connections() do not exist, so the `ENGINE_FACETS` row
+    // offers neither panel and nothing would render a sentence explaining an empty one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
   });
 
   test("the global vacuum wording says what VACUUM actually does on this engine", () => {
@@ -358,6 +361,8 @@ describe("connect / disconnect", () => {
   // under a hard limit, so a regression fails here instead of hanging the suite.
   describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO as the database path", () => {
     const duckdbModule = join(import.meta.dir, "../../../src/lib/db/providers/sql/duckdb/index.ts");
+    // A child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+    const providerFilesModule = join(import.meta.dir, "../../../src/lib/db/provider-files.ts");
 
     test.each([
       ["the editor", {}],
@@ -445,7 +450,8 @@ describe("connect / disconnect", () => {
             `const regular = statSync(${JSON.stringify(standIn)});`,
             `spyOn(fs, "statSync").mockImplementation((target, options) => (target === ${JSON.stringify(fifo)} ? regular : statSync(target, options)));`,
             `const { DuckDBProvider: Provider } = await import(${JSON.stringify(duckdbModule)});`,
-            `const provider = new Provider(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}, {}, {});`,
+            `const { admittedFileConnection } = await import(${JSON.stringify(providerFilesModule)});`,
+            `const provider = new Provider(admittedFileConnection(${JSON.stringify({ id: "swap", name: "swap", type: "duckdb", database: fifo })}), {}, {});`,
             "try {",
             "  await provider.connect();",
             "  await provider.disconnect();",
@@ -488,11 +494,17 @@ describe("connect / disconnect", () => {
     await provider.disconnect();
   });
 
-  test("a path carrying a NUL byte is refused as a configuration error", async () => {
-    provider = new DuckDBProvider(makeConfig({ database: "/tmp/bad\0path.duckdb" }));
-
-    await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
+  test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+    const dbPath = join(relativeWorkDir, "never-admitted.duckdb");
+    provider = new DuckDBProvider({ id: "raw", name: "raw", type: "duckdb", database: dbPath, createdAt: new Date() });
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
     expect(provider.isConnected()).toBe(false);
+    expect(existsSync(dbPath)).toBe(false);
   });
 
   test("a second handle on the same file inside ONE process is admitted on POSIX and refused on Windows", async () => {
@@ -1120,6 +1132,31 @@ describe("query()", () => {
     expect(result.rows).toEqual([{ a: 7, b: "x" }]);
   });
 
+  // Measured on 1.5.5: DuckDB reads U+00A0, U+3000 and U+200B between INSERT, OR and REPLACE as spaces and replaced the
+  // row, while the confirmation gate read no INSERT OR REPLACE there and did not ask.
+  test.each([
+    "INSERT\u00A0OR\u00A0REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT OR\u3000REPLACE INTO t VALUES (1, 'new', NULL)",
+    "INSERT\u200BOR REPLACE INTO t VALUES (1, 'new', NULL)",
+  ])("a Unicode space DuckDB reads as a space is refused before the engine runs %j", async (sql) => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+    await provider.query("CREATE TABLE t (id INTEGER PRIMARY KEY, v VARCHAR, note VARCHAR)");
+    await provider.query("INSERT INTO t VALUES (1, 'a', 'keep-me')");
+
+    await expect(provider.query(sql)).rejects.toThrow(QueryError);
+    await expect(provider.query(sql)).rejects.toThrow(DUCKDB_UNICODE_SPACE_SENTENCE);
+
+    expect((await provider.query("SELECT * FROM t")).rows).toEqual([{ id: 1, v: "a", note: "keep-me" }]);
+  });
+
+  test("a Unicode space inside a string is the string's own, and the statement runs", async () => {
+    provider = new DuckDBProvider(makeConfig());
+    await provider.connect();
+
+    expect((await provider.query("SELECT 'a\u00A0b' AS s")).rows).toEqual([{ s: "a\u00A0b" }]);
+  });
+
   test("a syntax error is a QueryError carrying DuckDB's own sentence", async () => {
     provider = new DuckDBProvider(makeConfig());
     await provider.connect();
@@ -1449,14 +1486,15 @@ describe("monitoring", () => {
     expect(main.location).toBe(":memory:");
   });
 
-  test("getMonitoringData reads every panel and reports no errors", async () => {
-    // Inherited from BaseDatabaseProvider, which reads the seven panels with
+  test("getMonitoringData reads every panel DuckDB offers and reports no errors", async () => {
+    // Inherited from BaseDatabaseProvider, which reads the panels the engine offers with
     // Promise.allSettled - this asserts none of them rejects on this engine.
     provider = await seededMemoryProvider();
 
     const data = await provider.getMonitoringData();
 
     expect(data.errors).toBeUndefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions"]);
     expect(data.overview).toBeDefined();
     expect(data.tables).toBeDefined();
     expect(data.indexes).toBeDefined();
@@ -1653,18 +1691,22 @@ describe("queryReadOnly()", () => {
   test("a result over the row budget is refused", async () => {
     provider = await readOnlyProvider();
 
-    await expect(
-      provider.queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultRows: 1 }),
-    ).rejects.toThrow(/exceeded the row budget: 2 rows > 1 allowed/);
+    const refused = await provider
+      .queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultRows: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget: 2 rows > 1 allowed/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("a result over the byte budget is refused", async () => {
     provider = await readOnlyProvider();
 
-    // The whole sentence, numbers in order: the two seeded users are 52 bytes as JSON (D367).
-    await expect(
-      provider.queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultBytes: 1 }),
-    ).rejects.toThrow(/^Read-only execution exceeded the byte budget: 52 bytes > 1 allowed$/);
+    // The whole sentence, numbers in order: the two seeded users are 52 bytes as JSON.
+    const refused = await provider
+      .queryReadOnly("SELECT * FROM users", { ...GENEROUS_BUDGET, maxResultBytes: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/^Read-only execution exceeded the byte budget: 52 bytes > 1 allowed$/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a statement over the time budget has its result refused", async () => {
@@ -1672,9 +1714,11 @@ describe("queryReadOnly()", () => {
     // the fact: the result is refused rather than returned as if it were in budget.
     provider = await readOnlyProvider();
 
-    await expect(
-      provider.queryReadOnly("SELECT count(*) FROM range(30000000)", { ...GENEROUS_BUDGET, statementTimeoutMs: 1 }),
-    ).rejects.toThrow(/exceeded the time budget/);
+    const refused = await provider
+      .queryReadOnly("SELECT count(*) FROM range(30000000)", { ...GENEROUS_BUDGET, statementTimeoutMs: 1 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the time budget/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   }, 30_000);
 
   // ------------------------------------------------------------------------
@@ -1738,6 +1782,52 @@ describe("queryReadOnly()", () => {
     expect((error as Error).message).toMatch(/^Read-only execution refused /);
     expect(run).not.toHaveBeenCalled();
     run.mockRestore();
+  });
+
+  // Measured on 1.5.5: DuckDB reads U+00A0 and U+3000 between two code words as spaces, and this path handed such a
+  // statement to the engine, where every reader of Studio's, the statement guard above included, sees a code character.
+  test.each(["SELECT\u00A0id, secret FROM users ORDER BY id", "SELECT id FROM\u3000users ORDER BY id"])(
+    "a Unicode space DuckDB reads as a space is refused before the engine is called %j",
+    async (sql) => {
+      provider = await readOnlyProvider();
+      const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+      const run = spyOn(client, "run");
+
+      const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+      // A QueryError, as on the editor path, and this path's own class for a statement refused before it was sent, so
+      // the agent and MCP say this server refused it rather than presenting the sentence as DuckDB's error.
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect((error as Error).message).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(run).not.toHaveBeenCalled();
+      run.mockRestore();
+    },
+  );
+
+  // The order the docblock states: the Unicode-space refusal comes before the statement guard, so a statement both
+  // would refuse gets the sentence about the space, the one that says what the guard itself could not read.
+  test.each(["SELECT\u00A0id FROM users; INSTALL httpfs", "SELECT id FROM\u3000read_text('/etc/hostname')"])(
+    "a Unicode space is refused before the statement guard reads %j",
+    async (sql) => {
+      expect(() => assertReadOnlyStatementIsBounded(sql)).toThrow(/^Read-only execution refused /);
+      provider = await readOnlyProvider();
+      const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+      const run = spyOn(client, "run");
+
+      const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect((error as Error).message).toBe(DUCKDB_UNICODE_SPACE_SENTENCE);
+      expect(run).not.toHaveBeenCalled();
+      run.mockRestore();
+    },
+  );
+
+  test("a Unicode space inside a string is the string's own, and the read runs on this path too", async () => {
+    provider = await readOnlyProvider();
+
+    expect((await provider.queryReadOnly("SELECT 'a\u00A0b' AS s", GENEROUS_BUDGET)).rows).toEqual([{ s: "a\u00A0b" }]);
   });
 
   test("reading a file outside the database is refused, so nothing is returned from it", async () => {

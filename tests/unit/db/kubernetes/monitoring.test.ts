@@ -96,10 +96,10 @@ describe("kubernetesOverview", () => {
 });
 
 describe("KUBERNETES_LABELS", () => {
-  test("say why the panels a cluster cannot fill are empty", () => {
-    expect(KUBERNETES_LABELS.slowQueriesEmptyState).toBe("Kubernetes keeps no query log");
-    expect(KUBERNETES_LABELS.sessionsEmptyState).toBe("Kubernetes does not list client sessions");
-    expect(KUBERNETES_LABELS.tableStatsCaption).toContain("Kubernetes has no tables");
+  test("carry no copy for the panels a cluster does not offer", () => {
+    expect(KUBERNETES_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(KUBERNETES_LABELS.sessionsEmptyState).toBeUndefined();
+    expect(KUBERNETES_LABELS.tableStatsCaption).toBeUndefined();
     expect(KUBERNETES_LABELS.vacuumGlobalDesc).toBe("Studio sends a Kubernetes cluster no maintenance and no write.");
     expect(Object.isFrozen(KUBERNETES_LABELS)).toBe(true);
   });

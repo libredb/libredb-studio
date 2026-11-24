@@ -35,6 +35,7 @@ import {
   subscribedFilters,
   UNDECODABLE,
 } from "./fake-plant";
+import { errorKind } from "@/lib/db/error-record";
 
 /** Ids the plant script carries, none of which may reach an answer. */
 const IDS = ["Plant-North", "Line-7", "Press-3", "Pump-9", "host-scada", "Temperature", "Pressure"];
@@ -271,11 +272,14 @@ describe("refused before anything is sent", () => {
 
   test("a time budget that cannot hold the window is refused rather than shortened", async () => {
     const { provider, requests } = await opened([PLANT]);
-    await expect(
-      provider.queryReadOnly('{"read": "window"}', { ...BUDGET, statementTimeoutMs: 3_999 }),
-    ).rejects.toThrow(
+    const refused = await provider
+      .queryReadOnly('{"read": "window"}', { ...BUDGET, statementTimeoutMs: 3_999 })
+      .catch((e: unknown) => e);
+    expect((refused as Error).message).toBe(
       "Read-only execution exceeded the time budget: a Sparkplug agent read listens for a 3,000 ms window and needs at least 4,000 ms, and this read was given 3,999 ms. A window is never shortened, so nothing was sent.",
     );
+    // Refused before anything was sent, so it keeps that class rather than the time budget's.
+    expect(errorKind(refused)).toBe("refused-before-send");
     expect(requests).toHaveLength(1);
   });
 
@@ -424,6 +428,7 @@ describe("a failure is worded by its kind, never in the broker's or the transpor
     const pending = provider.queryReadOnly('{"read": "window"}', { ...BUDGET, statementTimeoutMs: 4_000 });
     const error = await pending.catch((e: unknown) => e);
     expect((error as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a late rejection after the deadline is observed, not unhandled", async () => {
@@ -444,6 +449,7 @@ describe("a failure is worded by its kind, never in the broker's or the transpor
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toContain("10");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a cell that does not fit its kind withholds the answer, naming the column and never the value", async () => {

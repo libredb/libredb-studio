@@ -22,13 +22,17 @@ import type { ExecutionProfile } from "@/lib/db/factory";
 import { MQTT_COMPLETENESS, MQTT_TOPIC_LAST_MESSAGE } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { type FakeBroker, type FakeBrokerScript, fakeBroker, subscribeFilters } from "../../unit/db/mqtt/fake-broker";
+
+/** The notice an answer carrying database content opens with on this file's mqtt connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mqtt"));
 
 pinMcpTestEnvironment();
 
@@ -201,7 +205,7 @@ describe("a read", () => {
   test("the window answers totals behind the notice, with its window and the completeness sentence as notes", async () => {
     const result = await mqtt('{"read": "window"}');
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:plant",

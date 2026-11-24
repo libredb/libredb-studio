@@ -10,16 +10,37 @@ import {
   OffsetUnsupportedError,
   TimeoutError,
   QueryCancelledError,
+  UnknownProviderError,
+  FacetNotOfferedError,
+  TransactionLostError,
+  StudioProfileRefusal,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  ByteBudgetRefusal,
+  TimeBudgetRefusal,
+  CutValueRefusal,
+  SerialisedResultRefusal,
+  StudioRowBudgetRefusal,
+  StudioByteBudgetRefusal,
+  StudioTimeBudgetRefusal,
+  StudioTimeoutRefusal,
+  ReadAllowanceExceededError,
+  isBudgetRefusal,
   isDatabaseError,
   isConnectionError,
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   waitedSeconds,
   connectPhase,
+  buildPhase,
+  checkoutPhase,
+  ExecutionProfileError,
 } from "@/lib/db/errors";
+import * as errorsModule from "@/lib/db/errors";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
   describeOracleClientLoadFailure,
   describeOracleThinModeRefusal,
@@ -109,6 +130,56 @@ describe("DatabaseConfigError", () => {
   });
 });
 
+describe("UnknownProviderError", () => {
+  const sentence = 'No provider for the connection type "acmefoo" is installed in this LibreDB Studio.';
+
+  test("UnknownProviderError is a DatabaseConfigError with code PROVIDER_UNKNOWN and no provider", () => {
+    const err = new UnknownProviderError({ reason: "unknown", typeId: "acmefoo", sentence });
+    expect(err.name).toBe("UnknownProviderError");
+    expect(err.code).toBe(ApiErrorCode.PROVIDER_UNKNOWN);
+    expect(err.reason).toBe("unknown");
+    expect(err.typeId).toBe("acmefoo");
+    expect(err.message).toBe(sentence);
+    expect(err.provider).toBeUndefined();
+    expect(err.toJSON().code).toBe("PROVIDER_UNKNOWN");
+    expect(err).toBeInstanceOf(DatabaseConfigError);
+    expect(err).toBeInstanceOf(DatabaseError);
+  });
+
+  test("an absent type carries no type id", () => {
+    const err = new UnknownProviderError({ reason: "absent", sentence: "no type" });
+    expect(err.reason).toBe("absent");
+    expect(err.typeId).toBeUndefined();
+    expect(err.message).toBe("no type");
+  });
+
+  test("UnknownProviderError of a type that is not text has reason malformed and no typeId", () => {
+    const err = new UnknownProviderError({ reason: "malformed", sentence: "not text" });
+    expect(err.reason).toBe("malformed");
+    expect(err.typeId).toBeUndefined();
+    expect(err.message).toBe("not text");
+    expect(err.code).toBe(ApiErrorCode.PROVIDER_UNKNOWN);
+  });
+});
+
+describe("FacetNotOfferedError", () => {
+  const sentence = '"vacuum" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze.';
+
+  test("FacetNotOfferedError is a DatabaseError carrying FACET_NOT_OFFERED, its engine, facet and operation", () => {
+    const err = new FacetNotOfferedError(sentence, "mysql", "maintenance", "vacuum");
+    expect(err.name).toBe("FacetNotOfferedError");
+    expect(err.code).toBe(ApiErrorCode.FACET_NOT_OFFERED);
+    expect(err.provider).toBe("mysql");
+    expect(err.facet).toBe("maintenance");
+    expect(err.operation).toBe("vacuum");
+    expect(err.message).toBe(sentence);
+    expect(err.toJSON().code).toBe("FACET_NOT_OFFERED");
+    expect(err).toBeInstanceOf(FacetNotOfferedError);
+    expect(err).toBeInstanceOf(DatabaseError);
+    expect(err).not.toBeInstanceOf(DatabaseConfigError);
+  });
+});
+
 describe("ConnectionError", () => {
   test('sets name to "ConnectionError"', () => {
     const err = new ConnectionError("conn fail");
@@ -125,6 +196,34 @@ describe("ConnectionError", () => {
   test("is instanceof DatabaseError", () => {
     const err = new ConnectionError("fail");
     expect(err).toBeInstanceOf(DatabaseError);
+  });
+});
+
+describe("TransactionLostError", () => {
+  test("is a ConnectionError with the TRANSACTION_LOST code, its host and its port", () => {
+    const err = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432);
+    expect(err).toBeInstanceOf(ConnectionError);
+    expect(err.name).toBe("TransactionLostError");
+    expect(err.code).toBe("TRANSACTION_LOST");
+    expect(err.provider).toBe("postgres");
+    expect(err.host).toBe("db.internal");
+    expect(err.port).toBe(5432);
+  });
+
+  test("a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown", () => {
+    const beforeSend = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432, {
+      beforeSend: true,
+    });
+    const during = new TransactionLostError("The transaction was lost", "postgres", "db.internal", 5432);
+
+    expect(Object.hasOwn(beforeSend, "outcome")).toBe(true);
+    expect(beforeSend.outcome).toBe("not-sent");
+    expect(Object.hasOwn(during, "outcome")).toBe(false);
+    expect(errorOutcome(during)).toBe("unknown");
+    for (const err of [beforeSend, during]) {
+      expect(errorKind(err)).toBe("transaction-lost");
+      expect(err.code).toBe("TRANSACTION_LOST");
+    }
   });
 });
 
@@ -216,6 +315,81 @@ describe("OffsetUnsupportedError", () => {
   });
 });
 
+describe("budget refusal classes", () => {
+  const BUDGET_REFUSALS = [
+    RowBudgetRefusal,
+    ByteBudgetRefusal,
+    TimeBudgetRefusal,
+    CutValueRefusal,
+    SerialisedResultRefusal,
+  ] as const;
+
+  test.each(BUDGET_REFUSALS.map((Class) => [Class.name, Class] as const))(
+    "each is a QueryError named QueryError, with its provider and statement, and is no refusal before send: %s",
+    (_name, Class) => {
+      const sentence = `refused ${crypto.randomUUID()}`;
+      const err = new Class(sentence, "postgres", "SELECT 1");
+      expect(err).toBeInstanceOf(Class);
+      expect(err).toBeInstanceOf(QueryError);
+      expect(err).toBeInstanceOf(DatabaseError);
+      expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+      expect(err).not.toBeInstanceOf(TimeoutError);
+      expect(err.name).toBe("QueryError");
+      expect(err.message).toBe(sentence);
+      expect(err.code).toBe("QUERY_ERROR");
+      expect(err.provider).toBe("postgres");
+      expect(err.query).toBe("SELECT 1");
+      for (const Other of BUDGET_REFUSALS) if (Other !== Class) expect(err).not.toBeInstanceOf(Other);
+    },
+  );
+
+  test("none answers an outcome of its own", () => {
+    for (const Class of BUDGET_REFUSALS) {
+      const err = new Class("refused", "postgres");
+      expect(err.outcome, Class.name).toBeUndefined();
+      expect(Object.hasOwn(err, "outcome"), Class.name).toBe(false);
+    }
+  });
+
+  const STUDIO_BUDGET_REFUSALS = [
+    [StudioRowBudgetRefusal, RowBudgetRefusal, "studio-row-budget-refusal"],
+    [StudioByteBudgetRefusal, ByteBudgetRefusal, "studio-byte-budget-refusal"],
+    [StudioTimeBudgetRefusal, TimeBudgetRefusal, "studio-time-budget-refusal"],
+  ] as const;
+
+  test.each(
+    STUDIO_BUDGET_REFUSALS.map(([Studio, Parent, kind]) => [Studio.name, Parent.name, Studio, Parent, kind] as const),
+  )(
+    "Studio's %s is a %s named QueryError, with its provider and statement, and is neither other budget",
+    (_studio, _parent, Studio, Parent, kind) => {
+      const sentence = `refused ${crypto.randomUUID()}`;
+      const err = new Studio(sentence, "postgres", "SELECT 1");
+      expect(err).toBeInstanceOf(Parent);
+      expect(err).toBeInstanceOf(QueryError);
+      expect(err).toBeInstanceOf(DatabaseError);
+      expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+      expect(err).not.toBeInstanceOf(TimeoutError);
+      for (const [OtherStudio, OtherParent] of STUDIO_BUDGET_REFUSALS) {
+        if (OtherStudio === Studio) continue;
+        expect(err).not.toBeInstanceOf(OtherStudio);
+        expect(err).not.toBeInstanceOf(OtherParent);
+      }
+      expect(err.name).toBe("QueryError");
+      expect(err.message).toBe(sentence);
+      expect(err.code).toBe("QUERY_ERROR");
+      expect(err.provider).toBe("postgres");
+      expect(err.query).toBe("SELECT 1");
+      expect(err.outcome).toBeUndefined();
+      expect(Object.hasOwn(err, "outcome")).toBe(false);
+      expect(errorKind(err)).toBe(kind);
+    },
+  );
+
+  test("no class holds all three budgets: StudioBudgetRefusal is no export", () => {
+    expect(Object.keys(errorsModule)).not.toContain("StudioBudgetRefusal");
+  });
+});
+
 describe("TimeoutError", () => {
   test('sets name to "TimeoutError"', () => {
     const err = new TimeoutError("timed out");
@@ -281,6 +455,42 @@ describe("isQueryError", () => {
   });
 });
 
+describe("isBudgetRefusal", () => {
+  const ALL_BUDGET_REFUSALS = [
+    RowBudgetRefusal,
+    ByteBudgetRefusal,
+    TimeBudgetRefusal,
+    CutValueRefusal,
+    SerialisedResultRefusal,
+    StudioRowBudgetRefusal,
+    StudioByteBudgetRefusal,
+    StudioTimeBudgetRefusal,
+  ] as const;
+
+  test("is true for each budget refusal class, a provider's or Studio's, and for a subclass of each", () => {
+    for (const Class of ALL_BUDGET_REFUSALS) {
+      const Subclass = class extends Class {};
+      expect(isBudgetRefusal(new Class(`refused ${crypto.randomUUID()}`, "postgres")), Class.name).toBe(true);
+      expect(isBudgetRefusal(new Subclass(`refused ${crypto.randomUUID()}`, "postgres")), Class.name).toBe(true);
+    }
+  });
+
+  test("is false for a refusal before send, a timeout, Studio's statistics timeout, a plain QueryError and anything else", () => {
+    for (const error of [
+      new QueryError("refused", "postgres"),
+      new RefusedBeforeSendError(rowBudgetSentence(3, 2), "postgres"),
+      new ReadAllowanceExceededError("too many reads", "postgres"),
+      new TimeoutError("timed out", "postgres", 50),
+      new StudioTimeoutRefusal("timed out", "postgres", 50),
+      new Error("plain"),
+      "a string",
+      undefined,
+    ]) {
+      expect(isBudgetRefusal(error), String(error)).toBe(false);
+    }
+  });
+});
+
 describe("isTimeoutError", () => {
   test("returns true for TimeoutError", () => {
     expect(isTimeoutError(new TimeoutError("err"))).toBe(true);
@@ -298,48 +508,6 @@ describe("isAuthenticationError", () => {
 
   test("returns false for non-AuthenticationError", () => {
     expect(isAuthenticationError(new DatabaseError("err"))).toBe(false);
-  });
-});
-
-// ============================================================================
-// isRetryableError
-// ============================================================================
-
-describe("isRetryableError", () => {
-  test("ConnectionError is retryable", () => {
-    expect(isRetryableError(new ConnectionError("fail"))).toBe(true);
-  });
-
-  test("TimeoutError is retryable", () => {
-    expect(isRetryableError(new TimeoutError("timed out"))).toBe(true);
-  });
-
-  test("AuthenticationError is NOT retryable", () => {
-    expect(isRetryableError(new AuthenticationError("bad creds"))).toBe(false);
-  });
-
-  test("PermissionDeniedError is NOT retryable", () => {
-    expect(isRetryableError(new PermissionDeniedError("permission denied for table orders"))).toBe(false);
-  });
-
-  test("DatabaseConfigError is NOT retryable", () => {
-    expect(isRetryableError(new DatabaseConfigError("bad config"))).toBe(false);
-  });
-
-  test("QueryError with position is NOT retryable", () => {
-    expect(isRetryableError(new QueryError("syntax", "postgres", "q", 5))).toBe(false);
-  });
-
-  test("plain Error is NOT retryable", () => {
-    expect(isRetryableError(new Error("generic"))).toBe(false);
-  });
-
-  test('TypeError with "fetch" IS retryable (network error)', () => {
-    expect(isRetryableError(new TypeError("fetch failed"))).toBe(true);
-  });
-
-  test("PoolExhaustedError is retryable (inherits from DatabaseError)", () => {
-    expect(isRetryableError(new PoolExhaustedError("pool"))).toBe(true);
   });
 });
 
@@ -414,7 +582,6 @@ describe("mapDatabaseError", () => {
     );
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -428,7 +595,6 @@ describe("mapDatabaseError", () => {
     // The driver's own text contains "password", so the generic authentication
     // branch would swallow this one if the Oracle check did not run first.
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
     // The DBA-side way out, which needs no Instant Client at all.
     expect(result.message).toContain("12C");
@@ -441,7 +607,6 @@ describe("mapDatabaseError", () => {
     );
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -449,7 +614,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("NJS-089: Kerberos authentication is not supported by node-oracledb in Thin mode");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
 
@@ -459,7 +623,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("NJS-529: Invalid wallet content format. Supported format is PEM");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
     expect(result.message).toContain("PEM");
     expect(result.message).toContain("ORACLE_CLIENT_LIB_DIR");
   });
@@ -468,7 +631,6 @@ describe("mapDatabaseError", () => {
     const err = new Error("LDAP naming is not supported by node-oracledb in Thin mode");
     const result = mapDatabaseError(err, "oracle");
     expect(result).toBeInstanceOf(DatabaseConfigError);
-    expect(isRetryableError(result)).toBe(false);
   });
 
   test('MSSQL "login failed" maps to AuthenticationError', () => {
@@ -1113,5 +1275,152 @@ describe("connectPhase", () => {
     const denied = new AuthenticationError("bad token", "kubernetes");
     expect(await connectPhase(() => Promise.reject(refused)).catch((e: unknown) => e)).toBe(refused);
     expect(await connectPhase(() => Promise.reject(denied)).catch((e: unknown) => e)).toBe(denied);
+  });
+
+  test("a failure the connect raises keeps its identity and answers not-sent", async () => {
+    const raised = [
+      new ConnectionError("No answer from db.test:5432", "postgres"),
+      new AuthenticationError("bad token", "kubernetes"),
+      new DatabaseConfigError("bad config", "postgres"),
+      new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
+    ];
+    const rejections = await Promise.all(
+      raised.map((error) => connectPhase(() => Promise.reject(error)).catch((e: unknown) => e)),
+    );
+    expect(rejections).toEqual(raised);
+    rejections.forEach((rejection, index) => expect(rejection).toBe(raised[index]));
+    for (const error of raised) expect(error.outcome).toBe("not-sent");
+    const outside = new ConnectionError("Connection terminated unexpectedly", "postgres");
+    expect(outside.outcome).toBeUndefined();
+    expect(Object.keys(outside)).not.toContain("outcome");
+    const raw = new Error("socket hang up");
+    expect(await connectPhase(() => Promise.reject(raw)).catch((e: unknown) => e)).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+  });
+
+  test("a connect deadline becomes a ConnectionError that answers not-sent", async () => {
+    const deadline = new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
+    const error = await connectPhase(() => Promise.reject(deadline)).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).outcome).toBe("not-sent");
+    expect(deadline.outcome).toBeUndefined();
+  });
+});
+
+describe("buildPhase", () => {
+  test("marks a database error and an execution profile refusal not-sent, keeping each instance", async () => {
+    const raised = [
+      new DatabaseConfigError("bad config", "postgres"),
+      new ConnectionError("No answer from db.test:5432", "postgres"),
+      new ExecutionProfileError("refused", "PROFILE_UNSUPPORTED_TARGET"),
+      new StudioProfileRefusal("refused", "PROFILE_UNSUPPORTED_TARGET"),
+    ];
+    const rejections = await Promise.all(
+      raised.map((error) => buildPhase(() => Promise.reject(error)).catch((e: unknown) => e)),
+    );
+    rejections.forEach((rejection, index) => expect(rejection).toBe(raised[index]));
+    for (const error of raised) expect(error.outcome).toBe("not-sent");
+  });
+
+  test("passes any other value unmarked", async () => {
+    const raw = new Error("socket hang up");
+    expect(await buildPhase(() => Promise.reject(raw)).catch((e: unknown) => e)).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+    const text = "not an error";
+    expect(await buildPhase(() => Promise.reject(text)).catch((e: unknown) => e)).toBe(text);
+  });
+
+  test("resolves to what the build answers", async () => {
+    const built = { built: true };
+    expect(await buildPhase(async () => built)).toBe(built);
+  });
+});
+
+describe("checkoutPhase", () => {
+  const SENTENCE =
+    /^No connection of the pool came free or opened within (\d+(?:\.\d)?) seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/;
+
+  test("a checkout that answers resolves to its value and maps nothing", async () => {
+    const connection = { taken: true };
+    let mapped = 0;
+    const answer = await checkoutPhase(
+      async () => connection,
+      (error) => {
+        mapped += 1;
+        return error;
+      },
+    );
+    expect(answer).toBe(connection);
+    expect(mapped).toBe(0);
+  });
+
+  test("a failure the checkout raises is thrown as its mapped class and answers not-sent", async () => {
+    const raw = new Error("connect ECONNREFUSED 127.0.0.1:5432");
+    const mapped = [
+      new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
+      new AuthenticationError("password authentication failed", "postgres"),
+      new PoolExhaustedError("Pool is closed.", "mysql"),
+      new DatabaseConfigError("bad config", "oracle"),
+    ];
+    const seen: unknown[] = [];
+    const rejections = await Promise.all(
+      mapped.map((error) =>
+        checkoutPhase(
+          () => Promise.reject(raw),
+          (cause) => {
+            seen.push(cause);
+            return error;
+          },
+        ).catch((e: unknown) => e),
+      ),
+    );
+    rejections.forEach((rejection, index) => expect(rejection).toBe(mapped[index]));
+    for (const error of mapped) expect(error.outcome).toBe("not-sent");
+    for (const cause of seen) expect(cause).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+  });
+
+  test("a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause", async () => {
+    const deadline = new TimeoutError("Query timeout: timeout exceeded when trying to connect", "postgres");
+    const error = await checkoutPhase(
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        throw new Error("timeout exceeded when trying to connect");
+      },
+      () => deadline,
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).not.toBeInstanceOf(TimeoutError);
+    const failure = error as ConnectionError;
+    const match = SENTENCE.exec(failure.message);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1])).toBeGreaterThanOrEqual(0.2);
+    expect(Number(match?.[1])).toBeLessThan(2);
+    expect(failure.provider).toBe("postgres");
+    expect(failure.cause).toBe(deadline);
+    expect(failure.outcome).toBe("not-sent");
+    expect(deadline.outcome).toBeUndefined();
+    expect(Object.keys(deadline)).not.toContain("outcome");
+  });
+
+  test("a mapped value outside the database classes passes unmarked and answers unknown", async () => {
+    const raw = new Error("socket hang up");
+    expect(
+      await checkoutPhase(
+        () => Promise.reject(new Error("first")),
+        () => raw,
+      ).catch((e: unknown) => e),
+    ).toBe(raw);
+    expect(Object.keys(raw)).toEqual([]);
+    const broken = new Error("the map itself failed");
+    expect(
+      await checkoutPhase(
+        () => Promise.reject(new Error("first")),
+        () => {
+          throw broken;
+        },
+      ).catch((e: unknown) => e),
+    ).toBe(broken);
+    expect(Object.keys(broken)).toEqual([]);
   });
 });

@@ -7,13 +7,13 @@
  * `@/lib/db/factory`. Two of its setup steps happen exactly once per process and cannot be
  * repeated: the `mock.module()` calls below, which stand in for six native driver packages
  * and `@/lib/ssh/tunnel` so that real providers can be constructed without a server, and the
- * `await import("@/lib/db/factory")` under a temporary `NODE_ENV=production`, which is how the
- * SIGTERM and SIGINT handlers the module registers on load are captured by diffing
- * `process.listeners`.
+ * `await import("@/lib/db/factory")` under a temporary `NODE_ENV=production`, which shows by
+ * diffing `process.listeners` that the import adds no SIGTERM or SIGINT listener even under
+ * production.
  *
  * If any other file in the same process has already evaluated the factory, this file inherits
- * an already-built module. Nothing registered a shutdown handler at an observable moment, so
- * the three `shutdown signal handlers` tests fail; and `getOrCreateProvider` caches a provider
+ * an already-built module. Its import then evaluates nothing at an observable moment, so the
+ * `importing the factory` tests prove nothing; and `getOrCreateProvider` caches a provider
  * built on unmocked drivers, whose entry then throws inside the `clearProviderCache()` in
  * `beforeEach` and fails every remaining test in the file.
  *
@@ -37,6 +37,7 @@
  * registration, and `bun test tests/unit` is clean again.
  */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach, jest, spyOn } from "bun:test";
+import { randomBytes, randomUUID } from "node:crypto";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -45,38 +46,80 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { createCanonicalOperationRegistry, sqlExplainAnalyzeDescriptor } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import type { DatabaseProvider, QueryResult } from "@/lib/db/types";
+import type { AgentCredentialForm, DatabaseProvider, ProviderCapabilities, QueryResult } from "@/lib/db/types";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative as relativePath } from "node:path";
-import type { DatabaseConnection, EditorExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
+import type {
+  DatabaseConnection,
+  EditorExecutionContext,
+  ProviderExecutionContext,
+  ReadOnlyStatementBudget,
+} from "@/lib/db/types";
 import {
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   RefusedBeforeSendError,
+  StudioTimeoutRefusal,
   TimeoutError,
+  UnknownProviderError,
 } from "@/lib/db/errors";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
+import { MASKING_EXEMPT_COLUMNS, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
+import { egressDecision, forgetEgressDecision, INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
 import { logger } from "@/lib/logger";
-import { encryptSecret } from "@/lib/storage/encryption";
+import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
 import { projectSeedConnection } from "@/lib/seed/connection-filter";
-import type { SSHTunnelConfig } from "@/lib/types";
+import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
+import { TUNNEL_ROUTE, type DatabaseType, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
+import { providerFields } from "@/lib/db/provider-connection";
+import { REFUSED_CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
+import { CENSUS_CONNECTION } from "../helpers/census-connection";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
+import { markersReachableFrom } from "../helpers/reachable-markers";
+import { setEgressFlag } from "../helpers/egress-flag";
+import { sealVersionOne } from "../helpers/storage-envelope-v1";
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
+
+/** The error a factory log line renders when the scrub withheld a failure of class `className`. */
+const withheldLine = (className: string) => `ProviderTextWithheldError: ${withheldErrorMessage(className)}`;
+
+/** A failure whose text holds `secret`, as a driver's authentication failure echoes the credential it was given. */
+const echoing = (secret: string) => new Error(`password authentication failed for "${secret}"`);
+
+/**
+ * Runs `run` with a generated STORAGE_ENCRYPTION_KEY in the environment, the key a store would seal under, and puts the
+ * environment back afterwards.
+ */
+async function withStorageKey(run: () => Promise<void>): Promise<void> {
+  const saved = process.env.STORAGE_ENCRYPTION_KEY;
+  process.env.STORAGE_ENCRYPTION_KEY = randomBytes(32).toString("base64url");
+  resetStorageEncryptionKey();
+  try {
+    await run();
+  } finally {
+    if (saved === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
+    else process.env.STORAGE_ENCRYPTION_KEY = saved;
+    resetStorageEncryptionKey();
+  }
+}
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -105,6 +148,14 @@ const CENSUS_LIBREDB_FILE = join(tmpdir(), "factory-census.libredb");
 // ============================================================================
 // Helper: build a minimal DatabaseConnection for a given type
 // ============================================================================
+
+/**
+ * Each field the engine of `type` refuses by name, left undefined: core refuses a connection that sets one before the
+ * build (FND-2 slice 6c), and makeConnection's defaults set `user` and `database`.
+ */
+function withoutRefusedFields(type: DatabaseType): Partial<DatabaseConnection> {
+  return Object.fromEntries(Object.keys(REFUSED_CONNECTION_FIELDS[type]).map((field) => [field, undefined]));
+}
 
 function makeConnection(type: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
   return {
@@ -168,6 +219,19 @@ class MockPgPool {
   constructor(config: { min?: number; max?: number; idleTimeoutMillis?: number }) {
     pgPoolConfigs.push(config);
     return mockPgPool;
+  }
+}
+
+/** Run `body` while the mocked pg pool refuses every connect, restoring it after. */
+async function withRefusingPgPool(body: () => Promise<void>): Promise<void> {
+  const originalConnect = mockPgPool.connect;
+  mockPgPool.connect = async () => {
+    throw new Error("connection refused");
+  };
+  try {
+    await body();
+  } finally {
+    mockPgPool.connect = originalConnect;
   }
 }
 
@@ -346,35 +410,55 @@ mock.module("ioredis", () => ({
  * test overrides one call with a forward that reaches somewhere else, which is what a pooled
  * tunnel opened for a previous record actually is.
  */
-const mockCreateSSHTunnel = mock(async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
+const forwardToTheAskedAddress = async (_id: string, _sshConfig: unknown, remoteHost: string, remotePort: number) => ({
   localHost: "127.0.0.1",
   localPort: 54321,
   remoteHost,
   remotePort,
   close: mock(async () => {}),
-}));
+});
+const mockCreateSSHTunnel = mock(forwardToTheAskedAddress);
 
 const mockCloseSSHTunnel = mock(async () => {});
 
 /**
- * Takes its arguments so the assertions on them are not vacuous: the factory must ask about ONE
- * forward - this connection's route and far end - and the loose question would answer `true` for
- * a forward this call is about to open, which is the FD-leak the `tunnelPreexisted` flag guards.
+ * The two reports a cached entry point makes on the tunnel it was handed: its provider opened, or it did not and the
+ * tunnel is released. Whether a release closes the forward is the pool's decision (it closes only when no other caller
+ * is connecting through it and no provider opened on it), and `tests/unit/lib/ssh/tunnel-factory-share.test.ts` drives
+ * that against the real pool. This release closes, which is the pool's answer for a forward only this call held; a test
+ * that needs the pool to keep the forward overrides it.
  */
-const mockHasTunnel = mock((_connectionId: string, _forward?: unknown) => false);
+const releaseByClosing = async (tunnel: unknown) => (tunnel as { close: () => Promise<void> }).close();
+const mockReleaseUnopenedTunnel = mock(releaseByClosing);
+const mockTunnelProviderOpened = mock((_tunnel: unknown) => {});
 
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel: mockCreateSSHTunnel,
   closeSSHTunnel: mockCloseSSHTunnel,
-  hasTunnel: mockHasTunnel,
+  releaseUnopenedTunnel: mockReleaseUnopenedTunnel,
+  tunnelProviderOpened: mockTunnelProviderOpened,
   getTunnelInfo: mock(() => undefined),
+}));
+
+/**
+ * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so a case
+ * that needs an open's deadline to pass sets it to a few tens of milliseconds for itself and puts it back after; every
+ * other case reads the real budget, which no gated connect here comes near.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+let budgetOverride: number | undefined;
+mock.module("@/lib/db/connect-budget", () => ({
+  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
+  openDeadlineSentence: realConnectBudget.openDeadlineSentence,
+  connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));
 
 // ============================================================================
 // Import factory AFTER mocking native drivers.
-// NODE_ENV is temporarily overridden so the module-level auto-registration
-// (registerShutdownHandlers) executes on import; the SIGTERM/SIGINT handlers
-// it registers are captured by diffing the process listeners.
+// NODE_ENV is temporarily overridden to production, and the process listeners
+// diffed around the import, to show the import adds no SIGTERM or SIGINT
+// listener in any NODE_ENV.
 // ============================================================================
 
 const sigtermListenersBefore = process.listeners("SIGTERM");
@@ -389,7 +473,6 @@ const {
   clearProviderCache,
   getProviderCacheStats,
   evictIdleProviders,
-  registerShutdownHandlers,
   acquireExecutionProfileProvider: rawAcquireExecutionProfileProvider,
   executionContextFor,
   profiledCacheKey,
@@ -400,15 +483,18 @@ const {
   assertReadOnlyHonoured,
   editorCacheKey,
   findCachedProvider,
+  readProviderDeclarations,
+  logUnclaimedOpen,
 } = await import("@/lib/db/factory");
 // Existing SQLite cache tests exercise trusted callers. Explicitly grant their file posture;
 // denied callers are tested separately against the unwrapped factory below.
 function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>) {
-  const [connection, options, execution] = args;
+  const [connection, options, execution, wait] = args;
   return rawGetOrCreateProvider(
     connection,
     options,
     execution ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
+    wait,
   );
 }
 // The same for the profiled path: existing SQLite agent tests exercise trusted requesters, and the
@@ -428,14 +514,12 @@ if (nodeEnvBefore === undefined) {
   (process.env as Record<string, string>).NODE_ENV = nodeEnvBefore;
 }
 
-const sigtermHandler = process.listeners("SIGTERM").find((l) => !sigtermListenersBefore.includes(l));
-const sigintHandler = process.listeners("SIGINT").find((l) => !sigintListenersBefore.includes(l));
+const sigtermListenersAdded = process.listeners("SIGTERM").filter((l) => !sigtermListenersBefore.includes(l));
+const sigintListenersAdded = process.listeners("SIGINT").filter((l) => !sigintListenersBefore.includes(l));
 
-// Detach the captured handlers immediately: the tests below invoke the
-// function references directly, and leaving them attached would leak
-// factory shutdown behavior into other tests sharing this process.
-if (sigtermHandler) process.removeListener("SIGTERM", sigtermHandler);
-if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
+// Detach anything the import attached, so a real signal to this process never runs it; the test below fails on it.
+for (const listener of sigtermListenersAdded) process.removeListener("SIGTERM", listener);
+for (const listener of sigintListenersAdded) process.removeListener("SIGINT", listener);
 
 // ============================================================================
 // Tests
@@ -443,8 +527,15 @@ if (sigintHandler) process.removeListener("SIGINT", sigintHandler);
 
 beforeEach(async () => {
   await clearProviderCache();
-  mockCreateSSHTunnel.mockClear();
+  // Resets, not clears: a test that overrides one dial or one release and fails before its call would otherwise
+  // leave the override queued for whichever later test dials or releases a tunnel next (Bun's mockClear keeps a
+  // queued mockImplementationOnce).
+  mockCreateSSHTunnel.mockReset();
+  mockCreateSSHTunnel.mockImplementation(forwardToTheAskedAddress);
   mockCloseSSHTunnel.mockClear();
+  mockReleaseUnopenedTunnel.mockReset();
+  mockReleaseUnopenedTunnel.mockImplementation(releaseByClosing);
+  mockTunnelProviderOpened.mockClear();
 });
 
 // ─── createDatabaseProvider ────────────────────────────────────────────────
@@ -461,22 +552,6 @@ describe("createDatabaseProvider", () => {
     });
     // Read the effective value consumed by drivers, not just the saved configuration.
     expect((provider as unknown as { queryTimeout: number }).queryTimeout).toBe(expected);
-  });
-
-  test("throws DatabaseConfigError for unknown type", async () => {
-    const conn = makeConnection("unknown");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Unknown database type: unknown/);
-  });
-
-  test("the unknown-type error lists every supported type", async () => {
-    // The list inside that message is a hand-written string literal, not something
-    // TypeScript checks, so a new provider is only named there because a test pins it.
-    // Every SHIPPED type is pinned here rather than a sample of them: the surface that
-    // silently drifts is exactly the one nobody notices.
-    const conn = makeConnection("unknown");
-    for (const type of SHIPPED_DATABASE_TYPES) {
-      await expect(createDatabaseProvider(conn)).rejects.toThrow(new RegExp(type));
-    }
   });
 
   test('creates provider for type "postgres"', async () => {
@@ -600,13 +675,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("firestore");
-  });
-
-  test("the factory error lists firestore between couchbase and redis, the order of the cases", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bmongodb, couchbase, firestore, redis\b/,
-    );
   });
 
   test('creates provider for type "elasticsearch"', async () => {
@@ -1025,7 +1093,12 @@ describe("createDatabaseProvider", () => {
   });
 
   test("the execution context rides along to influxdb3: queryReadOnly answers only under the agent profile", async () => {
-    const conn = makeConnection("influxdb3", { port: 18181, password: "not-a-real-token", database: "home" });
+    const conn = makeConnection("influxdb3", {
+      port: 18181,
+      user: undefined,
+      password: "not-a-real-token",
+      database: "home",
+    });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
@@ -1228,21 +1301,11 @@ describe("createDatabaseProvider", () => {
     await expect(createDatabaseProvider(conn)).rejects.toThrow(DatabaseConfigError);
   });
 
-  test("the factory error lists databend after trino, in the SQL block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bdruid, trino, databend, bigquery, snowflake, spark, cassandra\b/,
-    );
-  });
-
-  test("the factory error lists spark after snowflake, in the SQL block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/\bsnowflake, spark, cassandra\b/);
-  });
-
   test('creates provider for type "spark", unconnected, with the factory passing no transport', async () => {
     const { SparkProvider } = await import("@/lib/db/providers/sql/spark/index");
-    const provider = await createDatabaseProvider(makeConnection("spark", { host: "127.0.0.1", port: 15002 }));
+    const provider = await createDatabaseProvider(
+      makeConnection("spark", { host: "127.0.0.1", port: 15002, user: undefined }),
+    );
     expect(provider).toBeInstanceOf(SparkProvider);
     expect(provider.isConnected()).toBe(false);
     // The third constructor argument, the transport seam, defaults to an empty object when the factory omits it.
@@ -1312,13 +1375,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("influxdb3");
-  });
-
-  test("the factory error lists both InfluxDB types after prometheus, in their family block", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bprometheus, influxdb, influxdb3, kafka\b/,
-    );
   });
 
   test('creates provider for type "kafka"', async () => {
@@ -1447,11 +1503,6 @@ describe("createDatabaseProvider", () => {
     expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
   });
 
-  test("the factory error lists oxia among the supported types, after etcd and before prometheus", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\betcd, oxia, prometheus\b/);
-  });
-
   test('creates provider for type "milvus"', async () => {
     // The constructor validates nothing and opens nothing, as etcd's, so the provider is built, and declares its
     // language, its dialect and its read-only enforcement, with no Milvus running (vector-family spec 5.7).
@@ -1470,15 +1521,11 @@ describe("createDatabaseProvider", () => {
     expect((await createDatabaseProvider(conn)).type).toBe("milvus");
   });
 
-  test("the factory error lists milvus among the supported types, before qdrant and the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bneo4j, milvus, qdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
-    );
-  });
-
   test("a kubernetes connection is built unconnected, with the kubectl dialect, and keeps readOnly", async () => {
-    const conn = { ...makeConnection("kubernetes", { port: 6443, database: undefined }), readOnly: true };
+    const conn = {
+      ...makeConnection("kubernetes", { port: 6443, database: undefined, user: undefined }),
+      readOnly: true,
+    };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     const provider = await createDatabaseProvider(conn);
     expect(provider.type).toBe("kubernetes");
@@ -1488,7 +1535,7 @@ describe("createDatabaseProvider", () => {
   });
 
   test("the execution context rides along to kubernetes: queryReadOnly answers only under the agent profile", async () => {
-    const conn = makeConnection("kubernetes", { port: 6443, database: undefined });
+    const conn = makeConnection("kubernetes", { port: 6443, database: undefined, user: undefined });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
@@ -1507,18 +1554,6 @@ describe("createDatabaseProvider", () => {
     expect((refusal as Error).message).toContain("it is not read-only");
     expect((refusal as Error).message).not.toContain(MACHINE_PROFILE_SENTENCE);
     lifetime.abort();
-  });
-
-  test("the factory error lists weaviate between qdrant and s3", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, weaviate, s3\b.*, libredb$/,
-    );
-  });
-
-  test("the factory error lists qdrant among the supported types, before the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(/Supported types: .*\bqdrant\b.*, libredb$/);
   });
 
   test('creates provider for type "s3"', async () => {
@@ -1541,13 +1576,6 @@ describe("createDatabaseProvider", () => {
     };
     expect(() => assertReadOnlyHonoured(conn)).not.toThrow();
     expect((await createDatabaseProvider(conn)).type).toBe("s3");
-  });
-
-  test("the factory error lists s3 between qdrant and kubernetes, kubernetes before the embedded store", async () => {
-    const conn = makeConnection("not-an-engine");
-    await expect(createDatabaseProvider(conn)).rejects.toThrow(
-      /Supported types: .*\bqdrant, weaviate, s3, mqtt, opcua, mtconnect, modbus, snmp, rabbitmq, kubernetes, netconf, sparkplug, libredb$/,
-    );
   });
 
   test('creates provider for type "libredb"', async () => {
@@ -1583,15 +1611,16 @@ describe("createDatabaseProvider", () => {
       trino: { port: 8080, database: "tpch" },
       cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
       libredb: { database: CENSUS_LIBREDB_FILE },
+      // The shared password is the access token: a key-pair connection with no key is refused before the build.
+      snowflake: { authMethod: "pat" },
     };
 
     const declaringTypes: string[] = [];
     const implicitCommitTypes: string[] = [];
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const provider = (await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}))) as unknown as Record<
-        string,
-        unknown
-      >;
+      const provider = (await createDatabaseProvider(
+        makeConnection(type, { ...withoutRefusedFields(type), ...overrides[type] }),
+      )) as unknown as Record<string, unknown>;
       const implementsTrio =
         typeof provider.beginTransaction === "function" &&
         typeof provider.commitTransaction === "function" &&
@@ -1640,11 +1669,15 @@ describe("createDatabaseProvider", () => {
       trino: { port: 8080, database: "tpch" },
       cassandra: { port: 9042, database: "probe", localDataCenter: "datacenter1" } as Partial<DatabaseConnection>,
       libredb: { database: CENSUS_LIBREDB_FILE },
+      // The shared password is the access token: a key-pair connection with no key is refused before the build.
+      snowflake: { authMethod: "pat" },
     };
 
     const cannotCancel: string[] = [];
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const provider = await createDatabaseProvider(makeConnection(type, overrides[type] ?? {}));
+      const provider = await createDatabaseProvider(
+        makeConnection(type, { ...withoutRefusedFields(type), ...overrides[type] }),
+      );
       if (!supportsQueryCancel(provider)) cannotCancel.push(type);
     }
 
@@ -1722,7 +1755,8 @@ describe("getOrCreateProvider", () => {
   });
 
   test("creates SSH tunnel when sshTunnel is configured", async () => {
-    const conn = makeConnection("sqlite", {
+    // PostgreSQL, an engine that takes a tunnel: a file engine's tunnel is refused before any dial (FND-2 slice 5).
+    const conn = makeConnection("postgres", {
       id: "ssh-conn",
       host: "remote-db.example.com",
       port: 5432,
@@ -1740,13 +1774,11 @@ describe("getOrCreateProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
   });
 
-  test("asks the pool about THIS forward, route and far end, before opening one", async () => {
-    // D86. `tunnelPreexisted` decides whether a failed connect may close the tunnel, so the
-    // question has to be the specific one: a loose `hasTunnel(id)` answers `true` for any forward
-    // under the id, and the forward this call opened would then be left open on failure. Deleting
-    // the second argument in `getOrCreateProvider` fails here and nowhere else.
-    const conn = makeConnection("sqlite", {
-      id: "ssh-has-tunnel-args",
+  test("reports the provider that opened through the tunnel to the pool, and releases nothing", async () => {
+    // A provider that opened leaves its forward to the connection's teardown, so a concurrent connect of the same
+    // forward that fails cannot close it under this provider.
+    const conn = makeConnection("postgres", {
+      id: "ssh-tunnel-opened",
       host: "remote-db.example.com",
       port: 5432,
       sshTunnel: {
@@ -1761,10 +1793,9 @@ describe("getOrCreateProvider", () => {
 
     await getOrCreateProvider(conn);
 
-    expect(mockHasTunnel).toHaveBeenLastCalledWith("ssh-has-tunnel-args", {
-      ssh: conn.sshTunnel,
-      farEnd: { host: "remote-db.example.com", port: 5432 },
-    });
+    const tunnel = await mockCreateSSHTunnel.mock.results[0]?.value;
+    expect(mockTunnelProviderOpened.mock.calls).toEqual([[tunnel]]);
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
   test("seals the far end the tunnel forwards to, not the one the record names", async () => {
@@ -1772,11 +1803,10 @@ describe("getOrCreateProvider", () => {
     // pooled tunnel could be forwarding somewhere else entirely, so a plan verified against
     // a machine the statement never reached. The far end now comes off the tunnel.
     const forwardedTo = { host: "forwarded-db.internal", port: 15432 };
-    const conn = makeConnection("sqlite", {
+    const conn = makeConnection("postgres", {
       id: "ssh-seal-far-end",
       host: "record-db.example.com",
       port: 5432,
-      database: ":memory:",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1804,10 +1834,9 @@ describe("getOrCreateProvider", () => {
   });
 
   test("closes SSH tunnel when provider connect fails", async () => {
-    // NUL byte in the path makes SQLiteProvider.connect() throw after the tunnel is created
-    const conn = makeConnection("sqlite", {
+    // The mocked pool refuses, so PostgresProvider.connect() throws after the tunnel is created.
+    const conn = makeConnection("postgres", {
       id: "ssh-connect-fail",
-      database: "bad\u0000path.db",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1818,21 +1847,24 @@ describe("getOrCreateProvider", () => {
       },
     } as Partial<DatabaseConnection>);
 
-    await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
+    await withRefusingPgPool(async () => {
+      await expect(getOrCreateProvider(conn)).rejects.toThrow(/connection refused|Failed to connect/);
+    });
 
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
     expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
 
-  test("does not close a pre-existing tunnel when provider connect fails", async () => {
-    // createSSHTunnel returns the existing tunnel for the connection id, so a
-    // failed connect must not tear down a tunnel another provider (e.g. an
-    // execution-profile one) is still using.
-    const conn = makeConnection("sqlite", {
+  test("leaves a tunnel the pool keeps open when provider connect fails", async () => {
+    // createSSHTunnel hands every caller of one forward the same forward, so a failed connect
+    // releases it to the pool and does not close it itself: another provider (e.g. an
+    // execution-profile one) may be connecting or serving through it.
+    const conn = makeConnection("postgres", {
       id: "ssh-connect-fail-shared",
-      database: "bad\u0000path.db",
       sshTunnel: {
         enabled: true,
         host: "bastion.example.com",
@@ -1842,11 +1874,14 @@ describe("getOrCreateProvider", () => {
         password: "secret",
       },
     } as Partial<DatabaseConnection>);
-    mockHasTunnel.mockReturnValueOnce(true);
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
 
-    await expect(getOrCreateProvider(conn)).rejects.toThrow(/NUL bytes/);
+    await withRefusingPgPool(async () => {
+      await expect(getOrCreateProvider(conn)).rejects.toThrow(/connection refused|Failed to connect/);
+    });
 
     const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
     expect(tunnel?.close).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
@@ -2203,6 +2238,963 @@ describe("per-user providers", () => {
 
 // ─── The writable cache's key and lookup, for the transaction route (docs/GOVERNANCE.md#per-user-providers) ───
 
+// ─── one open in flight per cache key (docs/providers/CONTRACT.md, clause C-44) ─────────────────────────────────
+
+/**
+ * Holds every `connect()` of the provider class `conn` builds at one gate the test opens or fails, and records each
+ * provider that reached it, so a test can start concurrent opens and see how many built and connected a provider.
+ */
+async function gateConnects(conn: DatabaseConnection) {
+  // Built without its tunnel, which only an entry point that opens one may build with.
+  const prototype = Object.getPrototypeOf(
+    await createDatabaseProvider({ ...conn, sshTunnel: undefined }),
+  ) as DatabaseProvider;
+  const original = prototype.connect;
+  const connected: DatabaseProvider[] = [];
+  const arrivals: { count: number; resolve: () => void }[] = [];
+  let open: () => void = () => {};
+  let fail: (error: unknown) => void = () => {};
+  const gate = new Promise<void>((resolve, reject) => {
+    open = resolve;
+    fail = reject;
+  });
+  // A failed gate is awaited by every connect that reaches it; this keeps one that none reached handled.
+  gate.catch(() => {});
+  const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+    connected.push(this);
+    for (const arrival of arrivals.filter((entry) => entry.count <= connected.length)) arrival.resolve();
+    await gate;
+    return original.call(this);
+  });
+  return {
+    connected,
+    open,
+    fail,
+    /** Resolves once `count` connects have reached the gate. */
+    reached(count: number): Promise<void> {
+      if (connected.length >= count) return Promise.resolve();
+      return new Promise((resolve) => arrivals.push({ count, resolve }));
+    },
+    restore: () => spy.mockRestore(),
+  };
+}
+
+/**
+ * Resolves after `count` turns of the event loop, each a setImmediate, never a timer: once every digest the calls
+ * started has settled (`trackDigests`), long enough for a concurrent call that does not wait on an open in flight to
+ * reach the connect gate, so a test does not pass by the order two calls happened to run in.
+ */
+const turns = (count: number): Promise<void> =>
+  count === 0 ? Promise.resolve() : new Promise<void>((resolve) => setImmediate(resolve)).then(() => turns(count - 1));
+
+/**
+ * Every `crypto.subtle.digest` the code under test starts. A call computes its cache key with digests that settle off
+ * the event loop, after however many turns the machine's load makes them take, so a concurrent caller reaches the open
+ * in flight only after its digests settle; `settled` resolves once every digest started so far has settled and a turn
+ * passed without a new one.
+ */
+function trackDigests(): { settled(): Promise<void>; restore(): void } {
+  const started: Promise<ArrayBuffer>[] = [];
+  const digest = crypto.subtle.digest.bind(crypto.subtle);
+  const spy = spyOn(crypto.subtle, "digest").mockImplementation((...args: Parameters<SubtleCrypto["digest"]>) => {
+    const pending = digest(...args);
+    started.push(pending);
+    return pending;
+  });
+  return {
+    async settled() {
+      for (let seen = -1; seen !== started.length; ) {
+        seen = started.length;
+        // oxlint-disable-next-line no-await-in-loop -- a digest that settles may start another, so each round waits for the ones started before it.
+        await Promise.allSettled(started);
+        // oxlint-disable-next-line no-await-in-loop -- one turn lets a call whose digest settled start its next one before the count is read again.
+        await turns(1);
+      }
+    },
+    restore: () => spy.mockRestore(),
+  };
+}
+
+/** Counts every `disconnect()` of `provider`, still running the provider's own. */
+function countDisconnects(provider: DatabaseProvider): { readonly count: number } {
+  const counter = { count: 0 };
+  const original = provider.disconnect.bind(provider);
+  provider.disconnect = async () => {
+    counter.count += 1;
+    await original();
+  };
+  return counter;
+}
+
+const TUNNELLED: Partial<DatabaseConnection> = {
+  sshTunnel: {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "admin",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  },
+} as Partial<DatabaseConnection>;
+
+describe("one open in flight per cache key", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+
+  test("two concurrent first calls for one connection build, connect and cache one provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-shared" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn);
+      const second = getOrCreateProvider(conn);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const [one, two] = await Promise.all([first, second]);
+      expect(gate.connected).toHaveLength(1);
+      expect(one).toBe(two);
+      expect(one).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-once-shared"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-fails", ...TUNNELLED });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn).catch((error: unknown) => error);
+      const second = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const failure = new ConnectionError("The server refused the connection.", "postgres");
+      gate.fail(failure);
+      const [one, two] = await Promise.all([first, second]);
+      expect(one).toBe(failure);
+      expect(two).toBe(failure);
+      expect(errorOutcome(one)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+      const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+
+    // The key is free again: a third call opens a provider of its own.
+    const third = await getOrCreateProvider(conn);
+    expect(third.isConnected()).toBe(true);
+    expect(getProviderCacheStats().size).toBe(1);
+  });
+
+  test("two owners' concurrent first calls still build two providers", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-owners" });
+    const gate = await gateConnects(conn);
+    try {
+      const alice = getOrCreateProvider(conn, {}, owned("alice-subject"));
+      const bob = getOrCreateProvider(conn, {}, owned("bob-subject"));
+      await gate.reached(2);
+      gate.open();
+      const [forAlice, forBob] = await Promise.all([alice, bob]);
+      expect(forAlice).not.toBe(forBob);
+      expect(gate.connected).toHaveLength(2);
+      expect(getProviderCacheStats().size).toBe(2);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a joiner naming another query timeout takes the timeout path after the shared open", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-timeout", queryTimeout: 1_000 });
+    const other = { ...conn, queryTimeout: 2_000 };
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const first = getOrCreateProvider(conn);
+      const joiner = getOrCreateProvider(other);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const [shared, own] = await Promise.all([first, joiner]);
+      // As two sequential calls do today: the provider the shared open admitted is disconnected and replaced by one
+      // opened with the joiner's timeout.
+      expect(gate.connected).toHaveLength(2);
+      expect(own).not.toBe(shared);
+      expect(shared.isConnected()).toBe(false);
+      expect(own.config.queryTimeout).toBe(2_000);
+      expect(getProviderCacheStats().size).toBe(1);
+      expect(await getOrCreateProvider(other)).toBe(own);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("twelve concurrent first acquisitions of one connection and profile construct one provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-once-profiled" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const acquisitions = Array.from({ length: 12 }, () => acquireExecutionProfileProvider(conn, "agent-read-only"));
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+      const providers = await Promise.all(acquisitions);
+      expect(gate.connected).toHaveLength(1);
+      expect(new Set(providers).size).toBe(1);
+      expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: ["open-once-profiled"] });
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      logUnclaimedOpen(new ConnectionError(`refused by ${crypto.randomUUID()}`, "postgres"), {
+        key: "key",
+        meta: { connectionId: "seed:orders", type: "postgres" },
+        signal: new AbortController().signal,
+      });
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] An open of seed:orders failed after every caller stopped waiting for it, so nothing was admitted.",
+          { connectionId: "seed:orders", kind: "connection", code: "CONNECTION_ERROR" },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});
+
+// ─── a caller's own wait for an open (docs/providers/CONTRACT.md, clause C-44) ──────────────────────────────────
+
+describe("a caller's own wait for an open", () => {
+  /**
+   * Resolves once `condition` holds, read after each turn of the event loop, never a timer; throws naming `what` after
+   * `limit` turns, so a regression fails by name instead of waiting for the test's timeout.
+   */
+  async function until(condition: () => boolean, what: string, limit = 2_000): Promise<void> {
+    for (let turn = 0; !condition(); turn += 1) {
+      if (turn === limit) throw new Error(`${what} did not happen within ${limit} turns of the event loop`);
+      // oxlint-disable-next-line no-await-in-loop -- each turn reads the condition again after what it let run.
+      await turns(1);
+    }
+  }
+
+  test("a caller whose wait ends stops waiting with its reason, and the others still get the open", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-leaves" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const leaving = new AbortController();
+      const staying = getOrCreateProvider(conn);
+      const left = getOrCreateProvider(conn, {}, {}, { signal: leaving.signal }).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reason = new Error(`left ${randomUUID()}`);
+      leaving.abort(reason);
+      expect(await left).toBe(reason);
+      gate.open();
+      const provider = await staying;
+      expect(gate.connected).toHaveLength(1);
+      expect(provider).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-wait-leaves"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open every caller stopped waiting for is admitted once and served from the cache", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-admitted" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const waits = [new AbortController(), new AbortController()];
+      const callers = waits.map((wait) =>
+        getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error),
+      );
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reasons = waits.map((wait) => {
+        const reason = new Error(`left ${randomUUID()}`);
+        wait.abort(reason);
+        return reason;
+      });
+      expect(await Promise.all(callers)).toEqual(reasons);
+      gate.open();
+      await until(() => getProviderCacheStats().size === 1, "the open's admission");
+      const served = await getOrCreateProvider(conn);
+      expect(gate.connected).toHaveLength(1);
+      expect(served).toBe(gate.connected[0]);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-wait-admitted"] });
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-unclaimed" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    let logged: () => void = () => {};
+    const unclaimedLogged = new Promise<void>((resolve) => {
+      logged = resolve;
+    });
+    const warn = spyOn(logger, "warn").mockImplementation((message: string) => {
+      if (message.startsWith("[DB] An open of")) logged();
+    });
+    try {
+      const wait = new AbortController();
+      const caller = getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error);
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reason = new Error(`left ${randomUUID()}`);
+      wait.abort(reason);
+      expect(await caller).toBe(reason);
+      const marker = randomUUID();
+      gate.fail(new ConnectionError(`refused by ${marker}`, "postgres"));
+      await unclaimedLogged;
+      await turns(2);
+
+      const unclaimed = warn.mock.calls.filter(([message]) => String(message).startsWith("[DB] An open of"));
+      expect(unclaimed).toEqual([
+        [
+          "[DB] An open of open-wait-unclaimed failed after every caller stopped waiting for it, so nothing was admitted.",
+          { connectionId: "open-wait-unclaimed", kind: "connection", code: "CONNECTION_ERROR" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(marker);
+      expect(rejections).toEqual([]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      process.off("unhandledRejection", onRejection);
+      warn.mockRestore();
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("a caller whose wait already ended builds and connects nothing", async () => {
+    const conn = makeConnection("postgres", { id: "open-wait-ended" });
+    const gate = await gateConnects(conn);
+    try {
+      const wait = new AbortController();
+      const reason = new Error(`left ${randomUUID()}`);
+      wait.abort(reason);
+
+      const caught = await getOrCreateProvider(conn, {}, {}, { signal: wait.signal }).catch((error: unknown) => error);
+
+      expect(caught).toBe(reason);
+      expect(gate.connected).toHaveLength(0);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+});
+
+// ─── an open's deadline, its engine's connect budget (docs/providers/CONTRACT.md, clause C-55) ──────────────────
+
+describe("an open's deadline, its engine's connect budget", () => {
+  afterEach(() => {
+    budgetOverride = undefined;
+  });
+
+  /** Counts every `disconnect()` of `provider` and resolves `closed` at the first, still running the provider's own. */
+  function watchDisconnects(provider: DatabaseProvider): {
+    readonly count: () => number;
+    readonly closed: Promise<void>;
+  } {
+    let count = 0;
+    let closedOnce: () => void = () => {};
+    const closed = new Promise<void>((resolve) => {
+      closedOnce = resolve;
+    });
+    const original = provider.disconnect.bind(provider);
+    provider.disconnect = async () => {
+      count += 1;
+      await original();
+      closedOnce();
+    };
+    return { count: () => count, closed };
+  }
+
+  const SENTENCE = (seconds: number) =>
+    `The connection did not open within ${seconds} seconds, so Studio stopped waiting for it and sent nothing.`;
+
+  test("an open still connecting at its engine's connect budget answers StudioTimeoutRefusal not-sent to every caller, one without a wait included", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-callers" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    // Long enough for the joiner's digests to settle and join the open before its deadline.
+    budgetOverride = 500;
+    try {
+      const unbounded = getOrCreateProvider(conn).catch((error: unknown) => error);
+      const joiner = getOrCreateProvider(conn, {}, {}, { signal: new AbortController().signal }).catch(
+        (error: unknown) => error,
+      );
+      await gate.reached(1);
+      await digests.settled();
+      const [first, second] = await Promise.all([unbounded, joiner]);
+
+      expect(first).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(second).toBe(first);
+      expect((first as Error).message).toBe(
+        "The connection did not open within 0.5 seconds, so Studio stopped waiting for it and sent nothing.",
+      );
+      expect(errorKind(first)).toBe("studio-timeout-refusal");
+      expect(errorOutcome(first)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.open();
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("the next call after an open's deadline builds and connects a new provider", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-next" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    try {
+      const expired = await getOrCreateProvider(conn).catch((error: unknown) => error);
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(gate.connected).toHaveLength(1);
+
+      budgetOverride = undefined;
+      const next = getOrCreateProvider(conn);
+      await gate.reached(2);
+      expect(gate.connected).toHaveLength(2);
+      expect(gate.connected[1]).not.toBe(gate.connected[0]);
+      gate.open();
+      expect(await next).toBe(gate.connected[1]);
+    } finally {
+      gate.open();
+      gate.restore();
+    }
+  });
+
+  test("a provider whose connect settles after its open's deadline is closed once and never cached", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-late" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const first = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const late = watchDisconnects(gate.connected[0] as DatabaseProvider);
+      expect(await first).toBeInstanceOf(StudioTimeoutRefusal);
+
+      budgetOverride = undefined;
+      const next = getOrCreateProvider(conn);
+      await gate.reached(2);
+      const replacing = watchDisconnects(gate.connected[1] as DatabaseProvider);
+      gate.open();
+      const provider = await next;
+      await late.closed;
+
+      expect(provider).toBe(gate.connected[1]);
+      expect(late.count()).toBe(1);
+      expect(gate.connected[0]?.isConnected()).toBe(false);
+      expect(replacing.count()).toBe(0);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["open-deadline-late"] });
+      expect(await getOrCreateProvider(conn)).toBe(provider);
+    } finally {
+      warn.mockRestore();
+      gate.restore();
+    }
+  });
+
+  test("an execution-profile open ends at the same budget", async () => {
+    const conn = makeConnection("postgres", { id: "open-deadline-profiled" });
+    const gate = await gateConnects(conn);
+    budgetOverride = 40;
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const expired = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((error: unknown) => error);
+
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect((expired as Error).message).toBe(SENTENCE(0.1));
+      expect(errorOutcome(expired)).toBe("not-sent");
+      expect(gate.connected).toHaveLength(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      gate.open();
+      warn.mockRestore();
+      gate.restore();
+    }
+  });
+});
+
+// ─── an open a removal or a cache close overtakes (docs/providers/CONTRACT.md, clause C-44) ────────────────────
+
+describe("an open a removal or a cache close overtakes", () => {
+  const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
+  /** Lets every pending promise settle: bun's fake timers leave setImmediate real. */
+  const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+  const OVERTAKEN =
+    "The connection was closed while it was opening: a disconnect, a removal, a change of access or a shutdown closed it before it was ready, so nothing was sent to the database. Try again.";
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test("a removal of the connection closes an open it overtook and caches nothing", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken", ...TUNNELLED });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+
+      await removeProvider("overtaken");
+      gate.open();
+      const error = await opening;
+
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(OVERTAKEN);
+      expect(errorOutcome(error)).toBe("not-sent");
+      expect(disconnects.count).toBe(1);
+      expect(gate.connected[0]?.isConnected()).toBe(false);
+      const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+      expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("an owner-scoped removal overtakes only that owner's open", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-owner" });
+    const gate = await gateConnects(conn);
+    try {
+      const alice = getOrCreateProvider(conn, {}, owned("alice-subject")).catch((error: unknown) => error);
+      const bob = getOrCreateProvider(conn, {}, owned("bob-subject"));
+      await gate.reached(2);
+
+      await removeProvider("overtaken-owner", { owner: "alice-subject" });
+      gate.open();
+
+      expect((await alice) as Error).toBeInstanceOf(ConnectionError);
+      const forBob = await bob;
+      expect(forBob.isConnected()).toBe(true);
+      expect(await getOrCreateProvider(conn, {}, owned("bob-subject"))).toBe(forBob);
+      expect(getProviderCacheStats().size).toBe(1);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a key-scoped removal overtakes only the open under its key", async () => {
+    const record = makeConnection("postgres", { id: "overtaken-key", user: "alice", password: crypto.randomUUID() });
+    const otherRecord = makeConnection("postgres", { id: "overtaken-key", user: "bob", password: crypto.randomUUID() });
+    const gate = await gateConnects(record);
+    try {
+      const editor = getOrCreateProvider(record).catch((error: unknown) => error);
+      const profiled = acquireExecutionProfileProvider(record, "agent-read-only").catch((error: unknown) => error);
+      const other = getOrCreateProvider(otherRecord);
+      await gate.reached(3);
+
+      await removeProvider("overtaken-key", { key: await editorCacheKey(record) });
+      gate.open();
+
+      expect((await editor) as Error).toBeInstanceOf(ConnectionError);
+      expect((await profiled) as Error).toBeInstanceOf(ConnectionError);
+      expect((await other).isConnected()).toBe(true);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["overtaken-key"] });
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  test("a cache clear closes an open in flight and names one still opening at the cut", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-clear" });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      // The clear waits for the open it overtook.
+      expect(cleared).toBe(false);
+      gate.open();
+      await clear;
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(disconnects.count).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+
+    // A connect that never answers is waited for until the close deadline, and named then.
+    const hanging = makeConnection("postgres", { id: "still-opening" });
+    const neverOpens = await gateConnects(hanging);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    resetShutdownHooks();
+    try {
+      const opening = getOrCreateProvider(hanging).catch((failure: unknown) => failure);
+      await neverOpens.reached(1);
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: still-opening (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(warn.mock.calls.map((call: unknown[]) => String(call[0]))).toContain(
+        "[DB] The open of still-opening was still connecting when the caches closed, after 10000 ms; it closes itself if its connect answers.",
+      );
+
+      // Its connect answers at last: the open closes what it opened and caches nothing.
+      jest.useRealTimers();
+      neverOpens.open();
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      neverOpens.restore();
+      resetShutdownHooks();
+      warn.mockRestore();
+      error.mockRestore();
+      if (savedVersion !== undefined) process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
+    }
+  });
+
+  test("a cache clear names an open its deadline ended that is still connecting at the cut", async () => {
+    const hanging = makeConnection("postgres", { id: "expired-still-opening" });
+    const neverOpens = await gateConnects(hanging);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
+    resetShutdownHooks();
+    budgetOverride = 40;
+    try {
+      const expired = await getOrCreateProvider(hanging).catch((failure: unknown) => failure);
+      expect(expired).toBeInstanceOf(StudioTimeoutRefusal);
+      expect(neverOpens.connected).toHaveLength(1);
+      budgetOverride = undefined;
+
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      // The close waits for the expired open still connecting, as for any open in flight.
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: expired-still-opening (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(warn.mock.calls.map((call: unknown[]) => String(call[0]))).toContain(
+        "[DB] The open of expired-still-opening was still connecting when the caches closed, after 10000 ms; it closes itself if its connect answers.",
+      );
+    } finally {
+      jest.useRealTimers();
+      budgetOverride = undefined;
+      neverOpens.open();
+      neverOpens.restore();
+      resetShutdownHooks();
+      warn.mockRestore();
+      error.mockRestore();
+      if (savedVersion !== undefined) process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
+    }
+  });
+
+  test("a cache clear names an open that connected and is still inside its own close at the cut as closing, not connecting", async () => {
+    const conn = makeConnection("postgres", { id: "still-closing" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      let answered: unknown;
+      void getOrCreateProvider(conn).then(
+        (provider) => {
+          answered = provider;
+        },
+        (failure: unknown) => {
+          answered = failure;
+        },
+      );
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = () => new Promise<void>(() => {});
+      jest.useFakeTimers();
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      // The connect answers 1 ms into the close, so the open's own close deadline falls 1 ms after the clear's cut.
+      jest.advanceTimersByTime(1);
+      gate.open();
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      // Fake timers also hold the test's own timeout, so nothing here awaits a promise that might never settle.
+      await settle();
+      expect(cleared).toBe(true);
+      const lines = warn.mock.calls.map((call: unknown[]) => String(call[0]));
+      expect(lines).toContain(
+        "[DB] The open of still-closing was still closing the provider it opened when the caches closed, after 10000 ms; its close is cut at its own deadline.",
+      );
+      expect(lines.filter((line) => line.includes("still connecting"))).toEqual([]);
+
+      // Its own close is cut 1 ms later, and its callers are answered.
+      jest.advanceTimersByTime(1);
+      await settle();
+      expect(answered).toBeInstanceOf(ConnectionError);
+      expect(getProviderCacheStats().size).toBe(0);
+      await clear;
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
+  test("an overtaken open whose close fails is logged by its kind and code, and its callers are still answered", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-close-fails" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = async () => {
+        throw new ConnectionError(`pool ended by ${crypto.randomUUID()}`, "postgres");
+      };
+      await removeProvider("overtaken-close-fails");
+      gate.open();
+      expect((await opening) as Error).toBeInstanceOf(ConnectionError);
+      expect(warn.mock.calls).toContainEqual([
+        "[DB] A provider of overtaken-close-fails that was closed while it was opening did not close: its disconnect failed.",
+        { connectionId: "overtaken-close-fails", kind: "connection", code: "CONNECTION_ERROR" },
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
+  test("an overtaken open whose close never settles is cut at the close deadline and logged", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-close-hangs" });
+    const gate = await gateConnects(conn);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      let answered: unknown;
+      const opening = getOrCreateProvider(conn).then(
+        (provider) => {
+          answered = provider;
+        },
+        (error: unknown) => {
+          answered = error;
+        },
+      );
+      await gate.reached(1);
+      (gate.connected[0] as DatabaseProvider).disconnect = () => new Promise<void>(() => {});
+      await removeProvider("overtaken-close-hangs");
+      jest.useFakeTimers();
+      gate.open();
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(answered).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await opening;
+      expect(answered).toBeInstanceOf(ConnectionError);
+      expect(warn.mock.calls).toContainEqual([
+        "[DB] A provider of overtaken-close-hangs that was closed while it was opening did not close: its disconnect did not finish within 10000 ms.",
+        { connectionId: "overtaken-close-hangs" },
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+      warn.mockRestore();
+    }
+  });
+
+  test("an overtaken open whose connect fails rejects with its own error and closes nothing", async () => {
+    const conn = makeConnection("postgres", { id: "overtaken-fails" });
+    const gate = await gateConnects(conn);
+    try {
+      const opening = getOrCreateProvider(conn).catch((error: unknown) => error);
+      await gate.reached(1);
+      const disconnects = countDisconnects(gate.connected[0] as DatabaseProvider);
+      await removeProvider("overtaken-fails");
+      const failure = new ConnectionError("The server refused the connection.", "postgres");
+      gate.fail(failure);
+      expect(await opening).toBe(failure);
+      expect(disconnects.count).toBe(0);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      gate.restore();
+    }
+  });
+
+  /**
+   * Runs a removal of each opened connection `hops` microtasks after its connect answered, for every `hops` from 0 to
+   * 8, so the removal lands before the overtake check, between the check and the admission when they are apart, and
+   * after the admission. Answers, per `hops`, whether the cache still holds the connection after the removal and how
+   * often the provider built was closed.
+   */
+  async function removalAfterConnect(
+    open: (conn: DatabaseConnection) => Promise<DatabaseProvider>,
+    cached: () => string[],
+  ): Promise<{ hops: number; cached: boolean; disconnects: number }[]> {
+    const prototype = Object.getPrototypeOf(
+      await createDatabaseProvider(makeConnection("postgres")),
+    ) as DatabaseProvider;
+    const original = prototype.connect;
+    let afterConnect: (provider: DatabaseProvider) => void = () => {};
+    const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+      await original.call(this);
+      afterConnect(this);
+    });
+    const results: { hops: number; cached: boolean; disconnects: number }[] = [];
+    try {
+      for (let hops = 0; hops <= 8; hops += 1) {
+        const id = `overtaken-after-connect-${hops}`;
+        let removal: Promise<void> = Promise.resolve();
+        let disconnects: { readonly count: number } = { count: 0 };
+        afterConnect = (provider) => {
+          disconnects = countDisconnects(provider);
+          let turn = Promise.resolve();
+          for (let hop = 0; hop < hops; hop += 1) turn = turn.then(() => {});
+          removal = turn.then(() => removeProvider(id));
+        };
+        // oxlint-disable-next-line no-await-in-loop -- each removal is timed in microtasks from its own connect, so the opens run one at a time.
+        await open(makeConnection("postgres", { id })).catch(() => null);
+        // oxlint-disable-next-line no-await-in-loop -- as above: the next open starts once this removal ended.
+        await removal;
+        results.push({ hops, cached: cached().includes(id), disconnects: disconnects.count });
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    return results;
+  }
+
+  test("an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache", async () => {
+    const slow = await getOrCreateProvider(makeConnection("sqlite", { id: "closing-slowly", database: ":memory:" }));
+    const slowDisconnect = slow.disconnect.bind(slow);
+    let releaseSlow: () => void = () => {};
+    const slowGate = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    slow.disconnect = async () => {
+      await slowGate;
+      await slowDisconnect();
+    };
+    const editorConn = makeConnection("postgres", { id: "opened-while-closing" });
+    const profiledConn = makeConnection("postgres", { id: "acquired-while-closing" });
+    const gate = await gateConnects(editorConn);
+    try {
+      let cleared = false;
+      const clear = clearProviderCache().then(() => {
+        cleared = true;
+      });
+      await settle();
+      const editor = getOrCreateProvider(editorConn).catch((error: unknown) => error);
+      const profiled = acquireExecutionProfileProvider(profiledConn, "agent-read-only").catch(
+        (error: unknown) => error,
+      );
+      await gate.reached(2);
+      const disconnects = gate.connected.map((provider) => countDisconnects(provider));
+      gate.open();
+
+      const answers = await Promise.all([editor, profiled]);
+      // Both answered while the close still waits on the slow provider.
+      expect(cleared).toBe(false);
+      for (const answer of answers) {
+        expect(answer).toBeInstanceOf(ConnectionError);
+        expect((answer as Error).message).toBe(OVERTAKEN);
+        expect(errorOutcome(answer)).toBe("not-sent");
+      }
+      expect(disconnects.map((counter) => counter.count)).toEqual([1, 1]);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+
+      releaseSlow();
+      await clear;
+      expect(disconnects.map((counter) => counter.count)).toEqual([1, 1]);
+
+      // Once the close ended, an open is admitted as before.
+      expect((await getOrCreateProvider(editorConn)).isConnected()).toBe(true);
+      expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["opened-while-closing"] });
+    } finally {
+      releaseSlow();
+      gate.restore();
+    }
+  });
+
+  const NOTHING_ADMITTED = Array.from({ length: 9 }, (_, hops) => ({ hops, cached: false, disconnects: 1 }));
+
+  test("a removal at any microtask after the connect answered leaves no editor provider admitted, and closes it once", async () => {
+    const results = await removalAfterConnect(
+      (conn) => getOrCreateProvider(conn),
+      () => getProviderCacheStats().connections,
+    );
+    expect(results).toEqual(NOTHING_ADMITTED);
+  });
+
+  test("a removal at any microtask after the connect answered leaves no execution-profile provider admitted, and closes it once", async () => {
+    const results = await removalAfterConnect(
+      (conn) => acquireExecutionProfileProvider(conn, "agent-read-only"),
+      () => getExecutionProfileCacheStats().connections,
+    );
+    expect(results).toEqual(NOTHING_ADMITTED);
+  });
+});
+
 describe("editorCacheKey and findCachedProvider", () => {
   const owned = (owner: string): EditorExecutionContext => ({ owner, ownerPoolMax: 3 });
 
@@ -2275,6 +3267,98 @@ describe("removeProvider", () => {
     // Should not throw — the error is caught and logged
     await removeProvider("no-such-connection");
     expect(mockCloseSSHTunnel).toHaveBeenCalledWith("no-such-connection");
+  });
+
+  /** Makes `provider`'s disconnect reject with `failure`. */
+  const failsToDisconnect = (provider: DatabaseProvider, failure: Error) => {
+    provider.disconnect = async () => {
+      throw failure;
+    };
+  };
+
+  test("a shared and a profiled provider's failed disconnect are logged withheld when their text holds the connection's credential, and as their own text when it holds none", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const secret = makeConnection("postgres", { id: "remove-secret", password });
+      const clean = makeConnection("postgres", { id: "remove-clean" });
+      failsToDisconnect(await getOrCreateProvider(secret), echoing(password));
+      failsToDisconnect(await acquireExecutionProfileProvider(secret, "agent-read-only"), echoing(password));
+      failsToDisconnect(await getOrCreateProvider(clean), new Error("disconnect failed"));
+      failsToDisconnect(
+        await acquireExecutionProfileProvider(clean, "agent-read-only"),
+        new Error("disconnect failed"),
+      );
+
+      await removeProvider("remove-secret");
+      await removeProvider("remove-clean");
+
+      expect(warn.mock.calls).toEqual([
+        ["Error disconnecting provider remove-secret", { connectionId: "remove-secret", error: withheldLine("Error") }],
+        [
+          "Error disconnecting profiled provider remove-secret",
+          { connectionId: "remove-secret", error: withheldLine("Error") },
+        ],
+        [
+          "Error disconnecting provider remove-clean",
+          { connectionId: "remove-clean", error: "Error: disconnect failed" },
+        ],
+        [
+          "Error disconnecting profiled provider remove-clean",
+          { connectionId: "remove-clean", error: "Error: disconnect failed" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a profiled provider's failed disconnect that holds the agent credential is logged withheld", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const agentPassword = randomUUID();
+      const conn = makeConnection("postgres", { id: "remove-agent", agentUser: "agent_ro", agentPassword });
+      failsToDisconnect(await acquireExecutionProfileProvider(conn, "agent-read-only"), echoing(agentPassword));
+
+      await removeProvider("remove-agent");
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "Error disconnecting profiled provider remove-agent",
+          { connectionId: "remove-agent", error: withheldLine("Error") },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(agentPassword);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a failed disconnect is logged withheld for every form of the connection's credential", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const forms = secretForms([password]);
+      const ids = forms.map((_form, index) => `forms-${index}`);
+      const providers = await Promise.all(
+        ids.map((id) => getOrCreateProvider(makeConnection("postgres", { id, password }))),
+      );
+      providers.forEach((provider, index) => failsToDisconnect(provider, new Error(`server said ${forms[index]}`)));
+
+      await Promise.all(ids.map((id) => removeProvider(id)));
+
+      expect(forms.length).toBeGreaterThan(1);
+      expect(
+        (warn.mock.calls as [string, { connectionId: string; error: string }][])
+          .map(([line, context]) => [line, context.connectionId, context.error])
+          .sort(),
+      ).toEqual(ids.map((id) => [`Error disconnecting provider ${id}`, id, withheldLine("Error")]).sort());
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(forms.filter((form) => logged.includes(form))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -2509,16 +3593,22 @@ describe("teardown of an owned provider", () => {
   const hangs = (): Promise<void> => new Promise<void>(() => {});
   let warn: ReturnType<typeof spyOn>;
   let info: ReturnType<typeof spyOn>;
+  /** Studio's version as the environment held it; each test here runs without one unless it sets its own. */
+  let savedVersion: string | undefined;
 
   beforeEach(() => {
     warn = spyOn(logger, "warn").mockImplementation(() => {});
     info = spyOn(logger, "info").mockImplementation(() => {});
+    savedVersion = process.env.NEXT_PUBLIC_APP_VERSION;
+    delete process.env.NEXT_PUBLIC_APP_VERSION;
   });
 
   afterEach(() => {
     jest.useRealTimers();
     warn.mockRestore();
     info.mockRestore();
+    if (savedVersion === undefined) delete process.env.NEXT_PUBLIC_APP_VERSION;
+    else process.env.NEXT_PUBLIC_APP_VERSION = savedVersion;
   });
 
   /**
@@ -2701,6 +3791,37 @@ describe("teardown of an owned provider", () => {
     expect(lines(info).some((line) => line.includes("Rolled back"))).toBe(false);
   });
 
+  test("an owned provider's failed rollback and failed disconnect are logged withheld when their text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const provider = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:orders", password }),
+      {},
+      owned("alice-subject"),
+    );
+    const events: string[] = [];
+    openTransaction(provider, events, async () => {
+      throw echoing(password);
+    });
+    recordDisconnect(provider, events, async () => {
+      throw echoing(password);
+    });
+
+    await removeProvider("seed:orders", { owner: "alice-subject" });
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of an owned provider of seed:orders failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:orders", error: withheldLine("Error") },
+      ],
+      [
+        "[DB] Error disconnecting owned provider seed:orders",
+        { connectionId: "seed:orders", error: withheldLine("Error") },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+  });
+
   test("an owner's profiled provider is torn down with its editor provider, and the shared provider keeps today's path", async () => {
     const conn = makeConnection("postgres", { id: "seed:orders" });
     const editor = await getOrCreateProvider(conn, {}, owned("alice-subject"));
@@ -2783,14 +3904,303 @@ describe("teardown of an owned provider", () => {
 
     await clearProviderCache();
 
+    // Every entry leaves its cache as its teardown starts: the shared one was still cached when the owned one's rollback
+    // started, and gone by the time the owned one disconnected.
     expect(events.sort()).toEqual([
       "agent disconnect",
-      "disconnect, 1 cached",
+      "disconnect, 0 cached",
       "rollback, 1 cached",
       "shared disconnect",
     ]);
     expect(getProviderCacheStats().size).toBe(0);
     expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("a shared provider in a transaction is rolled back before it is closed when the caches close", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared" }));
+    const profiled = await acquireExecutionProfileProvider(
+      makeConnection("postgres", { id: "seed:shared-agent" }),
+      "agent-read-only",
+    );
+    const events: string[] = [];
+    openTransaction(shared, events);
+    recordDisconnect(shared, events);
+    profiled.disconnect = async () => {
+      events.push(`profiled disconnect, ${getExecutionProfileCacheStats().size} profiled`);
+    };
+
+    await clearProviderCache();
+
+    // Its entry went first, as an owned one's does, and the transaction was rolled back before the pool closed. The
+    // profiled provider closes beside it, so only the shared provider's own order is pinned.
+    expect(events.filter((event) => !event.startsWith("profiled"))).toEqual([
+      "rollback, 0 cached",
+      "disconnect, 0 cached",
+    ]);
+    expect(events).toContain("profiled disconnect, 0 profiled");
+    expect(lines(info)).toContain(
+      "[DB] Rolled back the open transaction of a shared provider of seed:shared before closing it.",
+    );
+    expect(lines(warn)).toEqual([]);
+  });
+
+  test("a shared provider whose disconnect never settles is cut at 10 s and named", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-hangs" }));
+    recordDisconnect(shared, [], hangs);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    resetShutdownHooks();
+    try {
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      jest.advanceTimersByTime(9_999);
+      await settle();
+      expect(outcome).toBeUndefined();
+      jest.advanceTimersByTime(1);
+      await run;
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: seed:shared-hangs (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(lines(warn)).toEqual([
+        "[DB] Abandoned the pool of shared provider seed:shared-hangs: its disconnect did not finish within 10000 ms.",
+      ]);
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+    }
+
+    // Outside the shutdown the same cut lets the clear resolve, within the 15 s a rollback and a close may take.
+    const again = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-hangs" }));
+    recordDisconnect(again, [], hangs);
+    let cleared = false;
+    const clear = clearProviderCache().then(() => {
+      cleared = true;
+    });
+    await settle();
+    jest.advanceTimersByTime(10_000);
+    await clear;
+    expect(cleared).toBe(true);
+  });
+
+  test("a shared provider whose rollback never settles is cut at 5 s and still closed", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-rollback-hangs" }));
+    const events: string[] = [];
+    openTransaction(shared, events, hangs);
+    recordDisconnect(shared, events);
+    jest.useFakeTimers();
+    let cleared = false;
+    const clear = clearProviderCache().then(() => {
+      cleared = true;
+    });
+    await settle();
+    expect(events).toEqual(["rollback, 0 cached"]);
+    jest.advanceTimersByTime(4_999);
+    await settle();
+    expect(events).toEqual(["rollback, 0 cached"]);
+    jest.advanceTimersByTime(1);
+    await clear;
+    expect(cleared).toBe(true);
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(lines(warn)).toEqual([
+      "[DB] The open transaction of a shared provider of seed:shared-rollback-hangs did not roll back within 5000 ms, so the provider is closed with it open.",
+    ]);
+  });
+
+  test("a shared provider whose rollback fails is logged and still closed", async () => {
+    const shared = await getOrCreateProvider(makeConnection("postgres", { id: "seed:shared-rollback-fails" }));
+    const events: string[] = [];
+    openTransaction(shared, events, async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    recordDisconnect(shared, events);
+
+    await clearProviderCache();
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of a shared provider of seed:shared-rollback-fails failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:shared-rollback-fails", error: "Error: Connection terminated unexpectedly" },
+      ],
+    ]);
+  });
+
+  test("a shared provider's failed rollback at the cache close is logged withheld when its text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const shared = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:shared-rollback-secret", password }),
+    );
+    const events: string[] = [];
+    openTransaction(shared, events, async () => {
+      throw echoing(password);
+    });
+    recordDisconnect(shared, events);
+
+    await clearProviderCache();
+
+    expect(events).toEqual(["rollback, 0 cached", "disconnect, 0 cached"]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "[DB] The open transaction of a shared provider of seed:shared-rollback-secret failed to roll back, so the provider is closed with it open.",
+        { connectionId: "seed:shared-rollback-secret", error: withheldLine("Error") },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+  });
+
+  test("the providers not closed at shutdown are named with their author and Studio's version", async () => {
+    process.env.NEXT_PUBLIC_APP_VERSION = "9.9.9-named";
+    const shared = await getOrCreateProvider(makeConnection("sqlite", { id: "named-shared", database: ":memory:" }));
+    const failure = new Error("disconnect failed");
+    shared.disconnect = () => Promise.reject(failure);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    resetShutdownHooks();
+    try {
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message: "Providers not closed: named-shared (SQLite provider, bundled with Studio 9.9.9-named)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith("[DB] Error disconnecting provider", "named-shared", String(failure));
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
+  test("the close the factory registers for the shutdown rejects naming each provider whose close failed, while clearProviderCache resolves", async () => {
+    const shared = await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }));
+    const failedRollback = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:orders" }),
+      {},
+      owned("alice-subject"),
+    );
+    const closes = await getOrCreateProvider(
+      makeConnection("postgres", { id: "seed:fine" }),
+      {},
+      owned("alice-subject"),
+    );
+    const failure = new Error("disconnect failed");
+    shared.disconnect = () => Promise.reject(failure);
+    const events: string[] = [];
+    openTransaction(failedRollback, events, async () => {
+      throw new Error("Connection terminated unexpectedly");
+    });
+    recordDisconnect(failedRollback, events);
+    recordDisconnect(closes, events);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message:
+            "Providers not closed: shutdown-shared (SQLite provider, bundled with Studio), seed:orders (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting provider",
+        "shutdown-shared",
+        String(failure),
+      );
+      expect(getProviderCacheStats().size).toBe(0);
+
+      // Outside the shutdown the same failures are logged and the clear resolves, as an embedder's call expects.
+      const again = await getOrCreateProvider(
+        makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }),
+      );
+      again.disconnect = () => Promise.reject(failure);
+      expect(await clearProviderCache()).toBeUndefined();
+      expect(getProviderCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
+  });
+
+  test("the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed", async () => {
+    const postgres = (id: string) => makeConnection("postgres", { id });
+    const rollbackHangs = await getOrCreateProvider(postgres("seed:rollback-hangs"), {}, owned("alice-subject"));
+    const disconnectHangs = await getOrCreateProvider(postgres("seed:disconnect-hangs"), {}, owned("alice-subject"));
+    const disconnectFails = await getOrCreateProvider(postgres("seed:disconnect-fails"), {}, owned("alice-subject"));
+    const closes = await getOrCreateProvider(postgres("seed:fine"), {}, owned("alice-subject"));
+    const profiledOwned = await acquireExecutionProfileProvider(
+      postgres("seed:profiled-owned"),
+      "agent-read-only",
+      {},
+      owned("alice-subject"),
+    );
+    const profiledShared = await acquireExecutionProfileProvider(postgres("seed:profiled-shared"), "agent-read-only");
+    const events: string[] = [];
+    openTransaction(rollbackHangs, events, hangs);
+    recordDisconnect(rollbackHangs, events);
+    recordDisconnect(disconnectHangs, events, hangs);
+    recordDisconnect(disconnectFails, events, async () => {
+      throw new Error("pool already ended");
+    });
+    recordDisconnect(closes, events);
+    recordDisconnect(profiledOwned, events, async () => {
+      throw new Error("pool already ended");
+    });
+    const failure = new Error("disconnect failed");
+    profiledShared.disconnect = () => Promise.reject(failure);
+    const error = spyOn(logger, "error").mockImplementation(() => {});
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+
+    resetShutdownHooks();
+    try {
+      jest.useFakeTimers();
+      let outcome: unknown;
+      const run = closeProviderCaches().then((result) => {
+        outcome = result;
+      });
+      await settle();
+      // The rollback is given up at 5 s, and the hanging disconnect at 10 s, inside the 15 s the closes may take.
+      jest.advanceTimersByTime(5_000);
+      await settle();
+      jest.advanceTimersByTime(5_000);
+      await run;
+
+      expect(outcome).toEqual({ cut: 0, failed: 1 });
+      expect(error).toHaveBeenCalledWith(
+        "Provider cache close failed",
+        expect.objectContaining({
+          message:
+            "Providers not closed: seed:rollback-hangs (PostgreSQL provider, bundled with Studio), seed:disconnect-hangs (PostgreSQL provider, bundled with Studio), seed:disconnect-fails (PostgreSQL provider, bundled with Studio), seed:profiled-owned (PostgreSQL provider, bundled with Studio), seed:profiled-shared (PostgreSQL provider, bundled with Studio)",
+        }),
+        { route: "shutdown" },
+      );
+      expect(consoleError).toHaveBeenCalledWith(
+        "[DB] Error disconnecting profiled provider",
+        "seed:profiled-shared",
+        String(failure),
+      );
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    } finally {
+      resetShutdownHooks();
+      error.mockRestore();
+      consoleError.mockRestore();
+    }
   });
 
   test("the factory registers its owner-scoped removal, so the governance loader reaches this cache from another bundle", async () => {
@@ -2858,6 +4268,27 @@ describe("clearProviderCache", () => {
      * address. A constant first argument cannot be a format attack at all.
      */
     expect(String(mine[0]![0])).not.toContain("evil");
+  });
+
+  test("a shared and a profiled provider's failed disconnect are logged with Studio's withheld sentence when their text holds the connection's credential", async () => {
+    const password = randomUUID();
+    const conn = makeConnection("postgres", { id: "clear-secret", password });
+    const editor = await getOrCreateProvider(conn);
+    const agent = await acquireExecutionProfileProvider(conn, "agent-read-only");
+    editor.disconnect = () => Promise.reject(echoing(password));
+    agent.disconnect = () => Promise.reject(echoing(password));
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await clearProviderCache();
+
+      expect(consoleError.mock.calls).toEqual([
+        ["[DB] Error disconnecting provider", "clear-secret", withheldLine("Error")],
+        ["[DB] Error disconnecting profiled provider", "clear-secret", withheldLine("Error")],
+      ]);
+      expect(consoleError.mock.calls.flat().some((arg) => String(arg).includes(password))).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   test("logs and continues when a provider disconnect rejects during clear", async () => {
@@ -3011,6 +4442,75 @@ describe("evictIdleProviders", () => {
       error.mockRestore();
     }
   });
+
+  test("a hasRunsInFlight that throws a text holding the connection's credential is logged withheld", async () => {
+    const error = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const provider = await getOrCreateProvider(makeConnection("postgres", { id: "throws-secret", password }));
+      Object.assign(provider, {
+        hasRunsInFlight: () => {
+          throw echoing(password);
+        },
+      });
+
+      expect(await evictIdleProviders(0)).toBe(1);
+      expect(getProviderCacheStats().size).toBe(0);
+      const lines = error.mock.calls
+        .map((call) => call.join(" "))
+        .filter((line) => line.includes("hasRunsInFlight() threw"));
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("throws-secret");
+      expect(lines[0]).toContain(withheldErrorMessage("Error"));
+      expect(error.mock.calls.flat().some((arg) => String(arg).includes(password))).toBe(false);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  test("an idle provider's and an idle profiled provider's failed disconnect are logged withheld when their text holds the connection's credential, and as their own text when it holds none", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      const password = randomUUID();
+      const secret = makeConnection("postgres", { id: "idle-secret", password });
+      const clean = makeConnection("postgres", { id: "idle-clean" });
+      const fails = (provider: DatabaseProvider, failure: Error) => {
+        provider.disconnect = async () => {
+          throw failure;
+        };
+      };
+      fails(await getOrCreateProvider(secret), echoing(password));
+      fails(await getOrCreateProvider(clean), new Error("socket already gone"));
+      fails(await acquireExecutionProfileProvider(secret, "agent-read-only"), echoing(password));
+      fails(await acquireExecutionProfileProvider(clean, "agent-read-only"), new Error("socket already gone"));
+
+      expect(await evictIdleProviders(0)).toBe(4);
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error disconnecting idle provider idle-secret",
+          { connectionId: "idle-secret", error: withheldLine("Error") },
+        ],
+        [
+          "[DB] Error disconnecting idle provider idle-clean",
+          { connectionId: "idle-clean", error: "Error: socket already gone" },
+        ],
+        [
+          "[DB] Error disconnecting idle profiled provider idle-secret",
+          { connectionId: "idle-secret", error: withheldLine("Error") },
+        ],
+        [
+          "[DB] Error disconnecting idle profiled provider idle-clean",
+          { connectionId: "idle-clean", error: "Error: socket already gone" },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+    }
+  });
 });
 
 // ─── idle sweep timer ─────────────────────────────────────────────────────
@@ -3041,78 +4541,28 @@ describe("idle sweep timer", () => {
   });
 });
 
-// ─── registerShutdownHandlers ─────────────────────────────────────────────
+// ─── importing the factory ────────────────────────────────────────────────
+// The import above ran under NODE_ENV=production with the process listeners diffed around it.
 
-describe("registerShutdownHandlers", () => {
-  test("can be called multiple times without error (idempotent)", () => {
-    // Should not throw even when called repeatedly
-    registerShutdownHandlers();
-    registerShutdownHandlers();
-    registerShutdownHandlers();
-  });
-});
-
-// ─── shutdown signal handlers ─────────────────────────────────────────────
-// The handlers were auto-registered at import time (NODE_ENV override above)
-// and captured by diffing the process listeners.
-
-/** Stub process.exit with a spy whose promise resolves on the first call. */
-function stubProcessExit(): { exitCalls: Array<number | undefined>; exited: Promise<void>; restore: () => void } {
-  const originalExit = process.exit;
-  const exitCalls: Array<number | undefined> = [];
-  let resolveExited: () => void = () => {};
-  const exited = new Promise<void>((resolve) => {
-    resolveExited = resolve;
-  });
-  process.exit = ((code?: number) => {
-    exitCalls.push(code);
-    resolveExited();
-  }) as unknown as typeof process.exit;
-  return {
-    exitCalls,
-    exited,
-    restore: () => {
-      process.exit = originalExit;
-    },
-  };
-}
-
-describe("shutdown signal handlers", () => {
-  test("auto-registration on import captured SIGTERM and SIGINT handlers", () => {
-    expect(sigtermHandler).toBeDefined();
-    expect(sigintHandler).toBeDefined();
+describe("importing the factory", () => {
+  test("importing the factory adds no SIGTERM or SIGINT listener, even under NODE_ENV=production", () => {
+    expect(sigtermListenersAdded).toEqual([]);
+    expect(sigintListenersAdded).toEqual([]);
   });
 
-  test("SIGTERM handler clears the provider cache and exits with code 0", async () => {
-    await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-term", database: ":memory:" }));
+  test("the factory registers the close of its caches with the shutdown registry, and running it empties both caches", async () => {
+    await getOrCreateProvider(makeConnection("sqlite", { id: "shutdown-shared", database: ":memory:" }));
+    await acquireExecutionProfileProvider(makeConnection("postgres", { id: "shutdown-profiled" }), "agent-read-only");
+    expect(getProviderCacheStats().size).toBe(1);
+    expect(getExecutionProfileCacheStats().size).toBe(1);
 
-    const { exitCalls, exited, restore } = stubProcessExit();
+    resetShutdownHooks();
     try {
-      sigtermHandler?.("SIGTERM");
-      await exited;
-      expect(exitCalls).toEqual([0]);
+      expect(await closeProviderCaches()).toEqual({ cut: 0, failed: 0 });
       expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
     } finally {
-      restore();
-    }
-  });
-
-  test("SIGINT handler logs the error and still exits when cache clear fails", async () => {
-    const conn = makeConnection("sqlite", { id: "shutdown-int", database: ":memory:" });
-    const provider = await getOrCreateProvider(conn);
-    const realDisconnect = provider.disconnect.bind(provider);
-    // Return a non-promise so clearProviderCache rejects inside the handler
-    (provider as unknown as { disconnect: () => undefined }).disconnect = () => undefined;
-
-    const { exitCalls, exited, restore } = stubProcessExit();
-    try {
-      sigintHandler?.("SIGINT");
-      await exited;
-      expect(exitCalls).toEqual([0]);
-    } finally {
-      restore();
-      provider.disconnect = realDisconnect;
-      await clearProviderCache();
+      resetShutdownHooks();
     }
   });
 });
@@ -3168,6 +4618,23 @@ describe("executionContextFor", () => {
 });
 
 // ─── acquireExecutionProfileProvider — agent read-only profile (#328) ──────
+
+/**
+ * Runs `body` with PostgreSQL's `queryReadOnly` shadowed by `undefined` on its prototype, so an engine on the review
+ * record has a provider with no read-only statement path, and restores the prototype afterwards.
+ */
+async function withoutPostgresReadOnlyPath<T>(body: () => Promise<T>): Promise<T> {
+  const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
+  const prototype = PostgresProvider.prototype as unknown as { queryReadOnly?: unknown };
+  const own = Object.getOwnPropertyDescriptor(prototype, "queryReadOnly");
+  Object.defineProperty(prototype, "queryReadOnly", { value: undefined, configurable: true, writable: true });
+  try {
+    return await body();
+  } finally {
+    if (own === undefined) delete prototype.queryReadOnly;
+    else Object.defineProperty(prototype, "queryReadOnly", own);
+  }
+}
 
 describe("acquireExecutionProfileProvider", () => {
   const pgConn = (overrides: Partial<DatabaseConnection> = {}) =>
@@ -3251,21 +4718,35 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses a provider type without a read-only statement path", async () => {
-    const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("spark", { id: "spark-profile" }),
-      "agent-read-only",
-    ).catch((e: unknown) => e);
+  test.each(["agent-read-only", "agent-handover"] as const)(
+    "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback",
+    async (profile) => {
+      // The method is a second precondition beside the review record, for both profiles that send statements: an engine
+      // the record lists is still refused when its provider has no `queryReadOnly`, never served `query()`, and the
+      // provider is never connected, so no pool or session is opened with the agent's credential and left behind.
+      const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
+      const connect = spyOn(PostgresProvider.prototype, "connect");
+      try {
+        const error: unknown = await withoutPostgresReadOnlyPath(() =>
+          acquireExecutionProfileProvider(pgConn({ id: `pg-no-read-only-path-${profile}` }), profile).catch(
+            (e: unknown) => e,
+          ),
+        );
 
-    expect(error).toBeInstanceOf(ExecutionProfileError);
-    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
-    // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
-    // no database read-only session.
-    expect((error as Error).message).toBe(
-      'Provider type "spark" implements no read-only statement path (queryReadOnly)',
-    );
-    expect(getExecutionProfileCacheStats().size).toBe(0);
-  });
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(
+          "PROFILE_UNSUPPORTED_BY_PROVIDER",
+        );
+        expect((error as Error).message).toBe(
+          'Provider type "postgres" implements no read-only statement path (queryReadOnly)',
+        );
+        expect(connect).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        connect.mockRestore();
+      }
+    },
+  );
 
   test("trino refuses an executed plan before anything is sent, the gate the explain-analyze descriptor's capability check is not", async () => {
     // `sql.explain.analyze` requires only `supportsExplain`, which Trino declares for the editor's Explain button, so
@@ -3320,17 +4801,19 @@ describe("acquireExecutionProfileProvider", () => {
 
   test("the hand-over profile takes the same engine gate, and caches apart from the run's own", async () => {
     // #373 review. `agent-handover` serves the editor replay of a statement a run
-    // already answered with, so it SENDS a statement and must be refused wherever the
-    // engine cannot bound one — the same rule as `agent-read-only`, from the same
-    // table. Its own key in the profiled cache is the other half: two profiles are two
-    // entries, so a later change to one path's lifecycle cannot reach the other, and
-    // neither is ever the editor's writable pool.
+    // already answered with, so it SENDS a statement and is refused on an engine off the
+    // review record, as `agent-read-only` is. Its own key in the profiled cache is the
+    // other half: two profiles are two entries, so a later change to one path's lifecycle
+    // cannot reach the other, and neither is ever the editor's writable pool. The method
+    // precondition for both profiles is held by the test "refuses %s on an engine on the
+    // review record whose provider implements no read-only statement path, before connecting
+    // it, and query() is never the fallback".
     const refused: unknown = await acquireExecutionProfileProvider(
       makeConnection("spark", { id: "spark-handover" }),
       "agent-handover",
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ExecutionProfileError);
-    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
 
     const agent = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
     const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
@@ -3358,10 +4841,12 @@ describe("acquireExecutionProfileProvider", () => {
       const readOnly = await acquireExecutionProfileProvider(pgConn(), "agent-read-only");
       const handover = await acquireExecutionProfileProvider(pgConn(), "agent-handover");
 
+      // The factory adds the process's egress decision to every context it hands a provider (FND-2 slice 2b).
+      const egress = egressDecision();
       expect(constructed.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
-        { readOnly: true, sendsStatements: false, allowExternalFileAccess: false },
-        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
-        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false },
+        { readOnly: true, sendsStatements: false, allowExternalFileAccess: false, egress },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false, egress },
+        { readOnly: true, sendsStatements: true, allowExternalFileAccess: false, egress },
       ]);
       // The profile is framed into the profiled cache key and decides the flag, so a provider opened without the
       // proof a statement needs is never the one a statement-sending profile is handed.
@@ -3409,8 +4894,8 @@ describe("acquireExecutionProfileProvider", () => {
   });
 
   test("denies when the agent credential is configured but unresolvable (fail closed)", async () => {
-    // "v9:a:b" carries an envelope version tag this build does not recognise —
-    // readSecret classifies it undecryptable, never plaintext.
+    // "v9:a:b" is shaped like a storage envelope (isEnvelopeClaim), so the factory refuses it
+    // without opening it, and never uses it as a plaintext password.
     const conn = pgConn({ id: "pg-bad-cred", agentUser: "agent_ro", agentPassword: "v9:a:b" });
 
     const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
@@ -3421,8 +4906,9 @@ describe("acquireExecutionProfileProvider", () => {
   });
 
   /**
-   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory reads it through
-   * readSecret as it reads a stored one. Projected from a seed, so the test fails if the projection drops a field.
+   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory uses a value that is
+   * not shaped like an envelope as written (an envelope-shaped one is refused unopened, isEnvelopeClaim). Projected from
+   * a seed, so the test fails if the projection drops a field.
    */
   test("opens every profile of a seed connection under its resolved agent credential, and one without under its own", async () => {
     const seed = {
@@ -3478,11 +4964,33 @@ describe("acquireExecutionProfileProvider", () => {
     expect((error as Error).message).toBe(
       'Connection "seed:pg-seed-envelope" configures an agent credential that cannot be resolved',
     );
-    const sealed = await acquireExecutionProfileProvider(
-      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret(STAND_IN_AGENT_PASSWORD) },
-      "agent-read-only",
-    );
-    expect(sealed.config.password).toBe(STAND_IN_AGENT_PASSWORD);
+  });
+
+  test("an agent password shaped like a storage envelope is refused without being opened", async () => {
+    // A sealed storage value opens only in the store it was sealed in, for the record and field it was sealed for, so
+    // the factory opens none: an envelope of the previous format and one of the current format are refused alike.
+    // The key the store would use is the one in the environment while the factory runs, so a factory that still
+    // opened envelopes would open the version 1 value here.
+    await withStorageKey(async () => {
+      const versionOne = sealVersionOne(STAND_IN_AGENT_PASSWORD);
+      const versionTwo = ["v2", randomBytes(12).toString("base64url"), randomBytes(40).toString("base64url")].join(":");
+      for (const [id, agentPassword] of [
+        ["pg-sealed-v1", versionOne],
+        ["pg-sealed-v2", versionTwo],
+      ] as const) {
+        const conn = pgConn({ id, agentUser: "agent_ro", agentPassword });
+
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
+        const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+        expect((error as Error).message).toBe(
+          `Connection "${id}" configures an agent credential that cannot be resolved`,
+        );
+      }
+    });
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("denies an agent user without a password (fail closed)", async () => {
@@ -3520,16 +5028,16 @@ describe("acquireExecutionProfileProvider", () => {
   }
 
   const kubernetesConn = (overrides: Partial<DatabaseConnection> = {}) =>
-    makeConnection("kubernetes", { id: "k8s-profile", port: 6443, database: undefined, ...overrides });
+    makeConnection("kubernetes", { id: "k8s-profile", port: 6443, database: undefined, user: undefined, ...overrides });
 
-  test("a token engine's agent password alone is the agent's token, and the connection's user is kept", async () => {
+  test("a token engine's agent password alone is the agent's token, and the provider holds no user", async () => {
     const conn = kubernetesConn({ id: "k8s-agent-token", password: "connection-token", agentPassword: "agent-token" });
     const restore = await kubernetesConnectStubbed(conn);
     try {
       const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
 
       expect(agent.config.password).toBe("agent-token");
-      expect(agent.config.user).toBe("test");
+      expect(Object.hasOwn(agent.config, "user")).toBe(false);
       expect(getExecutionProfileCacheStats().size).toBe(1);
     } finally {
       restore();
@@ -3569,8 +5077,9 @@ describe("acquireExecutionProfileProvider", () => {
   /**
    * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
    * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
-   * `"dedicated-user"`, which S3 declares and a PostgreSQL provider is given here as well. Every refusal
-   * lands before the provider connects, which each test holds by stubbing `connect` and asserting it never ran.
+   * `"dedicated-user"`, which S3 declares. The factory reads each form from Studio's record, `AGENT_CREDENTIAL_FORM`,
+   * never from the provider it builds. Every refusal lands before the provider connects, which each test holds by
+   * stubbing `connect` and asserting it never ran.
    */
   describe("agent credential forms", () => {
     async function connectStubbed(conn: DatabaseConnection) {
@@ -3641,33 +5150,21 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
-    test("a service-account-key engine opens a sealed agent key before it reads the key's type", async () => {
-      // Stored connections hold agentPassword sealed, so the key check must read the opened secret, never the field.
-      const agentKey = SERVICE_ACCOUNT_KEY.replace("agent@", "reader@");
-      const conn = bigqueryConn({ agentPassword: encryptSecret(agentKey) });
-      const connect = await connectStubbed(conn);
-      try {
-        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+    test("a service-account-key engine refuses a sealed agent key without opening it", async () => {
+      // A storage envelope opens only in the store it was sealed in, so the factory refuses it before the key check.
+      await withStorageKey(async () => {
+        const conn = bigqueryConn({ agentPassword: sealVersionOne(SERVICE_ACCOUNT_KEY.replace("agent@", "reader@")) });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
 
-        expect(agent.config.password).toBe(agentKey);
-        expect(connect).toHaveBeenCalledTimes(1);
-      } finally {
-        connect.mockRestore();
-      }
-    });
-
-    test("a service-account-key engine refuses a sealed agent secret that opens to something other than a key", async () => {
-      const conn = bigqueryConn({ agentPassword: encryptSecret("ya29.not-a-real-access-token") });
-      const connect = await connectStubbed(conn);
-      try {
-        const error = await refusal(conn);
-
-        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
-        expect(error.message).toContain("is not a service-account key");
-        expect(connect).not.toHaveBeenCalled();
-      } finally {
-        connect.mockRestore();
-      }
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toContain("cannot be resolved");
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
     });
 
     test.each([
@@ -3734,6 +5231,25 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
+    test.each(["spark", "oxia"])(
+      "%s, which takes no user name, refuses an agent user by name rather than drop it, and connects nothing",
+      async (type) => {
+        const base = makeConnection(type, { id: `${type}-agent-pair`, user: undefined, database: undefined });
+        const connect = await connectStubbed(base);
+        try {
+          const error = await refusal({ ...base, agentUser: "agent", agentPassword: crypto.randomUUID() });
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            `Connection "${type}-agent-pair" configures an agent user, and this engine takes no user name: clear the agent user`,
+          );
+          expect(connect).not.toHaveBeenCalled();
+          expect(getExecutionProfileCacheStats().size).toBe(0);
+        } finally {
+          connect.mockRestore();
+        }
+      },
+    );
+
     test.each(["weaviate", "qdrant"])("%s takes the agent's token alone and refuses an agent user", async (type) => {
       const base = makeConnection(type, { id: `${type}-agent`, user: undefined, port: 6333 });
       const connect = await connectStubbed(base);
@@ -3752,57 +5268,56 @@ describe("acquireExecutionProfileProvider", () => {
       }
     });
 
-    describe("dedicated-user", () => {
-      let restoreCapabilities: () => void = () => {};
-      beforeEach(async () => {
-        const prototype = Object.getPrototypeOf(await createDatabaseProvider(pgConn())) as DatabaseProvider;
-        const original = prototype.getCapabilities;
-        const spy = spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
-          return { ...original.call(this), agentCredential: "dedicated-user" };
-        });
-        restoreCapabilities = () => spy.mockRestore();
+    /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `form`. */
+    async function declaringForm(
+      conn: DatabaseConnection,
+      form: AgentCredentialForm | undefined,
+    ): Promise<{ mockRestore(): void }> {
+      const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+      const original = prototype.getCapabilities;
+      return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+        return { ...original.call(this), agentCredential: form };
       });
-      afterEach(() => restoreCapabilities());
+    }
 
-      test("takes an agent user other than the connection's own with its secret", async () => {
-        const agent = await acquireExecutionProfileProvider(
-          pgConn({ id: "pg-dedicated", agentUser: "agent_ro", agentPassword: "agent-secret" }),
-          "agent-operations",
-        );
+    test("a form a provider declares that Studio's record does not hold is never read: the record's pair refuses an agent secret alone", async () => {
+      const conn = pgConn({ id: "pg-declares-token", agentPassword: crypto.randomUUID() });
+      const capabilities = await declaringForm(conn, "token");
+      const connect = await connectStubbed(conn);
+      try {
+        const error = await refusal(conn);
 
-        expect(agent.config.user).toBe("agent_ro");
-        expect(agent.config.password).toBe("agent-secret");
-      });
-
-      test.each(["test", "TEST", " Test "])(
-        "refuses the connection's own user %p as the agent user before it connects",
-        async (agentUser) => {
-          const conn = pgConn({ id: "pg-same-user", agentUser, agentPassword: "agent-secret" });
-          const connect = await connectStubbed(conn);
-          try {
-            const error = await refusal(conn);
-
-            expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
-            expect(error.message).toBe(
-              'Connection "pg-same-user" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
-            );
-            expect(connect).not.toHaveBeenCalled();
-          } finally {
-            connect.mockRestore();
-          }
-        },
-      );
-
-      test.each([
-        ["an agent secret alone", { agentPassword: "agent-secret" }],
-        ["an agent user alone", { agentUser: "agent_ro" }],
-      ] as const)("refuses %s as incomplete", async (_label, credential) => {
-        const error = await refusal(pgConn({ id: "pg-dedicated-half", ...credential }));
-
+        expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
         expect(error.message).toBe(
-          'Connection "pg-dedicated-half" configures an incomplete agent credential (user and password are both required)',
+          'Connection "pg-declares-token" configures an incomplete agent credential (user and password are both required)',
         );
+        expect(connect).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        connect.mockRestore();
+        capabilities.mockRestore();
+      }
+    });
+
+    test("the form Studio's record holds is read when the provider declares none: Kubernetes takes an agent token alone", async () => {
+      const token = crypto.randomUUID();
+      const conn = kubernetesConn({
+        id: "k8s-declares-none",
+        password: crypto.randomUUID(),
+        agentPassword: token,
       });
+      const capabilities = await declaringForm(conn, undefined);
+      const connect = await connectStubbed(conn);
+      try {
+        const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+        expect(agent.config.password).toBe(token);
+        expect(Object.hasOwn(agent.config, "user")).toBe(false);
+        expect(connect).toHaveBeenCalledTimes(1);
+      } finally {
+        connect.mockRestore();
+        capabilities.mockRestore();
+      }
     });
 
     describe("dedicated-user on S3, the engine that declares it", () => {
@@ -3818,6 +5333,44 @@ describe("acquireExecutionProfileProvider", () => {
           expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
           expect(error.message).toBe(
             'Connection "s3-same-key" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+          );
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
+
+      test.each(["AKIDCONNECTIONKEY", " AkidConnectionKey "])(
+        "refuses the connection's own access key ID %p as the agent user before it connects",
+        async (agentUser) => {
+          const conn = s3Conn({ id: "s3-same-key-spelling", agentUser, agentPassword: crypto.randomUUID() });
+          const connect = await connectStubbed(conn);
+          try {
+            const error = await refusal(conn);
+
+            expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+            expect(error.message).toBe(
+              'Connection "s3-same-key-spelling" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+            );
+            expect(connect).not.toHaveBeenCalled();
+          } finally {
+            connect.mockRestore();
+          }
+        },
+      );
+
+      test.each([
+        ["an agent secret alone", () => ({ agentPassword: crypto.randomUUID() })],
+        ["an agent user alone", () => ({ agentUser: "AKIDAGENTKEY" })],
+      ] as const)("refuses %s as incomplete before it connects", async (_label, credential) => {
+        const conn = s3Conn({ id: "s3-dedicated-half", ...credential() });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
+
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            'Connection "s3-dedicated-half" configures an incomplete agent credential (user and password are both required)',
           );
           expect(connect).not.toHaveBeenCalled();
         } finally {
@@ -3910,15 +5463,12 @@ describe("acquireExecutionProfileProvider", () => {
     expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
     expect(agent.config.host).toBe("127.0.0.1");
     expect(agent.config.port).toBe(54321);
-    // The same specific question as the writable path, for the same reason (D86): this
-    // acquisition may only tear down a forward it opened itself.
-    expect(mockHasTunnel).toHaveBeenLastCalledWith("pg-tunnel-profile", {
-      ssh: conn.sshTunnel,
-      farEnd: { host: "remote-db.example.com", port: 5432 },
-    });
+    // The same report as the writable path, for the same reason: a provider opened on the forward.
+    expect(mockTunnelProviderOpened.mock.calls).toEqual([[await mockCreateSSHTunnel.mock.results[0]?.value]]);
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
-  test("tears down a freshly created tunnel when the profile connection fails", async () => {
+  test("releases the tunnel when the profile connection fails", async () => {
     const conn = pgConn({
       id: "pg-tunnel-fail",
       sshTunnel: {
@@ -3941,11 +5491,54 @@ describe("acquireExecutionProfileProvider", () => {
       const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as
         | { close: ReturnType<typeof mock> }
         | undefined;
+      expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
       expect(tunnel?.close).toHaveBeenCalledTimes(1);
+      expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
       expect(getExecutionProfileCacheStats().size).toBe(0);
     } finally {
       mockPgPool.connect = originalConnect;
     }
+  });
+
+  // An engine off the review record never opens a tunnel at all: "the %s profile is refused on an engine the review
+  // record does not list" below asserts that.
+  test.each([
+    [
+      "the agent credential is refused for its form",
+      pgConn({ id: "pg-tunnel-credential-form", agentUser: "agent_ro" }),
+      "AGENT_CREDENTIAL_UNRESOLVABLE" as const,
+      false,
+    ],
+    [
+      "the provider has no read-only statement path",
+      pgConn({ id: "pg-tunnel-profile" }),
+      "PROFILE_UNSUPPORTED_BY_PROVIDER" as const,
+      true,
+    ],
+  ])("releases the tunnel when %s", async (_refusal, connection, reasonCode, withoutReadOnlyPath) => {
+    const tunnelled: DatabaseConnection = {
+      ...connection,
+      host: "remote-db.example.com",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.example.com",
+        port: 22,
+        username: "admin",
+        authMethod: "password",
+        password: "secret",
+      },
+    };
+
+    const acquire = () => acquireExecutionProfileProvider(tunnelled, "agent-read-only").catch((e: unknown) => e);
+    const error: unknown = await (withoutReadOnlyPath ? withoutPostgresReadOnlyPath(acquire) : acquire());
+
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(reasonCode);
+    const tunnel = (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> } | undefined;
+    expect(tunnel).toBeDefined();
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual([[tunnel]]);
+    expect(tunnel?.close).toHaveBeenCalledTimes(1);
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
   test("evicting an idle shared provider keeps the tunnel of a live profile provider", async () => {
@@ -4330,6 +5923,30 @@ describe("single-writer file reuse", () => {
     expect(findOpenSingleWriterProvider(underTest)).toBe(writable);
   });
 
+  /*
+   * The file identity is built with a template literal, so a value outside the union whose string form is
+   * `libredb` matches the open LibreDB handle's identity and reaches the engine's `READS_FILE_ACCESS_POSTURE` row.
+   * That row is read through the type-id check (FND-1), so the caller is refused by name instead of being lent the
+   * handle. The rows of `OUTSIDE_THE_UNION` cannot stand in here: its malformed values spell mysql, mongodb and redis,
+   * so they never match a LibreDB file and never reach the row.
+   */
+  const coercedToLibredb: readonly (readonly [string, unknown])[] = [
+    ['a String object of "libredb"', new String("libredb")],
+    ['the array ["libredb"]', ["libredb"]],
+    ['an object whose toString answers "libredb"', { toString: () => "libredb" }],
+  ];
+  test.each(coercedToLibredb)(
+    "%s on the file of an open LibreDB handle is refused by name, never lent it",
+    async (_label, value) => {
+      const held = libredbConn();
+      await getOrCreateProvider(held);
+
+      const coerced = { ...held, id: "coerced", type: value as DatabaseConnection["type"] };
+
+      expect(refusalThrownBy(() => findOpenSingleWriterProvider(coerced))).toEqual(refusalOf(value));
+    },
+  );
+
   test("an unresolved spelling of the same path is the same file", async () => {
     const held = libredbConn();
     const writable = await getOrCreateProvider(held);
@@ -4410,6 +6027,53 @@ describe("single-writer file reuse", () => {
     expect(getProviderCacheStats().size).toBe(1);
   });
 
+  /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `singleWriterFile`. */
+  async function declaringSingleWriterFile(
+    conn: DatabaseConnection,
+    singleWriterFile: boolean | undefined,
+  ): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      return { ...original.call(this), singleWriterFile };
+    });
+  }
+
+  test("a provider that declares singleWriterFile on an engine Studio's record does not name registers no file, and no other connection is lent its handle", async () => {
+    const held = makeConnection("postgres", { id: "pg-declares-single-writer", database: "shared" });
+    const capabilities = await declaringSingleWriterFile(held, true);
+    try {
+      await getOrCreateProvider(held);
+
+      // Another record on another host, signing in as another user, that only names the same database.
+      const other = makeConnection("postgres", {
+        id: "pg-other-server",
+        host: "other.internal",
+        user: "other_user",
+        password: randomUUID(),
+        database: "shared",
+      });
+
+      expect(findOpenSingleWriterProvider(other)).toBeNull();
+      expect(isSingleWriterFileOpen(other)).toBe(false);
+    } finally {
+      capabilities.mockRestore();
+      await removeProvider(held.id);
+    }
+  });
+
+  test("Studio's record registers the file of a single-writer engine whose provider declares nothing, and another connection on the file is lent the open handle", async () => {
+    const held = libredbConn();
+    const capabilities = await declaringSingleWriterFile(held, undefined);
+    try {
+      const writable = await getOrCreateProvider(held);
+
+      expect(findOpenSingleWriterProvider({ ...held, id: "libredb-same-file" })).toBe(writable);
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
   test("a connection with no file path holds no file, and matches nothing", async () => {
     const conn = libredbConn();
     await getOrCreateProvider(conn);
@@ -4481,6 +6145,49 @@ describe("single-writer file reuse", () => {
     // one. On the base before the fix this was two entries on one file.
     expect(getProviderCacheStats()).toEqual({ size: 1, connections: ["duck-flip-close"] });
     await removeProvider(conn.id);
+  });
+
+  test("a stale handle's failed disconnect is logged as its own text, and withheld when it holds the record's credential", async () => {
+    // DuckDB receives no password; the record carries one all the same, and the stale handle's line reads the scrub of
+    // the record that handle was built from.
+    const password = randomUUID();
+    const conn = makeConnection("duckdb", {
+      id: "duck-flip-log",
+      database: join(dir, "posture-flip-log.duckdb"),
+      password,
+    });
+    /** Closes the real handle, so the file is released for the reopen, then rejects with `failure`. */
+    const closesThenFails = (provider: DatabaseProvider, failure: Error) => {
+      const realDisconnect = provider.disconnect.bind(provider);
+      provider.disconnect = async () => {
+        await realDisconnect();
+        throw failure;
+      };
+    };
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      closesThenFails(
+        await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true }),
+        new Error("disconnect failed"),
+      );
+      closesThenFails(await getOrCreateProvider(conn, {}, { allowExternalFileAccess: false }), echoing(password));
+      await getOrCreateProvider(conn, {}, { allowExternalFileAccess: true });
+
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error disconnecting a stale single-writer handle before reopening",
+          { connectionId: "duck-flip-log", error: "Error: disconnect failed" },
+        ],
+        [
+          "[DB] Error disconnecting a stale single-writer handle before reopening",
+          { connectionId: "duck-flip-log", error: withheldLine("Error") },
+        ],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+      await removeProvider(conn.id);
+    }
   });
 
   test("a reopen under a new key closes only the stale handle of its own record, not another record on the file", async () => {
@@ -4745,13 +6452,6 @@ describe("single-writer file reuse", () => {
 // ============================================================================
 
 describe("withOneShotTunnel", () => {
-  // `mockHasTunnel` is not reset by the file-level beforeEach, and one assertion below
-  // is that this scope never consults the shared pool - a negative that only means
-  // anything against a counter this describe owns.
-  beforeEach(() => {
-    mockHasTunnel.mockClear();
-  });
-
   const tunnelled = () =>
     makeConnection("postgres", {
       id: "one-shot-conn",
@@ -4793,9 +6493,10 @@ describe("withOneShotTunnel", () => {
       5432,
       { shared: false },
     );
-    // The shared pool is never consulted: a one-shot scope must not adopt, or be
-    // mistaken for, the tunnel serving a cached provider of the same connection.
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    // The shared pool is never told of it: a one-shot scope must not hold, or release, a claim
+    // on the tunnel serving a cached provider of the same connection.
+    expect(mockTunnelProviderOpened).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
   });
 
   test("closes the tunnel after the callback succeeds", async () => {
@@ -4814,7 +6515,7 @@ describe("withOneShotTunnel", () => {
     expect(await closeOf(0)).toHaveBeenCalledTimes(1);
   });
 
-  test("propagates the callback failure even when closing the tunnel throws", async () => {
+  test("propagates the callback failure even when closing the tunnel throws, and logs the failed close", async () => {
     mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
       localHost: "127.0.0.1",
       localPort: 54321,
@@ -4824,12 +6525,50 @@ describe("withOneShotTunnel", () => {
         throw new Error("close failed");
       }),
     }));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      await expect(
+        withOneShotTunnel(tunnelled(), async () => {
+          throw new Error("connect refused");
+        }),
+      ).rejects.toThrow("connect refused");
 
-    await expect(
-      withOneShotTunnel(tunnelled(), async () => {
-        throw new Error("connect refused");
+      expect(warn.mock.calls).toEqual([
+        ["[DB] Error closing a one-shot SSH tunnel", { connectionId: "one-shot-conn", error: "Error: close failed" }],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a tunnel close failure that holds the connection's credential is logged withheld, and the callback's failure is what the caller gets", async () => {
+    const password = randomUUID();
+    mockCreateSSHTunnel.mockImplementationOnce(async (_id, _sshConfig, remoteHost, remotePort) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw echoing(password);
       }),
-    ).rejects.toThrow("connect refused");
+    }));
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const error = await withOneShotTunnel({ ...tunnelled(), password }, async () => {
+        throw new Error("connect refused");
+      }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+
+      expect((error as Error).message).toBe("connect refused");
+      expect(warn.mock.calls).toEqual([
+        ["[DB] Error closing a one-shot SSH tunnel", { connectionId: "one-shot-conn", error: withheldLine("Error") }],
+      ]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("opens no tunnel when the connection has none configured", async () => {
@@ -4852,28 +6591,256 @@ describe("withOneShotTunnel", () => {
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
   });
 
-  test("opens no tunnel for a connection with no host and port to forward to", async () => {
-    // A connection-string connection (MongoDB, Couchbase, ClickHouse) and SQLite carry
-    // neither, so there is no endpoint to rewrite - the same rule the pooled paths apply.
+  test("refuses a tunnel that is on for a connection with no host and port to forward to, and runs nothing", async () => {
+    // A connection-string connection carries neither, so no tunnel can be opened, and a provider built anyway would
+    // reach its server past the tunnel the connection asked for (FND-2 slice 5).
     const stringOnly = tunnelled();
     delete stringOnly.host;
     delete stringOnly.port;
+    const run = mock(async () => undefined);
 
-    await withOneShotTunnel(stringOnly, async () => undefined);
+    const error = await withOneShotTunnel(stringOnly, run).catch((e: unknown) => e);
 
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(UNOPENABLE_TUNNEL);
+    expect(run).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Core decides the SSH tunnel before it dials (FND-2 slice 5) ──
+
+const UNOPENABLE_TUNNEL =
+  "This connection's SSH tunnel is on, but the connection names no Host and Port for the tunnel to forward to, so no tunnel was opened and nothing was sent. Fill in Host and Port, or turn the tunnel off.";
+
+describe("core decides the SSH tunnel before it dials (FND-2 slice 5)", () => {
+  const bastion = (): SSHTunnelConfig => ({
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  });
+
+  const refusedEngines = [
+    {
+      type: "kafka",
+      port: 9092,
+      sentence:
+        "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
+    },
+    {
+      type: "couchbase",
+      port: 8091,
+      sentence:
+        "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off.",
+    },
+    {
+      type: "sqlite",
+      port: 1,
+      sentence:
+        "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+    },
+  ];
+
+  const entryPoints = {
+    getOrCreateProvider: (connection: DatabaseConnection) => getOrCreateProvider(connection),
+    acquireExecutionProfileProvider: (connection: DatabaseConnection) =>
+      acquireExecutionProfileProvider(connection, "agent-operations"),
+    withOneShotTunnel: (connection: DatabaseConnection) => withOneShotTunnel(connection, async () => undefined),
+  };
+
+  const refusal = async (run: () => Promise<unknown>): Promise<Error> => {
+    const error = await run().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    return error as Error;
+  };
+
+  for (const [name, enter] of Object.entries(entryPoints)) {
+    for (const { type, port, sentence } of refusedEngines) {
+      test(`${name} refuses a tunnel on ${type}, an engine that takes none, and never dials the bastion`, async () => {
+        const connection = makeConnection(type, { id: `refused-${type}`, port, sshTunnel: bastion() });
+
+        expect((await refusal(() => enter(connection))).message).toBe(sentence);
+        expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      });
+    }
+
+    test(`${name} refuses an enabled that is not a boolean, and never dials the bastion`, async () => {
+      const connection = makeConnection("postgres", {
+        id: "enabled-yes",
+        sshTunnel: { ...bastion(), enabled: "yes" as unknown as boolean },
+      });
+
+      expect((await refusal(() => enter(connection))).message).toBe(
+        "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
+      );
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    });
+
+    test(`${name} refuses a partial tunnel by name, not with a TypeError`, async () => {
+      for (const sshTunnel of [{ enabled: false }, {}]) {
+        const connection = makeConnection("postgres", {
+          id: "partial-tunnel",
+          sshTunnel: sshTunnel as unknown as SSHTunnelConfig,
+        });
+        expect((await refusal(() => enter(connection))).message).toBe(
+          "The connection's sshTunnel.host must be text; nothing was sent.",
+        );
+      }
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    });
+
+    test(`${name} refuses a tunnel that is on with no port before the cache key`, async () => {
+      const connection = makeConnection("postgres", { id: "no-port", port: undefined, sshTunnel: bastion() });
+
+      expect((await refusal(() => enter(connection))).message).toBe(UNOPENABLE_TUNNEL);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
+  }
+
+  test("the engine's refusal comes before the statement review on a profile that sends statements", async () => {
+    const connection = makeConnection("kafka", { id: "kafka-read-only", port: 9092, sshTunnel: bastion() });
+
+    const error = await refusal(() => acquireExecutionProfileProvider(connection, "agent-read-only"));
+
+    expect(error.message).toBe(refusedEngines[0].sentence);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("createDatabaseProvider refuses a tunnel that is on and was not opened", async () => {
+    const connection = makeConnection("postgres", { id: "not-opened", sshTunnel: bastion() });
+
+    expect((await refusal(() => createDatabaseProvider(connection))).message).toBe(
+      "This connection's SSH tunnel is on and no tunnel was opened for it, so no provider was built and nothing was sent: build the provider inside withOneShotTunnel, or get it from getOrCreateProvider, which open the tunnel first.",
+    );
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations reads a tunnelled record's declarations without dialling", async () => {
+    const connection = makeConnection("postgres", { id: "declarations-tunnelled", sshTunnel: bastion() });
+    const unconnected = await createDatabaseProvider(makeConnection("postgres", { id: "declarations-plain" }));
+
+    const declarations = await readProviderDeclarations(connection);
+
+    expect(declarations).toEqual({
+      capabilities: unconnected.getCapabilities(),
+      labels: unconnected.getLabels(),
+      supportsQueryCancel: true,
+    });
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations refuses what the decision refuses", async () => {
+    const kafka = makeConnection("kafka", { id: "declarations-kafka", port: 9092, sshTunnel: bastion() });
+    const noPort = makeConnection("postgres", { id: "declarations-no-port", port: undefined, sshTunnel: bastion() });
+
+    expect((await refusal(() => readProviderDeclarations(kafka))).message).toBe(refusedEngines[0].sentence);
+    expect((await refusal(() => readProviderDeclarations(noPort))).message).toBe(UNOPENABLE_TUNNEL);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("readProviderDeclarations hands back data, never the provider", async () => {
+    const declarations = await readProviderDeclarations(
+      makeConnection("postgres", { id: "declarations-data", sshTunnel: bastion() }),
+      { allowExternalFileAccess: false },
+    );
+
+    expect(Object.keys(declarations).sort()).toEqual(["capabilities", "labels", "supportsQueryCancel"]);
+    const functions = (value: unknown): number =>
+      typeof value === "function"
+        ? 1
+        : value !== null && typeof value === "object"
+          ? Object.values(value).reduce((sum: number, inner) => sum + functions(inner), 0)
+          : 0;
+    expect(functions(declarations)).toBe(0);
+  });
+
+  test("an MQTT record whose tunnel is on and names no port is refused before any socket on every builder", async () => {
+    const mqtt = makeConnection("mqtt", {
+      id: "mqtt-no-port",
+      host: "broker.example.com",
+      port: undefined,
+      password: crypto.randomUUID(),
+      sshTunnel: bastion(),
+    });
+    const builders: Array<() => Promise<unknown>> = [
+      () => getOrCreateProvider(mqtt),
+      () => acquireExecutionProfileProvider(mqtt, "agent-operations"),
+      () => withOneShotTunnel(mqtt, async () => undefined),
+      () => createDatabaseProvider(mqtt),
+      () => readProviderDeclarations(mqtt),
+    ];
+    for (const build of builders) expect((await refusal(build)).message).toBe(UNOPENABLE_TUNNEL);
+    // The same record with its port, built without the tunnel core would open, is refused at build on the published
+    // createDatabaseProvider too.
+    expect((await refusal(() => createDatabaseProvider({ ...mqtt, port: 1883 }))).message).toContain(
+      "no tunnel was opened for it",
+    );
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("the same records with the tunnel off are not refused for the tunnel", async () => {
+    const off = makeConnection("postgres", { id: "tunnel-off", sshTunnel: { ...bastion(), enabled: false } });
+    const seen = await withOneShotTunnel(off, async (effective) => effective);
+
+    expect(seen).toBe(off);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+});
+
+describe("the masking exemption a client is handed", () => {
+  const WIDE_REASON = "Every column of this engine is said to carry no personal data.";
+
+  /** Spies `getCapabilities` on the prototype of `conn`'s provider so the built provider declares `exemption`. */
+  async function declaringExemption(
+    conn: DatabaseConnection,
+    exemption: ProviderCapabilities["maskingExemptColumns"],
+  ): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      const capabilities: ProviderCapabilities = { ...original.call(this) };
+      if (exemption === undefined) delete capabilities.maskingExemptColumns;
+      else capabilities.maskingExemptColumns = exemption;
+      return capabilities;
+    });
+  }
+
+  test("a masking exemption a provider declares that Studio's record does not hold is never read: readProviderDeclarations answers none", async () => {
+    const conn = makeConnection("postgres", { id: "pg-declares-exemption" });
+    const capabilities = await declaringExemption(conn, { column: ".*", reason: WIDE_REASON });
+    try {
+      const declarations = await readProviderDeclarations(conn);
+
+      expect(Object.hasOwn(declarations.capabilities, "maskingExemptColumns")).toBe(false);
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
+  test("the masking exemption Studio's record holds is read when the provider declares none: Modbus answers its address column", async () => {
+    const conn = CENSUS_CONNECTION.modbus;
+    const capabilities = await declaringExemption(conn, undefined);
+    try {
+      const declarations = await readProviderDeclarations(conn);
+
+      expect(declarations.capabilities.maskingExemptColumns).toEqual(MASKING_EXEMPT_COLUMNS.modbus!);
+    } finally {
+      capabilities.mockRestore();
+    }
   });
 });
 
 // ─── A readOnly the engine cannot keep is refused before anything is built or dialled (#1089) ──
 
 describe("assertReadOnlyHonoured", () => {
-  // `mockHasTunnel` is not reset by the file-level beforeEach, and two assertions below are that no
-  // pool is consulted: negatives that only mean anything against a counter this describe owns.
-  beforeEach(() => {
-    mockHasTunnel.mockClear();
-  });
-
   const bastion: SSHTunnelConfig = {
     enabled: true,
     host: "bastion.example.com",
@@ -4941,13 +6908,26 @@ describe("assertReadOnlyHonoured", () => {
   });
 
   test("the refusal names a type it does not know with its line breaks taken out", () => {
-    // The type arrives in the request body, and the factory strips a line break from every
-    // caller-supplied value it interpolates into a message, so a type cannot write a line of its own.
-    const error = thrownBy(() => assertReadOnlyHonoured(makeConnection("postgres\r\ninjected", { readOnly: true })));
+    // The type arrives in the request body. A type that is not a type id is refused by name before the
+    // engine's row is read (FND-1), and the sentence quotes it with its line breaks escaped, so a type
+    // cannot write a line of its own.
+    const type = "postgres\r\ninjected";
+    const error = thrownBy(() => assertReadOnlyHonoured(makeConnection(type, { readOnly: true })));
 
-    expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect((error as Error).message).toBe(unenforced("postgres  injected"));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as Error).message).toBe(unknownTypeSentence(type));
+    expect((error as Error).message).toContain(String.raw`"postgres\r\ninjected"`);
+    expect((error as Error).message).not.toMatch(/[\r\n]/);
   });
+
+  test.each(OUTSIDE_THE_UNION)(
+    "readOnly: true on %s is refused by name before the engine's row is read",
+    (_label, value) => {
+      expect(
+        refusalThrownBy(() => assertReadOnlyHonoured(makeConnection(value as string, { readOnly: true }))),
+      ).toEqual(refusalOf(value));
+    },
+  );
 
   test("createDatabaseProvider refuses before it builds a provider", async () => {
     // The first thing the factory does after the check is log the provider it is creating, so a log
@@ -4979,7 +6959,7 @@ describe("assertReadOnlyHonoured", () => {
       log.mockRestore();
     }
 
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getProviderCacheStats().size).toBe(0);
   });
@@ -5026,7 +7006,7 @@ describe("assertReadOnlyHonoured", () => {
       unenforced("postgres"),
     );
 
-    expect(mockHasTunnel).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
     expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -5069,6 +7049,319 @@ describe("assertReadOnlyHonoured", () => {
     );
 
     expect(run).not.toHaveBeenCalled();
+  });
+});
+
+// ─── A connection whose type names no provider is refused before anything else (FND-1) ──
+
+describe("a connection whose type names no provider (FND-1)", () => {
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  /** The lines `createDatabaseProvider` logs, one for every provider it builds. */
+  const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
+    log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+
+  const rejection = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  const tunnelled = (type: string | undefined) =>
+    ({
+      id: `fnd1-${String(type)}`,
+      name: "Unknown",
+      type,
+      host: "db.internal",
+      port: 5432,
+      sshTunnel: bastion,
+      createdAt: new Date(),
+    }) as unknown as DatabaseConnection;
+
+  test("createDatabaseProvider refuses an unknown type by name before it builds anything", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as UnknownProviderError).reason).toBe("unknown");
+      expect((error as UnknownProviderError).typeId).toBe("acmefoo");
+      expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("createDatabaseProvider refuses a connection with no type as absent, not with a TypeError", async () => {
+    const connection = makeConnection("postgres");
+    delete (connection as { type?: unknown }).type;
+    const error = await rejection(() => createDatabaseProvider(connection));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as UnknownProviderError).reason).toBe("absent");
+    expect((error as Error).message).toBe(ABSENT_TYPE_SENTENCE);
+  });
+
+  test.each(["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"])(
+    "createDatabaseProvider refuses the prototype key %p as unknown",
+    async (type) => {
+      const error = await rejection(() => createDatabaseProvider(makeConnection(type)));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as UnknownProviderError).typeId).toBe(type);
+    },
+  );
+
+  test("an unknown type with readOnly: true is refused for its type, not for the mode", async () => {
+    const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo", { readOnly: true })));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+  });
+
+  test("an unknown type is refused for its type while LIBREDB_ENABLED_PROVIDERS is set", async () => {
+    const before = process.env.LIBREDB_ENABLED_PROVIDERS;
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres";
+    try {
+      const error = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect((error as Error).message).toBe(unknownTypeSentence("acmefoo"));
+    } finally {
+      if (before === undefined) delete process.env.LIBREDB_ENABLED_PROVIDERS;
+      else process.env.LIBREDB_ENABLED_PROVIDERS = before;
+    }
+  });
+
+  test("an unknown type is refused for its type while DB_HTTP_BLOCK_PRIVATE_HOSTS is invalid, by every entry point, before the tunnel", async () => {
+    const before = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag("yes");
+    const run = mock(async () => "ran");
+    try {
+      const built = await rejection(() => createDatabaseProvider(makeConnection("acmefoo")));
+      expect(built).toBeInstanceOf(UnknownProviderError);
+      expect((built as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      for (const refused of [
+        await rejection(() => getOrCreateProvider(tunnelled("acmefoo"))),
+        await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations")),
+        await rejection(() => withOneShotTunnel(tunnelled("acmefoo"), run)),
+      ]) {
+        expect(refused).toBeInstanceOf(UnknownProviderError);
+        expect((refused as Error).message).toBe(unknownTypeSentence("acmefoo"));
+      }
+    } finally {
+      setEgressFlag(before);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("a record with neither an id nor a type is refused for its type by both cached entry points", async () => {
+    const connection = { name: "Neither", host: "db.internal", port: 5432 } as unknown as DatabaseConnection;
+    const cached = await rejection(() => getOrCreateProvider(connection));
+    expect(cached).toBeInstanceOf(UnknownProviderError);
+    const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+    expect(profiled).toBeInstanceOf(UnknownProviderError);
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("getOrCreateProvider refuses an unknown tunnelled type before the tunnel and the cache", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const error = await rejection(() => getOrCreateProvider(tunnelled("acmefoo")));
+      expect(error).toBeInstanceOf(UnknownProviderError);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("acquireExecutionProfileProvider refuses an unknown tunnelled type before the tunnel and the cache", async () => {
+    const error = await rejection(() => acquireExecutionProfileProvider(tunnelled("acmefoo"), "agent-operations"));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("withOneShotTunnel refuses an unknown tunnelled type before it dials, and never runs its callback", async () => {
+    const run = mock(async () => "ran");
+    const error = await rejection(() => withOneShotTunnel(tunnelled("acmefoo"), run));
+    expect(error).toBeInstanceOf(UnknownProviderError);
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  test("the same tunnelled record with a type id opens its tunnel and is cached, as before", async () => {
+    const provider = await getOrCreateProvider(tunnelled("postgres"));
+    expect(provider.isConnected()).toBe(true);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    expect(getProviderCacheStats().connections).toEqual(["fnd1-postgres"]);
+  });
+});
+
+/**
+ * A tunnelled connection whose provider refuses to be built.
+ *
+ * Both cached entry points dial the tunnel before they build the provider, so a refusal raised while the provider is
+ * built (a constructor's `validate()`) came after the tunnel. It was raised outside the code that closes a freshly
+ * dialled tunnel, so the SSH client and its loopback listener stayed open, pooled under a connection id no cache entry
+ * held. The idle sweep never reached them; only a disconnect of the connection (`removeProvider`) or the eviction of
+ * another entry of the same id closed them, and a `seed:` connection's disconnect removes nothing without governance.
+ * MySQL without a database and Apache Cassandra without a local data centre are two such refusals; each entry point is
+ * tested with both.
+ */
+describe("a tunnelled connection its provider refuses to build", () => {
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: "pw",
+  };
+
+  // MySQL alone: Apache Cassandra without a local data centre was the second record until core refused Cassandra's
+  // tunnel before any dial (FND-2 slice 5), and one constructor refusal drives every release path below.
+  const refusedRecords = [
+    {
+      label: "MySQL without a database",
+      connection: makeConnection("mysql", { id: "refused-mysql", port: 3306, database: undefined, sshTunnel: bastion }),
+      sentence: "Database name is required for MySQL",
+    },
+  ];
+
+  const rejection = async (run: () => Promise<unknown>): Promise<unknown> => {
+    try {
+      await run();
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+
+  /** The tunnel the factory was handed by its one `createSSHTunnel` call. */
+  const dialledTunnel = async () => {
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    return (await mockCreateSSHTunnel.mock.results[0]?.value) as { close: ReturnType<typeof mock> };
+  };
+
+  for (const { label, connection, sentence } of refusedRecords) {
+    test(`getOrCreateProvider releases the tunnel it was handed and raises the refusal unchanged: ${label}`, async () => {
+      const error = await rejection(() => getOrCreateProvider(connection));
+
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(sentence);
+      expect((await dialledTunnel()).close).toHaveBeenCalledTimes(1);
+      expect(getProviderCacheStats().size).toBe(0);
+    });
+
+    test(`acquireExecutionProfileProvider releases the tunnel it was handed and raises the refusal unchanged: ${label}`, async () => {
+      const error = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(sentence);
+      expect((await dialledTunnel()).close).toHaveBeenCalledTimes(1);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    });
+  }
+
+  test("a tunnel the pool keeps for another caller stays open after the refusal, on both entry points", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
+    const editor = await rejection(() => getOrCreateProvider(connection));
+    mockReleaseUnopenedTunnel.mockImplementationOnce(async () => {});
+    const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+    expect((editor as Error).message).toBe(sentence);
+    expect((profiled as Error).message).toBe(sentence);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(2);
+    const tunnels = (await Promise.all(mockCreateSSHTunnel.mock.results.map((result) => result.value))) as {
+      close: ReturnType<typeof mock>;
+    }[];
+    expect(mockReleaseUnopenedTunnel.mock.calls).toEqual(tunnels.map((tunnel) => [tunnel]));
+    for (const tunnel of tunnels) expect(tunnel.close).not.toHaveBeenCalled();
+  });
+
+  test("a tunnel that fails to close is logged, and the refusal is still what the caller gets", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    const failingTunnel = async (_id: string, _ssh: unknown, remoteHost: string, remotePort: number) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw new Error("tunnel close failed");
+      }),
+    });
+    mockCreateSSHTunnel.mockImplementationOnce(failingTunnel).mockImplementationOnce(failingTunnel);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const editor = await rejection(() => getOrCreateProvider(connection));
+      const profiled = await rejection(() => acquireExecutionProfileProvider(connection, "agent-operations"));
+
+      expect(editor).toBeInstanceOf(DatabaseConfigError);
+      expect((editor as Error).message).toBe(sentence);
+      expect(profiled).toBeInstanceOf(DatabaseConfigError);
+      expect((profiled as Error).message).toBe(sentence);
+      expect(warn.mock.calls).toEqual([
+        [
+          "[DB] Error closing the SSH tunnel of a provider that did not open",
+          { connectionId: "refused-mysql", error: "Error: tunnel close failed" },
+        ],
+        [
+          "[DB] Error closing the SSH tunnel of a provider that did not open",
+          { connectionId: "refused-mysql", error: "Error: tunnel close failed" },
+        ],
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a tunnel close failure that holds the connection's credential is logged withheld on both entry points", async () => {
+    const [{ connection, sentence }] = refusedRecords;
+    const password = randomUUID();
+    const secret = { ...connection, password };
+    const failingTunnel = async (_id: string, _ssh: unknown, remoteHost: string, remotePort: number) => ({
+      localHost: "127.0.0.1",
+      localPort: 54321,
+      remoteHost,
+      remotePort,
+      close: mock(async () => {
+        throw echoing(password);
+      }),
+    });
+    mockCreateSSHTunnel.mockImplementationOnce(failingTunnel).mockImplementationOnce(failingTunnel);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const editor = await rejection(() => getOrCreateProvider(secret));
+      const profiled = await rejection(() => acquireExecutionProfileProvider(secret, "agent-operations"));
+
+      expect((editor as Error).message).toBe(sentence);
+      expect((profiled as Error).message).toBe(sentence);
+      const line: [string, { connectionId: string; error: string }] = [
+        "[DB] Error closing the SSH tunnel of a provider that did not open",
+        { connectionId: "refused-mysql", error: withheldLine("Error") },
+      ];
+      expect(warn.mock.calls).toEqual([line, line]);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -5215,6 +7508,41 @@ describe("cached connection query timeout", () => {
       expect((cleared as unknown as { queryTimeout: number }).queryTimeout).toBe(60000);
     },
   );
+  test.each([false, true])(
+    "a failed disconnect after a timeout change is logged withheld when its text holds the connection's credential, and as its own text when it holds none (profiled: %s)",
+    async (profiled) => {
+      const acquire = (connection: DatabaseConnection) =>
+        profiled ? acquireExecutionProfileProvider(connection, "agent-read-only") : getOrCreateProvider(connection);
+      const password = randomUUID();
+      const connection = makeConnection("postgres", { id: "timeout-change-log", password });
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const initial = await acquire(connection);
+        initial.disconnect = async () => {
+          throw echoing(password);
+        };
+        const changed = await acquire({ ...connection, queryTimeout: 120000 });
+        changed.disconnect = async () => {
+          throw new Error("socket already gone");
+        };
+        await acquire(connection);
+
+        expect(warn.mock.calls).toEqual([
+          [
+            "[DB] Error disconnecting provider after query timeout change",
+            { connectionId: "timeout-change-log", error: withheldLine("Error") },
+          ],
+          [
+            "[DB] Error disconnecting provider after query timeout change",
+            { connectionId: "timeout-change-log", error: "Error: socket already gone" },
+          ],
+        ]);
+        expect(JSON.stringify(warn.mock.calls)).not.toContain(password);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 });
 
 // ============================================================================
@@ -5301,10 +7629,11 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
     const roundTripped = JSON.parse(JSON.stringify(provider.config)) as DatabaseConnection;
     expect(await connectionFingerprint(roundTripped)).not.toBe(await connectionFingerprint(stored));
     // Fail closed: what a round trip leaves is the LOCAL endpoint, which is what the routes
-    // refuse. The seal never falls back to "equal if we cannot tell".
-    expect(await connectionFingerprint(roundTripped)).toBe(
-      await connectionFingerprint({ ...stored, host: "127.0.0.1", port: 54321 }),
-    );
+    // refuse. The seal never falls back to "equal if we cannot tell". The route marker is a
+    // symbol too and the provider holds no `sshTunnel` (FND-2 slice 5b), so no route is left.
+    const localOnly: DatabaseConnection = { ...stored, host: "127.0.0.1", port: 54321 };
+    delete localOnly.sshTunnel;
+    expect(await connectionFingerprint(roundTripped)).toBe(await connectionFingerprint(localOnly));
   });
 
   test("the execution-profile path carries it too, credential substitution and all", async () => {
@@ -5332,6 +7661,200 @@ describe("a tunnelled provider fingerprints the far end (X23)", () => {
   });
 });
 
+// ============================================================================
+// The SSH tunnel's secret fields stay in core (FND-2, docs/SECURITY.md 3.41)
+// ----------------------------------------------------------------------------
+// Core dials the bastion with the record's tunnel password, private key and
+// passphrase, and builds the provider from a copy of the connection without
+// `sshTunnel`, the tunnel's route under `TUNNEL_ROUTE` in its place (slice 5b).
+// Each entry point is driven here.
+// ============================================================================
+
+describe("the SSH tunnel's secret fields stay in core (FND-2)", () => {
+  const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
+  const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
+  const TUNNEL_MARKER_THREE = "not-a-real-tunnel-marker-5d0e";
+
+  /** A tunnelled PostgreSQL record with a marker in each tunnel field the classification calls secret. */
+  function record(id: string, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
+    return makeConnection("postgres", {
+      id,
+      host: "db.internal",
+      port: 5432,
+      database: "app",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.internal",
+        port: 22,
+        username: "jump",
+        authMethod: "privateKey",
+        password: TUNNEL_MARKER_ONE,
+        privateKey: TUNNEL_MARKER_TWO,
+        passphrase: TUNNEL_MARKER_THREE,
+      },
+      ...overrides,
+    });
+  }
+
+  function expectWithoutTunnelSecrets(provider: DatabaseProvider): void {
+    expect(provider.config.host).toBe("127.0.0.1");
+    expect(Object.hasOwn(provider.config, "sshTunnel")).toBe(false);
+    // The route of the record's tunnel, written out by hand.
+    expect((provider.config as WithTunnelRoute)[TUNNEL_ROUTE]).toBe("4:true16:bastion.internal2:224:jump");
+    // The whole provider, not only its config: options and the execution context reach it too.
+    expect(markersReachableFrom(provider, [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE])).toEqual([]);
+  }
+
+  function expectRecordKeepsThem(stored: DatabaseConnection): void {
+    expect(stored.sshTunnel?.password).toBe(TUNNEL_MARKER_ONE);
+    expect(stored.sshTunnel?.privateKey).toBe(TUNNEL_MARKER_TWO);
+    expect(stored.sshTunnel?.passphrase).toBe(TUNNEL_MARKER_THREE);
+  }
+
+  test("getOrCreateProvider dials the tunnel with the record's secret fields and builds the provider without the tunnel, its route under core's marker", async () => {
+    const stored = record("fnd2-cached");
+    const provider = await getOrCreateProvider(stored);
+    expect(mockCreateSSHTunnel).toHaveBeenCalledTimes(1);
+    // Core dials with the record's own tunnel object, the three secret fields in it.
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectRecordKeepsThem(stored);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("acquireExecutionProfileProvider builds its provider without the tunnel, its route under core's marker", async () => {
+    const stored = record("fnd2-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    const provider = await acquireExecutionProfileProvider(stored, "agent-read-only");
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expect(provider.config.user).toBe("agent_ro");
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  test("a provider built inside withOneShotTunnel holds no tunnel, its route under core's marker", async () => {
+    const stored = record("fnd2-one-shot");
+    const provider = await withOneShotTunnel(stored, async (effective) => {
+      // The callback is core code and still receives the record's whole tunnel (plan Q1).
+      expect(effective.sshTunnel).toBe(stored.sshTunnel);
+      return await createDatabaseProvider(effective);
+    });
+    expect(mockCreateSSHTunnel.mock.calls[0]?.[1]).toBe(stored.sshTunnel);
+    expectWithoutTunnelSecrets(provider);
+  });
+
+  const CONNECTION_REFUSAL =
+    "A connection with an sshTunnel must be a plain object of data fields; no provider was built.";
+  const TUNNEL_REFUSAL = "The connection's sshTunnel must be a plain object of data fields; no provider was built.";
+
+  /** A tunnel whose `enabled` is a prototype getter, which a copy of the tunnel would lose. */
+  class GetterTunnel {
+    host = "bastion.internal";
+    port = 22;
+    username = "jump";
+    password = TUNNEL_MARKER_ONE;
+    get enabled(): boolean {
+      return true;
+    }
+  }
+
+  /**
+   * Tunnelled records that are not plain data, each with the refusal that names it. An entry point that opens the tunnel
+   * builds from a copy of the record, and a copy loses a field defined on the prototype or as not enumerable.
+   */
+  const NOT_PLAIN_DATA: Array<[string, (id: string) => DatabaseConnection, string]> = [
+    [
+      "a record whose database is not enumerable",
+      (id) => {
+        const hidden = record(id);
+        Object.defineProperty(hidden, "database", { value: "app", enumerable: false });
+        return hidden;
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a record whose password is a prototype getter",
+      (id) => {
+        const withoutPassword = record(id);
+        delete withoutPassword.password;
+        const prototype = {
+          get password(): string {
+            return "stand-in-database-value";
+          },
+        };
+        return Object.assign(Object.create(prototype) as DatabaseConnection, withoutPassword);
+      },
+      CONNECTION_REFUSAL,
+    ],
+    [
+      "a tunnel whose enabled is a prototype getter",
+      (id) => record(id, { sshTunnel: new GetterTunnel() as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+    [
+      "a tunnel that is a string",
+      (id) => record(id, { sshTunnel: "on" as unknown as DatabaseConnection["sshTunnel"] }),
+      TUNNEL_REFUSAL,
+    ],
+  ];
+
+  test.each(NOT_PLAIN_DATA)("withOneShotTunnel refuses by name, before it dials, %s", async (_case, build, refusal) => {
+    const run = mock(async (effective: DatabaseConnection) => await createDatabaseProvider(effective));
+    const error: unknown = await withOneShotTunnel(build("fnd2-shape-one-shot"), run).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(refusal);
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test.each(NOT_PLAIN_DATA)(
+    "getOrCreateProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await getOrCreateProvider(build("fnd2-shape-cached")).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getProviderCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "acquireExecutionProfileProvider refuses by name, before the cache key and the dial, %s",
+    async (_case, build, refusal) => {
+      const error: unknown = await acquireExecutionProfileProvider(
+        build("fnd2-shape-profile"),
+        "agent-read-only",
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(refusal);
+      expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+    },
+  );
+
+  test.each(NOT_PLAIN_DATA)(
+    "createDatabaseProvider refuses by name, before it logs a build, %s",
+    async (_case, build, refusal) => {
+      const log = spyOn(console, "log");
+      try {
+        await expect(createDatabaseProvider(build("fnd2-shape-direct"))).rejects.toThrow(refusal);
+        expect(log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"))).toEqual([]);
+      } finally {
+        log.mockRestore();
+      }
+    },
+  );
+
+  test("the caller's record keeps them", async () => {
+    const cached = record("fnd2-keeps-cached");
+    await getOrCreateProvider(cached);
+    expectRecordKeepsThem(cached);
+    const profiled = record("fnd2-keeps-profile", { agentUser: "agent_ro", agentPassword: STAND_IN_AGENT_PASSWORD });
+    await acquireExecutionProfileProvider(profiled, "agent-read-only");
+    expectRecordKeepsThem(profiled);
+    const oneShot = record("fnd2-keeps-one-shot");
+    await withOneShotTunnel(oneShot, async (effective) => await createDatabaseProvider(effective));
+    expectRecordKeepsThem(oneShot);
+  });
+});
+
 test("a denied SQLite caller cannot borrow a cached administrator handle", async () => {
   const connection = makeConnection("sqlite", { database: ":memory:" });
   const trusted = await getOrCreateProvider(connection, {}, { allowExternalFileAccess: true });
@@ -5350,8 +7873,16 @@ test("a denied SQLite caller cannot borrow a cached administrator handle", async
 
 // Imported after the factory, which this file must evaluate first (the docblock above).
 const { SnowflakeProvider } = await import("@/lib/db/providers/sql/snowflake/index");
+const { SNOWFLAKE_FIELD_SENTENCES } = await import("@/lib/db/providers/sql/snowflake/account-host");
+const { testConnection } = await import("@/lib/api/test-connection");
+const { databaseErrorBody } = await import("@/lib/api/error-body");
 
 describe("the Snowflake provider in the factory", () => {
+  /**
+   * Generated once per run, so it is never a literal credential in test source, and shared by every connection below,
+   * so two of them differ only where a test makes them differ.
+   */
+  const token = crypto.randomUUID();
   /** A Snowflake connection as a census builds one: nothing in it is read before connect(). */
   const snowflake = (overrides: Partial<DatabaseConnection> = {}): DatabaseConnection =>
     makeConnection("snowflake", {
@@ -5360,7 +7891,7 @@ describe("the Snowflake provider in the factory", () => {
       user: "studio_svc",
       role: "STUDIO_RO",
       authMethod: "pat",
-      password: "stand-in-token",
+      password: token,
       warehouse: "STUDIO_WH",
       ...overrides,
     });
@@ -5374,14 +7905,14 @@ describe("the Snowflake provider in the factory", () => {
     });
   }
 
-  test("builds SnowflakeProvider with two arguments only, so no deps reach it from a connection", async () => {
+  test("builds SnowflakeProvider with three arguments, the third the build context, so no deps reach it from a connection", async () => {
     const source = readFileSync(join(import.meta.dir, "../../src/lib/db/factory.ts"), "utf8");
     const start = source.indexOf('case "snowflake": {');
     expect(start).toBeGreaterThan(-1);
     // The case block ends at its own closing brace, the first one at the case's indentation.
     const block = source.slice(start, source.indexOf("\n    }", start));
-    expect(block).toContain("new SnowflakeProvider(connection, options)");
-    expect(block).not.toMatch(/new SnowflakeProvider\([^)]*,[^)]*,/);
+    expect(block).toContain("new SnowflakeProvider(connection, options, context)");
+    expect(block).not.toMatch(/new SnowflakeProvider\([^)]*,[^)]*,[^)]*,/);
 
     const provider = await createDatabaseProvider(snowflake());
     expect(provider).toBeInstanceOf(SnowflakeProvider);
@@ -5426,8 +7957,44 @@ describe("the Snowflake provider in the factory", () => {
     }
   });
 
+  test("a key-pair connection with no key is refused by core before the provider is built, on every connect path", async () => {
+    const connect = stubConnect();
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const record = snowflake({ id: "sf-no-key", authMethod: "keypair", password: undefined });
+      for (const attempt of [
+        () => createDatabaseProvider(record),
+        () => getOrCreateProvider(record),
+        () => acquireExecutionProfileProvider(record, "agent-operations"),
+        () => testConnection(record, {}, "/api/db/test-connection"),
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
+        const error: unknown = await attempt().catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(DatabaseConfigError);
+        expect((error as Error).message).toBe(SNOWFLAKE_FIELD_SENTENCES.keyEmpty);
+        // Nothing was sent, and the API answer says so: a client is never told to check its data after this refusal.
+        expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+      }
+      expect(log.mock.calls.some(([line]) => String(line).startsWith("[DB] Creating snowflake provider"))).toBe(false);
+      expect(getProviderCacheStats().size).toBe(0);
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+      expect(connect).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+      connect.mockRestore();
+    }
+  });
+
+  test("readProviderDeclarations answers for that connection", async () => {
+    const declarations = await readProviderDeclarations(
+      snowflake({ id: "sf-no-key-read", authMethod: undefined, password: undefined }),
+    );
+    // What the provider built with its token declares: reading declarations never connects, so it never refuses.
+    expect(declarations.capabilities).toEqual((await createDatabaseProvider(snowflake())).getCapabilities());
+  });
+
   test.each(["agent-read-only", "agent-handover"] as const)(
-    "the %s profile is refused, since Snowflake declares no read-only statement path, and nothing connects",
+    "the %s profile is refused, since Snowflake is not on the review record, and nothing connects",
     async (profile) => {
       const connect = stubConnect();
       try {
@@ -5435,14 +8002,652 @@ describe("the Snowflake provider in the factory", () => {
           (e: unknown) => e,
         );
         expect(error).toBeInstanceOf(ExecutionProfileError);
-        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe(
-          "PROFILE_UNSUPPORTED_BY_PROVIDER",
-        );
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
         expect(connect).not.toHaveBeenCalled();
         expect(getExecutionProfileCacheStats().size).toBe(0);
       } finally {
         connect.mockRestore();
       }
+    },
+  );
+  test.each(["agent-read-only", "agent-handover"] as const)(
+    "the %s profile is refused on an engine the review record does not list, by name, even when its provider implements queryReadOnly, and nothing is built or connected",
+    async (profile) => {
+      const connect = stubConnect();
+      const planted = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+      const prototype = SnowflakeProvider.prototype as unknown as { queryReadOnly?: unknown };
+      prototype.queryReadOnly = planted;
+      try {
+        // No tunnel: Snowflake takes none, and core refuses one before the review (FND-2 slice 5).
+        const record = snowflake({ id: `sf-planted-${profile}`, port: 443 });
+        const error: unknown = await acquireExecutionProfileProvider(record, profile).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(ExecutionProfileError);
+        expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_ENGINE_NOT_REVIEWED");
+        expect((error as Error).message).toBe(
+          'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+        );
+        expect(connect).not.toHaveBeenCalled();
+        expect(planted).not.toHaveBeenCalled();
+        expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+      } finally {
+        delete prototype.queryReadOnly;
+        connect.mockRestore();
+      }
+    },
+  );
+});
+
+// ─── The egress decision comes before any cache, tunnel or provider (FND-2 slice 2a) ──
+
+describe("the egress decision comes before any cache, tunnel or provider (FND-2 slice 2a)", () => {
+  const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  // Generated per run: a fabricated credential is never written in the source.
+  const bastion: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example.com",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+    password: crypto.randomUUID(),
+  };
+  const tunnelled = (id: string) =>
+    makeConnection("postgres", { id, host: "db.internal", port: 5432, sshTunnel: bastion });
+
+  /** The lines `createDatabaseProvider` logs, one for every provider it builds. */
+  const buildLines = (log: { readonly mock: { readonly calls: readonly (readonly unknown[])[] } }) =>
+    log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+
+  /** The error a call rejects with, so a case can pin its class: `toThrow` with an instance compares only the message. */
+  const refusalOf = (run: () => Promise<unknown>): Promise<unknown> =>
+    run().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+  beforeEach(() => {
+    setEgressFlag("yes");
+  });
+
+  afterEach(() => {
+    setEgressFlag(original);
+  });
+
+  test("createDatabaseProvider refuses an invalid DB_HTTP_BLOCK_PRIVATE_HOSTS by name for an engine the guard does not cover, and builds nothing", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const refusal = await refusalOf(() => createDatabaseProvider(makeConnection("postgres")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("getOrCreateProvider refuses it before the cache and before the tunnel, and builds and opens nothing", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const refusal = await refusalOf(() => getOrCreateProvider(tunnelled("egress-tunnelled")));
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+      expect(buildLines(log)).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+
+  test("acquireExecutionProfileProvider refuses it before the profiled cache and before the tunnel", async () => {
+    const refusal = await refusalOf(() =>
+      acquireExecutionProfileProvider(tunnelled("egress-profiled"), "agent-operations"),
+    );
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+
+    expect(mockReleaseUnopenedTunnel).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("withOneShotTunnel refuses it before it dials, and never runs its callback", async () => {
+    const run = mock(async () => "ran");
+
+    const refusal = await refusalOf(() => withOneShotTunnel(tunnelled("egress-one-shot"), run));
+    expect(refusal).toBeInstanceOf(DatabaseConfigError);
+    expect((refusal as Error).message).toBe(INVALID_EGRESS_SETTING);
+
+    expect(run).not.toHaveBeenCalled();
+    expect(mockCreateSSHTunnel).not.toHaveBeenCalled();
+  });
+
+  test("the first build takes the decision and reports it once, and a later build reports nothing", async () => {
+    setEgressFlag(undefined);
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    let reported: unknown[][] = [];
+    try {
+      await createDatabaseProvider(makeConnection("postgres", { id: "egress-first" }));
+      await createDatabaseProvider(makeConnection("postgres", { id: "egress-second" }));
+      reported = info.mock.calls.filter((call) => call[1]?.route === "egress-decision");
+      expect(buildLines(log)).toHaveLength(2);
+    } finally {
+      log.mockRestore();
+      info.mockRestore();
+      forgetEgressDecision();
+    }
+
+    expect(reported).toEqual([
+      [
+        "Private database destinations are reachable",
+        {
+          route: "egress-decision",
+          variable: "DB_HTTP_BLOCK_PRIVATE_HOSTS",
+          blocksPrivateHosts: false,
+          source: "default",
+        },
+      ],
+    ]);
+  });
+});
+
+// ─── The execution context createDatabaseProvider copies is plain data (FND-2 slice 2b) ──
+
+describe("createDatabaseProvider refuses an execution context that is not plain data (FND-2 slice 2b)", () => {
+  const REFUSAL = "The execution context must be a plain object of data fields; no provider was built.";
+
+  /** A context whose `readOnly` and `sendsStatements` are prototype getters, as an agent profile class would hold them. */
+  class AgentReadOnly {
+    get readOnly(): boolean {
+      return true;
+    }
+    get sendsStatements(): boolean {
+      return true;
+    }
+  }
+
+  /**
+   * Contexts that are not plain data. The factory hands a provider a copy with core's egress decision added, and a copy
+   * loses a field defined on the prototype or as not enumerable, so the provider would read its default where core read
+   * the caller's value.
+   */
+  const NOT_PLAIN_DATA: Array<[string, () => ProviderExecutionContext]> = [
+    ["a class instance whose readOnly is a prototype getter", () => new AgentReadOnly() as ProviderExecutionContext],
+    [
+      "an object that inherits allowExternalFileAccess: false",
+      () => Object.create({ allowExternalFileAccess: false }) as ProviderExecutionContext,
+    ],
+    [
+      "an object whose readOnly is not enumerable",
+      () => Object.defineProperty({}, "readOnly", { value: true, enumerable: false }) as ProviderExecutionContext,
+    ],
+    [
+      "an object whose readOnly is an own getter",
+      () => Object.defineProperty({}, "readOnly", { get: () => true, enumerable: true }) as ProviderExecutionContext,
+    ],
+  ];
+
+  test.each(NOT_PLAIN_DATA)("refuses by name, before it logs a build, %s", async (_case, build) => {
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    let error: unknown;
+    let lines: unknown[][] = [];
+    try {
+      error = await createDatabaseProvider(makeConnection("sqlite", { database: ":memory:" }), {}, build()).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      lines = log.mock.calls.filter(([line]) => String(line).startsWith("[DB] Creating"));
+    } finally {
+      log.mockRestore();
+    }
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(REFUSAL);
+    expect(lines).toEqual([]);
+  });
+
+  test("a plain context, with a null prototype too, reaches the provider with every field and core's decision", async () => {
+    const postgres = await import("@/lib/db/providers/sql/postgres");
+    const RealProvider = postgres.PostgresProvider;
+    // bun types a spied class as `Mock<never>`, since a class has no call signature, hence the cast.
+    const constructed = spyOn(postgres, "PostgresProvider").mockImplementation(function (
+      ...args: ConstructorParameters<typeof RealProvider>
+    ) {
+      return new RealProvider(...args);
+    } as never);
+    try {
+      const bare = Object.assign(Object.create(null) as ProviderExecutionContext, { allowExternalFileAccess: true });
+      await createDatabaseProvider(makeConnection("postgres", { id: "plain-literal" }), {}, { readOnly: true });
+      await createDatabaseProvider(makeConnection("postgres", { id: "plain-bare" }), {}, bare);
+      const egress = egressDecision();
+      expect(constructed.mock.calls.map((call) => (call as unknown[])[2])).toEqual([
+        { readOnly: true, egress },
+        { allowExternalFileAccess: true, egress },
+      ]);
+    } finally {
+      constructed.mockRestore();
+    }
+  });
+});
+
+describe("a provider receives only its engine's fields on every entry point (FND-2 slice 6)", () => {
+  const PLAIN_DATA_REFUSAL = "A connection must be a plain object of data fields; no provider was built.";
+
+  /** The provider's connection holds no field its engine does not receive. */
+  function expectOnlyReceivedFields(provider: DatabaseProvider): void {
+    const received: readonly string[] = providerFields(provider.config.type);
+    expect(Object.keys(provider.config).filter((key) => !received.includes(key))).toEqual([]);
+    expect(Object.hasOwn(provider.config, "agentUser")).toBe(false);
+    expect(Object.hasOwn(provider.config, "agentPassword")).toBe(false);
+  }
+
+  /** A managed PostgreSQL seed carrying an agent credential with a generated password. */
+  function seedWithAgent(
+    id: string,
+    agentPassword: string,
+    owner: { user: string; password: string },
+  ): DatabaseConnection {
+    return projectSeedConnection(
+      {
+        id,
+        name: id,
+        type: "postgres",
+        host: "localhost",
+        port: 5432,
+        database: "testdb",
+        ...owner,
+        agentUser: "agent_ro",
+        agentPassword,
+        roles: ["*"],
+      },
+      ["admin"],
+    );
+  }
+
+  test("the editor provider of a seed with an agent credential holds neither agent field, and signs in with the record's own user and password", async () => {
+    const agentPassword = crypto.randomUUID();
+    const owner = { user: "owner", password: crypto.randomUUID() };
+    const provider = await getOrCreateProvider(seedWithAgent("pg-s6-editor", agentPassword, owner));
+    expectOnlyReceivedFields(provider);
+    expect([provider.config.user, provider.config.password]).toEqual([owner.user, owner.password]);
+    expect(markersReachableFrom(provider, [agentPassword])).toEqual([]);
+  });
+
+  test("the profiled provider holds neither agent field, and signs in with the agent's user and password", async () => {
+    const agentPassword = crypto.randomUUID();
+    const owner = { user: "owner", password: crypto.randomUUID() };
+    const provider = await acquireExecutionProfileProvider(
+      seedWithAgent("pg-s6-profile", agentPassword, owner),
+      "agent-read-only",
+    );
+    expectOnlyReceivedFields(provider);
+    expect([provider.config.user, provider.config.password]).toEqual(["agent_ro", agentPassword]);
+    expect(markersReachableFrom(provider, [owner.password])).toEqual([]);
+  });
+
+  test("a secret-only engine's profiled provider signs in with the agent's secret as its password, and holds no agent field", async () => {
+    const agentPassword = crypto.randomUUID();
+    const conn = makeConnection("kubernetes", {
+      id: "k8s-s6-profile",
+      port: 6443,
+      database: undefined,
+      user: undefined,
+      password: crypto.randomUUID(),
+      agentPassword,
+    });
+    // Kubernetes' connect dials the API server, so its prototype's connect is stubbed for this test only.
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(conn)) as DatabaseProvider;
+    const spy = spyOn(prototype, "connect").mockImplementation(async function (this: DatabaseProvider) {
+      (this as unknown as { setConnected(value: boolean): void }).setConnected(true);
+    });
+    try {
+      const provider = await acquireExecutionProfileProvider(conn, "agent-operations");
+      expectOnlyReceivedFields(provider);
+      expect(provider.config.password).toBe(agentPassword);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a provider built inside withOneShotTunnel holds only its engine's fields", async () => {
+    const agentPassword = crypto.randomUUID();
+    const stored = makeConnection("postgres", {
+      id: "pg-s6-one-shot",
+      host: "db.internal",
+      agentUser: "agent_ro",
+      agentPassword,
+      color: "red",
+      environment: "production",
+      schema: "elsewhere",
+      sshTunnel: {
+        enabled: true,
+        host: "bastion.internal",
+        port: 22,
+        username: "jump",
+        authMethod: "password",
+        password: crypto.randomUUID(),
+      },
+    });
+    const provider = await withOneShotTunnel(stored, async (effective) => await createDatabaseProvider(effective));
+    expectOnlyReceivedFields(provider);
+    expect(Object.hasOwn(provider.config, "schema")).toBe(false);
+    expect(markersReachableFrom(provider, [agentPassword])).toEqual([]);
+  });
+
+  test("a record that is not plain data is refused by every entry point, and nothing is cached", async () => {
+    class Connection {
+      id = "pg-s6-class";
+      name = "pg-s6-class";
+      type = "postgres" as const;
+      host = "localhost";
+      port = 5432;
+      database = "testdb";
+      user = "test";
+      createdAt = new Date(0);
+    }
+    const record = new Connection() as unknown as DatabaseConnection;
+    const refusals = await Promise.all(
+      [
+        () => rawGetOrCreateProvider(record),
+        () => rawAcquireExecutionProfileProvider(record, "agent-read-only"),
+        () => readProviderDeclarations(record),
+        () => createDatabaseProvider(record),
+      ].map((build) => build().catch((error: unknown) => error)),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(getProviderCacheStats().size).toBe(0);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+  test("a class-instance record with an agent credential is refused by the profiled acquisition, and by withOneShotTunnel before its callback runs", async () => {
+    const agentPassword = crypto.randomUUID();
+    class ManagedConnection {
+      id = "pg-s6-class-agent";
+      name = "pg-s6-class-agent";
+      type = "postgres" as const;
+      host = "localhost";
+      port = 5432;
+      database = "testdb";
+      user = "owner";
+      managed = true;
+      agentUser = "agent_ro";
+      agentPassword = agentPassword;
+    }
+    const record = new ManagedConnection() as unknown as DatabaseConnection;
+    let ran = false;
+    const refusals = await Promise.all(
+      [
+        () => rawAcquireExecutionProfileProvider(record, "agent-read-only"),
+        () => rawAcquireExecutionProfileProvider(record, "agent-operations"),
+        () =>
+          withOneShotTunnel(record, async () => {
+            ran = true;
+          }),
+      ].map((build) => build().catch((error: unknown) => error)),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(ran).toBe(false);
+    expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  test("a record that is not plain data is refused even when a plain record with the same cache key is cached", async () => {
+    const fields = {
+      id: "pg-s6-class-cached",
+      name: "pg-s6-class-cached",
+      type: "postgres" as const,
+      host: "localhost",
+      port: 5432,
+      database: "testdb",
+      user: "test",
+      createdAt: new Date(0),
+    };
+    const plain: DatabaseConnection = { ...fields };
+    const writable = await rawGetOrCreateProvider(plain);
+    const profiled = await rawAcquireExecutionProfileProvider(plain, "agent-read-only");
+    expect(findCachedProvider(await editorCacheKey(plain))).toBe(writable);
+    // The same fields, inherited from a prototype: the cache key reads them as the plain record's.
+    const record = Object.create({ ...fields }) as DatabaseConnection;
+    expect(await editorCacheKey(record)).toBe(await editorCacheKey(plain));
+    const refusals = await Promise.all(
+      [() => rawGetOrCreateProvider(record), () => rawAcquireExecutionProfileProvider(record, "agent-read-only")].map(
+        (build) => build().catch((error: unknown) => error),
+      ),
+    );
+    for (const refusal of refusals) {
+      expect(refusal).toBeInstanceOf(DatabaseConfigError);
+      expect((refusal as Error).message).toBe(PLAIN_DATA_REFUSAL);
+    }
+    expect(getProviderCacheStats().size).toBe(1);
+    expect(getExecutionProfileCacheStats().size).toBe(1);
+    expect(profiled.isConnected()).toBe(true);
+  });
+});
+
+const { errorKind, errorOutcome } = await import("@/lib/db/error-record");
+
+describe("every refusal raised while a provider is built answers outcome not-sent (FND-2 slice 6c)", () => {
+  /** A record whose class makes it something other than plain data. */
+  class ClassConnection {
+    id = "pg-s6c-class";
+    name = "pg-s6c-class";
+    type = "postgres" as const;
+    host = "localhost";
+    port = 5432;
+    database = "testdb";
+    createdAt = new Date(0);
+  }
+  interface BuildRefusal {
+    readonly connection: () => DatabaseConnection;
+    readonly execution?: () => ProviderExecutionContext;
+    /** Whether `readProviderDeclarations` runs the check too: it never connects, so it skips two. */
+    readonly declarations: boolean;
+    /** Words of the refusal, so each fixture is held to the check it names and to no earlier one. */
+    readonly says: string;
+  }
+  /** One refusal per check the build runs, each named for what it refuses. */
+  const REFUSALS: Readonly<Record<string, BuildRefusal>> = {
+    "a type that names no provider": {
+      connection: () => makeConnection("not-an-engine"),
+      declarations: true,
+      says: 'No provider for the connection type "not-an-engine"',
+    },
+    "a type LIBREDB_ENABLED_PROVIDERS leaves out": {
+      connection: () => makeConnection("mysql"),
+      declarations: true,
+      says: "The mysql provider is not available",
+    },
+    "a readOnly the engine cannot honour": {
+      connection: () => makeConnection("databend", { readOnly: true }),
+      declarations: true,
+      says: "readOnly: true is refused for databend",
+    },
+    "an execution context that is not plain data": {
+      connection: () => makeConnection("postgres"),
+      execution: () => Object.create({ allowExternalFileAccess: false }) as ProviderExecutionContext,
+      declarations: true,
+      says: "The execution context must be a plain object",
+    },
+    "an owner without ownerPoolMax": {
+      connection: () => makeConnection("postgres"),
+      execution: () => ({ owner: "s6c-subject" }) as ProviderExecutionContext,
+      declarations: true,
+      says: "ownerPoolMax must be a whole number",
+    },
+    "a denied file-access posture on SQLite": {
+      connection: () => makeConnection("sqlite", { database: ":memory:" }),
+      execution: () => ({ allowExternalFileAccess: false }),
+      declarations: true,
+      says: "SQLite connections require an administrator",
+    },
+    "a tunnel that is on and was not opened": {
+      connection: () =>
+        makeConnection("postgres", {
+          sshTunnel: { enabled: true, host: "bastion.internal", port: 22, username: "jump", authMethod: "password" },
+        }),
+      declarations: false,
+      says: "no tunnel was opened for it",
+    },
+    "a record that is not plain data": {
+      connection: () => new ClassConnection() as unknown as DatabaseConnection,
+      declarations: true,
+      says: "A connection must be a plain object",
+    },
+    "a blank required secret": {
+      connection: () =>
+        makeConnection("snowflake", {
+          host: "myorg-myaccount",
+          port: undefined,
+          authMethod: "keypair",
+          password: undefined,
+        }),
+      declarations: false,
+      says: "Paste the private key for key-pair sign-in.",
+    },
+    "an admitted file holding a NUL byte": {
+      connection: () => makeConnection("sqlite", { database: "s6c\u0000.db" }),
+      declarations: true,
+      says: "Invalid database path: NUL bytes",
+    },
+    "an OPC UA host path holding a NUL byte": {
+      connection: () => makeConnection("opcua", { port: 4840, clientCertificatePath: "s6c\u0000.pem" }),
+      declarations: true,
+      says: "Invalid clientCertificatePath: NUL bytes",
+    },
+    "a provider constructor's refusal": {
+      connection: () => makeConnection("mssql", { host: undefined }),
+      declarations: true,
+      says: "Host is required for SQL Server",
+    },
+  };
+  const enabledBefore = process.env.LIBREDB_ENABLED_PROVIDERS;
+  beforeEach(() => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = SHIPPED_DATABASE_TYPES.filter((type) => type !== "mysql").join(",");
+  });
+  afterEach(() => {
+    if (enabledBefore === undefined) delete process.env.LIBREDB_ENABLED_PROVIDERS;
+    else process.env.LIBREDB_ENABLED_PROVIDERS = enabledBefore;
+  });
+
+  test.each(Object.keys(REFUSALS))("%s answers not-sent through createDatabaseProvider", async (name) => {
+    const refusal = REFUSALS[name];
+    const error: unknown = await createDatabaseProvider(refusal.connection(), {}, refusal.execution?.() ?? {}).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toContain(refusal.says);
+    expect(errorOutcome(error)).toBe("not-sent");
+    expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+  });
+
+  test.each(Object.keys(REFUSALS).filter((name) => REFUSALS[name].declarations))(
+    "%s answers not-sent through readProviderDeclarations",
+    async (name) => {
+      const refusal = REFUSALS[name];
+      const error: unknown = await readProviderDeclarations(refusal.connection(), refusal.execution?.() ?? {}).catch(
+        (e: unknown) => e,
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toContain(refusal.says);
+      expect(errorOutcome(error)).toBe("not-sent");
+    },
+  );
+
+  test("a refusal a getOrCreateProvider build raises answers not-sent, and nothing is cached", async () => {
+    const error: unknown = await getOrCreateProvider(
+      makeConnection("sqlite", { id: "sqlite-s6c-nul", database: "s6c\u0000.db" }),
+    ).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toContain("Invalid database path: NUL bytes");
+    expect(errorOutcome(error)).toBe("not-sent");
+    expect(getProviderCacheStats().size).toBe(0);
+  });
+});
+
+const { QdrantProvider } = await import("@/lib/db/providers/vector/qdrant/index");
+const { RabbitMQProvider } = await import("@/lib/db/providers/stream/rabbitmq/index");
+const { rabbitmqConnection } = await import("../helpers/rabbitmq-connection");
+
+describe("a field its engine refuses is refused by core on every connect path (FND-2 slice 6c)", () => {
+  const ENTRIES = [
+    {
+      type: "qdrant",
+      field: "user",
+      prototype: QdrantProvider.prototype,
+      record: (value: string) =>
+        makeConnection("qdrant", { id: "qdrant-s6c", port: 6333, database: undefined, user: value }),
+    },
+    {
+      type: "rabbitmq",
+      field: "database",
+      prototype: RabbitMQProvider.prototype,
+      record: (value: string) => rabbitmqConnection({ id: "rabbitmq-s6c", database: value }),
+    },
+  ] as const;
+
+  test.each(ENTRIES.map((entry) => [`${entry.type} ${entry.field}`, entry] as const))(
+    "%s is refused by name on createDatabaseProvider, getOrCreateProvider, acquireExecutionProfileProvider and testConnection, and nothing is cached or connected",
+    async (_name, entry) => {
+      const sentence = (REFUSED_CONNECTION_FIELDS[entry.type] as Readonly<Record<string, string>>)[entry.field];
+      const connect = spyOn(entry.prototype, "connect").mockImplementation(async () => {});
+      const log = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const value = `refused-${crypto.randomUUID()}`;
+        const record = entry.record(value);
+        for (const attempt of [
+          () => createDatabaseProvider(record),
+          () => getOrCreateProvider(record),
+          () => acquireExecutionProfileProvider(record, "agent-operations"),
+          () => testConnection(record, {}, "/api/db/test-connection"),
+        ]) {
+          // oxlint-disable-next-line no-await-in-loop -- each path is refused before the next is tried.
+          const error: unknown = await attempt().catch((e: unknown) => e);
+          expect(error).toBeInstanceOf(DatabaseConfigError);
+          expect((error as Error).message).toBe(sentence);
+          expect((error as Error).message).not.toContain(value);
+          expect(databaseErrorBody(error)?.body.outcome).toBe("not-sent");
+        }
+        expect(log.mock.calls.some(([line]) => String(line).startsWith(`[DB] Creating ${entry.type} provider`))).toBe(
+          false,
+        );
+        expect(getProviderCacheStats().size).toBe(0);
+        expect(getExecutionProfileCacheStats().size).toBe(0);
+        expect(connect).not.toHaveBeenCalled();
+      } finally {
+        log.mockRestore();
+        connect.mockRestore();
+      }
+    },
+  );
+
+  test("the agent credential is overlaid only into fields its engine receives, and every engine with an agent credential receives them", () => {
+    for (const type of SHIPPED_DATABASE_TYPES) {
+      const credential = SEED_AGENT_CREDENTIAL[type];
+      if (credential === null) continue;
+      const fields: readonly string[] = providerFields(type);
+      expect({ type, password: fields.includes("password") }).toEqual({ type, password: true });
+      if (credential.form !== "secret") expect({ type, user: fields.includes("user") }).toEqual({ type, user: true });
+      // A secret-form engine that refuses a user receives none, so an agent user there is never overlaid.
+      if ("user" in REFUSED_CONNECTION_FIELDS[type])
+        expect({ type, user: fields.includes("user") }).toEqual({ type, user: false });
+    }
+  });
+
+  test.each(ENTRIES.map((entry) => [`${entry.type} ${entry.field}`, entry] as const))(
+    "readProviderDeclarations answers for a %s connection without the field",
+    async (_name, entry) => {
+      const record = entry.record(`refused-${crypto.randomUUID()}`);
+      const without: Record<string, unknown> = { ...record };
+      delete without[entry.field];
+      const declarations = await readProviderDeclarations(record);
+      const expected = await readProviderDeclarations(without as unknown as DatabaseConnection);
+      expect(declarations).toEqual(expected);
     },
   );
 });

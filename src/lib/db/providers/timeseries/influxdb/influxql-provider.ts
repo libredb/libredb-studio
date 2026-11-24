@@ -3,12 +3,12 @@
  * API, read-only.
  *
  * COMPOSITION AND DELEGATION ONLY (spec 3.5). The wire lives in `client.ts` and `routes.ts`, the connection rules in
- * `connection-options.ts`, the version in `versions.ts`, the read policy in `influxql-policy.ts`, the run database in
- * `run-database.ts`, the answer's shape in `influxql-results.ts`, the catalog reads in `influxql-objects.ts`, the
+ * `connection-options.ts`, the version in `versions.ts`, the read policy in `src/lib/languages/influxql/policy.ts`
+ * (the influxql family module), the run database in `run-database.ts`, the answer's shape in `influxql-results.ts`, the catalog reads in `influxql-objects.ts`, the
  * monitoring mappings in `monitoring.ts`, the labels in `labels.ts` and every sentence of a failure in `errors.ts`.
  * What stays here is the lifecycle, the declarations, the connect sequence of spec 6.2, and each call's permit,
- * deadline and error context. The agent read-only profile's rules live in `influxql-agent-statement.ts` (what an agent
- * statement may be) and `influxql-agent-read.ts` (the proof of the principal and the strict shaping of an answer).
+ * deadline and error context. The agent read-only profile's rules live in
+ * `src/lib/languages/influxql/agent-statement.ts` (what an agent statement may be) and `influxql-agent-read.ts` (the proof of the principal and the strict shaping of an answer).
  *
  * On 1.x and 2.x the read policy is the only boundary before `DROP DATABASE`, so it runs on every text this provider
  * sends, its own catalog texts included (E6), and what it refuses sends nothing (E2). The generation `/ping` reports
@@ -22,6 +22,7 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertContainerPathShape,
@@ -46,8 +47,8 @@ import type {
   ObjectKindSpec,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -89,8 +90,8 @@ import {
   proveInfluxqlAgentPrincipal,
   shapeInfluxqlAgentAnswer,
 } from "./influxql-agent-read";
-import { readInfluxqlAgentStatement } from "./influxql-agent-statement";
-import { lexInfluxql } from "./influxql-lexer";
+import { readInfluxqlAgentStatement } from "@/lib/languages/influxql/agent-statement";
+import { lexInfluxql } from "@/lib/languages/influxql/lexer";
 import {
   countInfluxqlMeasurements,
   describeInfluxqlMeasurement,
@@ -101,7 +102,7 @@ import {
   readInfluxqlDatabaseListing,
   readInfluxqlDatabases,
 } from "./influxql-objects";
-import { evaluateInfluxql, INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES } from "./influxql-policy";
+import { evaluateInfluxql, INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import { InfluxqlQuoteError } from "./influxql-quote";
 import { shapeInfluxqlBody } from "./influxql-results";
 import { INFLUXQL_LABELS } from "./labels";
@@ -122,7 +123,7 @@ import { noWritePath } from "@/lib/db/write-reach";
  * before any request.
  */
 const INFLUXQL_WRITE_REACH = noWritePath({
-  module: "src/lib/db/providers/timeseries/influxdb/influxql-policy.ts",
+  module: "src/lib/languages/influxql/policy.ts",
   symbol: "evaluateInfluxql",
 });
 
@@ -223,6 +224,8 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
    * does, and plan mode keeps grounding on a connection whose principal can write.
    */
   private readonly readOnlyProfile: boolean;
+  /** The egress decision the factory built this provider with, handed to the origin `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /**
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. `createClient`
@@ -232,11 +235,12 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     private readonly createClient: InfluxClientFactory = createInfluxClient,
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -308,7 +312,11 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     let generation: InfluxGeneration = "unknown";
     try {
       this.validate();
-      options = buildInfluxConnectionOptions(this.config, { type: INFLUXDB, queryTimeout: this.queryTimeout });
+      options = buildInfluxConnectionOptions(this.config, {
+        type: INFLUXDB,
+        queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.egress),
+      });
       const opened = this.createClient(options, INFLUXQL_ROUTES);
       client = opened;
       const signal = AbortSignal.timeout(options.surfaceTimeoutMs);
@@ -717,13 +725,13 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: `getLabels().slowQueriesEmptyState` says why. */
+  /** Empty: the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: every request stands alone; `getLabels().sessionsEmptyState` says so. */
+  /** Empty: every request stands alone, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

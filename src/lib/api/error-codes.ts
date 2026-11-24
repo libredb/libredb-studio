@@ -8,6 +8,20 @@ export const ApiErrorCode = {
   QUERY_CANCELLED: "QUERY_CANCELLED",
   QUERY_ERROR: "QUERY_ERROR",
   CONFIG_ERROR: "CONFIG_ERROR",
+  /**
+   * The connection's type is absent, not text, or names no provider this Studio has (400, `UnknownProviderError`), answered before
+   * any provider is built or any SSH tunnel opened. Distinct from CONFIG_ERROR, which is a provider this Studio has
+   * refusing a setting: the remedy here is a provider, not a field, and the sentence quotes the type when it is a
+   * non-empty string.
+   */
+  PROVIDER_UNKNOWN: "PROVIDER_UNKNOWN",
+  /**
+   * The request names a facet member the connection's engine does not offer in this Studio, or one the connected
+   * server does not accept (400, `FacetNotOfferedError`). The first is answered before any provider is built; the
+   * sentence names the member and the engine. Distinct from CONFIG_ERROR and QUERY_ERROR: no setting or statement is
+   * at fault, and no retry on this engine succeeds.
+   */
+  FACET_NOT_OFFERED: "FACET_NOT_OFFERED",
   AUTH_ERROR: "AUTH_ERROR",
   /**
    * A database accepted the credential and refused the statement for a privilege that credential lacks (403), such as
@@ -42,6 +56,20 @@ export const ApiErrorCode = {
    * sentence. Distinct from the plain `{ error }` 400 a malformed body gets: naming fewer kinds answers this one.
    */
   INVENTORY_PAIR_LIMIT: "INVENTORY_PAIR_LIMIT",
+
+  /**
+   * The statement needs a confirmation before it runs (428, `src/lib/api/run-confirmation.ts`): the request asked
+   * (`"confirmation": "ask"`), or the server requires one (LIBREDB_RUN_CONFIRMATION=required). Nothing was built,
+   * opened or run. The body's `confirmation` carries the token to send back and what the confirmation asks.
+   */
+  CONFIRMATION_REQUIRED: "CONFIRMATION_REQUIRED",
+
+  /**
+   * The confirmation token a request sent does not confirm it (400): not verifiable, expired, already used, or issued
+   * for another route, session, connection, statement or reading of the statement. The sentence names which, and
+   * nothing ran. Distinct from CONFIRMATION_REQUIRED: asking again with `"confirmation": "ask"` issues a new token.
+   */
+  CONFIRMATION_INVALID: "CONFIRMATION_INVALID",
 
   // LLM errors
   LLM_SAFETY: "LLM_SAFETY",
@@ -102,6 +130,12 @@ export const ApiErrorCode = {
   BEARER_NO_ROLE: "BEARER_NO_ROLE",
 
   /**
+   * A bearer access token verified, but the account speaks for a domain outside OIDC_ALLOWED_EMAIL_DOMAINS (403,
+   * src/lib/oidc-identity.ts). Like BEARER_NO_ROLE, a fresh token is refused the same way until the account changes.
+   */
+  BEARER_DOMAIN_NOT_ALLOWED: "BEARER_DOMAIN_NOT_ALLOWED",
+
+  /**
    * A bearer access token verified, but it carries no subject or no user name Studio can use (403,
    * src/lib/oidc-identity.ts): no email the provider has not marked unverified, and no preferred_username without "@".
    * Like BEARER_NO_ROLE, a fresh token is refused the same way until the account changes.
@@ -142,11 +176,37 @@ export const ApiErrorCode = {
   TRANSACTION_NOT_OWNED: "TRANSACTION_NOT_OWNED",
 
   /**
+   * A call of the caller's that Studio stopped waiting for, its caller gone or its deadline passed, is still running on
+   * the caller's transaction (409, src/app/api/db/transaction/route.ts): until it settles nothing about the session's
+   * state is known, so a BEGIN, a statement, a COMMIT or a ROLLBACK is refused before it is sent rather than queued
+   * behind that call, which may end the transaction first. The status action is still answered; the request succeeds
+   * once that call has finished. Distinct from TRANSACTION_NOT_OWNED: the transaction is the caller's own.
+   */
+  TRANSACTION_CALL_RUNNING: "TRANSACTION_CALL_RUNNING",
+
+  /**
+   * The database session a held transaction ran on has ended (503): the server ended the transaction with it, so the
+   * provider holds none from then on. Distinct from CONNECTION_ERROR, after which a transaction may still be open: the
+   * editor leaves transaction mode for this code (`transactionGone()` in src/hooks/use-transaction-control.ts).
+   */
+  TRANSACTION_LOST: "TRANSACTION_LOST",
+
+  /**
    * Under governance, the control plane set the runtime setting `ai.enabled` to false, and a route of the AI bucket
    * refused the request before any LLM provider was built (403). Distinct from LLM_UNCONFIGURED, which is the
    * environment naming no model: this refusal is the control plane's switch, and no LLM_* variable changes it.
    */
   AI_DISABLED: "AI_DISABLED",
+
+  /**
+   * An agent run whose ledger header names a statement language, workflow or goal rule this Studio does not have, or has
+   * retired (409). Answered by the agent run routes and the drive route rather than `createErrorResponse`
+   * (`agentRunUnavailableResponse` in src/lib/api/agent-run-access.ts). The session routes answer it to the run's owner
+   * alone, and anyone else gets the 404 a missing run gets; the drive route answers it to the holder of the drive
+   * credential that names the run. 409 because the run's own record is what is in the way, and no retry on this build
+   * succeeds.
+   */
+  AGENT_RUN_UNAVAILABLE: "AGENT_RUN_UNAVAILABLE",
 
   // Application rate limiting (distinct from LLM_RATE_LIMIT, which is the provider's limit)
   RATE_LIMITED: "RATE_LIMITED",

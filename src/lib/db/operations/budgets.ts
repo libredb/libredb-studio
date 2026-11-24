@@ -66,6 +66,22 @@ interface RunAccount {
   totalElapsedMs: number;
 }
 
+/** What one execution cost its run: the statements it ran and the time it took. */
+interface ExecutionOutcome {
+  readonly statements: number;
+  readonly elapsedMs: number;
+}
+
+function assertOutcome(outcome: ExecutionOutcome): void {
+  const { statements, elapsedMs } = outcome;
+  if (!Number.isInteger(statements) || statements < 0) {
+    throw new BudgetAccountingError(`statements must be a non-negative integer, got ${String(statements)}`);
+  }
+  if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs) || elapsedMs < 0) {
+    throw new BudgetAccountingError(`elapsedMs must be a non-negative finite number, got ${String(elapsedMs)}`);
+  }
+}
+
 function assertRunId(runId: string): string {
   if (typeof runId !== "string" || runId.trim().length === 0) {
     throw new BudgetAccountingError("run id must be a non-empty string");
@@ -82,6 +98,7 @@ function assertRunId(runId: string): string {
  */
 export class ExecutionBudgetTracker {
   private readonly runs = new Map<string, RunAccount>();
+  private readonly idleWaiters = new Map<string, (() => void)[]>();
 
   /**
    * Seeds a run's accounting with what a PREVIOUS drive already spent, so a
@@ -115,22 +132,52 @@ export class ExecutionBudgetTracker {
     this.runs.set(id, account);
   }
 
-  endExecution(runId: string, outcome: { readonly statements: number; readonly elapsedMs: number }): void {
+  endExecution(runId: string, outcome: ExecutionOutcome): void {
     const id = assertRunId(runId);
-    const { statements, elapsedMs } = outcome;
-    if (!Number.isInteger(statements) || statements < 0) {
-      throw new BudgetAccountingError(`statements must be a non-negative integer, got ${String(statements)}`);
-    }
-    if (typeof elapsedMs !== "number" || !Number.isFinite(elapsedMs) || elapsedMs < 0) {
-      throw new BudgetAccountingError(`elapsedMs must be a non-negative finite number, got ${String(elapsedMs)}`);
-    }
+    assertOutcome(outcome);
     const account = this.runs.get(id);
     if (!account || account.activeExecutions === 0) {
       throw new BudgetAccountingError(`unbalanced endExecution for run "${id}" — no live execution to release`);
     }
     account.activeExecutions -= 1;
-    account.executedStatements += statements;
-    account.totalElapsedMs += elapsedMs;
+    account.executedStatements += outcome.statements;
+    account.totalElapsedMs += outcome.elapsedMs;
+    if (account.activeExecutions === 0) this.wakeIdleWaiters(id);
+  }
+
+  /**
+   * Charges a live execution's statements and time without releasing it: the execution stays live, counted against
+   * `maxConcurrentExecutions`, until its `endExecution`, which then charges nothing more. For an execution whose
+   * caller is answered while the provider call it made still runs, which `executeAuditedOperation` charges when the
+   * caller is answered and releases once that call settles.
+   */
+  chargeExecution(runId: string, outcome: ExecutionOutcome): void {
+    const id = assertRunId(runId);
+    assertOutcome(outcome);
+    const account = this.runs.get(id);
+    if (!account || account.activeExecutions === 0) {
+      throw new BudgetAccountingError(`chargeExecution for run "${id}" with no live execution to charge`);
+    }
+    account.executedStatements += outcome.statements;
+    account.totalElapsedMs += outcome.elapsedMs;
+  }
+
+  /**
+   * Settles once the run has no live execution: at once when it has none, otherwise when `endExecution` releases the
+   * last one. Ending a run waits on it, because a statement can hold its execution after the run has its answer.
+   */
+  whenIdle(runId: string): Promise<void> {
+    const id = assertRunId(runId);
+    if ((this.runs.get(id)?.activeExecutions ?? 0) === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.idleWaiters.set(id, [...(this.idleWaiters.get(id) ?? []), resolve]);
+    });
+  }
+
+  private wakeIdleWaiters(id: string): void {
+    const waiters = this.idleWaiters.get(id) ?? [];
+    this.idleWaiters.delete(id);
+    for (const wake of waiters) wake();
   }
 
   usage(runId: string): ExecutionUsage {

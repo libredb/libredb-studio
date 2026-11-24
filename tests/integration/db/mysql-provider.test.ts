@@ -16,8 +16,10 @@ import {
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
+  DatabaseError,
   NO_TRANSACTION_OPENED,
   PermissionDeniedError,
+  PoolExhaustedError,
   QueryError,
   TRANSACTION_STATE_UNREPORTED,
 } from "@/lib/db/errors";
@@ -25,12 +27,14 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { asBytes, binaryText } from "@/lib/export/binary";
+import { byteBudgetSentence, measureRowBytes } from "@/lib/db/read-only-budget";
 import { mysqlJsonStrategy } from "@/lib/explain/mysql-json";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { CATALOG_TYPE_RULES } from "@/lib/db/providers/sql/mysql";
 import { MYSQL_CREATE_TABLE } from "@/lib/db/providers/sql/mysql-create-table";
 import { diffSchemas } from "@/lib/schema-diff/diff-engine";
 import type { DetailedObject } from "@/lib/db/detailed-object";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 // ============================================================================
 // Mock mysql2/promise BEFORE importing the provider
@@ -231,6 +235,20 @@ let roPoolListeners: string[] = [];
 let roPoolEnds = 0;
 
 /**
+ * What a read-only pool's `end()` waits on before it settles, when a test sets it: mysql2's
+ * `end()` settles only once the statement still running on the pool has ended, and the
+ * order `disconnect()` ends its pools in is observable only while one of them waits.
+ */
+let roPoolEndGate: Promise<void> | null = null;
+
+/**
+ * The main pool the NEXT `createPool` hands back, when a test sets it: every main pool is
+ * otherwise the one shared `mockPool`, so a reconnect's pool could not be told from the
+ * pool a read started on.
+ */
+let nextMainPool: typeof mockPool | null = null;
+
+/**
  * The streaming command the read-only statement is read through: mysql2's callback
  * `query(...)` with NO callback hands back the command object, and `.stream()` on it
  * is the row-by-row Readable the provider counts rows on. The rows come from the same
@@ -362,6 +380,7 @@ const buildRoPool = () => {
     },
     end: async () => {
       roPoolEnds += 1;
+      if (roPoolEndGate !== null) await roPoolEndGate;
     },
     on: (event: string) => {
       roPoolListeners.push(event);
@@ -381,7 +400,9 @@ const createPool = (config: Record<string, unknown>) => {
     roPoolConfigs.push(config);
     return buildRoPool();
   }
-  return mockPool;
+  const mainPool = nextMainPool ?? mockPool;
+  nextMainPool = null;
+  return mainPool;
 };
 
 mock.module("mysql2/promise", () => ({
@@ -402,6 +423,8 @@ afterEach(() => {
   roSessions = [];
   roPoolListeners = [];
   roPoolEnds = 0;
+  roPoolEndGate = null;
+  nextMainPool = null;
   expect(violations).toEqual([]);
 });
 
@@ -1139,6 +1162,80 @@ describe("MySQLProvider", () => {
       expect(typeof result.rowCount).toBe("number");
     });
 
+    test("a pool checkout that fails answers its mapped class with outcome not-sent, not an internal error", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const executed = spyOn(mockConnection, "execute");
+      const queried = spyOn(mockConnection, "query");
+      try {
+        const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(executed).not.toHaveBeenCalled();
+        expect(queried).not.toHaveBeenCalled();
+        const response = createErrorResponse(refused, { route: "api/db/query" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+        executed.mockRestore();
+        queried.mockRestore();
+      }
+    });
+
+    test("a closed pool answers PoolExhaustedError, not-sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(new Error("Pool is closed."));
+      try {
+        const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(PoolExhaustedError);
+        expect((refused as PoolExhaustedError).outcome).toBe("not-sent");
+        const response = createErrorResponse(refused, { route: "api/db/query" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.POOL_EXHAUSTED,
+          statusCode: 503,
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+      }
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const released = spyOn(mockConnection, "release");
+      mockExecuteFn = () =>
+        Promise.reject(
+          Object.assign(new Error("Connection lost: The server closed the connection."), {
+            code: "PROTOCOL_CONNECTION_LOST",
+          }),
+        );
+      try {
+        const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).outcome).toBeUndefined();
+        expect(await createErrorResponse(failed, { route: "api/db/query" }).json()).toMatchObject({
+          outcome: "unknown",
+        });
+        expect(released).toHaveBeenCalledTimes(1);
+      } finally {
+        released.mockRestore();
+      }
+    });
+
     test("result contains sanitized rows", async () => {
       provider = new MySQLProvider(makeMySQLConfig());
       await provider.connect();
@@ -1230,6 +1327,8 @@ describe("MySQLProvider", () => {
           error: `Permission denied: ${message}`,
           code: ApiErrorCode.PERMISSION_DENIED,
           statusCode: 403,
+          kind: "permission",
+          outcome: "unknown",
         });
       });
 
@@ -2128,7 +2227,7 @@ describe("MySQLProvider", () => {
       ["a non-parse error (1105)", Object.assign(new Error("transaction already begun"), { errno: 1105 })],
       ["a fatal parse error", Object.assign(new Error("Connection lost"), { errno: 1064, fatal: true })],
     ] as const) {
-      test(`a BEGIN refused with ${label} is raised as is, with no START TRANSACTION`, async () => {
+      test(`a BEGIN refused with ${label} is raised as its mapped class, with no START TRANSACTION`, async () => {
         mockExecuteFn = (sql: string) =>
           sql === "BEGIN" ? Promise.reject(failure) : (answering({ "START TRANSACTION": 0 })(sql) as never);
         provider = new MySQLProvider(makeMySQLConfig());
@@ -2136,7 +2235,9 @@ describe("MySQLProvider", () => {
         const release = spyOn(mockConnection, "release");
         try {
           protocolCalls.length = 0;
-          await expect(provider.beginTransaction()).rejects.toBe(failure);
+          const raised = await provider.beginTransaction().catch((error: unknown) => error);
+          expect(raised).toBeInstanceOf(DatabaseError);
+          expect((raised as DatabaseError).message).toContain(failure.message);
           expect(protocolCalls.map((call) => call.sql)).toEqual(["BEGIN"]);
           expect(provider.isInTransaction()).toBe(false);
           expect(release).toHaveBeenCalledTimes(1);
@@ -2145,6 +2246,128 @@ describe("MySQLProvider", () => {
         }
       });
     }
+
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent, not an internal error", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const refusal = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:3306"), { code: "ECONNREFUSED" });
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(refusal);
+      const executed = spyOn(mockConnection, "execute");
+      const queried = spyOn(mockConnection, "query");
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(executed).not.toHaveBeenCalled();
+        expect(queried).not.toHaveBeenCalled();
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+        executed.mockRestore();
+        queried.mockRestore();
+      }
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin on a closed pool answers PoolExhaustedError, not-sent", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      const getConnection = spyOn(mockPool, "getConnection").mockRejectedValueOnce(new Error("Pool is closed."));
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(PoolExhaustedError);
+        expect((refused as PoolExhaustedError).outcome).toBe("not-sent");
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.POOL_EXHAUSTED,
+          statusCode: 503,
+          outcome: "not-sent",
+        });
+      } finally {
+        getConnection.mockRestore();
+      }
+    });
+
+    test.each([
+      ["commitTransaction", "commit"],
+      ["rollbackTransaction", "rollback"],
+    ] as const)(
+      "%s whose connection is lost answers a DatabaseError with outcome unknown and releases the connection",
+      async (end, driverMethod) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        const lost = Object.assign(new Error("Connection lost: The server closed the connection."), {
+          code: "PROTOCOL_CONNECTION_LOST",
+          fatal: true,
+        });
+        const driverEnd = spyOn(mockConnection, driverMethod).mockRejectedValueOnce(lost);
+        const release = spyOn(mockConnection, "release");
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect(failed).not.toBe(lost);
+          expect(errorOutcome(failed)).toBe("unknown");
+          expect(release).toHaveBeenCalledTimes(1);
+          expect(provider.isInTransaction()).toBe(false);
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          driverEnd.mockRestore();
+          release.mockRestore();
+        }
+      },
+    );
+
+    test("a COMMIT refused for a deadlock answers its mapped class with the SQLSTATE kept", async () => {
+      provider = new MySQLProvider(makeMySQLConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const deadlock = Object.assign(new Error("Deadlock found when trying to get lock; try restarting transaction"), {
+        errno: 1213,
+        code: "ER_LOCK_DEADLOCK",
+        sqlState: "40001",
+      });
+      const commit = spyOn(mockConnection, "commit").mockRejectedValueOnce(deadlock);
+      const release = spyOn(mockConnection, "release");
+      try {
+        const failed = await provider.commitTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).sqlstate).toBe("40001");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({ code: ApiErrorCode.DATABASE_ERROR, outcome: "unknown" });
+      } finally {
+        commit.mockRestore();
+        release.mockRestore();
+      }
+    });
 
     test("a statement MySQL commits implicitly ends the session, so no rollback is pretended", async () => {
       mockExecuteFn = answering({ BEGIN: 16387, INSERT: 3, CREATE: 16386 });
@@ -8960,9 +9183,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
         if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([rows, [{ name: "id" }]]);
         return profileDefault(sql);
       };
-      await expect(profiled.queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }))).rejects.toThrow(
-        /row budget: 11 rows > 10 allowed/,
-      );
+      const refused = await profiled
+        .queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget: 11 rows > 10 allowed/);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       expect(roSessions.at(-1)!.sets[0]).toBe("SET SESSION sql_select_limit = 11");
     });
 
@@ -8976,9 +9201,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
         if (sql.trim().toUpperCase().startsWith("SELECT")) return Promise.resolve([rows, [{ name: "id" }]]);
         return profileDefault(sql);
       };
-      await expect(
-        profiled.queryReadOnly("SELECT id FROM t CROSS JOIN u LIMIT 100000000", budget({ maxResultRows: 10 })),
-      ).rejects.toThrow(/row budget: 11 rows > 10 allowed/);
+      const refused = await profiled
+        .queryReadOnly("SELECT id FROM t CROSS JOIN u LIMIT 100000000", budget({ maxResultRows: 10 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget: 11 rows > 10 allowed/);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       // The server's generation is stopped from another session, and the connection
       // is destroyed rather than released: one dropped mid-result is not one this
       // profile can prove clean again.
@@ -9031,6 +9258,36 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
       expect(session.destroyed).toBe(true);
       expect(session.released).toBe(false);
+    });
+
+    test("bytes are measured on the keyed rows it serves, so it stops at the row core's re-check would refuse", async () => {
+      // The rows arrive as arrays (`rowsAsArray`) and are served keyed by column name, which adds the names to every
+      // row's JSON. Each array row here is 6 bytes and each served row 30, so an 80-byte budget passes all three
+      // arrays and is crossed by the third served row, at the sum `runReadOnlyStatement` refuses at.
+      const profiled = await profiledProvider();
+      const served = [
+        { customer_display_name: "c1" },
+        { customer_display_name: "c2" },
+        { customer_display_name: "c3" },
+      ];
+      expect(measureRowBytes(["c1"])).toBe(6);
+      mockExecuteFn = (sql: string) => {
+        if (sql.trim().toUpperCase().startsWith("SELECT")) {
+          return Promise.resolve([served, [{ name: "customer_display_name" }]]);
+        }
+        return profileDefault(sql);
+      };
+      const crossing = served.reduce((sum, row) => sum + measureRowBytes(row), 0);
+      expect(crossing).toBeGreaterThan(80);
+      expect(crossing - measureRowBytes(served[2])).toBeLessThanOrEqual(80);
+
+      const refused = await profiled
+        .queryReadOnly("SELECT customer_display_name FROM t", budget({ maxResultBytes: 80 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(byteBudgetSentence(crossing, 80));
+      expect(errorKind(refused)).toBe("byte-budget-refusal");
+      expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill query 4242"))).toBe(true);
+      expect(roSessions.at(-1)!.destroyed).toBe(true);
     });
   });
 
@@ -9158,6 +9415,294 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
       await expect(profiled.queryReadOnly("SELECT SLEEP(30)", budget({ statementTimeoutMs: 60 }))).rejects.toThrow(
         /deadline of 60ms and was killed/,
       );
+    });
+
+    /**
+     * The statement under test reaching the fixture, which is when the read is in flight
+     * with its deadline armed. The cases below wait on this rather than on a clock, so
+     * "the statement started, then the disconnect, then the deadline" is an order the test
+     * fixes rather than one it expects. A clock here also hung bun test on windows-latest:
+     * after the continuation of a timer called `expect(...).rejects`, no timer fired again.
+     * Bun 1.4.4 runs a timer's continuation inside its Windows timer dispatch, where the
+     * matcher's nested wait cannot fire one (oven-sh/bun#40023; oven-sh/bun#44833 makes
+     * the matcher non-blocking).
+     */
+    const statementStart = () => {
+      let started: () => void = () => {};
+      const reached = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      return { started, reached };
+    };
+
+    test("a deadline that fires after the connection was closed sends no KILL and says the connection was closed", async () => {
+      // `disconnect()` ends the read-only pool and then lets the main pool go, which the
+      // KILL is sent from. The deadline firing after that has no session to send the KILL
+      // from: it is recorded as not sent, and the read is refused with what happened to it
+      // rather than "killed server-side".
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const profiled = await profiledProvider();
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select")) {
+            statement.started();
+            // The server's own deadline, one backstop later, is what ends the statement.
+            return new Promise((_resolve, reject) =>
+              setTimeout(() => {
+                const error = new Error(
+                  "Query execution was interrupted, maximum statement execution time exceeded",
+                ) as Error & { code: string; errno: number };
+                error.code = "ER_QUERY_TIMEOUT";
+                error.errno = 3024;
+                reject(error);
+              }, 200),
+            );
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        await profiled.disconnect();
+        await expect(refusal).rejects.toThrow(
+          "The connection was closed while the read-only statement ran, so it was not killed at its deadline of 60ms and was not answered",
+        );
+        await expect(refusal).rejects.toBeInstanceOf(QueryError);
+        // The connection closed under it, which is no budget refusal: the other branch of the deadline's sentence.
+        expect(errorKind(await refusal.catch((caught: unknown) => caught))).toBe("query");
+        expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
+        expect(warn).toHaveBeenCalledWith(
+          "[MySQL] KILL QUERY 4242 for a read-only statement was not sent: the connection was closed",
+          expect.objectContaining({ provider: "mysql" }),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a row past the budget after the connection was closed sends no KILL, and the budget refusal still stands", async () => {
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const profiled = await profiledProvider();
+        const rows = Array.from({ length: 20 }, (_, i) => ({ id: i }));
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select")) {
+            statement.started();
+            return new Promise((resolve) => setTimeout(() => resolve([rows, [{ name: "id" }]]), 60));
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT id FROM t", budget({ maxResultRows: 10 }));
+        await statement.reached;
+        await profiled.disconnect();
+        await expect(refusal).rejects.toThrow(/row budget: 11 rows > 10 allowed/);
+        expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
+        expect(warn).toHaveBeenCalledWith(
+          "[MySQL] KILL QUERY 4242 for a read-only statement was not sent: the connection was closed",
+          expect.objectContaining({ provider: "mysql" }),
+        );
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    /** The session's own deadline variable stopping the statement, as MySQL answers it. */
+    const stoppedByDeadlineVariable = () => {
+      const error = new Error("Query execution was interrupted, maximum statement execution time exceeded") as Error & {
+        code: string;
+        errno: number;
+      };
+      error.code = "ER_QUERY_TIMEOUT";
+      error.errno = 3024;
+      return error;
+    };
+
+    const NOT_SENT = "[MySQL] KILL QUERY 4242 for a read-only statement was not sent: the connection was closed";
+    const CLOSED_UNDER =
+      "The connection was closed while the read-only statement ran, so it was not killed at its deadline of 60ms and was not answered";
+
+    test("a deadline that fires while disconnect() waits on the read-only pool still kills the statement", async () => {
+      // mysql2's end() settles only once the running statement has ended, so the read-only
+      // pool is ended while the main pool, which the KILL is sent from, is still held.
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      let releaseRoEnd: () => void = () => {};
+      roPoolEndGate = new Promise((resolve) => {
+        releaseRoEnd = resolve;
+      });
+      try {
+        const profiled = await profiledProvider();
+        let killStatement: (error: Error) => void = () => {};
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          const text = sql.trim().toLowerCase();
+          if (text.startsWith("select sleep")) {
+            statement.started();
+            return new Promise((_resolve, reject) => {
+              killStatement = reject;
+              // Without a KILL, the session's own deadline variable is what ends it.
+              setTimeout(() => reject(stoppedByDeadlineVariable()), 200);
+            });
+          }
+          if (text === "kill query 4242") {
+            const error = new Error("Query execution was interrupted") as Error & { code: string; errno: number };
+            error.code = "ER_QUERY_INTERRUPTED";
+            error.errno = 1317;
+            killStatement(error);
+            return Promise.resolve([{ affectedRows: 0 }, undefined]);
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        const closing = profiled.disconnect();
+        const refused = await refusal.catch((caught: unknown) => caught);
+        expect((refused as Error).message).toContain(
+          "Read-only execution exceeded the statement deadline of 60ms and was killed server-side",
+        );
+        expect(errorKind(refused)).toBe("time-budget-refusal");
+        releaseRoEnd();
+        await closing;
+        expect(protocolCalls.filter((c) => c.sql.toLowerCase().startsWith("kill")).map((c) => c.sql)).toEqual([
+          "KILL QUERY 4242",
+        ]);
+        expect(warn).not.toHaveBeenCalledWith(NOT_SENT, expect.anything());
+        expect(profiled.isConnected()).toBe(false);
+      } finally {
+        releaseRoEnd();
+        warn.mockRestore();
+      }
+    });
+
+    test("a deadline that fires while disconnect() waits on the main pool sends no KILL into the closing pool", async () => {
+      // A closing pool refuses every new statement, so the KILL is not sent from it: the
+      // provider lets the main pool go before it waits on its end.
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      let releaseMainEnd: () => void = () => {};
+      const mainEndGate = new Promise<void>((resolve) => {
+        releaseMainEnd = resolve;
+      });
+      let mainEndCalled: () => void = () => {};
+      const mainEndCall = new Promise<void>((resolve) => {
+        mainEndCalled = resolve;
+      });
+      const mainEnd = spyOn(mockPool, "end").mockImplementation(() => {
+        mainEndCalled();
+        return mainEndGate;
+      });
+      try {
+        const profiled = await profiledProvider();
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
+            return new Promise((_resolve, reject) => setTimeout(() => reject(stoppedByDeadlineVariable()), 200));
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        const closing = profiled.disconnect();
+        await mainEndCall;
+        expect(mainEnd).toHaveBeenCalledTimes(1);
+        expect(profiled.isConnected()).toBe(false);
+        await expect(refusal).rejects.toThrow(CLOSED_UNDER);
+        releaseMainEnd();
+        await closing;
+        expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
+        expect(warn).toHaveBeenCalledWith(NOT_SENT, expect.objectContaining({ provider: "mysql" }));
+      } finally {
+        releaseMainEnd();
+        mainEnd.mockRestore();
+        warn.mockRestore();
+      }
+    });
+
+    test("a deadline that fires after a reconnect does not send the KILL through the new connection's pool", async () => {
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const profiled = await profiledProvider();
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
+            return new Promise((_resolve, reject) => setTimeout(() => reject(stoppedByDeadlineVariable()), 200));
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        await profiled.disconnect();
+        nextMainPool = { ...mockPool };
+        await profiled.connect();
+        expect(profiled.isConnected()).toBe(true);
+        await expect(refusal).rejects.toThrow(CLOSED_UNDER);
+        expect(protocolCalls.some((c) => c.sql.toLowerCase().startsWith("kill"))).toBe(false);
+        expect(warn).toHaveBeenCalledWith(NOT_SENT, expect.objectContaining({ provider: "mysql" }));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a statement that answers after its KILL was not sent is refused as the closed connection, not served", async () => {
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const profiled = await profiledProvider();
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
+            return new Promise((resolve) =>
+              setTimeout(() => resolve([[{ "SLEEP(5)": 0 }], [{ name: "SLEEP(5)" }]]), 200),
+            );
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        await profiled.disconnect();
+        const error = await refusal.catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as QueryError).message).toBe(CLOSED_UNDER);
+        expect((error as QueryError).detail).toBeUndefined();
+        expect(warn).toHaveBeenCalledWith(NOT_SENT, expect.objectContaining({ provider: "mysql" }));
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
+    test("a statement that fails after its KILL was not sent is refused as the closed connection, carrying its own error", async () => {
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        const profiled = await profiledProvider();
+        const statement = statementStart();
+        mockExecuteFn = (sql: string) => {
+          if (sql.trim().toLowerCase().startsWith("select sleep")) {
+            statement.started();
+            return new Promise((_resolve, reject) =>
+              setTimeout(() => {
+                const error = new Error("Connection lost: The server closed the connection.") as Error & {
+                  code: string;
+                };
+                error.code = "PROTOCOL_CONNECTION_LOST";
+                reject(error);
+              }, 200),
+            );
+          }
+          return profileDefault(sql);
+        };
+        const refusal = profiled.queryReadOnly("SELECT SLEEP(5)", budget({ statementTimeoutMs: 60 }));
+        await statement.reached;
+        await profiled.disconnect();
+        const error = await refusal.catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as QueryError).message).toBe(CLOSED_UNDER);
+        expect((error as QueryError).detail).toBe(
+          "The statement ended with: Connection lost: The server closed the connection.",
+        );
+      } finally {
+        warn.mockRestore();
+      }
     });
   });
 

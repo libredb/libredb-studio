@@ -68,6 +68,7 @@ import { noWritePath } from "@/lib/db/write-reach";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { capture, captureBody, captureVm, captureVmBody } from "../../helpers/prometheus-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 // ============================================================================
 // The captured payloads, and the test's own view of their wire shapes
@@ -518,7 +519,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 async function connected(overrides: Partial<DatabaseConnection> = {}): Promise<PrometheusProvider> {
-  const provider = new PrometheusProvider(makeConnection(overrides));
+  const provider = new PrometheusProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -716,18 +717,26 @@ describe("connect", () => {
   });
 
   test("sends no credential when none is set, Basic for a user and a password, Bearer for a password alone", async () => {
-    await firstQuery(new PrometheusProvider(makeConnection()));
+    await firstQuery(new PrometheusProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }));
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((request) => !request.headers.has("authorization"))).toBe(true);
 
     sent = [];
-    await firstQuery(new PrometheusProvider(makeConnection({ user: "reader", password: "s3cret" })));
+    await firstQuery(
+      new PrometheusProvider(
+        makeConnection({ user: "reader", password: "s3cret" }),
+        {},
+        { egress: ALLOWS_PRIVATE_HOSTS },
+      ),
+    );
     const basic = `Basic ${Buffer.from("reader:s3cret").toString("base64")}`;
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((request) => request.headers.get("authorization") === basic)).toBe(true);
 
     sent = [];
-    await firstQuery(new PrometheusProvider(makeConnection({ password: "tok_123" })));
+    await firstQuery(
+      new PrometheusProvider(makeConnection({ password: "tok_123" }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    );
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((request) => request.headers.get("authorization") === "Bearer tok_123")).toBe(true);
   });
@@ -1378,11 +1387,12 @@ describe("monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getMonitoringData answers every panel, with no panel error", async () => {
+  test("getMonitoringData answers every panel it offers, with no panel error", async () => {
     const provider = await connected();
     const data = await provider.getMonitoringData();
 
     expect(data.errors).toBeUndefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
     expect(data.overview?.version).toBe(BUILDINFO.data.version);
     expect(data.tables).toHaveLength(TSDB_TOP.data.seriesCountByMetricName.length);
     expect(uncaptured).toEqual([]);
@@ -1635,7 +1645,11 @@ describe("errors, end to end", () => {
 
   test("a 401 with no envelope is an AuthenticationError (built inline from M5)", async () => {
     override = () => UNAUTHORIZED;
-    const provider = new PrometheusProvider(makeConnection({ user: "reader", password: "wrong" }));
+    const provider = new PrometheusProvider(
+      makeConnection({ user: "reader", password: "wrong" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(firstQuery(provider)).rejects.toBeInstanceOf(AuthenticationError);
   });
@@ -1643,7 +1657,7 @@ describe("errors, end to end", () => {
   test("a proxy's HTML page is a ConnectionError that never quotes the page (built inline)", async () => {
     const page = "<!doctype html><html><body><h1>Welcome to nginx!</h1><p>upstream-host-7</p></body></html>";
     override = () => ({ status: 200, body: page, headers: { "content-type": "text/html" } });
-    const provider = new PrometheusProvider(makeConnection());
+    const provider = new PrometheusProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const failure = firstQuery(provider);
 
     await expect(failure).rejects.toBeInstanceOf(ConnectionError);
@@ -1663,7 +1677,7 @@ describe("errors, end to end", () => {
       body: "Service Unavailable",
       headers: { "content-type": "text/plain; charset=utf-8", "x-prometheus-stopping": "false" },
     });
-    const provider = new PrometheusProvider(makeConnection());
+    const provider = new PrometheusProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const failure = provider.connect();
 
     await expect(failure).rejects.toBeInstanceOf(ConnectionError);
@@ -1679,7 +1693,7 @@ describe("errors, end to end", () => {
   test("a 502 with a body is a ConnectionError that never quotes the body (built inline)", async () => {
     const page = "<html><head><title>502</title></head><body>gateway-node-19 could not reach upstream</body></html>";
     override = () => ({ status: 502, body: page, headers: { "content-type": "text/html" } });
-    const provider = new PrometheusProvider(makeConnection());
+    const provider = new PrometheusProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     const failure = firstQuery(provider);
 
     await expect(failure).rejects.toBeInstanceOf(ConnectionError);
@@ -1709,7 +1723,7 @@ describe("errors, end to end", () => {
     override = () => {
       throw new TypeError("fetch failed");
     };
-    const provider = new PrometheusProvider(makeConnection());
+    const provider = new PrometheusProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(firstQuery(provider)).rejects.toBeInstanceOf(ConnectionError);
   });
@@ -1741,7 +1755,7 @@ describe("credentials (#1085 S3), end to end", () => {
   ] as const)(
     "%s is refused before any request, and neither the error nor the log repeats it",
     async (_, credential, secret) => {
-      const provider = new PrometheusProvider(makeConnection(credential));
+      const provider = new PrometheusProvider(makeConnection(credential), {}, { egress: ALLOWS_PRIVATE_HOSTS });
       const failure = firstQuery(provider);
 
       await expect(failure).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -1805,7 +1819,7 @@ describe("the query deadline, end to end (section 5.2)", () => {
     // bounds connect()'s build read, so it leaves that read room; the wait below stays inside bun's 5 s.
     const queryTimeout = 500;
     override = (request) => (request.url.pathname === "/api/v1/query" ? new Promise<Reply>(() => {}) : undefined);
-    const provider = new PrometheusProvider(makeConnection(), { queryTimeout });
+    const provider = new PrometheusProvider(makeConnection(), { queryTimeout }, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
 
     const outcome = await Promise.race([
@@ -1830,7 +1844,11 @@ describe("the query deadline, end to end (section 5.2)", () => {
 
 describe("write reach: no surface of a read-only connection requests anything but a PATHS value", () => {
   test("the provider declares no write path, with the closed endpoint table as the editor's proof", () => {
-    const capabilities = new PrometheusProvider(makeConnection()).getCapabilities();
+    const capabilities = new PrometheusProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
     expect(capabilities.writeReach).toEqual(
       noWritePath({ module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts", symbol: "PATHS" }),
     );

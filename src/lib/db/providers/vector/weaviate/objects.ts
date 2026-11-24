@@ -22,10 +22,11 @@ import type {
   ObjectSourceDocument,
 } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
-import type { WeaviateAnswer, WeaviateOp, WeaviateSend } from "./client";
+import type { WeaviateAnswer, WeaviateSend } from "./client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import { encodeGraphql } from "./graphql";
 import type { WeaviatePathState } from "./execute";
-import type { WeaviateSearchModel } from "./request";
+import type { WeaviateSearchModel } from "@/lib/languages/weaviateapi/request";
 import {
   readWeaviateClass,
   readWeaviateSchema,

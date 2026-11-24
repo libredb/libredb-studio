@@ -3,38 +3,32 @@
  * every refusal made before a socket exists, the per-device pacing across two connections, the run's request bound,
  * the time budget worded as Studio's, failures worded by category, and the surfaces an agent-mode handle answers.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { RefusedBeforeSendError } from "@/lib/db/errors";
+import { afterEach, describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
+import { RefusedBeforeSendError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { ModbusDevicePacer, ModbusPacingTimeout } from "@/lib/db/providers/industrial/modbus/agent-pacing";
 import {
   MODBUS_AGENT_FAILURE_SENTENCES,
   MODBUS_AGENT_RUN_REQUESTS,
-  ModbusAgentError,
 } from "@/lib/db/providers/industrial/modbus/agent-read";
 import { MODBUS_AGENT_READS } from "@/lib/db/providers/industrial/modbus/agent-statement";
 import { MODBUS_AGENT_WITHHELD } from "@/lib/db/providers/industrial/modbus/agent-surface";
 import { dialModbus, type Dialer } from "@/lib/db/providers/industrial/modbus/client";
 import { MAX_IDENTIFICATION_ROUNDS } from "@/lib/db/providers/industrial/modbus/constants";
 import { MODBUS_PROVIDER_SENTENCES, ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import type { DatabaseConnection } from "@/lib/types";
 import { fakeModbusDevice, readAdu, type FakeModbusDevice } from "../../../helpers/modbus-fake-device";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const original = process.env[FLAG];
 const devices: FakeModbusDevice[] = [];
-
-beforeEach(() => {
-  delete process.env[FLAG];
-});
 
 afterEach(async () => {
   for (const device of devices.splice(0)) await device.close();
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
 });
 
 const HOLDING = Array.from({ length: 10 }, (_unused, n) => 7000 + 11 * n);
@@ -70,7 +64,8 @@ function provider(
       registerMap: options.map ?? MAP,
     } as unknown as DatabaseConnection,
     {},
-    options.execution ?? AGENT,
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { ...(options.execution ?? AGENT), egress: ALLOWS_PRIVATE_HOSTS },
     { pacer: options.pacer ?? new ModbusDevicePacer(5), ...(options.dial === undefined ? {} : { dial: options.dial }) },
   );
 }
@@ -209,6 +204,7 @@ describe("each admitted read sends exactly the console's request, and only it", 
       label: "read result",
       operationId: "modbusread.query.read",
       reference: "r",
+      relayedBy: providerAuthor("modbus"),
     });
     expect(fenced.split(UNTRUSTED_CONTENT_END)).toHaveLength(2);
   });
@@ -270,6 +266,7 @@ describe("every refusal is made before a socket exists", () => {
       read.queryReadOnly('{"unit": 1, "table": "coil", "address": 0, "count": 5}', budget({ maxResultRows: 4 })),
     );
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.overRows(5, 4));
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(error.message).toStartWith("Read-only execution exceeded the row budget: 5 rows > 4 allowed");
     expect(dev.connections).toHaveLength(1);
   });
@@ -283,6 +280,7 @@ describe("every refusal is made before a socket exists", () => {
     );
     const error = await refusal(read.queryReadOnly('{"read": ["volts", "amps"]}', budget({ maxResultRows: 1 })));
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.overRows(2, 1));
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(dev.connections).toHaveLength(1);
   });
 
@@ -426,6 +424,7 @@ describe("pacing on one device", () => {
     const error = await refusal(provider(dev.port, { pacer }).queryReadOnly(text, budget({ statementTimeoutMs: 100 })));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toStartWith(`${TIME_BUDGET_PREFIX}: the read waited `);
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(error.message).toContain("This is Studio's refusal, not the device's answer.");
     await first;
     expect(dev.connections).toHaveLength(1);
@@ -441,7 +440,8 @@ describe("the time budget and the device's failures", () => {
         budget({ statementTimeoutMs: 100 }),
       ),
     );
-    expect(error).toBeInstanceOf(ModbusAgentError);
+    expect(error).toBeInstanceOf(TimeBudgetRefusal);
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.deadline(100));
     await arrives(() => dev.connections[0]?.closed !== undefined);
   });
@@ -474,6 +474,7 @@ describe("the time budget and the device's failures", () => {
       provider(dev.port).queryReadOnly('{"unit": 1, "table": "coil", "address": 0, "count": 1}', budget()),
     );
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.refused(2));
+    expect(errorKind(error)).toBe("query");
     expect(error.message).toBe(
       "The device refused the read with Modbus exception code 2: The device has no such address. A wrong address or a wrong unit id are both likely causes.",
     );
@@ -494,6 +495,7 @@ describe("the time budget and the device's failures", () => {
     const dev = await device({ objects, perRound: 1 });
     const error = await refusal(provider(dev.port).queryReadOnly('{"identify": "extended"}', budget()));
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.walkBound);
+    expect(errorKind(error)).toBe("query");
     expect(dev.received).toHaveLength(MAX_IDENTIFICATION_ROUNDS);
   });
 
@@ -505,6 +507,7 @@ describe("the time budget and the device's failures", () => {
       provider(dev.port).queryReadOnly('{"identify": "regular"}', budget({ maxResultRows: 2 })),
     );
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.overAnswerRows(3, 2));
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a result past the byte budget is refused rather than cut", async () => {
@@ -516,6 +519,7 @@ describe("the time budget and the device's failures", () => {
       ),
     );
     expect(error.message).toStartWith("Read-only execution exceeded the byte budget:");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("an address nothing answers is unreachable, worded by its category", async () => {
@@ -527,6 +531,7 @@ describe("the time budget and the device's failures", () => {
       provider(port).queryReadOnly('{"unit": 1, "table": "coil", "address": 0, "count": 1}', budget()),
     );
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.unreachable);
+    expect(errorKind(error)).toBe("query");
     expect(error.message).not.toContain(String(port));
   });
 
@@ -539,6 +544,7 @@ describe("the time budget and the device's failures", () => {
       ),
     );
     expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.silence);
+    expect(errorKind(error)).toBe("query");
     expect(error.message).not.toContain(TIME_BUDGET_PREFIX);
   }, 10_000);
 });

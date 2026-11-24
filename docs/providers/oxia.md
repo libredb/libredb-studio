@@ -8,6 +8,7 @@ Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424).
 | | |
 |---|---|
 | **Write reach** | none: the gRPC stub, built from `allowlistedServices`, holds only the read RPCs, so no write RPC can be called; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## Before you connect
 
@@ -56,13 +57,15 @@ The provider is the first gRPC member of the `keyvalue` family, composed over a 
 `grpc-client.ts` is the one provider file that imports `@grpc/proto-loader` and the generated descriptor, and it reaches `@grpc/grpc-js` only through PR A's shared transport in `src/lib/db/grpc/`, the only importer of grpc-js in the repository.
 Its stub is structural: it is built from the descriptor filtered to an allowlist, `GetShardAssignments`, `Read`, `List`, `RangeScan` and `Health/Check`, so no write, session, notification or watch method exists in it.
 The console's modules are pure and shipped to the browser, because the editor, the confirmation gate and the generators read them; everything else runs on the server.
+The command language's modules (its numbers, the lexer, the command table, the guard, the confirmation gate's row and the agent's command reader) live in the oxiacli statement language's core family module, `src/lib/languages/oxiacli/`, because core reads them too ([PROVIDER_IMPORTS.md](../PROVIDER_IMPORTS.md)); the table below names them by repository path.
 
 ### 2.2 Modules
 
 | File | What it owns | Runs on |
 |---|---|---|
 | `client.ts` | The seam: `OxiaClient`, its wire-mirroring types, the allowlisted RPC names and the walk answer types | server |
-| `constants.ts` | Every number and fixed name of the provider | browser |
+| `constants.ts` | Every number and fixed name of the provider; the numbers the command language reads are in the family's `constants.ts` | browser |
+| `src/lib/languages/oxiacli/constants.ts` | The numbers and fixed names the command language reads: the CLI's default port, the internal key prefix, the list and scan limits, the text bound and the echo width | browser |
 | `connection-options.ts` | The connection to options, every field refusal, the dial policy over the leaders a shard map names, the TLS identity | server |
 | `errors.ts` | The one error table, in the adapter's half and the provider's half, and every sentence other modules quote | server |
 | `grpc-client.ts` | The allowlisted stub over the shared transport, one channel per admitted address, the bearer token, the deadlines, the per-stream limits and `cancel()` | server |
@@ -72,9 +75,9 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `merge.ts` | The merge of shard answers under the merge bound, and the comparison get's winner | server |
 | `cursor.ts` | The Keys panel's cursor and its two refusals | browser |
 | `walks.ts` | Every sequence of calls: the order probe, the Keys panel pages, folder discovery, the console's walks and the limited client | server |
-| `lexer.ts` | The console's tokens and shell words | browser |
-| `commands.ts` | The command table, the parser and every refusal sentence of a command | browser |
-| `guard.ts` | The confirmation gate's reading of a command: no destructive operation | browser |
+| `src/lib/languages/oxiacli/lexer.ts` | The console's tokens and shell words | browser |
+| `src/lib/languages/oxiacli/commands.ts` | The command table, the parser and every refusal sentence of a command | browser |
+| `src/lib/languages/oxiacli/guard.ts` | The confirmation gate's reading of a command: no destructive operation | browser |
 | `values.ts` | A value's encoding, the hex forms, shown keys and timestamps | server |
 | `results.ts` | The result grid's columns, cells and notices | server |
 | `execute.ts` | One command's run over the walks | server |
@@ -85,13 +88,14 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `labels.ts` | The labels, the statement language and the key order in words | browser |
 | `connection-string.ts` | The engine's connection string row: no scheme, no TLS read from a URL query, no seed load check | browser |
 | `execution-ui.ts` | The engine's execution UI row: the rolled-back notice names `COMMIT`, no consent deadline | browser |
+| `engine-facets.ts` | The engine's facets row: no monitoring panel is offered | browser |
 | `generators.ts` | The commands Generate Command writes | browser |
 | `sql-writing.ts` | The SQL writing row, the inert standard answer no generator calls | browser |
-| `destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
+| `src/lib/languages/oxiacli/destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
 | `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
 | `editor-language.ts` | The engine's editor language row: the `oxia` language, no completion, no formatter, its accent | browser |
-| `agent-statement.ts` | Agent mode's reader of one command: the closed table of metadata reads over the editor's parser, and every refusal in agent mode's words | server |
+| `src/lib/languages/oxiacli/agent-statement.ts` | Agent mode's reader of one command: the closed table of metadata reads over the editor's parser, and every refusal in agent mode's words | server |
 | `agent-metadata-read.ts` | Agent mode's metadata-only projection of each read, the budgets and the wording of a failure by its category | server |
 | `index.ts` | The composition root: the session, the declarations, the snapshot cache, the order verdict's lifetime, the run registry and the one failure path | server |
 
@@ -212,7 +216,11 @@ A connection names one endpoint, one namespace and, for a cluster, the data serv
 | Read-only | A fixed label with no box: the mode of section 3.5 |
 
 The Host, Token, Namespace, Data servers and consent rows are the hints the connection dialog shows under each field.
-There is no User field: Oxia has no user name, and a connection that carries one is refused.
+There is no User field: Oxia has no user name.
+A connection that carries one is refused before the provider is built, whatever its value but empty, so the provider never receives it:
+
+> Oxia has no user name: clear User. A bearer token goes under Token.
+
 A Namespace is refused before any call when it is not short text:
 
 > The Namespace must be at most 300 bytes of text with no control characters; empty means default. Nothing was sent.
@@ -524,7 +532,7 @@ On a namespace that sorts keys naturally, a list or scan with those bounds carri
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/oxia/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/oxia/sql-grammar.ts), the `oxia` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `oxia` takes one `oxia client` read command, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/keyvalue/oxia/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/oxiacli/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -603,11 +611,31 @@ A Check that answers anything but SERVING:
 > Oxia answered the health check with \<STATUS\>: it serves no reads now.
 
 The overview counts no table and no index, because Oxia has none, and the client API reports no version, uptime or size, so those read N/A; the shard count, the namespace, the key order and each leader are in each shard's Source tab.
-The other panels are empty, with these states:
+That overview is constants after a reachability probe, so no monitoring panel is offered: the monitoring dashboard draws none for Oxia and says so, and fleet health asks for no overview.
+Oxia keeps no query log, does not list client sessions and has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.
+The provider therefore declares no empty-state sentence and no table caption, because no panel would draw them.
 
-- Slow queries: Oxia keeps no query log
-- Sessions: Oxia does not list client sessions
-- Tables: Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `oxia` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/oxia/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | No | `getOverview` answers constants after a reachability probe, never a figure the server reports |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 
@@ -662,9 +690,6 @@ Every capability is written, since the base's defaults are SQL's:
 | `vacuumGlobalLabel` | Compact |
 | `vacuumGlobalTitle` | Not available |
 | `vacuumGlobalDesc` | Oxia compacts its own storage, and Studio sends it no maintenance. |
-| `slowQueriesEmptyState` | Oxia keeps no query log |
-| `sessionsEmptyState` | Oxia does not list client sessions |
-| `tableStatsCaption` | Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console. |
 
 `statementLanguage`, the sentence plan mode states for the grammar, is built from the command table of section 5.2, so it names every verb and flag the parser takes.
 
@@ -845,7 +870,7 @@ The refusal reason it prints, verbatim:
 ## 15. Agent mode
 
 Agent mode reads Oxia's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/keyvalue/oxia/index.ts).
-The command reader and its closed table are [`agent-statement.ts`](../../src/lib/db/providers/keyvalue/oxia/agent-statement.ts), and the metadata-only projection and the wording of a failure are [`agent-metadata-read.ts`](../../src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts).
+The command reader and its closed table are [`src/lib/languages/oxiacli/agent-statement.ts`](../../src/lib/languages/oxiacli/agent-statement.ts), and the metadata-only projection and the wording of a failure are [`agent-metadata-read.ts`](../../src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts).
 Every claim below cites a capture under [`tests/fixtures/oxia/0.18.0/agent-boundary/`](../../tests/fixtures/oxia/0.18.0/agent-boundary/), recorded by its `run.sh` against two digest-pinned 0.18.0 servers, a standalone server with no authentication and a data server with the OIDC provider on, with every call sent raw over gRPC, past every Studio check.
 
 ### 15.1 The boundary

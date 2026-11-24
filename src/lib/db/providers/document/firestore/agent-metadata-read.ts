@@ -17,10 +17,14 @@
  */
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   DatabaseError,
+  isBudgetRefusal,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -29,7 +33,7 @@ import {
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -143,7 +147,7 @@ async function listCollections(
       context.call,
     );
     for (const id of page.ids) listed.add(id);
-    if (listed.size > allowed) throw studioWorded(rowBudgetSentence(listed.size, allowed));
+    if (listed.size > allowed) throw new RowBudgetRefusal(rowBudgetSentence(listed.size, allowed), FIRESTORE_TYPE);
     if (page.next === undefined) {
       const ids = [...listed].filter((id) => idRefusal(id, "collection") === null).sort(compareUtf8);
       return { op: "list-collections", ids, skipped: listed.size - ids.length };
@@ -168,7 +172,7 @@ export async function runFirestoreAgentRead(
       const allowed = context.budget.maxResultRows;
       // One past the budget: a count that reaches it is refused, and Firestore reads no index entry beyond it.
       const documents = await client.countDocuments(plan.source, allowed + 1, context.call);
-      if (documents > allowed) throw studioWorded(F.countOverRows(allowed));
+      if (documents > allowed) throw new RowBudgetRefusal(F.countOverRows(allowed), FIRESTORE_TYPE);
       const collection = plan.source.kind === "collectionGroup" ? plan.source.collectionId : plan.source.path.at(-1);
       return { op: "count", collection: collection as string, documents };
     }
@@ -206,7 +210,7 @@ export function firestoreAgentResult(
   const { projected, warnings } = project(answer);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw studioWorded(byteBudgetSentence(bytes, budget.maxResultBytes));
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), FIRESTORE_TYPE);
   }
   return {
     fields: projected.fields,
@@ -240,7 +244,8 @@ function isTransportFailure(error: unknown): boolean {
 
 /**
  * The agent's wording of a failure, or undefined for one the provider passes on as it is: Studio's own refusal before
- * anything was sent (the allowance, the closed table), or a defect. `deadlineFired` says the read's own time budget
+ * anything was sent (the allowance, the closed table), a budget refusal (`isBudgetRefusal`), which keeps its class and
+ * kind, or a defect. `deadlineFired` says the read's own time budget
  * ended it. A Google failure is worded by its status alone, never by its message, since a Firestore error can echo a
  * document path the request did not hold, and a token, transport or unknown failure by its category alone.
  */
@@ -251,10 +256,14 @@ export function firestoreAgentFailure(
   deadlineFired: boolean,
 ): QueryError | undefined {
   const worded = (sentence: string) => new QueryError(sentence, FIRESTORE_TYPE, statement);
-  if (error instanceof RefusedBeforeSendError || isStudioWorded(error)) return undefined;
+  if (error instanceof RefusedBeforeSendError || isStudioWorded(error) || isBudgetRefusal(error)) return undefined;
   if (error instanceof MetadataProjectionError) return worded(error.message);
   if (deadlineFired || error instanceof TimeoutError)
-    return worded(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`);
+    return new TimeBudgetRefusal(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      FIRESTORE_TYPE,
+      statement,
+    );
   const google = googleErrorOf(error);
   if (google !== undefined) {
     // A stream that failed after it began answers 2xx with the failure's own code in its error element.

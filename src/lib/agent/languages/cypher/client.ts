@@ -3,22 +3,19 @@
  * hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Neo4j Enterprise Edition: the boundary is the user. Before every statement the server is asked who the
  * user is and what its roles grant, so only a user that reads, cannot LOAD and can execute no extension is ever sent a
  * statement, in a READ session. The deadline is the transaction's: the server ends the work.
  */
-function cypherReadsPosture(bounds: StatementBudgets): AgentPosture {
+function cypherReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per statement, enforced by a user proved read-only`,
     title: "Agent mode reads, as a user the server proves cannot write",
     body: `Agent mode runs Cypher reads it wrote itself, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Before every statement Studio has the server prove the connection's user reads only: Neo4j Enterprise Edition, every privilege of every role a read, no LOAD, and no procedure or function beyond the server's built-ins, so an administrator, a user that writes or loads files and URLs, a server with an extension the user can run, and Community Edition are refused. Studio's reader refuses writes, LOAD CSV, USE and comments before anything is sent. Nothing reaches your editor.`,
@@ -74,7 +71,6 @@ export const CYPHER_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: cypherReadsPosture,
-    widened: cypherReadsPosture,
     handoverTerms: () =>
       "A Neo4j answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

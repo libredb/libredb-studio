@@ -257,13 +257,18 @@ mock.module("lucide-react", () => {
 });
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { render, cleanup, fireEvent, act, waitFor } from "@testing-library/react";
 import { QueryEditor } from "@/components/QueryEditor";
 import type { SchemaCompletionCache } from "@/lib/editor/sql-completions";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import type { MaintenanceType } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { UNTYPED_CAPABILITIES_SENTENCE } from "@/lib/db/type-id";
+import { logger } from "@/lib/logger";
+import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, shapeOfRefusal } from "../helpers/outside-the-union";
 
 // =============================================================================
 // QueryEditor Tests
@@ -422,6 +427,7 @@ describe("QueryEditor", () => {
   test("Explain button appears when onExplain and supportsExplain provided", () => {
     const props = createDefaultProps({
       onExplain: mock(() => {}),
+      databaseType: "postgres",
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
@@ -431,6 +437,7 @@ describe("QueryEditor", () => {
   test("Explain button hidden without onExplain", () => {
     const props = createDefaultProps({
       onExplain: undefined,
+      databaseType: "postgres",
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
@@ -440,6 +447,7 @@ describe("QueryEditor", () => {
   test("Explain button hidden when supportsExplain is false", () => {
     const props = createDefaultProps({
       onExplain: mock(() => {}),
+      databaseType: "postgres",
       capabilities: { ...defaultCapabilities, supportsExplain: false },
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
@@ -459,6 +467,7 @@ describe("QueryEditor", () => {
     const onExplain = mock(() => {});
     const props = createDefaultProps({
       onExplain,
+      databaseType: "postgres",
       capabilities: defaultCapabilities,
     });
     const { queryByText } = render(React.createElement(QueryEditor, props));
@@ -1093,7 +1102,12 @@ describe("QueryEditor", () => {
         eventDetail = e.detail;
       }) as EventListener;
       window.addEventListener("execute-query", handler);
-      render(React.createElement(QueryEditor, createDefaultProps({ value: selected, capabilities })));
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ value: selected, databaseType: "postgres", capabilities }),
+        ),
+      );
       act(() => {
         capturedCommands[0].handler();
       });
@@ -1656,14 +1670,20 @@ describe("QueryEditor", () => {
 
     test("a json editor on a Kafka connection registers none", () => {
       render(
-        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: kafkaCapabilities })),
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", databaseType: "kafka", capabilities: kafkaCapabilities }),
+        ),
       );
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
     });
 
     test("the control: a json editor on MongoDB's JSON, with no dialect, registers it", () => {
       render(
-        React.createElement(QueryEditor, createDefaultProps({ language: "json", capabilities: jsonCapabilities })),
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "json", databaseType: "mongodb", capabilities: jsonCapabilities }),
+        ),
       );
       expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
     });
@@ -1679,7 +1699,11 @@ describe("QueryEditor", () => {
       render(
         React.createElement(
           QueryEditor,
-          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "redis" } }),
+          createDefaultProps({
+            language: "json",
+            databaseType: "redis",
+            capabilities: { ...jsonCapabilities, queryDialect: "redis" },
+          }),
         ),
       );
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
@@ -1691,23 +1715,32 @@ describe("QueryEditor", () => {
       render(
         React.createElement(
           QueryEditor,
-          createDefaultProps({ language: "json", capabilities: { ...jsonCapabilities, queryDialect: "etcd" } }),
+          createDefaultProps({
+            language: "json",
+            databaseType: "etcd",
+            capabilities: { ...jsonCapabilities, queryDialect: "etcd" },
+          }),
         ),
       );
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
     });
 
     test("a sql editor registers none, whatever its capabilities", () => {
-      render(React.createElement(QueryEditor, createDefaultProps({ language: "sql", capabilities: jsonCapabilities })));
+      render(
+        React.createElement(
+          QueryEditor,
+          createDefaultProps({ language: "sql", databaseType: "mongodb", capabilities: jsonCapabilities }),
+        ),
+      );
       expect(mockRegisterMongoDBCompletionProvider).not.toHaveBeenCalled();
     });
 
     test("a switch from MongoDB to Kafka takes the registration down, and registers none in its place", () => {
-      const props = createDefaultProps({ language: "json", capabilities: jsonCapabilities });
+      const props = createDefaultProps({ language: "json", databaseType: "mongodb", capabilities: jsonCapabilities });
       const { rerender } = render(React.createElement(QueryEditor, props));
       expect(mockRegisterMongoDBCompletionProvider).toHaveBeenCalledTimes(1);
 
-      rerender(React.createElement(QueryEditor, { ...props, capabilities: kafkaCapabilities }));
+      rerender(React.createElement(QueryEditor, { ...props, databaseType: "kafka", capabilities: kafkaCapabilities }));
 
       expect(mockMongoDBCompletionDisposals).toHaveLength(1);
       expect(mockMongoDBCompletionDisposals[0]).toHaveBeenCalledTimes(1);
@@ -1732,6 +1765,7 @@ describe("QueryEditor", () => {
         QueryEditor,
         createDefaultProps({
           onExplain: mock(() => {}),
+          databaseType: "postgres",
           capabilities: defaultCapabilities,
         }),
       ),
@@ -1752,7 +1786,7 @@ describe("QueryEditor", () => {
 
   test("explain action becomes usable when capability metadata arrives after mount", () => {
     const onExplain = mock(() => {});
-    const props = createDefaultProps({ onExplain: undefined, capabilities: undefined });
+    const props = createDefaultProps({ databaseType: "postgres", onExplain: undefined, capabilities: undefined });
     const { rerender } = render(React.createElement(QueryEditor, props));
 
     rerender(React.createElement(QueryEditor, { ...props, onExplain, capabilities: defaultCapabilities }));
@@ -1768,7 +1802,11 @@ describe("QueryEditor", () => {
   test("explain action invokes the current handler after a connection switch", () => {
     const firstOnExplain = mock(() => {});
     const secondOnExplain = mock(() => {});
-    const props = createDefaultProps({ onExplain: firstOnExplain, capabilities: defaultCapabilities });
+    const props = createDefaultProps({
+      onExplain: firstOnExplain,
+      databaseType: "postgres",
+      capabilities: defaultCapabilities,
+    });
     const { rerender } = render(React.createElement(QueryEditor, props));
 
     rerender(React.createElement(QueryEditor, { ...props, onExplain: secondOnExplain }));
@@ -1783,7 +1821,7 @@ describe("QueryEditor", () => {
 
   test("explain action is hidden and inert after switching to a provider without explain", () => {
     const onExplain = mock(() => {});
-    const props = createDefaultProps({ onExplain, capabilities: defaultCapabilities });
+    const props = createDefaultProps({ onExplain, databaseType: "postgres", capabilities: defaultCapabilities });
     const { rerender } = render(React.createElement(QueryEditor, props));
     expect(capturedContextKeys["libredbCanExplain"]).toBe(true);
 
@@ -1810,7 +1848,11 @@ describe("QueryEditor", () => {
     render(
       React.createElement(
         QueryEditor,
-        createDefaultProps({ onExplain, capabilities: { ...defaultCapabilities, supportsExplain: false } }),
+        createDefaultProps({
+          onExplain,
+          databaseType: "postgres",
+          capabilities: { ...defaultCapabilities, supportsExplain: false },
+        }),
       ),
     );
 
@@ -1857,6 +1899,7 @@ describe("QueryEditor", () => {
         QueryEditor,
         createDefaultProps({
           onExplain,
+          databaseType: "postgres",
           capabilities: defaultCapabilities,
         }),
       ),
@@ -2263,6 +2306,7 @@ describe("QueryEditor", () => {
           createDefaultProps({
             language: "firestore",
             schemaContext: collectionSchema,
+            databaseType: "firestore",
             capabilities: { queryLanguage: "json", queryDialect: "firestore" } as never,
           }),
         ),
@@ -2638,7 +2682,7 @@ describe("QueryEditor", () => {
   });
 
   test("the control: with the field absent, an SQL tab keeps its Format button and Format SQL", () => {
-    const props = createDefaultProps({ language: "sql", capabilities: defaultCapabilities });
+    const props = createDefaultProps({ language: "sql", databaseType: "postgres", capabilities: defaultCapabilities });
     const { queryByText } = render(React.createElement(QueryEditor, props));
     expect(queryByText("Format")).not.toBeNull();
     expect(capturedContextKeys["libredbCanFormatSql"]).toBe(true);
@@ -3464,13 +3508,54 @@ describe("QueryEditor completion addresses (#1397)", () => {
     const capabilities = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Parameters<
       typeof QueryEditor
     >[0]["capabilities"];
-    const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ capabilities })));
+    const { unmount } = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "mysql" })),
+    );
     const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
     expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
     unmount();
     const bare = render(React.createElement(QueryEditor, createDefaultProps()));
     expect(calls[calls.length - 1][1].quoteSegment).toBeUndefined();
     bare.unmount();
+    mockUseMonacoReturn = null;
+  });
+
+  test("completion quotes a segment by the connection's type, never the port its declaration names", () => {
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    type Capabilities = Parameters<typeof QueryEditor>[0]["capabilities"];
+    const declaring = (defaultPort: number) => ({ queryLanguage: "sql", defaultPort }) as unknown as Capabilities;
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const cases: readonly (readonly [Parameters<typeof QueryEditor>[0]["databaseType"], number, string])[] = [
+      ["mysql", 5432, "`e2e-other`"],
+      ["postgres", 3306, '"e2e-other"'],
+    ];
+    for (const [databaseType, defaultPort, quoted] of cases) {
+      const view = render(
+        React.createElement(QueryEditor, createDefaultProps({ capabilities: declaring(defaultPort), databaseType })),
+      );
+      expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe(quoted);
+      view.unmount();
+    }
+    mockUseMonacoReturn = null;
+  });
+
+  test("a mounted editor requotes completion when only the connection's type changes", () => {
+    // An embedded host can share one SQL declaration between two connections: the same object arrives with a
+    // new type, and completion must follow the type.
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    const capabilities = { queryLanguage: "sql", defaultPort: 5432 } as unknown as Parameters<
+      typeof QueryEditor
+    >[0]["capabilities"];
+    const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
+    const view = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "postgres" })),
+    );
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe('"e2e-other"');
+    view.rerender(React.createElement(QueryEditor, createDefaultProps({ capabilities, databaseType: "mysql" })));
+    expect(calls[calls.length - 1][1].quoteSegment!("e2e-other")).toBe("`e2e-other`");
+    view.unmount();
     mockUseMonacoReturn = null;
   });
 
@@ -3488,13 +3573,17 @@ describe("QueryEditor completion addresses (#1397)", () => {
       ],
     } as unknown as Capabilities;
     const calls = mockRegisterSQLCompletionProvider.mock.calls as unknown as [unknown, SchemaCompletionCache][];
-    const spelled = render(React.createElement(QueryEditor, createDefaultProps({ capabilities: spark })));
+    const spelled = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities: spark, databaseType: "spark" })),
+    );
     const spelling = calls[calls.length - 1][1].containerSpelling!;
     expect(spelling.quotePath(["lake", "a.b", "t"])).toBe("`lake`.`a`.`b`.`t`");
     expect(spelling.pathNames(["lake", "a.b", "t"])).toStrictEqual([["lake"], ["a", "b"], ["t"]]);
     spelled.unmount();
     const mysql = { queryLanguage: "sql", defaultPort: 3306 } as unknown as Capabilities;
-    const plain = render(React.createElement(QueryEditor, createDefaultProps({ capabilities: mysql })));
+    const plain = render(
+      React.createElement(QueryEditor, createDefaultProps({ capabilities: mysql, databaseType: "mysql" })),
+    );
     expect(calls[calls.length - 1][1].containerSpelling).toBeUndefined();
     plain.unmount();
     mockUseMonacoReturn = null;
@@ -3506,29 +3595,30 @@ describe("QueryEditor completion addresses (#1397)", () => {
 
   test("an engine whose bare names resolve nowhere qualifies every contained table when no default is known", () => {
     const capabilities = { ...defaultCapabilities, tablesNeedContainer: true };
-    expect(registeredTables({ schemaContext: schema, capabilities }).map((item) => item.qualify)).toEqual([
-      true,
-      true,
-      undefined,
-    ]);
+    expect(
+      registeredTables({ schemaContext: schema, databaseType: "bigquery", capabilities }).map((item) => item.qualify),
+    ).toEqual([true, true, undefined]);
   });
 
   test("a known default container still decides, whatever the capability says", () => {
     const capabilities = { ...defaultCapabilities, tablesNeedContainer: true };
     expect(
-      registeredTables({ schemaContext: schema, capabilities, defaultContainer: ["public"] }).map(
-        (item) => item.qualify,
-      ),
+      registeredTables({
+        schemaContext: schema,
+        databaseType: "bigquery",
+        capabilities,
+        defaultContainer: ["public"],
+      }).map((item) => item.qualify),
     ).toEqual([false, true, undefined]);
   });
 
   test("an engine whose tables need a container labels them by address", () => {
     const capabilities = { ...defaultCapabilities, tablesNeedContainer: true };
-    expect(registeredTables({ schemaContext: schema, capabilities }).map((item) => item.labelQualified)).toEqual([
-      true,
-      true,
-      undefined,
-    ]);
+    expect(
+      registeredTables({ schemaContext: schema, databaseType: "bigquery", capabilities }).map(
+        (item) => item.labelQualified,
+      ),
+    ).toEqual([true, true, undefined]);
     expect(registeredTables({ schemaContext: schema }).some((item) => item.labelQualified)).toBe(false);
   });
 
@@ -3564,5 +3654,152 @@ describe("QueryEditor completion addresses (#1397)", () => {
     test("with no default the first listed wins", () => {
       expect(columnMap({ schemaContext: dup }).get("orders")![0].label).toBe("sale_id");
     });
+  });
+});
+
+// QueryEditor is published and types `databaseType` as a DatabaseType, which only a caller outside TypeScript's checks
+// can break (FND-1, D-a). Such a value is refused by name as the editor renders, before any hook or reader runs with
+// it, and the host's error boundary receives the error.
+describe("QueryEditor and a databaseType outside DatabaseType (FND-1)", () => {
+  /** A test's own error boundary, which records what it caught. */
+  class RecordingBoundary extends React.Component<
+    { children?: React.ReactNode; onCaught: (error: unknown) => void },
+    { caught: boolean }
+  > {
+    state = { caught: false };
+    static getDerivedStateFromError() {
+      return { caught: true };
+    }
+    componentDidCatch(error: unknown) {
+      this.props.onCaught(error);
+    }
+    render() {
+      return this.state.caught ? React.createElement("p", { "data-testid": "boundary-caught" }) : this.props.children;
+    }
+  }
+
+  const ROWS = OUTSIDE_THE_UNION.filter(([, value]) =>
+    ["acmefoo", "constructor", "", null, 5].includes(value as never),
+  );
+  let caught: unknown[];
+  let consoleError: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    caught = [];
+    mockUseMonacoReturn = { Range: class {} };
+    mockRegisterSQLCompletionProvider.mockClear();
+    // React reports an error its boundary caught on console.error; the boundary's record is what is asserted.
+    consoleError = spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+    mockUseMonacoReturn = null;
+    cleanup();
+  });
+
+  function editorUnder(props: Partial<Parameters<typeof QueryEditor>[0]>) {
+    return React.createElement(
+      RecordingBoundary,
+      { onCaught: (error: unknown) => caught.push(error) },
+      React.createElement(QueryEditor, createDefaultProps(props)),
+    );
+  }
+
+  function caughtRefusal() {
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(UnknownProviderError);
+    return shapeOfRefusal(caught[0] as UnknownProviderError);
+  }
+
+  test("ROWS holds the five values named for this table", () => {
+    expect(ROWS.map(([label]) => label)).toEqual([
+      "acmefoo",
+      "constructor",
+      "the empty string",
+      "null",
+      "the number 5",
+    ]);
+  });
+
+  test.each(ROWS)("refuses %s by name as it renders, before any completion is registered", (_label, value) => {
+    const { queryByTestId } = render(editorUnder({ databaseType: value as DatabaseType }));
+    expect(caughtRefusal()).toEqual(refusalOf(value));
+    expect(queryByTestId("boundary-caught")).not.toBeNull();
+    expect(queryByTestId("mock-monaco-editor")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
+  test("under graph-cypher, a prototype key is refused before the graph policy profile is read", () => {
+    render(
+      editorUnder({
+        language: "graph-cypher",
+        value: "MATCH (n) RETURN n",
+        databaseType: "constructor" as DatabaseType,
+      }),
+    );
+    expect(caughtRefusal()).toEqual(refusalOf("constructor"));
+  });
+
+  test("a host that re-renders it with such a value gets the named error at its boundary, and nothing is formatted or registered with it", () => {
+    const warn = spyOn(logger, "warn");
+    try {
+      mockSqlFormat.mockClear();
+      const { rerender, queryByTestId, queryByText } = render(
+        editorUnder({ databaseType: "postgres", value: "select 1" }),
+      );
+      expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+      expect(caught).toHaveLength(0);
+      // The control: under a type id Format runs the formatter once and nothing is logged.
+      fireEvent.click(queryByText("Format")!);
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
+      rerender(editorUnder({ databaseType: "acmefoo" as DatabaseType, value: "select 1" }));
+      expect(caughtRefusal()).toEqual(refusalOf("acmefoo"));
+      expect(queryByTestId("mock-monaco-editor")).toBeNull();
+      // The refused render never commits, so no Format control holds a handler that could read the refused value.
+      expect(queryByText("Format")).toBeNull();
+      expect(mockSqlFormat).toHaveBeenCalledTimes(1);
+      const registeredTypes = mockRegisterSQLCompletionProvider.mock.calls.map((call) => call[2]);
+      expect(registeredTypes).toEqual(["postgres"]);
+      const warnings = warn.mock.calls.map((call) => call[0]);
+      expect(warnings).not.toContain("Statement formatting failed; the editor text is left as written");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("capabilities without a databaseType are refused by name as it renders, whatever port they name", () => {
+    // MySQL's own declaration names its port, and the port names no engine: the call needs the connection's type.
+    const { queryByTestId } = render(editorUnder({ capabilities: { ...defaultCapabilities, defaultPort: 3306 } }));
+    expect(caughtRefusal()).toEqual({ reason: "absent", typeId: undefined, message: UNTYPED_CAPABILITIES_SENTENCE });
+    expect(queryByTestId("mock-monaco-editor")).toBeNull();
+    expect(mockRegisterSQLCompletionProvider).not.toHaveBeenCalled();
+  });
+
+  test("a host that drops the type while the capabilities stay gets the named error at its boundary", () => {
+    const capabilities = { ...defaultCapabilities, defaultPort: 3306 };
+    const { rerender, queryByTestId } = render(editorUnder({ databaseType: "mysql", capabilities }));
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+    rerender(editorUnder({ capabilities }));
+    expect(caughtRefusal()).toEqual({ reason: "absent", typeId: undefined, message: UNTYPED_CAPABILITIES_SENTENCE });
+    expect(queryByTestId("mock-monaco-editor")).toBeNull();
+  });
+
+  test("with neither a databaseType nor capabilities it renders as with no connection open", () => {
+    const { queryByTestId } = render(editorUnder({}));
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+  });
+
+  test("a type id renders the editor", () => {
+    const { queryByTestId } = render(editorUnder({ databaseType: "postgres" }));
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("mock-monaco-editor")).not.toBeNull();
+    expect(mockRegisterSQLCompletionProvider).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.anything(),
+      "postgres",
+    );
   });
 });

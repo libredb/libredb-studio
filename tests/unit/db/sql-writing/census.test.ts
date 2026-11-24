@@ -33,11 +33,11 @@ import {
   STANDARD_TYPE_VOCABULARY,
   VERBATIM_DECLARED_TYPES_STAND_ALONE,
 } from "@/lib/db/sql-writing/shared";
-import { UNKNOWN_TYPE_SQL_WRITING } from "@/lib/db/sql-writing/unknown-type";
 import type { ExportSpec, InferredKind, SqlWritingSpec } from "@/lib/db/sql-writing/types";
+import { buildResultExport } from "@/lib/export/result-export";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 import { TYPED_LITERAL_MODULES } from "./engine-modules";
-import { renderExportGolden } from "./export-fixtures";
 
 /**
  * The SQL writing registry is one row per type id, and each row is the object the engine's
@@ -118,28 +118,23 @@ describe("SQL writing census", () => {
     expect(sqlWritingFor(undefined)).toBe(NO_CONNECTION_SQL_WRITING);
   });
 
-  // Before the contract every writer tested `dialect ? ... : "standard"`, so the empty string a
-  // published component's `databaseType?: string` can carry, and a JS caller's `null`, meant no connection.
-  test.each(["", null])("%p reads the named no-connection spec", (type) => {
-    expect(sqlWritingFor(type as string | undefined)).toBe(NO_CONNECTION_SQL_WRITING);
-  });
-
-  test.each(["constructor", "__proto__", "not-an-engine"])("%s reads the named unknown-type spec", (type) => {
-    expect(sqlWritingFor(type)).toBe(UNKNOWN_TYPE_SQL_WRITING);
+  // Only `undefined` is no connection (FND-1, Q6): the empty string a published component's
+  // `databaseType?: string` can carry and a JS caller's `null` are refused like any other value outside the union.
+  test.each(OUTSIDE_THE_UNION)("sqlWritingFor refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => sqlWritingFor(value as string))).toEqual(refusalOf(value));
   });
 
   test("a member of the union reads its row", () => {
     expect(sqlWritingFor("postgres")).toBe(SQL_WRITING.postgres);
   });
 
-  // Every engine but the two that embed SQLite reads the shared type-name sets, and so do
-  // the two named specs, because before the contract a type outside the dialect sets, the
-  // empty string and an unknown string all read those sets.
+  // Every engine but the two that embed SQLite reads the shared type-name sets, and so does
+  // the no-connection spec, because before the contract a type outside the dialect sets read
+  // those sets.
   const NO_DECLARED_KINDS = new Set(["sqlite", "libsql"]);
   const SHARED_SET_ROWS: readonly (readonly [string, SqlWritingSpec])[] = [
     ...Object.entries(SQL_WRITING).filter(([id]) => !NO_DECLARED_KINDS.has(id)),
     ["no connection", NO_CONNECTION_SQL_WRITING],
-    ["unknown type", UNKNOWN_TYPE_SQL_WRITING],
   ];
 
   for (const [name, spec] of SHARED_SET_ROWS) {
@@ -174,7 +169,6 @@ describe("SQL writing census", () => {
       .sort();
     expect(bound).toEqual(["mssql", "oracle"]);
     expect(NO_CONNECTION_SQL_WRITING.inlineEdit.boundEdit).toBeUndefined();
-    expect(UNKNOWN_TYPE_SQL_WRITING.inlineEdit.boundEdit).toBeUndefined();
   });
 });
 
@@ -360,38 +354,38 @@ describe("SQL export census", () => {
     });
   }
 
-  test.each([
-    ["no connection", NO_CONNECTION_SQL_WRITING],
-    ["unknown type", UNKNOWN_TYPE_SQL_WRITING],
-  ] as const)("%s: the export is the shared defaults with no hook", (_name, spec) => {
-    expect(spec.export.ddlTypes).toBe(STANDARD_DDL_TYPES);
-    expect(spec.export.standsAlone).toBe(NOTHING_STANDS_ALONE);
-    expect(spec.export.bareSpelling).toBe(NO_BARE_SPELLING);
-    expect(spec.export.typeVocabulary).toBe(STANDARD_TYPE_VOCABULARY);
-    expect(spec.export.typeVocabulary.bareTypeFamily).toBe(BARE_TYPE_FAMILY);
-    expect(spec.export.typeVocabulary.floatType).toBe(FLOAT_TYPE);
-    expect(spec.export.typeVocabulary.exactNumericType).toBe(EXACT_NUMERIC_TYPE);
-    expect(spec.export.typeVocabulary.numericWrapper).toBe(CLICKHOUSE_WRAPPER);
-    expect(spec.export.binaryLiteral).toBe(binaryStandardHex);
-    expect(spec.export.nonFinite).toBe(NULL_NON_FINITE);
-    expect(spec.export.insertForm).toBe("values");
-    for (const hook of Object.keys(HOOKS)) {
-      expect((spec.export as unknown as Record<string, unknown>)[hook]).toBeUndefined();
-    }
-  });
-
-  // Spec 5.3 [T14]: the export reaches the named specs through `sqlWritingFor`, so a key
-  // the registry does not own writes what the committed `not-an-engine` golden pins. Before
-  // the registry each of these threw or wrote `[object Object]` instead.
-  test.each(["__proto__", "toString", "valueOf", "hasOwnProperty", "constructor", "POSTGRES", " postgres"])(
-    "%s: the export writes what an unknown type writes",
-    (type) => {
-      expect(renderExportGolden(type)).toBe(renderExportGolden("not-an-engine"));
+  test.each([["no connection", NO_CONNECTION_SQL_WRITING]] as const)(
+    "%s: the export is the shared defaults with no hook",
+    (_name, spec) => {
+      expect(spec.export.ddlTypes).toBe(STANDARD_DDL_TYPES);
+      expect(spec.export.standsAlone).toBe(NOTHING_STANDS_ALONE);
+      expect(spec.export.bareSpelling).toBe(NO_BARE_SPELLING);
+      expect(spec.export.typeVocabulary).toBe(STANDARD_TYPE_VOCABULARY);
+      expect(spec.export.typeVocabulary.bareTypeFamily).toBe(BARE_TYPE_FAMILY);
+      expect(spec.export.typeVocabulary.floatType).toBe(FLOAT_TYPE);
+      expect(spec.export.typeVocabulary.exactNumericType).toBe(EXACT_NUMERIC_TYPE);
+      expect(spec.export.typeVocabulary.numericWrapper).toBe(CLICKHOUSE_WRAPPER);
+      expect(spec.export.binaryLiteral).toBe(binaryStandardHex);
+      expect(spec.export.nonFinite).toBe(NULL_NON_FINITE);
+      expect(spec.export.insertForm).toBe("values");
+      for (const hook of Object.keys(HOOKS)) {
+        expect((spec.export as unknown as Record<string, unknown>)[hook]).toBeUndefined();
+      }
     },
   );
 
-  test("null: the export writes what no connection writes", () => {
-    expect(renderExportGolden(null as unknown as undefined)).toBe(renderExportGolden(undefined));
+  // Spec 5.3 [T14]: the export reaches the registry through `sqlWritingFor`, so a key the
+  // registry does not own is refused by name before any format is written (FND-1). Before the
+  // registry each of these threw or wrote `[object Object]`; before FND-1 they wrote the
+  // unknown-type defaults.
+  test.each(
+    OUTSIDE_THE_UNION.flatMap(([label, value]) =>
+      (["sql-insert", "csv"] as const).map((format) => [label, format, value] as const),
+    ),
+  )("the export refuses %s by name, whatever the format (%s)", (_label, format, value) => {
+    const call = () =>
+      buildResultExport(format, { rows: [{ c: 1 }], fields: ["c"], dialect: value as DatabaseType, tabName: "t" });
+    expect(refusalThrownBy(call)).toEqual(refusalOf(value));
   });
 
   // The hooks nothing reads until the export path does: each answers what today's code in

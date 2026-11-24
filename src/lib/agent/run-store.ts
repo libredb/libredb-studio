@@ -54,11 +54,19 @@
  *    stream name can be a prefix of another's chunk file, because a match would
  *    require the other id to contain the delimiter. The parser re-checks the
  *    header's own run id as a second line of defence.
+ *  - **A ledger is read in the vocabulary its header names.** `read` checks the
+ *    header's statement language, workflow and goal verifier before any other
+ *    line is parsed; a header naming one this build does not hold, or holds as
+ *    retired, is refused by name (`AgentRunUnavailableError`), and the ledger is
+ *    left as it was for a Studio that has the id. `stream` does not check the
+ *    header: it relies on its caller having read the run first, as
+ *    `AgentRunService.stream` does.
  */
 
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { logger } from "@/lib/logger";
+import type { DatabaseType } from "@/lib/types";
 import { getAgentRuntimeConfig } from "./config";
 import { AGENT_RUN_ID_PATTERN } from "./run-id";
 import {
@@ -74,6 +82,7 @@ import type { AgentStatementLanguageId } from "./agent-manifest";
 import type { AgentGoalVerifierId } from "./goal-verifier";
 import { AGENT_EVIDENCE_EVENTS } from "./languages/client";
 import type { AgentPackEvidenceEvent } from "./languages/pack";
+import { type AgentRunHeaderRefusal, RUN_HEADER_REASON_VERB, runHeaderRefusal } from "./run-ledger-ids";
 import { assertPersistableState } from "./state-guard";
 import {
   type AgentThreadHeader,
@@ -188,6 +197,12 @@ export type AgentLedgerEntry =
        */
       readonly statementLanguage?: AgentStatementLanguageId;
       /**
+       * Optional for the same reason, and never defaulted: a header written before this field names no
+       * engine, and its run is offered the six curated readings it was opened with; see
+       * `AgentRunRecord.engine`.
+       */
+      readonly engine?: DatabaseType;
+      /**
        * Optional for the same reason, and absent folds to the verifier of the run's
        * variant, which is the rule that judged every run written before this field.
        */
@@ -262,7 +277,8 @@ export type AgentRunStoreReason =
   | "RUN_ALREADY_CLOSED"
   | "MALFORMED_LEDGER"
   | "LEDGER_WRITE_FAILED"
-  | "RUNTIME_DISABLED";
+  | "RUNTIME_DISABLED"
+  | "RUN_UNAVAILABLE";
 
 export class AgentRunStoreError extends Error {
   readonly reasonCode: AgentRunStoreReason;
@@ -272,6 +288,30 @@ export class AgentRunStoreError extends Error {
     this.name = "AgentRunStoreError";
     this.reasonCode = reasonCode;
     Object.setPrototypeOf(this, AgentRunStoreError.prototype);
+  }
+}
+
+/**
+ * A run whose header names a statement language, workflow or goal rule this build does not hold, or holds only as
+ * retired (`runHeaderRefusal`). Thrown by `read` before any other line of the ledger is parsed, so nothing of such a run is
+ * folded, resolved or driven here; the ledger itself is left as it was, for a Studio that has the id.
+ */
+export class AgentRunUnavailableError extends AgentRunStoreError {
+  readonly runId: string;
+  /** The actor the header persists, so a caller can answer someone else's run as one that does not exist. */
+  readonly actor: AgentRunActor;
+  readonly refusal: AgentRunHeaderRefusal;
+
+  constructor(runId: string, actor: AgentRunActor, refusal: AgentRunHeaderRefusal) {
+    super(
+      "RUN_UNAVAILABLE",
+      `agent run "${runId}" names ${refusal.named}, which this LibreDB Studio ${RUN_HEADER_REASON_VERB[refusal.reason]}`,
+    );
+    this.name = "AgentRunUnavailableError";
+    this.runId = runId;
+    this.actor = actor;
+    this.refusal = refusal;
+    Object.setPrototypeOf(this, AgentRunUnavailableError.prototype);
   }
 }
 
@@ -313,6 +353,8 @@ export interface AgentRunOpenInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /** The connection's type id, decided at start; absent only from a caller that records none. See `AgentRunRecord`. */
+  readonly engine?: DatabaseType;
   /** Defaults to the variant's verifier. Decided from the manifest at start; see `AgentRunRecord`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; written to the header only when it does. */
@@ -363,7 +405,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Reads one ledger line back. The ledger is written only by this module's own
  * server code, so this is a corruption tripwire rather than a parser for hostile
  * input: it establishes that the line is one of the three known entry kinds and
- * that a header belongs to the run being read, then trusts the contract.
+ * that a header belongs to the run being read, then trusts the contract. The ids
+ * a header persists that this build resolves against its own vocabulary are the
+ * exception: `read` checks them through `assertReadableHeader`, because a ledger
+ * outlives the build that wrote it. `stream` parses with this function alone.
  */
 function parseEntry(runId: string, line: string): AgentLedgerEntry {
   let parsed: unknown;
@@ -385,6 +430,29 @@ function parseEntry(runId: string, line: string): AgentLedgerEntry {
     return parsed as unknown as AgentLedgerEntry;
   }
   throw malformed(runId, `a ledger line carries the unknown kind "${String(parsed.kind)}"`);
+}
+
+/**
+ * The header's persisted vocabulary ids, checked before any other line is parsed: a present id that is not text is
+ * corruption, and an id this build does not hold, or holds as retired, makes the run unavailable here.
+ *
+ * @throws {AgentRunStoreError} `MALFORMED_LEDGER` for an id that is not text.
+ * @throws {AgentRunUnavailableError} For an id `runHeaderRefusal` refuses.
+ */
+function assertReadableHeader(runId: string, header: Extract<AgentLedgerEntry, { kind: "run-opened" }>): void {
+  const raw: {
+    readonly statementLanguage?: unknown;
+    readonly workflowType?: unknown;
+    readonly verifier?: unknown;
+    readonly engine?: unknown;
+  } = header;
+  for (const field of ["statementLanguage", "workflowType", "verifier", "engine"] as const) {
+    if (raw[field] !== undefined && typeof raw[field] !== "string") {
+      throw malformed(runId, `its header's ${field} is not text`);
+    }
+  }
+  const refusal = runHeaderRefusal(header);
+  if (refusal !== null) throw new AgentRunUnavailableError(runId, header.actor, refusal);
 }
 
 function entryAtMs(entry: AgentLedgerEntry): number {
@@ -451,6 +519,8 @@ function foldLedger(runId: string, entries: readonly AgentLedgerEntry[]): AgentR
       // Spread for the same reason: `sql` and the variant's verifier are what absence says.
       ...(header.statementLanguage === undefined ? {} : { statementLanguage: header.statementLanguage }),
       ...(header.verifier === undefined ? {} : { verifier: header.verifier }),
+      // Spread for the same reason: an absent engine is a run recorded before the field.
+      ...(header.engine === undefined ? {} : { engine: header.engine }),
       // Defaulted rather than spread, because every run HAS a conversation: one it
       // continues, or one of its own that begins here. A header written before this
       // field folds to a thread of one named after itself, which is what was true of
@@ -610,6 +680,7 @@ export class AgentRunStore {
       ...(input.toolProtocol === undefined ? {} : { toolProtocol: input.toolProtocol }),
       ...(input.statementLanguage === undefined ? {} : { statementLanguage: input.statementLanguage }),
       ...(input.verifier === undefined ? {} : { verifier: input.verifier }),
+      ...(input.engine === undefined ? {} : { engine: input.engine }),
       // Written only when a run CONTINUES a conversation, so a ledger opened before
       // this field and one that starts its own thread are the same bytes.
       ...(input.thread === undefined ? {} : { thread: input.thread }),
@@ -711,7 +782,9 @@ export class AgentRunStore {
   /**
    * The run's entries, replayed from `startIndex` and then followed live. Ends
    * when the run is closed. Cancelling the returned stream releases the
-   * backend's watcher, so a disconnected reader costs nothing.
+   * backend's watcher, so a disconnected reader costs nothing. The header's ids
+   * are not checked here: a caller reads the run first (`read`), which refuses a
+   * header this build cannot resolve, as `AgentRunService.stream` does.
    */
   async stream(runId: string, options?: { readonly startIndex?: number }): Promise<ReadableStream<AgentLedgerEntry>> {
     const id = assertRunId(runId);
@@ -824,9 +897,17 @@ export class AgentRunStore {
     }
   }
 
+  /**
+   * The run's entries. The first line is parsed alone and, when it is a header, its ids are checked before any other
+   * line is parsed, so a ledger written in a vocabulary this build does not have is named by that vocabulary rather
+   * than by the first line of it this build cannot parse.
+   */
   private async readEntries(runId: string): Promise<readonly AgentLedgerEntry[]> {
-    const lines = await this.readStreamLines(ledgerStreamName(runId));
-    return lines.map((line) => parseEntry(runId, line));
+    const [first, ...rest] = await this.readStreamLines(ledgerStreamName(runId));
+    if (first === undefined) return [];
+    const head = parseEntry(runId, first);
+    if (head.kind === "run-opened") assertReadableHeader(runId, head);
+    return [head, ...rest.map((line) => parseEntry(runId, line))];
   }
 
   /**

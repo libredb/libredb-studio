@@ -1,0 +1,554 @@
+{
+  "id": "s3",
+  "displayName": "S3-compatible object storage",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "region",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 9000
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": null,
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "dedicated-pair",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Endpoint host"
+        },
+        {
+          "field": "user",
+          "text": "Access key ID"
+        },
+        {
+          "field": "password",
+          "text": "Secret access key"
+        },
+        {
+          "field": "database",
+          "text": "Bucket"
+        },
+        {
+          "field": "region",
+          "text": "Region"
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Connect without TLS"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A host name or address, or a pasted http:// or https:// endpoint such as http://localhost:9000, which is split into Host and Port. The endpoint only: a bucket goes under Bucket, never in the address. MinIO and RustFS serve on port 9000 unless configured otherwise, Garage on 3900. If Studio runs in a container, localhost is that container: use host.docker.internal."
+        },
+        {
+          "field": "user",
+          "text": "The access key ID. It is stored and shown in the clear, like a user name. Leave both keys empty only for a bucket that allows anonymous reads: Studio then sends unsigned requests, never this server's own cloud credentials."
+        },
+        {
+          "field": "password",
+          "text": "The secret access key. Studio's server signs every request with it and never sends it to the S3 server. Fill in both keys, or neither."
+        },
+        {
+          "field": "database",
+          "text": "Optional. With a bucket here, Studio reads only that bucket and never lists the others, which a key limited to one bucket needs. Empty: every bucket this key can list."
+        },
+        {
+          "field": "region",
+          "text": "The region every request is signed for. Empty means us-east-1, which MinIO accepts unless it was started with a region of its own. Garage: its s3_region setting. AWS: the bucket's region."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Ticked, Studio connects to this host over plain HTTP. The secret access key is never sent to this server, but bucket and object names, listings and previewed contents travel in the clear, readable by anyone on the path, and a captured request can be replayed for several minutes. Choose an SSL mode under SSL / TLS, or an SSH tunnel, wherever the server offers one."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "all buckets"
+        },
+        {
+          "field": "region",
+          "text": "us-east-1"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "pair",
+        "user": "minioadmin",
+        "password": "minioadmin",
+        "message": "This is the documented default root credential a MinIO server starts with when MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are not set, so anyone who knows MinIO can sign in with it as the administrator. Set both on the server, or connect with an access key of your own."
+      },
+      {
+        "kind": "pair",
+        "user": "rustfsadmin",
+        "password": "rustfsadmin",
+        "message": "This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own."
+      }
+    ],
+    "fieldRules": [
+      {
+        "field": "user",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[\\x21-\\x2b\\x2d\\x2e\\x30-\\x3c\\x3e-\\x7e]+$",
+            "flags": ""
+          },
+          "sentence": "Access key ID must be printable ASCII without spaces, commas, equals signs or slashes, because it is sent inside the signed Authorization header. Nothing was sent."
+        },
+        "charRange": {
+          "min": 3,
+          "max": 512,
+          "sentence": "Access key ID holds 3 to 512 characters, because S3 servers issue no shorter ID and it is sent inside the signed Authorization header. Nothing was sent."
+        },
+        "check": null
+      },
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,253}[A-Za-z0-9])?$",
+            "flags": ""
+          },
+          "sentence": "Bucket must be 1 to 255 letters, digits, dots, hyphens or underscores, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "region",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[A-Za-z0-9_-]{1,64}$",
+            "flags": ""
+          },
+          "sentence": "Region must be 1 to 64 letters, digits, hyphens or underscores, such as us-east-1. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "not-offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "s3api",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "s3api"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "s3",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "s3",
+      "accent": "border-hue-indigo-alt/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": false,
+    "grammar": {
+      "hash": "comment-unless-operator",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "none"
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BLOB"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "NULL",
+        "-Infinity": "NULL"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": null,
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- S3-compatible object storage: Cannot generate table DDL. S3 stores objects under keys with no schema, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "S3 stores objects under keys with no schema, so there is no column definition to change."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "dedicated-user",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": true
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/objectstore/s3/console/commands.ts",
+          "symbol": "S3_COMMAND_TABLE"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "list-buckets",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "created",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "head-bucket",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "region",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "get-bucket-location",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "location",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "get-bucket-versioning",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "status",
+            "kind": "name"
+          },
+          {
+            "column": "mfa_delete",
+            "kind": "name"
+          }
+        ]
+      },
+      {
+        "operation": "summary",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "objects",
+            "kind": "count"
+          },
+          {
+            "column": "total_size_bytes",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "head-object",
+        "columns": [
+          {
+            "column": "bucket",
+            "kind": "name"
+          },
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "size_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "last_modified",
+            "kind": "name"
+          },
+          {
+            "column": "storage_class",
+            "kind": "name"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
+  }
+}

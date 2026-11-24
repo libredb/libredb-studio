@@ -3,8 +3,10 @@ import type { TypedConfirmationAsk } from "@/lib/db/types";
 /**
  * The shape of one row of the confirmation gate's vocabulary, for an engine whose query text is NOT SQL.
  *
- * Each row is declared beside its provider, in a `destructive.ts` module, and `NON_SQL_DESTRUCTIVE_VOCABULARY` in
- * `./destructive-commands.ts` only collects them. This module is a leaf: it imports nothing but a type, so a row
+ * Each row is declared in its statement language's core family module, `destructive.ts` under
+ * `src/lib/languages/<language>/`, or under `src/lib/db/graph/cypher/` for Cypher, or, until the provider plugin
+ * program's slice for that language moves it, beside its provider in a `destructive.ts` module
+ * (docs/PROVIDER_IMPORTS.md), and `NON_SQL_DESTRUCTIVE_VOCABULARY` in `./destructive-commands.ts` only collects them. This module is a leaf: it imports nothing but a type, so a row
  * module and the gate can both import it in the browser.
  */
 
@@ -37,6 +39,10 @@ export interface DestructiveVocabulary {
    * any of those names too, in text that can only ever read that topic. An etcd command
    * names its keys, which can be spelled like any SQL keyword, and `guard.ts` reads it with
    * the parser the provider runs, so what asks and what runs are one parse (#1089).
+   *
+   * True is a claim that loosens the gate, so the gate counts it only where Studio's review record lists it
+   * (`CONFIRMATION_CLAIM_REVIEW` in `./confirmation-claim-review.ts`). An unlisted `true` is read as if the row had
+   * not declared it: the SQL keyword test stays in front, and this row is read beside it.
    */
   readonly decidesAlone: boolean;
   /**

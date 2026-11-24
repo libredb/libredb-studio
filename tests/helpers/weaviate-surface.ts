@@ -10,12 +10,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { NodeTransport } from "@/lib/db/http/node-transport";
-import type {
-  WeaviateAnswer,
-  WeaviateClient,
-  WeaviateOp,
-  WeaviateRequest,
-} from "@/lib/db/providers/vector/weaviate/client";
+import type { WeaviateAnswer, WeaviateClient, WeaviateRequest } from "@/lib/db/providers/vector/weaviate/client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import {
   buildWeaviateConnectionOptions,
   type WeaviateConnectionOptions,
@@ -24,7 +20,7 @@ import type { WeaviatePathState } from "@/lib/db/providers/vector/weaviate/execu
 import type { WeaviateClientFactory } from "@/lib/db/providers/vector/weaviate/index";
 import type { WeaviateSurfaceContext } from "@/lib/db/providers/vector/weaviate/objects";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import {
   readWeaviateVersion,
   type WeaviatePath,
@@ -35,6 +31,7 @@ import type { ObjectSourcePart } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import type { LoggedCall } from "./call-log";
 import type { WeaviateExchange } from "./weaviate-scenario";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 const FIXTURES = join(import.meta.dir, "..", "fixtures", "weaviate");
 
@@ -49,7 +46,11 @@ export const WEAVIATE_TEST_CONNECTION: DatabaseConnection = {
 
 /** The options a plain connection to 127.0.0.1:8080 is built with. */
 export function testOptions(): WeaviateConnectionOptions {
-  return buildWeaviateConnectionOptions(WEAVIATE_TEST_CONNECTION, { executionReadOnly: false, queryTimeout: 30_000 });
+  return buildWeaviateConnectionOptions(WEAVIATE_TEST_CONNECTION, {
+    executionReadOnly: false,
+    queryTimeout: 30_000,
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
 }
 
 /** A version as `GET /v1/meta` reports it. */

@@ -13,6 +13,7 @@ import { readClusterEndpoint } from "@/lib/db/providers/platform/kubernetes/conn
 import { ANONYMOUS_UNAUTHORIZED_SENTENCE, UNAUTHORIZED_SENTENCE } from "@/lib/db/providers/platform/kubernetes/errors";
 import type { ResourceRef } from "@/lib/db/providers/platform/kubernetes/request-policy";
 import { expectCalls } from "../../../helpers/call-log";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { kubernetesConnection, TEST_TOKEN } from "../../../helpers/kubernetes-connection";
 import {
   jsonAnswer,
@@ -41,7 +42,11 @@ function clientWith(
 ) {
   const transport = recordingKubernetesTransport(answer);
   const seams = testSeams(transport, { now: NOW, random });
-  const endpoint = readClusterEndpoint(connection, { queryTimeout: 30_000, appVersion: "0.18.2" });
+  const endpoint = readClusterEndpoint(connection, {
+    queryTimeout: 30_000,
+    appVersion: "0.18.2",
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
   return { client: createKubernetesClient(endpoint, seams), transport, seams };
 }
 
@@ -59,6 +64,8 @@ describe("the transport the client builds", () => {
       "user-agent": "libredb-studio/0.18.2 (kubernetes)",
     });
     expect(options.maxSockets).toBe(4);
+    // The egress decision the cluster endpoint was read with, by identity.
+    expect(options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     client.close();
     expect(transport.closed()).toBe(1);
   });
@@ -115,7 +122,11 @@ describe("send", () => {
 
   test("the client's own gate refuses a final path and a query value before the transport", async () => {
     const transport = recordingKubernetesTransport(() => jsonAnswer({}));
-    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: "0.18.2" });
+    const endpoint = readClusterEndpoint(kubernetesConnection(), {
+      queryTimeout: 30_000,
+      appVersion: "0.18.2",
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     const escaping = createKubernetesClient({ ...endpoint, apiPath: "/k8s/.." }, testSeams(transport));
     await expect(escaping.send({ op: "version" }, call())).rejects.toThrow(
       "The request path holds a character or a segment Studio never sends. Nothing was sent.",
@@ -284,7 +295,11 @@ describe("429 and Retry-After", () => {
         clock += ms;
       },
     };
-    const endpoint = readClusterEndpoint(kubernetesConnection(), { queryTimeout: 30_000, appVersion: "0.18.2" });
+    const endpoint = readClusterEndpoint(kubernetesConnection(), {
+      queryTimeout: 30_000,
+      appVersion: "0.18.2",
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     return { client: createKubernetesClient(endpoint, seams), transport, sleeps };
   }
 

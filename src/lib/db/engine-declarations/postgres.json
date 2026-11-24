@@ -1,0 +1,496 @@
+{
+  "id": "postgres",
+  "displayName": "PostgreSQL",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database"
+    ],
+    "defaults": {
+      "port": 5432
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": true,
+      "dialogOffersUri": false,
+      "scheme": "postgres",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "postgres://"
+        ]
+      },
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": true,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [
+      "vacuum",
+      "analyze",
+      "reindex",
+      "kill"
+    ],
+    "maintenanceSpecs": [
+      {
+        "operation": "vacuum",
+        "label": "Vacuum Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "analyze",
+        "label": "Analyze Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "reindex",
+        "label": "Reindex Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Terminate Backend",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": null,
+          "retry": {
+            "matches": "retryMatches",
+            "rewrite": "retryRewrite"
+          },
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": {
+          "kind": "prefix",
+          "prefix": "EXPLAIN (FORMAT JSON)"
+        },
+        "profileComposition": {
+          "shapeTests": {
+            "email": "emailShapeTest",
+            "digitRun": "digitRunShapeTest"
+          },
+          "incomparableType": {
+            "source": "\\b(jsonb?|xml|point|line|lseg|box|path|polygon|circle)\\b",
+            "flags": "i"
+          },
+          "uncountableType": null
+        },
+        "statistics": {
+          "probe": null,
+          "build": "statisticsBuild",
+          "limitNote": null
+        },
+        "catalogCapture": {
+          "kinds": [
+            "columns",
+            "relations",
+            "indexes"
+          ],
+          "build": "captureBuild",
+          "kindWords": [
+            {
+              "word": "r",
+              "kind": "table"
+            },
+            {
+              "word": "p",
+              "kind": "table"
+            },
+            {
+              "word": "v",
+              "kind": "view"
+            },
+            {
+              "word": "m",
+              "kind": "materialized_view"
+            },
+            {
+              "word": "S",
+              "kind": "sequence"
+            }
+          ]
+        }
+      },
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "postgresql",
+      "pgsql",
+      "psql",
+      "plpgsql"
+    ],
+    "explainFormat": "postgres-json",
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "nesting",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+AS\\s+OF\\s+(?:AT\\s+LEAST\\s+)?(?:\\d+|'[^']*')\\s*$",
+          "flags": "i"
+        },
+        {
+          "source": "\\s+FOR\\s+(?:NO\\s+KEY\\s+UPDATE|KEY\\s+SHARE|UPDATE|SHARE)(?:\\s+OF\\s+(?:\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`][^\\s()',;\"`]*)(?:\\s*,\\s*(?:\"(?:[^\"]|\"\")*\"|[^\\s()',;\"`][^\\s()',;\"`]*))*)?(?:\\s+(?:NOWAIT|SKIP\\s+LOCKED))?\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [
+        "ALL"
+      ],
+      "confirmForms": [],
+      "confirmCodeForms": [
+        {
+          "wordThenBody": "DO"
+        },
+        [
+          "DO",
+          "LANGUAGE"
+        ]
+      ],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": true
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": "\""
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": "formatSegment",
+      "readQuotedQualifier": "readQuotedQualifier"
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": "placeholder",
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BYTEA"
+      },
+      "standsAlone": [
+        "character varying",
+        "varchar",
+        "text",
+        "bytea",
+        "numeric",
+        "decimal",
+        "money",
+        "timestamp",
+        "timestamp without time zone",
+        "timestamp with time zone"
+      ],
+      "bareSpelling": [
+        {
+          "name": "bit",
+          "spelling": "bit varying"
+        }
+      ],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "'NaN'",
+        "Infinity": "'Infinity'",
+        "-Infinity": "'-Infinity'"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": "typedLiteral",
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": {
+      "begin": "BEGIN;",
+      "commit": "COMMIT;"
+    },
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": []
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, setSystemTime, spyOn } fro
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "path";
-import type { DatabaseConnection } from "@/lib/types";
+import { type DatabaseConnection, LITERAL_SEED_FILE } from "@/lib/types";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
@@ -22,6 +22,8 @@ process.env.BOTH_PG_PASS = "both-secret";
 import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import * as vaultClient from "@/lib/seed/vault-client";
 import { logger } from "@/lib/logger";
@@ -146,21 +148,29 @@ describe("resolve-connection", () => {
   });
 
   /*
-   * An inline record whose `type` is missing, empty or not a string names no provider, and one whose `name` is present
-   * and not a string, `null` included, names no connection a person could type. The factory logs both with a string
-   * method, so a route that handed such a record on answered 500 with the runtime's TypeError, or built a provider
-   * under an empty name for a `null` one. Refused here, before any route reaches the factory.
+   * An inline record whose `type` is missing or empty names no provider, one whose `type` is present and not text is
+   * not a type id, and one whose `type` is a string that is not exactly a type id names none either (FND-1): each is
+   * refused by naming the type, with the one refusal the factory raises, before any route reads a per-engine table or builds a provider.
    */
   it.each([
-    ["no type", {}],
-    ["an empty type", { type: "" }],
-    ["a type that is a number", { type: 5 }],
-    ["a type that is null", { type: null }],
-    ["a type that is an object", { type: { id: "postgres" } }],
-    ["a name that is a number", { type: "postgres", name: 5 }],
-    ["a name that is null", { type: "postgres", name: null }],
-    ["a name that is an object", { type: "postgres", name: { first: "orders" } }],
-  ])("refuses an inline connection with %s", async (_label, fields) => {
+    ["no type", {}, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["an empty type", { type: "" }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    ["a type that is a number", { type: 5 }, { reason: "malformed", message: MALFORMED_TYPE_SENTENCE }],
+    ["a type that is null", { type: null }, { reason: "absent", message: ABSENT_TYPE_SENTENCE }],
+    [
+      "a type that is an object",
+      { type: { id: "postgres" } },
+      { reason: "malformed", message: MALFORMED_TYPE_SENTENCE },
+    ],
+    ["an unknown type", { type: "acmefoo" }, { reason: "unknown", message: unknownTypeSentence("acmefoo") }],
+    [
+      "a case variant of a type id",
+      { type: "Postgres" },
+      { reason: "unknown", message: unknownTypeSentence("Postgres") },
+    ],
+    ["a padded type id", { type: " postgres" }, { reason: "unknown", message: unknownTypeSentence(" postgres") }],
+    ["a prototype key", { type: "constructor" }, { reason: "unknown", message: unknownTypeSentence("constructor") }],
+  ])("refuses an inline connection with %s by naming its type", async (_label, fields, expected) => {
     const inline = {
       id: "user-conn",
       name: "User DB",
@@ -169,12 +179,41 @@ describe("resolve-connection", () => {
       ...fields,
     } as unknown as DatabaseConnection;
 
-    await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject({
-      name: "SeedConnectionError",
-      message: "Valid connection configuration is required",
-      statusCode: 400,
-    });
+    const refused = resolveConnection({ connection: inline }, { role: "user", username: "test" });
+    await expect(refused).rejects.toBeInstanceOf(UnknownProviderError);
+    await expect(refused).rejects.toMatchObject({ ...expected, code: "PROVIDER_UNKNOWN" });
   });
+
+  /*
+   * One whose `name` is present and not a string, `null` included, names no connection a person could type. The
+   * factory logs it with a string method, so a route that handed such a record on answered 500 with the runtime's
+   * TypeError, or built a provider under an empty name for a `null` one. Refused here, before any route reaches the
+   * factory.
+   */
+  it.each([
+    ["a name that is a number", { type: "postgres", name: 5 }],
+    ["a name that is null", { type: "postgres", name: null }],
+    ["a name that is an object", { type: "postgres", name: { first: "orders" } }],
+  ] as ReadonlyArray<readonly [string, Record<string, unknown>]>)(
+    "refuses an inline connection with %s",
+    async (_label, fields) => {
+      const inline = {
+        id: "user-conn",
+        name: "User DB",
+        host: "db.example.com",
+        createdAt: new Date(),
+        ...fields,
+      } as unknown as DatabaseConnection;
+
+      await expect(resolveConnection({ connection: inline }, { role: "user", username: "test" })).rejects.toMatchObject(
+        {
+          name: "SeedConnectionError",
+          message: "Valid connection configuration is required",
+          statusCode: 400,
+        },
+      );
+    },
+  );
 
   // A connection that is not an object names no type either.
   it.each([["postgres"], [5], [true], [[{ type: "postgres" }]]])(
@@ -278,6 +317,72 @@ describe("resolve-connection", () => {
     expect(result.agentReadRoots).toBeUndefined();
   });
 
+  /**
+   * OPC UA's policy URI, client certificate and private key are deployment facts only the operator's seed file names
+   * (`SEED_ONLY_FIELD_NAMES` in src/lib/db/connection-fields.ts), so an inline connection that sets one is refused by
+   * name, whatever its engine, with its own sentence; `null` and an empty string are set too.
+   */
+  for (const field of ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath"] as const) {
+    const sentence = `${field} is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove ${field} from this connection.`;
+    for (const type of ["opcua", "postgres"] as const) {
+      it(`refuses an inline ${type} connection that sets ${field}, which only an operator's seed file sets`, async () => {
+        for (const value of ["/run/secrets/client.pem", "", null]) {
+          const conn = {
+            id: `user-${type}`,
+            name: "User Plant",
+            type,
+            host: "opc.tcp://plc.ornek.net:4840/",
+            [field]: value,
+            createdAt: new Date(),
+          } as unknown as DatabaseConnection;
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next request.
+          const refused = await resolveConnection({ connection: conn }, { role: "admin", username: "test" }).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect(refused).toBeInstanceOf(SeedConnectionError);
+          expect(refused).toMatchObject({ statusCode: 400, message: sentence });
+        }
+      });
+    }
+  }
+
+  it("refuses a seed-only field before a missing type, in its own sentence", async () => {
+    const conn = {
+      id: "user-plant",
+      name: "User Plant",
+      host: "opc.tcp://plc.ornek.net:4840/",
+      clientPrivateKeyPath: "/run/secrets/client.key",
+      createdAt: new Date(),
+    } as unknown as DatabaseConnection;
+    await expect(resolveConnection({ connection: conn }, { role: "admin", username: "test" })).rejects.toMatchObject({
+      name: "SeedConnectionError",
+      statusCode: 400,
+      message:
+        "clientPrivateKeyPath is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove clientPrivateKeyPath from this connection.",
+    });
+  });
+
+  it("resolves a seed id claim from the file, discarding seed-only fields the caller's copy carries", async () => {
+    const claimed = {
+      id: "seed:everyone",
+      name: "Claimed",
+      type: "postgres",
+      host: "db.ornek.net",
+      securityPolicyUri: "http://opcfoundation.org/UA/SecurityPolicy#None",
+      clientCertificatePath: "/run/secrets/client.pem",
+      clientPrivateKeyPath: "/run/secrets/client.key",
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    const result = await resolveConnection({ connection: claimed }, { role: "user", username: "test" });
+    expect(result.id).toBe("seed:everyone");
+    expect([result.securityPolicyUri, result.clientCertificatePath, result.clientPrivateKeyPath]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("resolves seed connection by connectionId", async () => {
     const result = await resolveConnection({ connectionId: "seed:everyone" }, { role: "user", username: "test" });
     expect(result.id).toBe("seed:everyone");
@@ -347,6 +452,128 @@ describe("resolve-connection", () => {
   would send one of Studio's own Vault secrets to that app as a password. readVaultSecret is replaced by a spy
   so a call to it is counted, not made.
 */
+/**
+ * A seed entry whose type names no provider this Studio has (FND-1) is listed, and refused by name wherever it is
+ * opened: after the access decision, so a caller who may not see it learns nothing of its type, and before any Vault
+ * reference is read. The file's other seeds still resolve.
+ */
+describe("resolve-connection with a seed entry whose type names no provider (FND-1)", () => {
+  const VAULT_REFERENCE = "${vault:secret/data/x#y}";
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+  let scratch: string;
+  let readVaultSecret: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-resolve-unknown-"));
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "acme",
+            name: "Acme Store",
+            type: "acmefoo",
+            host: "acme.example",
+            password: VAULT_REFERENCE,
+            roles: ["*"],
+          },
+          { id: "acme-admins", name: "Acme Admins", type: "acmefoo", roles: ["admin"] },
+          { id: "pg", name: "PG", type: "postgres", host: "pg.internal", password: VAULT_REFERENCE, roles: ["*"] },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+    readVaultSecret = spyOn(vaultClient, "readVaultSecret").mockResolvedValue("vault-resolved-secret");
+  });
+
+  afterEach(() => {
+    readVaultSecret.mockRestore();
+    process.env.SEED_CONFIG_PATH = originalSeedPath;
+    resetCache();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  it("refuses a seed whose type names no provider by name after the access decision, reading no Vault reference", async () => {
+    const refusal = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "test" }).catch(
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(UnknownProviderError);
+    expect((refusal as UnknownProviderError).reason).toBe("unknown");
+    expect((refusal as UnknownProviderError).typeId).toBe("acmefoo");
+    expect((refusal as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
+    expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+
+  it("resolves the file's other seed", async () => {
+    const resolved = await resolveConnection({ connectionId: "seed:pg" }, { role: "user", username: "test" });
+    expect(resolved.type).toBe("postgres");
+    expect(resolved.password).toBe("vault-resolved-secret");
+  });
+
+  it("answers a role it excludes with the 403 any seed gets", async () => {
+    const refusal = await resolveConnection(
+      { connectionId: "seed:acme-admins" },
+      { role: "user", username: "test" },
+    ).catch((error: unknown) => error);
+    expect(refusal).toBeInstanceOf(SeedConnectionError);
+    expect(refusal).toMatchObject({ statusCode: 403 });
+    expect((refusal as Error).message).not.toContain("acmefoo");
+  });
+});
+
+describe("resolve-connection and the operator's environment (FND-5 slice 6c)", () => {
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+  let scratch: string;
+
+  beforeEach(() => {
+    scratch = mkdtempSync(path.join(tmpdir(), "libredb-resolve-environment-"));
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          {
+            id: "orders",
+            name: "Orders",
+            type: "postgres",
+            host: "orders.internal",
+            environment: "production",
+            roles: ["*"],
+          },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+  });
+
+  afterEach(() => {
+    process.env.SEED_CONFIG_PATH = originalSeedPath;
+    resetCache();
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  // A guard of the property the production escalation relies on: the confirmation gate reads the resolved
+  // connection's environment, so for a seed it must be the operator's, never the caller's copy.
+  it("a seed id resolves with the operator's environment, whatever the caller's copy claims", async () => {
+    const session = { role: "user" as const, username: "test" };
+    expect((await resolveConnection({ connectionId: "seed:orders" }, session)).environment).toBe("production");
+    const claimed = {
+      id: "seed:orders",
+      name: "Orders",
+      type: "postgres",
+      host: "orders.internal",
+      environment: "development",
+      createdAt: new Date(),
+    } as DatabaseConnection;
+    expect((await resolveConnection({ connection: claimed }, session)).environment).toBe("production");
+  });
+});
+
 describe("resolve-connection with discovered connections", () => {
   const VAULT_REFERENCE = "${vault:secret/data/x#y}";
   const ADMIN = { role: "admin", username: "test" };
@@ -398,6 +625,21 @@ describe("resolve-connection with discovered connections", () => {
     // The marker is on what resolveConnection received from the list, after the role filter.
     expect((result as ManagedConnection).literal).toBe(true);
     expect(readVaultSecret).not.toHaveBeenCalled();
+  });
+
+  it("in literal mode, hands over the seed file's row carrying the literal-mode marker and the discovered row without it", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const fromFile = (await resolveConnection({ connectionId: "seed:caprover-x" }, ADMIN)) as ManagedConnection;
+      expect(fromFile.literal).toBe(true);
+      expect(fromFile[LITERAL_SEED_FILE]).toBe(true);
+      const discovered = (await resolveConnection({ connectionId: "seed:caprover-pg" }, ADMIN)) as ManagedConnection;
+      expect(discovered.literal).toBe(true);
+      expect(discovered[LITERAL_SEED_FILE]).toBeUndefined();
+      expect(readVaultSecret).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
   });
 
   it("still resolves a seed-file connection whose id starts with caprover- through Vault", async () => {

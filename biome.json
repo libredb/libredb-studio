@@ -5,6 +5,7 @@
     "includes": [
       "src/**",
       "tests/**",
+      "packages/**",
       "e2e/**",
       "scripts/**",
       "bin/**",

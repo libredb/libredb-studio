@@ -7,12 +7,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { fingerprintNetconfrpc, netconfrpcRowCapAdvice } from "@/lib/agent/languages/netconfrpc/adapter";
 import { NETCONFRPC_CLIENT_PACK } from "@/lib/agent/languages/netconfrpc/client";
 import { NETCONFRPC_TOOL_OVERRIDES } from "@/lib/agent/languages/netconfrpc/definitions";
 import { NETCONFRPC_SERVER_PACK } from "@/lib/agent/languages/netconfrpc/server";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {

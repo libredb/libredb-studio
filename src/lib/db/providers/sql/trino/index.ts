@@ -55,12 +55,15 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -98,7 +101,8 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type EgressDecision,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -116,13 +120,14 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   proveTrinoAgentBoundary,
   readTrinoCatalogs,
   TRINO_CATALOG_LIST_STATEMENT,
   trinoAgentStatementRefusal,
 } from "./agent-boundary";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TrinoHttpTransport } from "./http-transport";
 import { TRINO_CREATE_TABLE } from "./create-table";
 import {
@@ -381,21 +386,28 @@ export class TrinoProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport the open builds. */
+  private readonly egress: EgressDecision | undefined;
+
   /**
    * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a real
-   * connection always builds the HTTP one.
+   * connection always builds the HTTP one, with the egress decision the provider was built with; built without one,
+   * the HTTP transport is refused by name (`requireEgressDecision`) before any request.
    */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
-    private readonly createTransport: (dialect: TrinoDialect, config: DatabaseConnection) => TrinoTransport = (
-      dialect,
-      connection,
-    ) => new TrinoHttpTransport(dialect, connection),
+    execution: ProviderBuildContext = {},
+    private readonly createTransport: (
+      dialect: TrinoDialect,
+      config: DatabaseConnection,
+      egress: EgressDecision | undefined,
+    ) => TrinoTransport = (dialect, connection, egress) =>
+      new TrinoHttpTransport(dialect, connection, requireEgressDecision(egress)),
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -465,10 +477,9 @@ export class TrinoProvider extends SQLBaseProvider {
       // deployment serves on whatever port its operator chose, and inventing a
       // well-known HTTPS port would send credentials somewhere nothing is listening.
       defaultPort: this.dialect.defaultPort,
-      // Declared rather than derived from the port (#424 Phase 1's lesson): 8080 is a
-      // generic HTTP port and the query generators must not have to guess a dialect
-      // from it. Trino quotes identifiers with `"` and a backtick is not a quote
-      // character at all in its grammar.
+      // Declared so a later edit of the query generators' default cannot move it:
+      // Trino has no row of its own in `SQL_ENGINE_GENERATORS`. Trino quotes identifiers
+      // with `"` and a backtick is not a quote character at all in its grammar.
       identifierQuoting: "double",
       // Measured: `SELECT 1;` is a syntax error. The terminator is not in the
       // grammar, so the generators must not emit one.
@@ -699,7 +710,7 @@ export class TrinoProvider extends SQLBaseProvider {
       // Constructed inside the guard because the constructor itself refuses one
       // configuration: a password over plain HTTP, which the coordinator rejects
       // with HTTP 401 even when authentication is switched off.
-      transport = this.createTransport(this.dialect, this.config);
+      transport = this.createTransport(this.dialect, this.config, this.egress);
       await transport.query(CONNECT_PROBE_SQL);
       // AFTER the probe, never instead of it: the probe is what proves the
       // coordinator answers, and this check only says more when it did.
@@ -1013,11 +1024,16 @@ export class TrinoProvider extends SQLBaseProvider {
     if (error instanceof ExecutionProfileError || error instanceof QueryError || error instanceof ConnectionError) {
       return error;
     }
+    if (error instanceof TrinoAnswerTooLargeError && error.limit === "rows") {
+      return new RowBudgetRefusal(
+        `${rowBudgetSentence(error.seen, error.cap)}; the answer was not read further and was cancelled on the cluster`,
+        this.type,
+        sql,
+      );
+    }
     if (error instanceof TrinoAnswerTooLargeError) {
-      const sentence =
-        error.limit === "rows" ? rowBudgetSentence(error.seen, error.cap) : byteBudgetSentence(error.seen, error.cap);
-      return new QueryError(
-        `${sentence}; the answer was not read further and was cancelled on the cluster`,
+      return new ByteBudgetRefusal(
+        `${byteBudgetSentence(error.seen, error.cap)}; the answer was not read further and was cancelled on the cluster`,
         this.type,
         sql,
       );
@@ -1027,7 +1043,7 @@ export class TrinoProvider extends SQLBaseProvider {
       const outcome = sent
         ? "; the statement Studio had sent was cancelled on the cluster"
         : " while the access control was checked; the statement was not sent";
-      return new QueryError(
+      return new TimeBudgetRefusal(
         `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms${outcome}`,
         this.type,
         sql,
@@ -1050,7 +1066,7 @@ export class TrinoProvider extends SQLBaseProvider {
     const answer = toQueryResult(result, executionTime);
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

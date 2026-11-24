@@ -127,12 +127,17 @@ data-e2e-passkey/
 data-e2e-launch/
 # e2e/firestore-provider.spec.ts's server (playwright.config.ts), whose Firestore connections go to the spec's stub.
 data-e2e-firestore/
+# e2e/unknown-provider-seed.spec.ts's server (playwright.config.ts), whose seed file holds an entry no provider opens.
+data-e2e-unknown-seed/
 # Local Docker test volumes and any stray embedded-db files
 .docker-data*/
 # The agent runtime's durable ledger: with WORKFLOW_LOCAL_DATA_DIR unset it resolves
 # against the working directory, so running an agent locally writes run ledgers here.
 .workflow-data/
 *.libredb
+# The committed LibreDB sample, built by scripts/generate-libredb-sample.mjs and held by
+# tests/unit/seed/libredb-sample-asset.test.ts; the rule above would leave it out of the repository.
+!seed-assets/libredb/sample.libredb
 # The default target of `bun docker/libredb-init/01-object-fixture.ts`, which the fixture
 # module documents as a hand-run for a durable file (#789). `*.libredb` covers the database
 # but not the directory or the `.lock` sidecar beside it, so the documented run left an

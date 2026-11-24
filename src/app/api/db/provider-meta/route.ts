@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createDatabaseProvider } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { supportsQueryCancel } from "@/lib/db/query-cancel";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/provider-meta", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     let body;
     try {
@@ -35,25 +38,27 @@ export async function POST(req: NextRequest) {
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
     );
+    scrub = providerTextScrub(connection, "any");
 
     if (!connection.type) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    // No `withOneShotTunnel` here, unlike test-connection and schema-snapshot (#457):
-    // this route never calls connect(). Capabilities and labels are type-driven and read
-    // off the constructed provider without a socket, so there is nothing to tunnel. The
-    // execution context is passed for consistency with the other routes (non-admin DuckDB file access); it changes
-    // nothing, because the posture only affects a handle this route never opens.
-    const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // No `withOneShotTunnel` here, unlike test-connection and schema-snapshot (#457): this route never connects.
+    // Capabilities and labels are type-driven and read by `readProviderDeclarations` without a socket and without
+    // opening the connection's tunnel, and it hands back data, never a provider (FND-2 slice 5). The execution context
+    // is passed as the other routes pass it (non-admin DuckDB file access): the factory refuses a connection whose
+    // engine refuses a denied posture under one that denies it (SQLite), with the sentence its connect gives, before
+    // the provider is built, so a caller who could never open it gets that refusal here too.
+    const declarations = await readProviderDeclarations(connection, editorExecutionContext(guard.session, connection));
 
     return NextResponse.json({
       // `supportsQueryCancel` is read off the provider's surface rather than declared by
       // it: it is the cancel route's own check, so the two cannot disagree (#1364).
-      capabilities: { ...provider.getCapabilities(), supportsQueryCancel: supportsQueryCancel(provider) },
-      labels: provider.getLabels(),
+      capabilities: { ...declarations.capabilities, supportsQueryCancel: declarations.supportsQueryCancel },
+      labels: declarations.labels,
     });
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/provider-meta" });
+    return createErrorResponse(error, { route: "api/db/provider-meta", scrub });
   }
 }

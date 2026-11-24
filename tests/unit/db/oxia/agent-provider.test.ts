@@ -10,11 +10,11 @@ import {
   OXIA_AGENT_COUNT_SENTENCES,
   OXIA_AGENT_FAILURE_SENTENCES,
 } from "@/lib/db/providers/keyvalue/oxia/agent-metadata-read";
-import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { OXIA_AGENT_SENTENCES } from "@/lib/languages/oxiacli/agent-statement";
 import { OxiaError } from "@/lib/db/providers/keyvalue/oxia/errors";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { shardFor } from "@/lib/db/providers/keyvalue/oxia/routing";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import {
   createFakeOxiaClient,
@@ -23,6 +23,7 @@ import {
   type FakeOxiaRecord,
 } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET = { maxResultRows: 5, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -218,19 +219,26 @@ describe("the reads", () => {
   test("a count of exactly the row budget is answered; one past it is refused, never cut", async () => {
     const { provider } = await connected();
     expect((await provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 9 })).rows).toEqual([{ keys: 9 }]);
-    await expect(provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 8 })).rejects.toThrow(
-      OXIA_AGENT_COUNT_SENTENCES.overRows(8),
-    );
-    await expect(provider.queryReadOnly("list", BUDGET)).rejects.toThrow(OXIA_AGENT_COUNT_SENTENCES.overRows(5));
+    const pastEight = await provider
+      .queryReadOnly("list", { ...BUDGET, maxResultRows: 8 })
+      .catch((caught: unknown) => caught);
+    expect((pastEight as Error).message).toBe(OXIA_AGENT_COUNT_SENTENCES.overRows(8));
+    expect(errorKind(pastEight)).toBe("row-budget-refusal");
+    const pastFive = await provider.queryReadOnly("list", BUDGET).catch((caught: unknown) => caught);
+    expect((pastFive as Error).message).toBe(OXIA_AGENT_COUNT_SENTENCES.overRows(5));
+    expect(errorKind(pastFive)).toBe("row-budget-refusal");
   });
 
   test("a count Studio could not read to the namespace's end is refused", async () => {
     const long = "k".repeat(60_000);
     const records = Array.from({ length: 150 }, (_, index) => ({ key: `/long/${index}-${long}` }));
     const { provider } = await connected(READ_ONLY, records);
-    await expect(provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 500 })).rejects.toThrow(
-      OXIA_AGENT_COUNT_SENTENCES.overBytes,
-    );
+    const unread = await provider
+      .queryReadOnly("list", { ...BUDGET, maxResultRows: 500 })
+      .catch((caught: unknown) => caught);
+    expect((unread as Error).message).toBe(OXIA_AGENT_COUNT_SENTENCES.overBytes);
+    // Studio's own read cap of the count, not the read's byte budget: no budget refusal class.
+    expect(errorKind(unread)).toBe("query");
   });
 });
 
@@ -250,9 +258,9 @@ describe("the failures", () => {
   test("a deadline is the time budget's refusal", async () => {
     const { provider, fake } = await connected();
     fake.failNext({ rpc: "GetShardAssignments" }, new OxiaError("deadline-exceeded"));
-    await expect(provider.queryReadOnly("shards", BUDGET)).rejects.toThrow(
-      `${TIME_BUDGET_PREFIX}: no answer within 10000ms`,
-    );
+    const refused = await provider.queryReadOnly("shards", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 10000ms`);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("a defect passes on as it is", async () => {

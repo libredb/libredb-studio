@@ -1,0 +1,814 @@
+{
+  "id": "snowflake",
+  "displayName": "Snowflake",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "user",
+      "authMethod",
+      "privateKey",
+      "privateKeyPassphrase",
+      "password",
+      "warehouse",
+      "database",
+      "schema",
+      "role"
+    ],
+    "defaults": {
+      "host": ""
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "jdbc:snowflake://",
+          "snowflake://",
+          "a Snowflake account URL or host"
+        ]
+      },
+      "seedCheck": "seedCheck"
+    },
+    "tls": "not-offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Account"
+        },
+        {
+          "field": "user",
+          "text": "User"
+        },
+        {
+          "field": "authMethod",
+          "text": "Sign-in"
+        },
+        {
+          "field": "privateKey",
+          "text": "Private key"
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "text": "Passphrase"
+        },
+        {
+          "field": "password",
+          "text": "Access token"
+        },
+        {
+          "field": "warehouse",
+          "text": "Warehouse"
+        },
+        {
+          "field": "database",
+          "text": "Database"
+        },
+        {
+          "field": "schema",
+          "text": "Schema"
+        },
+        {
+          "field": "role",
+          "text": "Role"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "An account identifier such as myorg-myaccount, or its https:// URL."
+        },
+        {
+          "field": "user",
+          "text": "The user's login name (LOGIN_NAME)."
+        },
+        {
+          "field": "privateKey",
+          "text": "Paste the private key's contents. Studio reads no key file."
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "text": "Only for an encrypted key."
+        },
+        {
+          "field": "password",
+          "text": "A programmatic access token for this user."
+        },
+        {
+          "field": "warehouse",
+          "text": "Leave empty to use the user's default warehouse. Queries need one; browsing does not."
+        },
+        {
+          "field": "database",
+          "text": "Opened first in the tree, and the default for unqualified names."
+        },
+        {
+          "field": "schema",
+          "text": "The default schema for unqualified names."
+        },
+        {
+          "field": "role",
+          "text": "Every statement runs as this role; Studio checks it when it connects."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "host",
+          "text": "myorg-myaccount"
+        },
+        {
+          "field": "user",
+          "text": ""
+        },
+        {
+          "field": "privateKey",
+          "text": "-----BEGIN PRIVATE KEY-----"
+        },
+        {
+          "field": "database",
+          "text": ""
+        },
+        {
+          "field": "schema",
+          "text": ""
+        }
+      ],
+      "placement": [],
+      "options": [
+        {
+          "field": "authMethod",
+          "choices": [
+            {
+              "value": "keypair",
+              "label": "Key pair"
+            },
+            {
+              "value": "pat",
+              "label": "Programmatic access token"
+            }
+          ]
+        }
+      ],
+      "shownWhen": [
+        {
+          "field": "privateKey",
+          "when": {
+            "field": "authMethod",
+            "equals": "keypair"
+          }
+        },
+        {
+          "field": "privateKeyPassphrase",
+          "when": {
+            "field": "authMethod",
+            "equals": "keypair"
+          }
+        },
+        {
+          "field": "password",
+          "when": {
+            "field": "authMethod",
+            "equals": "pat"
+          }
+        }
+      ],
+      "absentValues": [
+        {
+          "field": "authMethod",
+          "value": "keypair"
+        }
+      ]
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "host",
+        "required": "Enter Account: an account identifier such as myorg-myaccount, or its URL. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": "hostCheck"
+      },
+      {
+        "field": "user",
+        "required": "Enter the user's login name. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "privateKey",
+        "required": "Paste the private key for key-pair sign-in. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "password",
+        "required": "Enter the programmatic access token. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "role",
+        "required": "Enter the role every statement runs as. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": "hostHint",
+    "hostIdentity": "hostIdentity",
+    "import": null,
+    "connectBudgetMs": 80000
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": null,
+    "overlay": null
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "snowflake-json",
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": true,
+      "backslashAlwaysEscapes": true,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": false,
+      "doubleQuoteBackslashEscapes": false,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+FOR\\s+UPDATE(?:\\s+NOWAIT|\\s+WAIT\\s+\\d+)?\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [
+        "NULL",
+        "''",
+        "$$$$"
+      ],
+      "confirmForms": [
+        [
+          "CREATE",
+          "OR",
+          "REPLACE"
+        ],
+        [
+          "CREATE",
+          "OR",
+          "ALTER"
+        ],
+        [
+          "INSERT",
+          "OVERWRITE"
+        ],
+        [
+          "COPY"
+        ],
+        [
+          "REMOVE"
+        ],
+        [
+          "RM"
+        ],
+        [
+          "EXECUTE",
+          "IMMEDIATE"
+        ],
+        [
+          "EXECUTE",
+          "TASK"
+        ],
+        [
+          "EXECUTE",
+          "ALERT"
+        ],
+        [
+          "EXECUTE",
+          "NOTEBOOK"
+        ],
+        [
+          "EXECUTE",
+          "JOB",
+          "SERVICE"
+        ],
+        [
+          "EXECUTE",
+          "DBT",
+          "PROJECT"
+        ],
+        [
+          "CALL"
+        ],
+        [
+          "CREATE",
+          "WAREHOUSE"
+        ],
+        [
+          "CREATE",
+          "TASK"
+        ],
+        [
+          "CREATE",
+          "USER"
+        ],
+        [
+          "CREATE",
+          "ROLE"
+        ],
+        [
+          "CREATE",
+          "NETWORK",
+          "POLICY"
+        ],
+        [
+          "CREATE",
+          "COMPUTE",
+          "POOL"
+        ],
+        [
+          "CREATE",
+          "SERVICE"
+        ],
+        [
+          "CREATE",
+          "DYNAMIC",
+          "TABLE"
+        ],
+        [
+          "CREATE",
+          "TRANSIENT",
+          "DYNAMIC",
+          "TABLE"
+        ],
+        [
+          "CREATE",
+          "ALERT"
+        ],
+        [
+          "CREATE",
+          "MATERIALIZED",
+          "VIEW"
+        ],
+        [
+          "CREATE",
+          "SECURE",
+          "MATERIALIZED",
+          "VIEW"
+        ],
+        [
+          "CREATE",
+          "PIPE"
+        ],
+        [
+          "CREATE",
+          "EXTERNAL",
+          "ACCESS",
+          "INTEGRATION"
+        ],
+        [
+          "CREATE",
+          "API",
+          "INTEGRATION"
+        ],
+        [
+          "CREATE",
+          "NETWORK",
+          "RULE"
+        ],
+        [
+          "CREATE",
+          "REPLICATION",
+          "GROUP"
+        ],
+        [
+          "CREATE",
+          "FAILOVER",
+          "GROUP"
+        ],
+        [
+          "CREATE",
+          "CORTEX",
+          "SEARCH",
+          "SERVICE"
+        ],
+        [
+          "CREATE",
+          "DYNAMIC",
+          "ICEBERG",
+          "TABLE"
+        ],
+        [
+          "CREATE",
+          "SECURITY",
+          "INTEGRATION"
+        ],
+        [
+          "CREATE",
+          "NOTIFICATION",
+          "INTEGRATION"
+        ],
+        [
+          "CREATE",
+          "STORAGE",
+          "INTEGRATION"
+        ],
+        [
+          "CREATE",
+          "ACCOUNT"
+        ],
+        [
+          "CREATE",
+          "MANAGED",
+          "ACCOUNT"
+        ],
+        [
+          "CREATE",
+          "SHARE"
+        ]
+      ],
+      "confirmCodeForms": [
+        [
+          "AS",
+          "PROCEDURE"
+        ],
+        {
+          "prefix": "SYSTEM$"
+        }
+      ],
+      "confirmFormsWhen": [
+        {
+          "form": [
+            "CREATE",
+            "STAGE"
+          ],
+          "when": "URL"
+        },
+        {
+          "form": [
+            "CREATE",
+            "TEMPORARY",
+            "STAGE"
+          ],
+          "when": "URL"
+        },
+        {
+          "form": [
+            "CREATE",
+            "TEMP",
+            "STAGE"
+          ],
+          "when": "URL"
+        }
+      ],
+      "confirmExemptForms": [
+        [
+          "ALTER",
+          "SESSION",
+          "SET"
+        ],
+        [
+          "ALTER",
+          "SESSION",
+          "UNSET"
+        ]
+      ],
+      "formatterLanguage": "snowflake",
+      "completionWords": {
+        "keywords": [
+          "QUALIFY",
+          "ILIKE",
+          "RLIKE",
+          "LATERAL",
+          "PIVOT",
+          "UNPIVOT",
+          "MATCH_RECOGNIZE",
+          "SAMPLE",
+          "TABLESAMPLE",
+          "EXCLUDE",
+          "MINUS",
+          "TOP",
+          "ASOF JOIN",
+          "CONNECT BY",
+          "START WITH",
+          "CHANGES"
+        ],
+        "functions": [
+          "ARRAY_AGG",
+          "ARRAY_CONSTRUCT",
+          "ARRAY_CONTAINS",
+          "ARRAY_SIZE",
+          "OBJECT_CONSTRUCT",
+          "OBJECT_KEYS",
+          "PARSE_JSON",
+          "TRY_PARSE_JSON",
+          "TO_VARIANT",
+          "TO_JSON",
+          "FLATTEN",
+          "GET_PATH",
+          "TYPEOF",
+          "IFF",
+          "NVL",
+          "NVL2",
+          "ZEROIFNULL",
+          "DIV0",
+          "LISTAGG",
+          "TRY_CAST",
+          "TRY_TO_NUMBER",
+          "TRY_TO_DATE",
+          "TO_TIMESTAMP",
+          "DATEADD",
+          "DATEDIFF",
+          "CONVERT_TIMEZONE",
+          "SPLIT_PART",
+          "REGEXP_SUBSTR",
+          "REGEXP_REPLACE",
+          "APPROX_COUNT_DISTINCT",
+          "MEDIAN",
+          "CURRENT_ROLE",
+          "CURRENT_WAREHOUSE",
+          "CURRENT_DATABASE",
+          "CURRENT_SCHEMA",
+          "CURRENT_USER",
+          "CURRENT_ACCOUNT",
+          "CURRENT_REGION",
+          "CURRENT_DATE",
+          "LAST_QUERY_ID",
+          "RESULT_SCAN",
+          "GENERATOR",
+          "SEQ4",
+          "UNIFORM",
+          "RANDOM",
+          "HASH",
+          "SHA2"
+        ]
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "FLOAT",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BINARY"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "'NaN'::FLOAT",
+        "Infinity": "'inf'::FLOAT",
+        "-Infinity": "'-inf'::FLOAT"
+      },
+      "insertForm": "select",
+      "rewriteDeclared": null,
+      "declareFromSample": "declareFromSample",
+      "typedLiteral": "typedLiteral",
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "Snowflake: Cannot generate index DDL. Snowflake has indexes only on hybrid tables; write the index change by hand.",
+      "ALTER COLUMN sets a default only to a sequence's NEXTVAL; recreate the column with its default."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

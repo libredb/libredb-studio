@@ -24,7 +24,8 @@ import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/pr
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -38,6 +39,10 @@ import {
   scopeServer,
 } from "../../helpers/weaviate-agent";
 import { type RecordedAnswer, okAnswer, recordingWeaviateTransport } from "../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's weaviate connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("weaviate"));
 
 pinMcpTestEnvironment();
 
@@ -76,7 +81,7 @@ beforeEach(() => {
       const provider = new WeaviateProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        { readOnly: honourProfile, sendsStatements: agent },
+        { readOnly: honourProfile, sendsStatements: agent, egress: ALLOWS_PRIVATE_HOSTS },
         (options, routes) => createRestWeaviateClient(options, routes, transport.factory),
       );
       await provider.connect();
@@ -161,7 +166,7 @@ describe("a read", () => {
   test("the schema answers names, counts and flags behind the notice, after the key is proved again", async () => {
     const result = await weaviate("GET /v1/schema");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:vectors",
@@ -308,16 +313,33 @@ describe("a refusal", () => {
   });
 
   test.each([
-    ["the root key", "own-info-root", WEAVIATE_PROOF_SENTENCES.widened("create_roles")],
-    ["an administrator's key", "own-info-admin", WEAVIATE_PROOF_SENTENCES.widened("create_roles")],
-    ["a role that also writes", "own-info-widened", WEAVIATE_PROOF_SENTENCES.widened("update_data")],
-    ["a key on a server with RBAC off", "own-info-keyonly", WEAVIATE_PROOF_SENTENCES.rbacOff],
-  ])("%s is refused at the open, and nothing is read", async (_who, capture, sentence) => {
+    ["the root key", "own-info-root", WEAVIATE_PROOF_SENTENCES.widened("create_roles"), "PROFILE_PRIVILEGES_TOO_BROAD"],
+    [
+      "an administrator's key",
+      "own-info-admin",
+      WEAVIATE_PROOF_SENTENCES.widened("create_roles"),
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    ],
+    [
+      "a role that also writes",
+      "own-info-widened",
+      WEAVIATE_PROOF_SENTENCES.widened("update_data"),
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    ],
+    [
+      "a key on a server with RBAC off",
+      "own-info-keyonly",
+      WEAVIATE_PROOF_SENTENCES.rbacOff,
+      "PROFILE_SERVER_UNENFORCED",
+    ],
+  ])("%s is refused at the open, and nothing is read", async (_who, capture, sentence, code) => {
     answer = viewerServer({ "GET /v1/users/own-info": agentAnswer(capture) });
     const result = await weaviate("GET /v1/schema");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "execution-profile", code, outcome: "unknown" } },
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Weaviate provider, bundled with Studio") },
         { type: "text", text: `run_weaviate_read cannot run on this connection: ${sentence} It runs on Weaviate.` },
       ],
     });
@@ -373,6 +395,7 @@ describe("a refusal", () => {
     const statement = "GET /v1/schema/Tenanted/tenants";
     const result = await weaviate(statement);
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {
@@ -393,6 +416,7 @@ describe("a refusal", () => {
     };
     const result = await weaviate("GET /v1/schema", { timeout_ms: 1_000 });
     expect(result).toEqual({
+      structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

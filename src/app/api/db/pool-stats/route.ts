@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -12,6 +13,9 @@ export async function POST(request: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/pool-stats", bucket: "query", request });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not a JSON object is a malformed request, refused before any connection resolves.
     const body = await readJsonObject(request);
@@ -20,6 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
 
@@ -42,6 +47,6 @@ export async function POST(request: NextRequest) {
       message: "Pool statistics not available for this provider",
     });
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/pool-stats" });
+    return createErrorResponse(error, { route: "api/db/pool-stats", scrub });
   }
 }

@@ -17,6 +17,7 @@ import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { SearchBoundsError, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 interface FetchCall {
   url: string;
@@ -49,7 +50,7 @@ afterEach(() => {
 
 describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s) endpoint", (dialect) => {
   function makeTransport(overrides: Partial<DatabaseConnection> = {}): SearchHttpTransport {
-    return new SearchHttpTransport(dialect, makeConnection(dialect, overrides));
+    return new SearchHttpTransport(dialect, makeConnection(dialect, overrides), ALLOWS_PRIVATE_HOSTS);
   }
 
   test("builds the origin from host and port", async () => {
@@ -101,7 +102,7 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
 
 describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s) redirects", (dialect) => {
   function makeTransport(): SearchHttpTransport {
-    return new SearchHttpTransport(dialect, makeConnection(dialect));
+    return new SearchHttpTransport(dialect, makeConnection(dialect), ALLOWS_PRIVATE_HOSTS);
   }
 
   test("asks fetch not to follow a redirect", async () => {
@@ -161,7 +162,7 @@ const SECURITY_BODY = JSON.stringify({
 describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s) 401 and 403 (#1413)", (dialect) => {
   async function failureOf(status: number, body: string): Promise<SearchTransportError> {
     handler = () => new Response(body, { status, headers: { "content-type": "application/json" } });
-    const caught = await new SearchHttpTransport(dialect, makeConnection(dialect))
+    const caught = await new SearchHttpTransport(dialect, makeConnection(dialect), ALLOWS_PRIVATE_HOSTS)
       .query("SELECT a FROM closed_idx")
       .catch((error: unknown) => error);
     expect(caught).toBeInstanceOf(SearchTransportError);
@@ -240,7 +241,7 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
   });
 
   function transport(): SearchHttpTransport {
-    return new SearchHttpTransport(dialect, makeConnection(dialect));
+    return new SearchHttpTransport(dialect, makeConnection(dialect), ALLOWS_PRIVATE_HOSTS);
   }
 
   const bodies = (): Record<string, unknown>[] =>
@@ -524,7 +525,7 @@ describe("SearchHttpTransport (opensearch) DELETE switch", () => {
   });
 
   function transport(): SearchHttpTransport {
-    return new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+    return new SearchHttpTransport("opensearch", makeConnection("opensearch"), ALLOWS_PRIVATE_HOSTS);
   }
 
   test("reads the setting from the cluster settings, defaults included, filtered to the one key", async () => {
@@ -676,7 +677,11 @@ describe("SearchHttpTransport (opensearch) DELETE switch", () => {
   );
 
   test("Elasticsearch, whose grammar holds no DELETE, refuses both before any request", async () => {
-    const elasticsearch = new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+    const elasticsearch = new SearchHttpTransport(
+      "elasticsearch",
+      makeConnection("elasticsearch"),
+      ALLOWS_PRIVATE_HOSTS,
+    );
 
     for (const call of [() => elasticsearch.sqlDeleteSetting(), () => elasticsearch.unrefusedSqlDelete()]) {
       const caught = await call().catch((error: unknown) => error);
@@ -706,7 +711,7 @@ describe("SearchHttpTransport (opensearch) result limit", () => {
   });
 
   function transport(): SearchHttpTransport {
-    return new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+    return new SearchHttpTransport("opensearch", makeConnection("opensearch"), ALLOWS_PRIVATE_HOSTS);
   }
 
   test("reads the setting from the cluster settings, defaults included, filtered to the one key", async () => {
@@ -745,7 +750,7 @@ describe("SearchHttpTransport (opensearch) result limit", () => {
   });
 
   test("Elasticsearch, which declares no such limit, refuses before any request", async () => {
-    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS)
       .sqlResultLimit()
       .catch((error: unknown) => error);
 
@@ -776,7 +781,8 @@ describe("SearchHttpTransport (opensearch) refusal inside a 200", () => {
     handler = () => new Response(SECURITY_IN_200, { status: 200, headers: { "content-type": "application/json" } });
   });
 
-  const transport = (): SearchHttpTransport => new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+  const transport = (): SearchHttpTransport =>
+    new SearchHttpTransport("opensearch", makeConnection("opensearch"), ALLOWS_PRIVATE_HOSTS);
 
   test.each([
     ["query", () => transport().query("DESCRIBE TABLES LIKE %")],
@@ -860,7 +866,8 @@ describe("SearchHttpTransport login check", () => {
       application: {},
     });
   };
-  const elasticsearch = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const elasticsearch = () =>
+    new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS);
 
   test("Elasticsearch asks one POST naming the cluster privilege all and read on every index, each restricted pattern and name, the release's names included, then lists the login's privileges", async () => {
     // Every asked name is answered, and the one that carries the release reads true.
@@ -1012,6 +1019,7 @@ describe("SearchHttpTransport login check", () => {
     await new SearchHttpTransport(
       "elasticsearch",
       makeConnection("elasticsearch", { user: "libredb_agent", password: "not-a-real-password" }),
+      ALLOWS_PRIVATE_HOSTS,
     ).loginReach("9.1.4");
 
     expect(calls).toHaveLength(2);
@@ -1164,7 +1172,7 @@ describe("SearchHttpTransport login check", () => {
             application: {},
           });
 
-    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS)
       .loginReach("9.1.4")
       .catch((error: unknown) => error);
 
@@ -1173,7 +1181,7 @@ describe("SearchHttpTransport login check", () => {
   });
 
   test("OpenSearch declares no restricted indices, and refuses before any request", async () => {
-    const caught = await new SearchHttpTransport("opensearch", makeConnection("opensearch"))
+    const caught = await new SearchHttpTransport("opensearch", makeConnection("opensearch"), ALLOWS_PRIVATE_HOSTS)
       .loginReach("3.8.0")
       .catch((error: unknown) => error);
 
@@ -1191,7 +1199,8 @@ describe("SearchHttpTransport login check", () => {
 describe("SearchHttpTransport index resolution", () => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  const transport = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const transport = () =>
+    new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS);
   const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
 
   test("resolves one expression as a whole, its commas encoded, with the SQL endpoint's wildcard expansion", async () => {
@@ -1351,7 +1360,11 @@ describe("SearchHttpTransport index resolution", () => {
   test("OpenSearch marks an index of a family its bundled plugins write into as a system index, by its name", async () => {
     handler = resolution;
 
-    const targets = await new SearchHttpTransport("opensearch", makeConnection("opensearch")).resolveTargets(["*"]);
+    const targets = await new SearchHttpTransport(
+      "opensearch",
+      makeConnection("opensearch"),
+      ALLOWS_PRIVATE_HOSTS,
+    ).resolveTargets(["*"]);
 
     expect(targets.indices.filter((index) => index.system).map((index) => index.name)).toEqual(PLUGIN_OWNED);
     expect(targets.indices.every((index) => !index.hidden)).toBe(true);
@@ -1407,7 +1420,8 @@ describe("SearchHttpTransport index resolution", () => {
 describe("SearchHttpTransport SQL table resolution", () => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  const transport = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const transport = () =>
+    new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS);
   const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
 
   test("asks the field capabilities of the expression as a whole, with the SQL resolver's index options", async () => {
@@ -1485,9 +1499,11 @@ describe("SearchHttpTransport SQL table resolution", () => {
   test("OpenSearch asks the same field capabilities request, which names the indices its SQL plugin reads", async () => {
     handler = () => json({ indices: ["probe_hidden", "probe_orders"], fields: {} });
 
-    const indices = await new SearchHttpTransport("opensearch", makeConnection("opensearch")).sqlTableIndices(
-      "probe_*,probe_over_hidden",
-    );
+    const indices = await new SearchHttpTransport(
+      "opensearch",
+      makeConnection("opensearch"),
+      ALLOWS_PRIVATE_HOSTS,
+    ).sqlTableIndices("probe_*,probe_over_hidden");
 
     expect(calls).toHaveLength(1);
     const url = new URL(calls[0]?.url ?? "");
@@ -1500,7 +1516,7 @@ describe("SearchHttpTransport SQL table resolution", () => {
 describe("SearchHttpTransport (opensearch) login probes", () => {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
-  const transport = () => new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+  const transport = () => new SearchHttpTransport("opensearch", makeConnection("opensearch"), ALLOWS_PRIVATE_HOSTS);
   const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
   const missing = (name: string) =>
     json(
@@ -1608,7 +1624,7 @@ describe("SearchHttpTransport (opensearch) login probes", () => {
 
   test("Elasticsearch declares no probes, and refuses before any request", async () => {
     const caught = await failure(() =>
-      new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch")).loginWrites(),
+      new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"), ALLOWS_PRIVATE_HOSTS).loginWrites(),
     );
 
     expect(caught).toBeInstanceOf(SearchTransportError);

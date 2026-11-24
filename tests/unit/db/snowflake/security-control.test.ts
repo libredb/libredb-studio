@@ -8,13 +8,16 @@
  * `tests/unit/db/http/egress-policy-providers.test.ts`: that census connects each provider to a loopback listener by
  * the host `localhost`, while a Snowflake Account is always read into a Snowflake host, so a private address can
  * only come from DNS. The resolver is stubbed (the runner gives this file its own process, so the module mock reaches
- * no other test file): a PrivateLink host answering 10.0.0.5 under DB_HTTP_BLOCK_PRIVATE_HOSTS is refused at the
- * lookup, before any socket, and no name is resolved by a real resolver.
+ * no other test file): a PrivateLink host answering 10.0.0.5 is refused at the lookup, before any socket, and no name
+ * is resolved by a real resolver. The provider is handed a blocking decision, which its origin and its node transport
+ * are built with, while the variable is unset, so the refusal at the lookup shows the handed decision decided.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -85,24 +88,27 @@ describe("the address policy on the Snowflake connect path", () => {
   const original = process.env[flag];
 
   afterEach(() => {
-    if (original === undefined) delete process.env[flag];
-    else process.env[flag] = original;
+    setEgressFlag(original);
     lookups.length = 0;
   });
 
   test("a PrivateLink host resolving to a private address is refused at the lookup, before any socket", async () => {
-    process.env[flag] = "true";
-    const provider = new SnowflakeProvider({
-      id: "blocked-snowflake",
-      name: "Blocked Snowflake",
-      type: "snowflake",
-      host: "xy12345.us-east-1.privatelink",
-      user: "studio_svc",
-      role: "STUDIO_RO",
-      authMethod: "pat",
-      password: "pat-value",
-      createdAt: new Date(0),
-    } as never);
+    setEgressFlag(undefined);
+    const provider = new SnowflakeProvider(
+      {
+        id: "blocked-snowflake",
+        name: "Blocked Snowflake",
+        type: "snowflake",
+        host: "xy12345.us-east-1.privatelink",
+        user: "studio_svc",
+        role: "STUDIO_RO",
+        authMethod: "pat",
+        password: crypto.randomUUID(),
+        createdAt: new Date(0),
+      } as never,
+      {},
+      { egress: BLOCKS_PRIVATE_HOSTS },
+    );
     const failure = await provider.connect().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(DatabaseConfigError);
     expect((failure as Error).message).toContain(BLOCKED_HOST);

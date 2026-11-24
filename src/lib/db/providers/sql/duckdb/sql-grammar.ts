@@ -1,5 +1,7 @@
-import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
-import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import { NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
+import type { SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * DuckDB, every fact measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4.
@@ -31,6 +33,11 @@ const DUCKDB_GRAMMAR: SqlGrammar = {
   backslashAlwaysEscapes: false,
   script: DEFAULT_SQL_GRAMMAR.script,
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
+  // The one INSERT form whose text overwrites a row already there: measured on v1.5.5, `INSERT OR REPLACE` (with or
+  // without BY NAME) overwrote the row a new one collided with on its primary key, while `INSERT OR IGNORE`, `ON
+  // CONFLICT DO NOTHING`, a plain `INSERT` and `INSERT ... BY NAME` or `BY POSITION` kept it. `ON CONFLICT ... DO
+  // UPDATE SET` overwrote it too and asks through the gate's shared `UPDATE ... SET` reading, so it is not a form here.
+  confirmForms: [["INSERT", "OR", "REPLACE"]],
 };
 
 /**

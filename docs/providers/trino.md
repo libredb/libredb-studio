@@ -21,6 +21,7 @@
 | **Connection string** | Not supported. `jdbc:trino://host:port/catalog/schema` exists; the shared parser does not accept it ([§4.2](#42-there-is-no-connection-string--yet)) |
 | **EXPLAIN** | `trino-json` — estimate only. `EXPLAIN (FORMAT JSON)` plans and never runs; `EXPLAIN ANALYZE` executes the statement, so it is deliberately never emitted ([§5.6](#56-explain-is-the-planning-form-only)) |
 | **Write reach** | open: the editor, Create Table, Import, the function object edit and maintenance (`kill`) send writes, and each catalog's connector decides for itself what it accepts ([§5.5](#55-writes-belong-to-the-connector-not-to-the-engine)) |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not exposed |
 | **Maintenance** | `kill` only, via `CALL system.runtime.kill_query` ([§8](#8-maintenance)) |
 | **Query cancellation** | Yes — `cancelQuery()` over `DELETE /v1/query/{id}` ([§3.7](#37-abandoning-a-request-does-not-stop-the-work)) |
@@ -310,6 +311,9 @@ polling immediately after the DELETE still reported state `QUEUED`, so nothing h
 instant `FAILED`/`CANCELED`. `cancelQuery()` returning `true` means *the coordinator accepted the
 termination*; `false` means only that nothing was ever recorded under that token.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `DELETE /v1/query/{id}`, when the request named a `queryId`.
+
 ### 3.8 No keys, no indexes — and why that is a fact about the engine
 
 Not "none found". Trino's `information_schema` holds exactly eight views, measured:
@@ -483,10 +487,8 @@ Where the statement ends comes from `lib/sql/statement-end` — the same reader 
 (#280), which scans spans rather than matching `/;\s*$/` and refuses to cut a text whose literal or
 comment never closes.
 
-`identifierQuoting: "double"` is declared explicitly for the neighbouring reason (#424 Phase 1's
-lesson): the generators otherwise derive the quote character from `defaultPort`, and `8080` is a
-generic HTTP port that says nothing about a dialect. Trino quotes with `"`, and a backtick is not a
-quote character in its grammar at all.
+`identifierQuoting: "double"` is declared explicitly, so a later edit of the generators' default cannot move Trino's quoting: Trino has no row of its own in `SQL_ENGINE_GENERATORS`.
+Trino quotes with `"`, and a backtick is not a quote character in its grammar at all.
 
 ### 3.14 `endOpenQueryTransaction()` is not implemented, and the honest reason is that nobody has measured it yet
 
@@ -1656,6 +1658,28 @@ a 72-table catalog, none of them the tables the fixtures use. The true table cou
 Overview panel, which reads it with `count(*)` in one statement, and the tables themselves are still
 in the schema tree.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `trino` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/trino/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
@@ -1734,7 +1758,7 @@ are undeclared.
 | `maintenanceOperations` | `["kill"]` | The only operation the engine itself can promise ([§8](#8-maintenance)) |
 | `supportsConnectionString` | `false` | The shared parser does not accept `jdbc:trino://` ([§4.2](#42-there-is-no-connection-string--yet)) |
 | `defaultPort` | `8080` | Same under TLS ([§4.3](#43-tls-and-the-password-rule)) |
-| `identifierQuoting` | `"double"` | Declared, not derived from a generic port ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
+| `identifierQuoting` | `"double"` | Declared, so it does not follow a later edit of the generators' default ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `statementTerminator` | `"none"` | `SELECT 1;` is a syntax error ([§3.13](#313-a-trailing-semicolon-is-a-syntax-error)) |
 | `containerLevels` | `catalog`, then `schema` | Labelled Catalog and Schema: a catalog is a named connector configuration, not a database ([two container levels](#two-container-levels-and-a-catalog-is-not-a-database)) |
 | `containerPathShapes` | `"prefixes"` | `[catalog]` and `[catalog, schema]` both address a container, because a catalog alone is a real address ([container shapes](#container-shapes-and-the-derivations-behind-them)); the empty path and a longer path are both refused, by the object routes over HTTP and by this provider directly (#1147) |

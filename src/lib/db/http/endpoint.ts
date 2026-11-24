@@ -20,6 +20,7 @@
 
 import { BlockList, isIP, isIPv6 } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 import { assertPublicLiteralHost, LOOPBACK_NETWORKS } from "./egress-policy";
 
 export type HttpScheme = "http" | "https";
@@ -154,10 +155,13 @@ export function plaintextSecretRefusal(connection: {
   );
 }
 
-/** Validate a connection's host and port for one scheme. */
-export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown): HttpOrigin {
+/**
+ * Validate a connection's host and port for one scheme. `egress` is the decision the calling provider was built with:
+ * when it blocks private destinations an IP literal outside the public ranges is refused here, before any socket.
+ */
+export function httpOrigin(scheme: HttpScheme, host: unknown, port: unknown, egress: EgressDecision): HttpOrigin {
   const validatedHost = validateHost(host);
-  assertPublicLiteralHost(validatedHost);
+  assertPublicLiteralHost(validatedHost, egress);
   return { scheme, host: validatedHost, port: validatePort(port) };
 }
 

@@ -8,6 +8,8 @@
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
+import { setEgressFlag } from "../../../helpers/egress-flag";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realDns = { ...(await import("node:dns")) };
 const lookups: string[] = [];
@@ -61,8 +63,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 
 afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
   lookups.length = 0;
   lookupOptions.length = 0;
 });
@@ -139,7 +140,7 @@ describe("assertNotLinkLocalLiteral", () => {
   });
 
   test("refuses whatever the guard flag says", () => {
-    process.env[FLAG] = "false";
+    setEgressFlag("false");
     expect(refusal(() => assertNotLinkLocalLiteral("169.254.169.254")).message).toBe(LINK_LOCAL);
   });
 });
@@ -244,11 +245,11 @@ describe("through a byte transport with the guard off", () => {
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
   function connect(host: string, port: number) {
-    delete process.env[FLAG];
     const transport = createNodeByteTransport({
-      origin: httpOrigin("http", host, port),
+      origin: httpOrigin("http", host, port, ALLOWS_PRIVATE_HOSTS),
       tls: null,
       maxSockets: 4,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
     });
     transports.push(transport);
@@ -303,14 +304,16 @@ describe("a byte transport refuses every link-local form whatever the guard flag
 
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
-  /** The guard flag off or on, then a byte transport on the host and port given, read raw so no validation runs first. */
+  /**
+   * A byte transport on the host and port given, read raw so no validation runs first, handed an allowing decision for
+   * the guard off and a blocking one for the guard on.
+   */
   function build(host: string, port: number, guard: "off" | "on") {
-    if (guard === "on") process.env[FLAG] = "true";
-    else delete process.env[FLAG];
     const transport = createNodeByteTransport({
       origin: { scheme: "http", host, port },
       tls: null,
       maxSockets: 4,
+      egress: guard === "on" ? BLOCKS_PRIVATE_HOSTS : ALLOWS_PRIVATE_HOSTS,
       headers: {},
     });
     transports.push(transport);
@@ -335,7 +338,7 @@ describe("a byte transport refuses every link-local form whatever the guard flag
     "[64:ff9b::a9fe:a9fe]",
   ];
 
-  // The guard's sentence when the flag is on, because the guard runs first; the link-local sentence otherwise.
+  // The guard's sentence when the decision blocks, because the guard runs first; the link-local sentence otherwise.
   const CASES = [
     ...LITERALS.map((host) => [host, "off", LINK_LOCAL] as const),
     ...LITERALS.map((host) => [host, "on", BLOCKED] as const),
@@ -391,11 +394,11 @@ describe("a text transport asked to refuse link-local addresses", () => {
 
   const OK = (): Buffer => rawAnswer("200 OK", ["content-length: 2"], "ok");
 
+  /** A text transport handed an allowing decision for the guard off and a blocking one for the guard on. */
   function send(host: string, port: number, guard: "off" | "on" = "off", refusesLinkLocal = true) {
-    if (guard === "on") process.env[FLAG] = "true";
-    else delete process.env[FLAG];
-    const origin = httpOrigin("http", host, port);
-    const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, headers: {}, refusesLinkLocal });
+    const origin = httpOrigin("http", host, port, ALLOWS_PRIVATE_HOSTS);
+    const egress = guard === "on" ? BLOCKS_PRIVATE_HOSTS : ALLOWS_PRIVATE_HOSTS;
+    const transport = createNodeTransport({ origin, tls: null, maxSockets: 4, egress, headers: {}, refusesLinkLocal });
     transports.push(transport);
     return transport.request({
       method: "GET",

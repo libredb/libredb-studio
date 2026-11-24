@@ -123,6 +123,26 @@ describe("proxy with the bearer channel on", () => {
     }
   });
 
+  test("a token from a domain outside OIDC_ALLOWED_EMAIL_DOMAINS answers 403 BEARER_DOMAIN_NOT_ALLOWED and is audited", async () => {
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "example.test";
+    const logSpy = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      const outsider = await signBearer(bearerClaims({ email: "ada@other.test", email_verified: true }));
+      const response = await proxy(request("/api/db/query", { authorization: `Bearer ${outsider}` }));
+
+      expect(response.status).toBe(403);
+      expect(response.headers.get("www-authenticate")).toBeNull();
+      expect(await response.json()).toEqual({
+        error: "This account's email domain is not allowed in Studio. Ask an administrator for access.",
+        code: "BEARER_DOMAIN_NOT_ALLOWED",
+      });
+      const lines = logSpy.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes('"reason":"bearer_domain_not_allowed"'))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   test("a token that names no usable user answers 403 BEARER_NO_IDENTITY and is audited", async () => {
     const logSpy = spyOn(console, "log").mockImplementation(() => {});
     try {

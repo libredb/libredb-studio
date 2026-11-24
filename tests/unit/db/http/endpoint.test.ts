@@ -17,6 +17,7 @@ import {
   validateHost,
   validatePort,
 } from "@/lib/db/http/endpoint";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 function refusal(run: () => unknown): Error {
   try {
@@ -48,7 +49,7 @@ describe("httpOrigin: host", () => {
   ];
 
   test.each(accepted)("accepts %s", (_label, input, host) => {
-    expect(httpOrigin("http", input, 8080).host).toBe(host);
+    expect(httpOrigin("http", input, 8080, ALLOWS_PRIVATE_HOSTS).host).toBe(host);
   });
 
   const refused: [label: string, input: unknown][] = [
@@ -90,15 +91,16 @@ describe("httpOrigin: host", () => {
   ];
 
   test.each(refused)("refuses %s with DatabaseConfigError", (_label, input) => {
-    const error = refusal(() => httpOrigin("http", input, 8080));
+    const error = refusal(() => httpOrigin("http", input, 8080, ALLOWS_PRIVATE_HOSTS));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toMatch(/\bhost\b/);
   });
 
   test("names the field without repeating the value", () => {
-    const error = refusal(() => httpOrigin("https", "evil.example/leak?token=SECRET", 443));
+    const marker = crypto.randomUUID();
+    const error = refusal(() => httpOrigin("https", `evil.example/leak?token=${marker}`, 443, ALLOWS_PRIVATE_HOSTS));
     expect(error.message).toMatch(/\bhost\b/);
-    expect(error.message).not.toContain("SECRET");
+    expect(error.message).not.toContain(marker);
     expect(error.message).not.toContain("evil.example");
   });
 });
@@ -113,7 +115,7 @@ describe("httpOrigin: port", () => {
   ];
 
   test.each(accepted)("accepts %p", (input, port) => {
-    expect(httpOrigin("http", "localhost", input).port).toBe(port);
+    expect(httpOrigin("http", "localhost", input, ALLOWS_PRIVATE_HOSTS).port).toBe(port);
   });
 
   const refused: [label: string, input: unknown][] = [
@@ -138,13 +140,13 @@ describe("httpOrigin: port", () => {
   ];
 
   test.each(refused)("refuses %s with DatabaseConfigError", (_label, input) => {
-    const error = refusal(() => httpOrigin("http", "localhost", input));
+    const error = refusal(() => httpOrigin("http", "localhost", input, ALLOWS_PRIVATE_HOSTS));
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toMatch(/\bport\b/);
   });
 
   test("names the field without repeating the value", () => {
-    const error = refusal(() => httpOrigin("http", "localhost", "8123/../admin"));
+    const error = refusal(() => httpOrigin("http", "localhost", "8123/../admin", ALLOWS_PRIVATE_HOSTS));
     expect(error.message).toMatch(/\bport\b/);
     expect(error.message).not.toContain("8123");
     expect(error.message).not.toContain("admin");
@@ -152,29 +154,38 @@ describe("httpOrigin: port", () => {
 });
 
 describe("endpointUrl", () => {
-  const origin = httpOrigin("http", "db.example", 8123);
+  const origin = httpOrigin("http", "db.example", 8123, ALLOWS_PRIVATE_HOSTS);
 
   test("builds the origin and path", () => {
     expect(endpointUrl(origin, "/v1/statement")).toBe("http://db.example:8123/v1/statement");
   });
 
   test("omits a scheme's default port the way a URL does", () => {
-    expect(endpointUrl(httpOrigin("http", "db.example", 80), "/")).toBe("http://db.example/");
-    expect(endpointUrl(httpOrigin("https", "db.example", 443), "/")).toBe("https://db.example/");
+    expect(endpointUrl(httpOrigin("http", "db.example", 80, ALLOWS_PRIVATE_HOSTS), "/")).toBe("http://db.example/");
+    expect(endpointUrl(httpOrigin("https", "db.example", 443, ALLOWS_PRIVATE_HOSTS), "/")).toBe("https://db.example/");
   });
 
   test("keeps a non-default port on https", () => {
-    expect(endpointUrl(httpOrigin("https", "db.example", 80), "/")).toBe("https://db.example:80/");
+    expect(endpointUrl(httpOrigin("https", "db.example", 80, ALLOWS_PRIVATE_HOSTS), "/")).toBe(
+      "https://db.example:80/",
+    );
   });
 
   test("brackets an IPv6 host", () => {
-    expect(endpointUrl(httpOrigin("http", "::1", 8080), "/v2/pipeline")).toBe("http://[::1]:8080/v2/pipeline");
+    expect(endpointUrl(httpOrigin("http", "::1", 8080, ALLOWS_PRIVATE_HOSTS), "/v2/pipeline")).toBe(
+      "http://[::1]:8080/v2/pipeline",
+    );
   });
 
   test("compares an IPv6 host by address, not by spelling", () => {
-    const url = endpointUrl(httpOrigin("http", "2001:0db8:0000:0000:0000:0000:0000:0001", 8080), "/");
+    const url = endpointUrl(
+      httpOrigin("http", "2001:0db8:0000:0000:0000:0000:0000:0001", 8080, ALLOWS_PRIVATE_HOSTS),
+      "/",
+    );
     expect(url).toBe("http://[2001:db8::1]:8080/");
-    expect(endpointUrl(httpOrigin("http", "::ffff:127.0.0.1", 8080), "/")).toBe("http://[::ffff:7f00:1]:8080/");
+    expect(endpointUrl(httpOrigin("http", "::ffff:127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS), "/")).toBe(
+      "http://[::ffff:7f00:1]:8080/",
+    );
   });
 
   test("encodes query parameters, so a value cannot open a fragment or a new parameter", () => {

@@ -21,6 +21,7 @@
 | **Connection string** | **Not supported** — addressed by host and port like Druid, and `http(s)://` is already ClickHouse's in the shared parser ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | **None.** `supportsExplain: false` and no `explainFormat`, so the button and the tab are hidden — even though this product *does* answer `EXPLAIN <select>` ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)) |
 | **Write reach** | open: Studio sends the SQL the editor holds, and the grammar has no `INSERT`, `UPDATE`, `DELETE`, `CREATE` or `ALTER`, which is the engine's grammar and not a Studio gate; documents change through the document APIs ([§5.6](#56-this-grammar-does-not-write)) |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not exposed (Elasticsearch has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`. An abort closes **this client's** socket; the cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)) |
@@ -140,7 +141,7 @@ The factory wires the type-id in via a dynamic import inside `createDatabaseProv
 ```ts
 case "elasticsearch": {
   const { ElasticsearchProvider } = await import("./providers/sql/search/index");
-  return new ElasticsearchProvider(connection, options);
+  return new ElasticsearchProvider(connection, options, context);
 }
 ```
 
@@ -398,8 +399,8 @@ whitespace is gone.
 OpenSearch** ([http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)), because
 nothing here has measured whether OpenSearch's security plugin accepts the same scheme. The form
 never offers the fields for that type-id ([connection-form.ts](../../src/lib/db/connection-form.ts)). A seed
-or stored connection that still carries the pair on OpenSearch is **refused** at the transport
-(and at seed parse) rather than dropped with no error — see [opensearch.md §4.1](./opensearch.md#41-configuration-fields).
+or stored connection that still carries the pair on OpenSearch is **refused** before the provider
+is built (and at seed parse) rather than dropped with no error — see [opensearch.md §4.1](./opensearch.md#41-configuration-fields).
 
 **Precedence: the key pair wins when both it and `user`/`password` are set.** It is the scheme
 operators prefer, and a connection edited to add one without clearing the other should use the one
@@ -763,7 +764,7 @@ user's own bound is what runs. The trait is declared per product (`acceptsOffset
 so a third product declares its own answer instead of being added to a condition someone has to find.
 
 The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`).
-MCP's `run_read_query` never asks for that page: this engine's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no `OFFSET`, so the tool refuses an `offset` before `prepareQuery` runs and names no next offset ([MCP read](#mcp-read)).
+MCP's `run_read_query` never asks for that page: this engine's row in `src/lib/sql/read-query-forms.ts` says its SQL has no `OFFSET`, so the tool refuses an `offset` before `prepareQuery` runs and names no next offset ([MCP read](#mcp-read)).
 
 ### 5.6 This grammar does not write
 
@@ -945,9 +946,9 @@ Beyond the hidden and system targets, the check refuses some reads the engine an
 
 The least-privilege role above reads no hidden index anyway: the server refuses it `".security"` itself.
 The check is the boundary that keeps hidden and system indices from an agent statement, whatever the login, and with security off the only rule, since no login exists for the open to check.
-The profile's refusal, the mode's and the statement check's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the SQL endpoint rather than quoting Studio's sentence as the engine's.
+The profile's refusal, the mode's and the statement check's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the SQL endpoint rather than quoting the provider's sentence as the engine's.
 The request asks for a page of one row past the row budget (`fetch_size`), clamped to 10,000, since a hit query past `index.max_result_window`, 10,000 by default, fails ("Result window is too large", measured on 9.1.4); a budget past that is reached by following the cursor.
-The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut.
+The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts), never cut.
 The cursor matters here: asking for a page size opens a search context on the node that only reading to the end, `POST /_sql/close` or the keep-alive releases (measured: `open_contexts` 1 while a cursor is held, 0 after the close), so a refusal closes the cursor it read before it throws.
 A later page that fails, past its byte cap, refused by the engine, unreadable, or ended by the deadline or a cancel, closes the cursor the page before it left open, on a signal of its own, which releases the same context (measured: `open_contexts` back to 0 after closing the earlier page's cursor).
 A page whose body is past three times the byte budget plus 64 KiB is abandoned unread and refused as over the byte budget; on the first page no cursor was read yet, so that one context waits for the engine's keep-alive.
@@ -1529,13 +1530,15 @@ The honest empties, each with its reason:
   ratio to a healthy 100 instead. Every other metric would read as a measurement of zero, which is a
   different and false claim — and **the tabs did read them that way** until the rule #448 settled for
   the Storage tab reached them: measured 2026-08-19 on OpenSearch, which is this same code path, the
-  Overview showed *Buffer Pool 0%* and *Deadlocks 0* for two fields this payload omits. Both cards now
-  read `N/A` beside *Not measured*, so the empty payload survives to the screen. The numbers do exist on this product's stats endpoints, so
+  Overview showed *Buffer Pool 0%* and *Deadlocks 0* for two fields this payload omits.
+  Since the answer asks the cluster nothing, the performance panel is not offered (see Engine facets below): `getMonitoringData` never reads it, and the Overview draws neither card.
+  The numbers do exist on this product's stats endpoints, so
   this is a recorded gap rather than an impossibility: widening the seam by one call is what a future
   phase would do, and doing it here would have meant reaching around the seam.
 - **`getSlowQueries()` and `getActiveSessions()` return `[]` rather than throwing.** Nothing is broken
-  and nothing is misconfigured, so a monitoring tab should render as quiet, not as failed. Only
+  and nothing is misconfigured, so a caller of either method gets a quiet answer, not a failure. Only
   `runMaintenance()` throws, because that one is a *request to act*.
+  Neither answer asks the cluster, so neither panel is offered: the dashboard draws no Queries or Sessions tab for Elasticsearch.
 - **`activeConnections` is absent, not 0.** The cluster counts open HTTP connections per node in its
   stats API, which is not one of this seam's five calls, and the shard and node counts that *are* here
   would be a different number wearing this field's name — so nothing is knowable, and the field is
@@ -1589,6 +1592,28 @@ Its null then propagates honestly: `getOverview()` shows `"N/A"` for the size **
 `databaseSizeBytes`**, and `getStorageStats()` returns **no row at all** rather than a row claiming
 the cluster stores zero bytes.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `elasticsearch` offers is its row in `ENGINE_FACETS`, declared in [`elasticsearch-engine-facets.ts`](../../src/lib/db/providers/sql/search/elasticsearch-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
@@ -1616,7 +1641,9 @@ altogether:
 
 `runMaintenance(type)` ([`search/index.ts`](../../src/lib/db/providers/sql/search/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because a request
-reaches it: `/api/db/maintenance` checks `supportsMaintenance` and answers 400 first. So the message
+reaches it: `/api/db/maintenance` reads the engine facets row, which offers no maintenance operation
+([Engine facets](#engine-facets)), and refuses every operation by name with `400 FACET_NOT_OFFERED`
+before it builds a provider. So the message
 below is what a *programmatic* caller of `@libredb/studio` sees:
 
 > Elasticsearch has no SQL-reachable maintenance operation, so "\<type\>" cannot run here. Refreshing,
@@ -1653,7 +1680,7 @@ refusal are the same value and cannot drift apart.
 | `maintenanceOperations` | `[]` | Consequence of the above |
 | `supportsConnectionString` | **`false`** | No URI convention, and `http(s)://` is ClickHouse's ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | `defaultPort` | `9200` | Both schemes ([§4.3](#43-tls)) |
-| `identifierQuoting` | **`double`** | Declared because the port cannot say: the fork ships on 9200 too and quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
+| `identifierQuoting` | **`double`** | Declared per product by the shared search provider: the fork quotes differently, and a wrong guess there returns **no rows** rather than an error ([opensearch.md §5.4](./opensearch.md#54-dialect-traps-a-user-will-hit)) |
 | `statementTerminator` | **`none`** | This grammar has no `;`, and the generated statement of the day, `SELECT * FROM probe_orders LIMIT 50;`, was refused — the schema tree's first click. #816 later took the bound out of that statement too, leaving the terminator as the reason ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `containerLevels` | **`[]`** | An index is not inside anything, and both products' own SQL surfaces say so ([§6](#the-object-surface-789)) |
 | `objectKinds` | `index`, `alias`, `stream`, `pipeline`, `template` | The five objects a search cluster publishes over REST; `index` is the only one that accepts row writes ([§6](#the-object-surface-789)) |
@@ -1674,7 +1701,6 @@ is what Redis and LibreDB declare.
 | `vacuumAction` / `vacuumGlobalLabel` | `Merge Segments` |
 | `searchPlaceholder` | `Search indices or fields...` |
 | `statementLanguage` | `Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES\|QL` |
-| `slowQueriesEmptyState` | `The slow log is written to the node's own log file, which no API returns, so this SQL surface does not reach it.` |
 
 `statementLanguage` is the one label here written for a **model** rather than for the UI, and it is
 declared on these two engines alone. Measured in the browser on 2026-08-19: a plan run on a search
@@ -1686,11 +1712,7 @@ the SQL endpoint this provider speaks to. The statement guard then declined to c
 stronger prior — so the label names what the language is **not**, and
 [`investigation.ts`](../../src/lib/agent/investigation.ts) states it in the plan contract.
 
-`slowQueriesEmptyState` is the monitoring Queries panel's empty state, and it says what §7 already
-says about `getSlowQueries()`. That sentence was hardcoded to PostgreSQL's `pg_stat_statements`
-advice on every engine, measured in the browser on 2026-08-19 against **this** panel on a search
-connection (#463) - the #427 defect in another panel, and fixed the same way: by
-reading the label.
+No `slowQueriesEmptyState` is declared: §7 says why `getSlowQueries()` answers `[]`, the slow-query panel is not offered, and the dashboard draws no Queries tab, so nothing would draw a sentence for it.
 
 These are not decoration. `inventory-noun.ts` lowercases `entityName` into the noun the **agent**
 reasons with, so a cluster described as holding "tables" of "rows" invites statements written for a
@@ -1916,7 +1938,7 @@ semicolon**, and double quotes — never backticks — if an identifier needs qu
 ### 12.2 Over the API
 
 `POST /api/db/query` with the statement in the `sql` field — the same contract every SQL provider
-uses. `POST /api/db/maintenance` answers 400 before reaching the provider ([§8](#8-maintenance)). The
+uses. `POST /api/db/maintenance` refuses every operation by name with `400 FACET_NOT_OFFERED` before it builds a provider ([§8](#8-maintenance)). The
 transaction and cancel routes do not apply: `/api/db/cancel` reports cancellation as unsupported
 because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)).
 

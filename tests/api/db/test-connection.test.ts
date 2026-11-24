@@ -1,11 +1,12 @@
 import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
-import { DatabaseConfigError, TimeoutError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, TimeoutError } from "@/lib/db/errors";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
-import type { QueryWarning } from "@/lib/types";
+import type { DatabaseType, QueryWarning } from "@/lib/types";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -96,6 +97,19 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: mock(async () => {}),
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
+}));
+
+/**
+ * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case
+ * that needs the test's deadline to pass sets it to a few tens of milliseconds for itself.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+let budgetOverride: number | undefined;
+mock.module("@/lib/db/connect-budget", () => ({
+  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
+  openDeadlineSentence: realConnectBudget.openDeadlineSentence,
+  connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -541,6 +555,32 @@ describe("POST /api/db/test-connection", () => {
       expect(data.code).toBe("CONNECTION_ERROR");
     });
 
+    test("a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles", async () => {
+      const held = Promise.withResolvers<void>();
+      const closed = Promise.withResolvers<void>();
+      (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(() => held.promise);
+      (mockProvider.disconnect as ReturnType<typeof mock>).mockImplementation(async () => {
+        closed.resolve();
+      });
+      budgetOverride = 40;
+      try {
+        const { res, data } = await post();
+        expect(res.status).toBe(503);
+        expect(data.code).toBe("CONNECTION_ERROR");
+        expect(data.error).toBe(
+          "The connection test got no answer within 0.1 seconds: check the address, the port, the network path and that the server is running.",
+        );
+        expect(mockProvider.disconnect).not.toHaveBeenCalled();
+
+        held.resolve();
+        await closed.promise;
+        expect(mockProvider.disconnect).toHaveBeenCalledTimes(1);
+        expect(mockProvider.getHealth).not.toHaveBeenCalled();
+      } finally {
+        budgetOverride = undefined;
+      }
+    });
+
     test("a deadline in the connect answers 503 with the connection's sentence, which a browser does not resend", async () => {
       (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
         throw new TimeoutError("The API server did not answer the request within 10 s.", "kubernetes", 10000);
@@ -609,6 +649,35 @@ describe("POST /api/db/test-connection", () => {
     expect(res.status).toBe(500);
     expect(data.degraded).toBeUndefined();
     expect(data.error).toBe("ECONNREFUSED");
+  });
+
+  test("a connect failure that holds the connection's credential keeps its status and code", async () => {
+    const password = crypto.randomUUID();
+    (mockProvider.connect as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new ConnectionError(`password authentication failed: ${password}`, "postgres");
+    });
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/test-connection", {
+          method: "POST",
+          body: { ...validConnection, password },
+        }) as never,
+      );
+      const data = await parseResponseJSON<Record<string, unknown>>(res);
+      expect(res.status).toBe(503);
+      expect(data).toEqual({
+        error: withheldErrorMessage("ConnectionError"),
+        code: "CONNECTION_ERROR",
+        statusCode: 503,
+        retryable: true,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+      expect(JSON.stringify(errors.mock.calls)).not.toContain(password);
+    } finally {
+      errors.mockRestore();
+    }
   });
 
   test("a health read that rejects with a non-Error still names what it threw", async () => {

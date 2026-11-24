@@ -5,7 +5,7 @@ import {
   type KubectlAdmissionCode,
   kubectlAgentReadInput,
 } from "@/lib/db/operations/kubectl-admission";
-import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { AGENT_PAGING_SENTENCE } from "@/lib/languages/kubectl/paging";
 
 /**
  * The agent's admission of a kubectl line: every read the console admits is admitted, every console refusal is

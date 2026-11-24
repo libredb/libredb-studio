@@ -19,15 +19,18 @@ import {
   type ManagedConnection,
   resetCache,
 } from "@/lib/seed";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import { resetDiscoveryCache } from "@/lib/seed/discovery-loader";
 import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 import {
   getKubernetesDiscoveredConnections,
   resetKubernetesDiscoveryCache,
 } from "@/lib/seed/kubernetes-discovery-loader";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
-import { SQLITE_SAMPLE_SEED_ID } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates } from "@/lib/seed/samples";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
 import {
   GOLDEN_CASES,
@@ -36,6 +39,10 @@ import {
   writeKubernetesDiscoveryExport,
   type KubernetesDiscoveryExportFixture,
 } from "../../helpers/kubernetes-discovery-fixture";
+import { seedSamples } from "../../helpers/sample-seeding";
+
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 // The ids come from the golden fixture, which the implementation generated: no id is typed by hand here.
 const [ORDERS, ANALYTICS, BILLING] = GOLDEN_CASES.filter((c) => goldenRow(c).slug === "cnpg").map(
@@ -111,6 +118,7 @@ describe("seed/index with the Kubernetes discovery source", () => {
     resetCache();
     resetDiscoveryCache();
     resetKubernetesDiscoveryCache();
+    resetSampleSeedStates();
   });
 
   it("lists the seed file, then CapRover, then Kubernetes", async () => {
@@ -160,6 +168,29 @@ describe("seed/index with the Kubernetes discovery source", () => {
     },
   );
 
+  it.each([
+    ["off", undefined],
+    ["on", "on"],
+  ])(
+    "in literal mode with the access review %s, marks the seed file's row and never a discovered one with the literal-mode marker",
+    async (_review, review) => {
+      if (review !== undefined) process.env.KUBERNETES_ACCESS_REVIEW = review;
+      process.env.SEED_LITERAL_VALUES = "true";
+      try {
+        const { before, pendingReview } = await getSeedListing(["admin"]);
+        const marked = [...before, ...pendingReview].map((c) => [c.seedId, c[LITERAL_SEED_FILE]]);
+        expect(marked).toEqual([
+          ["file-pg", true],
+          ["caprover-pg", undefined],
+          ...KUBERNETES_IDS.map((id) => [id, undefined]),
+        ]);
+        expect(pendingReview.length).toBe(review === undefined ? 0 : KUBERNETES_IDS.length);
+      } finally {
+        delete process.env.SEED_LITERAL_VALUES;
+      }
+    },
+  );
+
   it("in openshift sign-in mode with the review switch unset, sets every one apart with the reserved role, and the admin role's list holds none", async () => {
     // tests/setup.ts signs in locally; openshift sign-in runs the review whatever KUBERNETES_ACCESS_REVIEW says.
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
@@ -184,6 +215,7 @@ describe("seed/index with the Kubernetes discovery source", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
     // The review holds the LibreDB sample unless it is asked for, so it is asked for, to fill every section.
     process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+    await seedSamples();
     // Control: with the review off the admin role's list holds every section in this order.
     expect(seedIds(await getManagedConnections(["admin"]))).toEqual([
       "file-pg",
@@ -194,6 +226,8 @@ describe("seed/index with the Kubernetes discovery source", () => {
     ]);
 
     process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    // A server reads the review switch at boot, so it boots again with the review on.
+    await seedSamples();
     const { before, pendingReview, after } = await getSeedListing(["admin"]);
     expect([seedIds(before), seedIds(pendingReview), seedIds(after)]).toEqual([
       ["file-pg", "caprover-pg"],
@@ -217,6 +251,23 @@ describe("seed/index with the Kubernetes discovery source", () => {
       expect(before.filter((c) => c.kubernetesSecret !== undefined)).toEqual([]);
     }
     expect(admin.before.find((c) => c.seedId === ORDERS)?.host).toBe("db.internal");
+  });
+
+  // FND-1: an entry whose type names no provider is listed in before whichever section the review puts discovered rows
+  // in, so a route answers its seed: id with the refusal that names the type, not with the review's uniform 404.
+  it("with the review on, lists a seed entry whose type names no provider after the file's connections, and refuses it by name", async () => {
+    writeSeedFile([
+      { id: "pg", name: "PG", type: "postgres", host: "db.internal", roles: ["*"] },
+      { id: "acme", name: "Acme Store", type: "acmefoo", roles: ["*"] },
+    ]);
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    const { before } = await getSeedListing(["admin"]);
+    expect(seedIds(before).slice(0, 2)).toEqual(["pg", "acme"]);
+    const refused = await resolveConnection({ connectionId: "seed:acme" }, { role: "admin", username: "admin" }).catch(
+      (thrown: unknown) => thrown,
+    );
+    expect(refused).toBeInstanceOf(UnknownProviderError);
+    expect((refused as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
   });
 
   it("never lets a cached connection keep the section of a switch that changed", async () => {

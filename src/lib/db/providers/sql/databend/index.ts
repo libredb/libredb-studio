@@ -30,6 +30,7 @@
  * connection comes from `connect()`, before any socket.
  */
 import { QueryError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   assertContainerPathShape,
   assertObjectPathShape,
@@ -51,6 +52,7 @@ import type {
   ObjectDetailBatch,
   ObjectSourceDocument,
   PerformanceMetrics,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderLabels,
   ProviderOptions,
@@ -299,14 +301,18 @@ export class DatabendProvider extends SQLBaseProvider {
   /** Each registered run's end, by its `queryId`: whether it ended `cancelled`, and how long its closes may take. */
   private readonly runEnds = new Map<string, { readonly cancelled: Promise<boolean>; readonly closesMs: number }>();
   private readonly deadline: (ms: number) => AbortSignal;
+  /** The egress decision the factory built this provider with, handed to the origin `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
 
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before any socket. */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    execution: ProviderBuildContext = {},
     private readonly deps: Partial<DatabendHttpTransportDeps> = {},
   ) {
     super(config, options);
+    this.egress = execution.egress;
     this.deadline = deps.deadline ?? ((ms) => AbortSignal.timeout(ms));
   }
 
@@ -372,6 +378,7 @@ export class DatabendProvider extends SQLBaseProvider {
     try {
       const built = buildDatabendConnectionOptions(this.config as DatabaseConnection & WithTunnelFarEnd, {
         queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.egress),
       });
       // The sentences name the warehouse an older Databend Cloud host carries as they name a Warehouse (section 4.4);
       // the header is the Warehouse field's alone, already set when the options were built.

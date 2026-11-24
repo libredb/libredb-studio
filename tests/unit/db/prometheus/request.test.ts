@@ -36,6 +36,8 @@ import {
 } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { SSLConfig } from "@/lib/types";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
+import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TLS = loadTlsFixtures();
 
@@ -236,8 +238,18 @@ interface Path {
 
 // A mutable array: bun's describe.each takes a readonly table only when its rows are tuples.
 const PATHS: Path[] = [
-  { name: "plaintext through fetch", scheme: "http", send: createSendRequest(null), refusedCode: "ECONNREFUSED" },
-  { name: "TLS through node:https", scheme: "https", send: createSendRequest(VERIFYING), refusedCode: "ECONNREFUSED" },
+  {
+    name: "plaintext through fetch",
+    scheme: "http",
+    send: createSendRequest(null, ALLOWS_PRIVATE_HOSTS),
+    refusedCode: "ECONNREFUSED",
+  },
+  {
+    name: "TLS through node:https",
+    scheme: "https",
+    send: createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS),
+    refusedCode: "ECONNREFUSED",
+  },
 ];
 
 /** The request function for a TLS panel, refusing to go on when the panel maps to plaintext. */
@@ -246,7 +258,7 @@ function sendFor(ssl: SSLConfig): SendRequest {
   // A mapping that answered null would send through fetch, which refuses the test CA too, and a
   // TLS verdict below would then pass on the wrong path.
   expect(material).not.toBeNull();
-  return createSendRequest(material);
+  return createSendRequest(material, ALLOWS_PRIVATE_HOSTS);
 }
 
 describe("tlsMaterialFor", () => {
@@ -345,7 +357,7 @@ describe("the TLS fixtures", () => {
 
 describe("the plaintext path", () => {
   test("reads globalThis.fetch when it sends, not when it was built", async () => {
-    const send = createSendRequest(null);
+    const send = createSendRequest(null, ALLOWS_PRIVATE_HOSTS);
     const calls: { url: string; init: RequestInit | undefined }[] = [];
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({ url: String(input), init });
@@ -378,13 +390,15 @@ describe("the plaintext path", () => {
     expect(raw).toBeInstanceOf(TypeError);
     expect((raw as TypeError).message).toBe("Header 'Authorization' has invalid value");
 
-    const failure = await failureOf(createSendRequest(null)(outbound(served.origin, { headers })));
+    const failure = await failureOf(
+      createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin, { headers })),
+    );
 
     expect(failure.reason).toBe("network");
     expect(`${failure.message} ${JSON.stringify(failure.detail)}`).not.toContain(PLANTED_HEADER);
     expect(served.received).toHaveLength(0);
     // The control for the count: a request the runtime accepts is received.
-    await createSendRequest(null)(outbound(served.origin));
+    await createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin));
     expect(served.received).toHaveLength(1);
   });
 });
@@ -465,6 +479,22 @@ describe.each(PATHS)("$name: a request and its answer", ({ scheme, send, refused
     expect(failure.detail).toEqual({ code: "ECONNRESET" });
   });
 
+  test("a 101 that switches protocols is a network failure at once, and the switched connection is closed", async () => {
+    let closed: Promise<void> = Promise.resolve();
+    const served = await serve(scheme, (_response, request) => {
+      closed = answerWithUpgrade(request.socket, "upgrade");
+    });
+
+    // Well past the moment the 101 arrives and inside the test's own timeout, so a request left waiting fails as a
+    // deadline rather than as a timed-out test.
+    const failure = await failureOf(send(outbound(served.origin, { signal: AbortSignal.timeout(3000) })));
+
+    expect(failure.reason).toBe("network");
+    // Bun's fetch adds its own code (UnrequestedUpgrade on 1.4.4) and Node's fetch another; node:https gives none.
+    expect(failure.message).toStartWith("The request failed before a complete response arrived");
+    await closeSeen(closed);
+  });
+
   test("a refused connection is a network failure carrying the runtime's code, and nothing else", async () => {
     const failure = await failureOf(send(outbound(`${await refusingOrigin(scheme)}/api/v1/query`)));
 
@@ -486,7 +516,8 @@ describe("failure classification", () => {
   /** A Node fetch failure: a TypeError, with the code on its cause. */
   const nodeFetchFailure = (code: string): TypeError =>
     new TypeError("fetch failed", { cause: Object.assign(new Error(`connect ${code} 10.0.0.1:9090`), { code }) });
-  const sendPlainly = () => createSendRequest(null)(outbound("http://prometheus.test:9090/api/v1/query"));
+  const sendPlainly = () =>
+    createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound("http://prometheus.test:9090/api/v1/query"));
 
   test.each([
     "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
@@ -635,26 +666,28 @@ describe("TLS through node:https (#1085 S8)", () => {
   test("a TLS request to a plaintext server fails as TLS, and nothing is retried over plain HTTP", async () => {
     const plain = await serve("http", (response) => response.end("plaintext"));
 
-    const failure = await failureOf(createSendRequest(VERIFYING)(outbound(plain.origin.replace("http:", "https:"))));
+    const failure = await failureOf(
+      createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(plain.origin.replace("http:", "https:"))),
+    );
 
     expect(failure.reason).toBe("tls");
     expect(failure.detail).toEqual({ code: "ERR_SSL_WRONG_VERSION_NUMBER" });
     expect(plain.received).toHaveLength(0);
     // The control: the same server records a plaintext request when one arrives.
-    await createSendRequest(null)(outbound(plain.origin));
+    await createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(plain.origin));
     expect(plain.received).toHaveLength(1);
   });
 
   test("the TLS path sends nothing in plaintext, even for an http URL", async () => {
     const plain = await serve("http", (response) => response.end("plaintext"));
 
-    const failure = await failureOf(createSendRequest(VERIFYING)(outbound(plain.origin)));
+    const failure = await failureOf(createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(plain.origin)));
 
     expect(failure.reason).toBe("network");
     expect(failure.detail).toEqual({ code: "ERR_INVALID_PROTOCOL" });
     expect(plain.received).toHaveLength(0);
     // The control: the plaintext path reaches the same server.
-    await createSendRequest(null)(outbound(plain.origin));
+    await createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(plain.origin));
     expect(plain.received).toHaveLength(1);
   });
 
@@ -667,20 +700,22 @@ describe("TLS through node:https (#1085 S8)", () => {
       key: "not a pem",
     };
 
-    const failure = await failureOf(createSendRequest(unreadable)(outbound(served.origin)));
+    const failure = await failureOf(createSendRequest(unreadable, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin)));
 
     expect(failure.reason).toBe("tls");
     expect(failure.detail).toEqual({ code: "ERR_OSSL_PEM_NO_START_LINE" });
     expect(served.received).toHaveLength(0);
     // The control: readable material reaches the same server.
-    expect((await createSendRequest(VERIFYING)(outbound(served.origin))).body).toBe("verified");
+    expect((await createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin))).body).toBe("verified");
   });
 
   test("a header value node:https refuses is never quoted", async () => {
     const served = await verifiedServer();
     const headers = { authorization: `Bearer ${PLANTED_HEADER}\ncontinued` };
 
-    const failure = await failureOf(createSendRequest(VERIFYING)(outbound(served.origin, { headers })));
+    const failure = await failureOf(
+      createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin, { headers })),
+    );
 
     expect(failure.reason).toBe("network");
     // The control that the header was what node:https refused: its code for exactly that.
@@ -691,7 +726,7 @@ describe("TLS through node:https (#1085 S8)", () => {
     expect(failure.message).not.toContain(PLANTED_HEADER);
     expect(served.received).toHaveLength(0);
     // The control for the count: a request with a header node:https accepts is received.
-    expect((await createSendRequest(VERIFYING)(outbound(served.origin))).body).toBe("verified");
+    expect((await createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin))).body).toBe("verified");
     expect(served.received).toHaveLength(1);
   });
 });
@@ -705,7 +740,7 @@ describe("TLS through node:https: no connection outlives its test", () => {
   // the agent showed a reused socket under every such failure.
   test("the end of a test leaves the global agent no live socket to hand the next test's server", async () => {
     const served = await serve("https", (response) => response.end("pooled"));
-    await createSendRequest(VERIFYING)(outbound(served.origin));
+    await createSendRequest(VERIFYING, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin));
     // The control: the agent kept the answered connection for reuse.
     expect(liveAgentSockets()).toBe(1);
 
@@ -723,7 +758,7 @@ describe("redirects on the plaintext path (#1085 S2)", () => {
       return new Response("answered", { status: 200 });
     }) as unknown as typeof fetch;
 
-    await createSendRequest(null)(outbound("http://prometheus.test:9090/api/v1/query"));
+    await createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound("http://prometheus.test:9090/api/v1/query"));
 
     expect(calls[0]?.redirect).toBe("manual");
   });
@@ -734,7 +769,7 @@ describe("redirects on the plaintext path (#1085 S2)", () => {
       response.end();
     });
 
-    const refusal = await refusalOf(createSendRequest(null)(outbound(served.origin)));
+    const refusal = await refusalOf(createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin)));
 
     expect(refusal.message).toBe(
       `The server answered HTTP ${status}, a redirect to ${served.origin}, and redirects are not followed`,
@@ -749,7 +784,7 @@ describe("redirects on the plaintext path (#1085 S2)", () => {
       response.end();
     });
 
-    expect((await createSendRequest(null)(outbound(served.origin))).status).toBe(status);
+    expect((await createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound(served.origin))).status).toBe(status);
   });
 
   test("a redirect whose body already failed is still refused, and the runtime's error does not replace it", async () => {
@@ -764,7 +799,9 @@ describe("redirects on the plaintext path (#1085 S2)", () => {
     globalThis.fetch = (async () =>
       new Response(failedBody(), { status: 302, headers: { location: "/moved" } })) as unknown as typeof fetch;
 
-    const refusal = await refusalOf(createSendRequest(null)(outbound("http://prometheus.test:9090/api/v1/query")));
+    const refusal = await refusalOf(
+      createSendRequest(null, ALLOWS_PRIVATE_HOSTS)(outbound("http://prometheus.test:9090/api/v1/query")),
+    );
 
     expect(refusal.message).toBe(
       "The server answered HTTP 302, a redirect to http://prometheus.test:9090, and redirects are not followed",

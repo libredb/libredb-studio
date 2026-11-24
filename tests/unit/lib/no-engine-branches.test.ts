@@ -37,6 +37,7 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 /** The engine contract directories, scanned like the rest of the shared db core. */
 const CONTRACT_DIRECTORIES = [
   "src/lib/db/connection-string/",
+  "src/lib/db/engine-facets/",
   "src/lib/db/execution-ui/",
   "src/lib/db/migration-ddl/",
   "src/lib/db/sql-grammar/",
@@ -72,6 +73,7 @@ const FIELDS = "the UI-free connection field table, compile-enforced over the ty
 const CONTRACT = "an engine contract's index, which collects the row each engine declares beside its provider";
 const DEFAULT_ENGINE =
   "a view with no connection open names the product's default connection type, the one constant that names it";
+const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins with, not the engine";
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
@@ -80,8 +82,10 @@ export const REGISTRIES: readonly Listed[] = [
     "EXTERNAL",
     "WRITE_REACH",
     "READS_FILE_ACCESS_POSTURE",
+    "READS_TRUST_MATERIAL",
     "REFUSES_DENIED_FILE_ACCESS",
     "SINGLE_WRITER_FILE",
+    "MASKING_EXEMPT_COLUMNS",
     "MCP_EXPOSABLE",
     "MCP_STATEMENT_READ",
     "MCP_METADATA_READ_CHANGES_STATE",
@@ -90,16 +94,32 @@ export const REGISTRIES: readonly Listed[] = [
     "CONNECTION_FORM_URI_MODE",
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
+    "HOST_PATH_FIELDS",
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
+    "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
-  ...["CONNECTION_FIELD_ROWS", "CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "SEED_AGENT_CREDENTIAL"].map((declaration) => ({
+  ...[
+    "CONNECTION_FIELD_ROWS",
+    "CONNECTION_FIELDS",
+    "SEED_ONLY_FIELDS",
+    "REFUSED_CONNECTION_FIELDS",
+    "SEED_AGENT_CREDENTIAL",
+    "AGENT_CREDENTIAL_FORM",
+  ].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
     declaration,
     count: 1,
     reason: FIELDS,
   })),
+  {
+    path: "src/lib/db/connect-budget.ts",
+    declaration: "CONNECT_BUDGET",
+    count: 1,
+    reason: "the UI-free connect budget table, compile-enforced over the type-id union",
+  },
   ...[
     ["src/lib/db/connection-string/index.ts", "CONNECTION_STRING"],
+    ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
     ["src/lib/db/execution-ui/index.ts", "EXECUTION_UI"],
     ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
     ["src/lib/db/sql-grammar/index.ts", "SQL_GRAMMAR"],
@@ -152,13 +172,27 @@ export const REGISTRIES: readonly Listed[] = [
     path: "src/lib/db/destructive-commands.ts",
     declaration: "NON_SQL_DESTRUCTIVE_VOCABULARY",
     count: 1,
-    reason: "the confirmation gate's registry, each row declared beside its provider",
+    reason:
+      "the confirmation gate's registry, each row declared in its statement language's family module or beside its provider",
   },
   {
     path: "src/lib/db/factory.ts",
-    declaration: "createDatabaseProvider",
+    declaration: "buildProvider",
     count: 43,
     reason: "the composition root, which maps each type id to its provider class",
+  },
+  {
+    path: "src/lib/db/type-id.ts",
+    declaration: "typeIdRow",
+    count: 1,
+    reason: "the parameter type of the per-engine table it is handed, which holds no row here",
+  },
+  {
+    path: "src/lib/db/query-generators/index.ts",
+    declaration: "SQL_ENGINE_GENERATORS",
+    count: 1,
+    reason:
+      "the SQL forms of each SQL engine that writes its own, a partial registry whose rows are declared beside their providers",
   },
   {
     path: "src/lib/db/graph-policy-profiles.ts",
@@ -179,12 +213,6 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "each engine's icon and identity colour, joined to the UI-free form data of src/lib/db/connection-form.ts",
   },
-  {
-    path: "src/lib/seed/types.ts",
-    declaration: "SeedDatabaseType",
-    count: 1,
-    reason: "the seed file's validation mirror of the type-id union",
-  },
   { path: "src/lib/seed/discovery-fingerprint.ts", declaration: "IMAGE_ENGINES", count: 3, reason: INBOUND },
   {
     path: "src/lib/seed/discovery-fingerprint.ts",
@@ -193,10 +221,24 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "an inbound mapping of a container image's env names, owned by the discovery spec",
   },
   {
+    path: "src/lib/seed/samples.ts",
+    declaration: "SAMPLES",
+    count: 4,
+    reason:
+      "the built-in sample databases, a core-owned Studio feature: one row per engine that ships a sample, in listing order",
+  },
+  {
     path: "src/lib/sql/fence-tags.ts",
     declaration: "ENGINE_FENCE_TAGS",
     count: 1,
     reason: "the total name registry of code fence tags",
+  },
+  {
+    path: "src/lib/sql/read-query-forms.ts",
+    declaration: "READ_QUERY_FORMS",
+    count: 1,
+    reason:
+      "the statements and paging clause run_read_query names for each engine, a total table compile-enforced over the type-id union",
   },
   { path: "src/lib/agent/agent-manifest.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
   {
@@ -205,7 +247,12 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: "the type of the agent-leg tables above, which availability is decided from",
   },
-  { path: "src/lib/agent/engine-support.ts", declaration: "AGENT_EXECUTION_ENGINES", count: 1, reason: AGENT_LEG },
+  {
+    path: "src/lib/db/compatibility.ts",
+    declaration: "AGENT_EXECUTION_ENGINES",
+    count: 1,
+    reason: "the review record of the engines agent and MCP statements run on, read by every statement gate",
+  },
   {
     path: "src/lib/governance/config.ts",
     declaration: "ALLOWED_ENGINES_DEFAULT",
@@ -307,6 +354,8 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     count: 1,
     reason: "the parameter type of the `WRITE_REACH` registry it is handed, which holds no row here",
   },
+  { path: "src/lib/languages/oxiacli/commands.ts", declaration: "afterOxia", count: 1, reason: OXIA_PROGRAM },
+  { path: "src/lib/languages/oxiacli/lexer.ts", declaration: "leadAndVerb", count: 1, reason: OXIA_PROGRAM },
 ];
 
 /** Every branch of spec 2.6 not yet moved, with the PR that moves it. */

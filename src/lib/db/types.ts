@@ -27,6 +27,7 @@ import type {
   ForeignKeySchema,
   ExclusionConstraintSchema,
 } from "../types";
+import type { MonitoringPanel } from "./engine-facets/types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 import type { RunReadAllowance } from "./read-allowance";
 import type { MetadataOnlyDeclaration } from "./redaction/metadata-only";
@@ -164,6 +165,9 @@ export interface MaintenanceResult {
  * names one table and vacuums the database). An operation whose target is a session or
  * query id - every engine's `kill` - is `false` for both: the Sessions panel supplies
  * that id, and no table or global control can.
+ *
+ * The engine declaration states each spec at `facets.maintenanceSpecs`, one per listed operation, and the census reads
+ * it back to this declaration (docs/providers/CONTRACT.md, clause M-64).
  */
 export interface MaintenanceOperationSpec {
   /** This engine's own wording for a control that runs the operation. */
@@ -376,6 +380,9 @@ export type MaintenanceDeclaration = Pick<ProviderCapabilities, "maintenanceOper
  * An operation the measurement does not name keeps its declaration: `kill` takes a session id and
  * no probe here can ask about it. `measured` undefined is "not measured", the unconnected provider
  * `POST /api/db/provider-meta` reads, and answers the declaration unchanged.
+ *
+ * A connection's narrowing is the provider's answer for that connection, which no member of the engine declaration
+ * states (docs/providers/CONTRACT.md, clause M-66).
  */
 export function narrowMaintenance(
   declared: Required<MaintenanceDeclaration>,
@@ -929,8 +936,9 @@ export interface KindRowAction {
 
 /**
  * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
- * `agentUser` and `agentPassword`. An agent credential beside a connection string is refused in every form, because
- * the connection string's own credential would win.
+ * `agentUser` and `agentPassword`. The factory reads each engine's form from `AGENT_CREDENTIAL_FORM` in
+ * `src/lib/db/connection-fields.ts`, where null is the absent form. An agent credential beside a connection string is
+ * refused in every form, because the connection string's own credential would win.
  *
  * - absent: `agentUser` and `agentPassword`, both required.
  * - `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
@@ -1117,6 +1125,9 @@ export interface ProviderCapabilities {
    * DBCLOB or BLOB column declared 32768 bytes or longer (K24 in `docs/providers/db2.md`), and a
    * result declares those columns without their length.
    *
+   * The engine declaration states it at `safeguards.inlineEditRefusedColumns`, read back to this
+   * declaration by the census (docs/providers/CONTRACT.md, clause M-60).
+   *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent refuses no
    * column.
    */
@@ -1134,8 +1145,12 @@ export interface ProviderCapabilities {
    *
    * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
    * IP rule, so an exemption written for one column of one engine crosses into a second rule.
-   * `tests/unit/db/masking-exemption-guard.test.ts` measures which protected names a declared
-   * pattern reaches and holds each declarer to the set it was accepted for.
+   * Studio reads it from `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts`, never from
+   * the provider: its producers of client capabilities answer that row (`clientCapabilities`,
+   * docs/providers/CONTRACT.md clause M-57), and `tests/unit/db/masking-exemption-guard.test.ts`
+   * holds the record equal to this declaration and measures the protected names each row reaches.
+   * The embedded workspace and the published grid components take it from their embedder instead,
+   * as the record's own docblock says, so the record does not bind them.
    *
    * It exempts, it never adds: a column this does not name is masked exactly as before, so no
    * engine can widen what another engine's user sees.
@@ -1144,13 +1159,18 @@ export interface ProviderCapabilities {
    * (`providers/industrial/modbus/read.ts`), the zero-based PDU register the caller asked for
    * rather than a place; `builtin-address` stars out the one value the request was about.
    *
-   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read by the grid alone, and that is enough
-   * TODAY only because the two other surfaces that mask cannot reach the engines needing it: the
-   * Graph tab is offered only for a result holding a graph value (`hasGraphValues`), and the
-   * column profiler only where `offersColumnProfiling` is true, which every one of the eighteen
+   * WHERE THIS BOUNDARY WILL BREAK. The exemption is read, through `splitMaskedColumns`, by the
+   * grid, `PivotTable.tsx` and `DataCharts.tsx` from the capabilities `BottomPanel.tsx` hands them,
+   * and by `Studio.tsx` for the result rows it hands on. That is enough TODAY only because the two
+   * other surfaces that mask do not read it and cannot reach the engines needing it: the Graph
+   * tab is offered only for a result holding a graph value (`hasGraphValues`), and the column
+   * profiler only where `offersColumnProfiling` is true, which every one of the eighteen
    * JSON dialects declares false. The day a JSON dialect opens profiling, this exemption has to
    * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
    * another in the profiler.
+   *
+   * An engine declaration requests it at `policy.maskingExemptColumns`, which the generator writes
+   * from the record's row (docs/providers/CONTRACT.md, clause M-59).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent exempts
    * no column.
@@ -1395,13 +1415,16 @@ export interface ProviderCapabilities {
    * is already open, keyed by the RESOLVED FILE PATH rather than the connection id: the
    * second opener is usually a different connection record pointing at the same file.
    *
+   * Studio never reads this declaration where it decides: the provider cache key and the
+   * single-writer borrow read `SINGLE_WRITER_FILE` in `src/lib/db/compatibility.ts`,
+   * Studio's review record of the claim, which `tests/unit/db/compatibility.test.ts` holds
+   * equal to this declaration for every shipped type-id (docs/providers/CONTRACT.md,
+   * clause M-57). Absent reads as "this engine serves as many handles as we open", the
+   * ordinary case, and the one every client-server engine is in.
+   *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`
    * (`src/exports/types.ts`): a required field added after the fact stops every
-   * external implementer compiling. Consumers therefore gate on `=== true`, so an
-   * absent flag reads as "this engine serves as many handles as we open" - the
-   * ordinary case, and the one every client-server engine is in. Reading
-   * `connection.type` at the consumer was the alternative and is forbidden by
-   * `CLAUDE.md`.
+   * external implementer compiling.
    */
   singleWriterFile?: boolean;
   /**
@@ -1423,14 +1446,20 @@ export interface ProviderCapabilities {
    * Absent means open on every path; every provider whose reach is not open declares all four paths. Optional for the
    * same published-interface reason as `supportsInlineRowEdit` (`src/exports/types.ts`): a required field added after
    * the fact stops every external implementer compiling.
+   *
+   * The engine declaration states it at `safeguards.writePaths`, every path open where it is absent, read back to this
+   * declaration by the census (docs/providers/CONTRACT.md, clauses M-60 and M-61).
    */
   readonly writeReach?: Readonly<Record<WritePath, WritePathReach>>;
   /**
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
-   * user-and-password form. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it from the provider
-   * it builds and refuses a credential in a shape the form does not take before that provider connects, so no
-   * `connection.type` branch is needed (forbidden by `CLAUDE.md`), and
-   * `tests/unit/db/agent-credential-capability.test.ts` pins which engines declare which form.
+   * user-and-password form. Studio never reads this declaration where it decides: every agent acquisition
+   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine's row of `AGENT_CREDENTIAL_FORM`
+   * in `src/lib/db/connection-fields.ts`, Studio's review record of the claim, and refuses a credential in a shape
+   * the form does not take before the provider connects (docs/providers/CONTRACT.md, clause M-57).
+   * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
+   * type-id. An engine declaration requests it at `policy.agentCredentialForm`, which the generator writes from the
+   * record's row, `pair` for the user-and-password form (clause M-58).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
@@ -1452,7 +1481,8 @@ export interface ProviderCapabilities {
    * or a flag. Every other operation is refused before anything is sent. Absent: the provider answers as it reads.
    * The projection helpers are provider-neutral, in `src/lib/db/redaction/metadata-only.ts`, which derives this
    * declaration from the provider's projections, so the two cannot differ. Separate from `machineRedaction`, which
-   * masks names and neither names nor withholds a value.
+   * masks names and neither names nor withholds a value. The engine declaration states it at `safeguards.metadataOnly`,
+   * read back to this declaration by the census (docs/providers/CONTRACT.md, clause M-60).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
@@ -1500,7 +1530,8 @@ export interface ProviderCapabilities {
    * sentence saying each refresh keeps the billed compute running; auto-refresh stays off until the
    * user starts it, as it does for every provider, and then polls on its timer. A request the user
    * makes still runs and still resumes the compute.
-   * Read from an unconnected provider, so the declaration answers before any connect.
+   * Read from an unconnected provider, so the declaration answers before any connect. No manifest member states it,
+   * since the answer is the provider's for each connection (docs/providers/CONTRACT.md, clause M-63).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared,
@@ -1523,22 +1554,18 @@ export interface ProviderCapabilities {
   supportsConnectionString: boolean;
   defaultPort: number | null;
   /**
-   * How this engine quotes an identifier, when the port cannot say.
+   * How this engine quotes an identifier in what the query generators write, where it is not the default.
    *
-   * `src/lib/db/query-generators/index.ts` has always derived the dialect from
-   * `defaultPort`, which worked only because every engine had a distinct one. That
-   * assumption broke with #424 Phase 1: Elasticsearch and OpenSearch BOTH ship on
-   * 9200 and they disagree about the quote character, so one port had to answer for
-   * two dialects. The consequence was measured, and it is the worst kind: on
-   * OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
-   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200
-   * with `total: 0` - a generated query silently returning no rows instead of
-   * failing. Backticks return the row.
+   * The generators answer in this order: a query language that spells names its own way, this declaration, the
+   * engine's own row in `SQL_ENGINE_GENERATORS` under the connection's type id, and the default, under which an
+   * unquoted name folds to lower case.
+   * Elasticsearch and OpenSearch share one provider and disagree about the quote character, which is why the search
+   * provider declares it per product: on OpenSearch 3.8.0 a double-quoted identifier is a STRING LITERAL, so
+   * `SELECT customer FROM probe_orders WHERE "customer" = 'acme'` answers HTTP 200 with `total: 0`, a generated query
+   * silently returning no rows instead of failing; backticks return the row.
    *
-   * Absent means "keep deriving it from the port", so no existing provider changes
-   * and nothing about the old behaviour moves. A provider sets this when the port
-   * is not a faithful proxy for its dialect - which is any engine that shares a
-   * default port with a differently-quoting one.
+   * Absent means the engine's row under its type id, or the default where it has none; the declared `defaultPort` is
+   * not read.
    *
    * `"double"` and `"backtick"` quote only a name that would not round-trip bare;
    * `"double-always"` quotes every name. InfluxDB 3 declares it: its read policy
@@ -1700,6 +1727,11 @@ export interface ProviderCapabilities {
   /**
    * The connection reaches a whole server and names no catalog (#1530): each request runs in the
    * catalog the caller picks through `forCatalog()`. Absent means requests run where it points.
+   *
+   * Studio honours it only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds the engine and the
+   * connection names no database and no connection string (`catalogChoice` in
+   * `src/lib/db/catalog-scope.ts`, docs/providers/CONTRACT.md clause M-57), and elsewhere refuses a
+   * caller's catalog by name; `assertNotWholeServer` reads it as declared.
    */
   catalogSessions?: true;
   /**
@@ -1901,37 +1933,30 @@ export interface ProviderLabels {
    */
   statementLanguage?: string;
   /**
-   * Why the monitoring Queries tab's "Slowest Queries" panel is empty on this
-   * engine, in that engine's own terms.
+   * Why an offered "Slowest Queries" list is empty on this engine, in that engine's own
+   * terms.
    *
-   * Read by `QueriesTab`, which defaults to PostgreSQL's "Enable
-   * pg_stat_statements extension to see query stats." — the sentence it hardcoded
-   * for every engine until #U12, measured 2026-08-19 in Chrome telling an
-   * OpenSearch cluster to install a PostgreSQL extension. `postgres` therefore
-   * declares nothing, and so does any engine whose statement store really is an
-   * extension away.
+   * Read by the monitoring `QueriesTab`, which renders it under "No query statistics
+   * available."; absent, the tab says only that line. PostgreSQL declares its
+   * `pg_stat_statements` advice here, so the extension is named only on the engine that
+   * has it.
    *
-   * A provider sets this when the Postgres sentence is actively false for it:
-   * either the engine keeps no aggregate of finished statements at all, or the
-   * one it keeps is switched on somewhere else entirely. One field, not one per
-   * sentence — the panel's badge names an extension rather than a category, so it
-   * is dropped where this label is set instead of being re-worded from it.
+   * An engine whose `ENGINE_FACETS` row does not offer `slowQueries` declares none,
+   * because nothing draws the panel there; the monitoring panels census holds that.
    */
   slowQueriesEmptyState?: string;
 
   /**
-   * Why the monitoring Sessions panel and the admin Operations session list are
-   * empty on this engine, in that engine's own terms.
+   * What an empty answer of an offered session panel means on this engine, where "No active
+   * sessions found." would mislead: for example a list of running statements rather than of
+   * sessions.
    *
-   * The counterpart of `slowQueriesEmptyState` for the other half of the same
-   * absence (#518). Both panels default to "No active sessions found.", which a
-   * reader takes as "nothing is running right now" - true on PostgreSQL, and false
-   * on an engine that publishes no session list at all and can never show a row.
+   * Read by the monitoring Sessions tab and the admin Operations session list. A failed read
+   * renders its own reason instead (`activeSessions` absent from the payload, the reason under
+   * `errors`), because a refusal is not an empty answer.
    *
-   * A provider sets this when its `getActiveSessions()` can only ever answer `[]`.
-   * The failure branch beside it is a different fact: it renders a reason only when
-   * the READ failed (`activeSessions` absent from the payload, the reason under
-   * `errors`), and an absence is not an error.
+   * An engine whose `ENGINE_FACETS` row does not offer `activeSessions` declares none, because
+   * nothing draws the panel there; the monitoring panels census holds that.
    */
   sessionsEmptyState?: string;
 
@@ -1951,8 +1976,10 @@ export interface ProviderLabels {
    * frames the list as the top N).
    *
    * Every engine whose list is whole leaves this absent, and both lists then render as they always
-   * have. Optional, like every field added to this published interface after the fact, so an
-   * external implementer keeps compiling.
+   * have. An engine whose `ENGINE_FACETS` row does not offer `tables` declares none, because neither
+   * list nor the agent's table reading exists for it; the monitoring panels census holds that.
+   * Optional, like every field added to this published interface after the fact, so an external
+   * implementer keeps compiling.
    */
   tableStatsCaption?: string;
 }
@@ -1974,6 +2001,14 @@ export interface ProviderLabels {
  * - SQLite: the worker the statement runs in is killed at the deadline.
  * - DuckDB, and SQLite without its worker: no interrupt is wired, so the deadline is checked
  *   once the statement returns, and an overrun result is refused rather than served.
+ *
+ * On the agent statement path, the hand-over replay and every MCP statement tool, core holds the provider's answer to
+ * the same caps again (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`): it refuses an answer
+ * past the row cap (an estimating plan excepted, whose rows are operators), sums each served row's UTF-8 JSON bytes
+ * against the byte cap, and stops waiting at the timeout or at the caller's own deadline. Stopping the wait does not
+ * stop the statement, and the wait includes the provider's connection checkout. A provider that runs its statement
+ * synchronously on the event loop (LibreDB, SQLite without its worker) returns only once the statement has ended, so
+ * no timer of core's bounds it, and its own check once the statement returns is the time bound there.
  *
  * The three caps bound one statement. `readAllowance` is the one bound that spans statements:
  * the billed-read allowance of the agent run, or of the single call (an MCP statement call, the
@@ -2086,6 +2121,12 @@ export type ReadOnlyCatalogReading =
  *
  * `"execute"` is the default everywhere, including for a provider that ignores the
  * argument entirely: a provider written before this existed keeps its behaviour.
+ *
+ * A provider handed `"estimate-plan"` answers a plan or refuses, as LibreDB and
+ * Kubernetes refuse; it never executes the statement instead. `runReadOnlyStatement`
+ * holds an estimating plan's answer to the byte budget only, because its rows are
+ * operators rather than data rows, so a provider that executed the statement there
+ * would serve data rows no row cap in core checks.
  */
 export type ReadOnlyStatementMode = "execute" | "estimate-plan";
 
@@ -2143,6 +2184,35 @@ export interface BeginTransactionResult {
 }
 
 /**
+ * The transaction methods `POST /api/db/transaction` calls on a provider: the five a provider that supports
+ * transactions has, beside its `DatabaseProvider` members, found by the route's duck typing rather than declared on
+ * `DatabaseProvider`. The provider contract's census places each of them (docs/providers/CONTRACT.md, clause C-7).
+ */
+export interface TransactionProvider {
+  // `void` from the providers that read no transaction state when they open one.
+  beginTransaction(options?: BeginTransactionOptions): Promise<BeginTransactionResult | void>;
+  commitTransaction(): Promise<void>;
+  rollbackTransaction(): Promise<void>;
+  isInTransaction(): boolean;
+  queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult>;
+}
+
+/**
+ * Whether `provider` holds the transaction session `POST /api/db/transaction` drives: the duck typing of begin, commit
+ * and rollback the route has always read, shared with the legacy bridge, which offers `console.transaction` exactly
+ * for such a provider (docs/providers/CONTRACT.md, clause C-50).
+ */
+export function isTransactionProvider(provider: unknown): provider is TransactionProvider {
+  return (
+    typeof provider === "object" &&
+    provider !== null &&
+    "beginTransaction" in provider &&
+    "commitTransaction" in provider &&
+    "rollbackTransaction" in provider
+  );
+}
+
+/**
  * A fresh name for one caller's call scope (D87). One per request, minted by the route
  * that will also end it, so that the token cannot collide with another request's and
  * cannot be supplied by the client: a caller-chosen scope would let one request end
@@ -2162,8 +2232,9 @@ export function newQueryCallScope(): string {
  * it; on the rest a caller leaves the handle exactly as it found it, because inventing a
  * rollback there would be guessing at another engine's state. On `spark` it releases the
  * scope's Spark session and answers `"none"`, since Spark has no transaction across
- * statements. Shared by the two routes that end what they opened, so they cannot disagree
- * about who can be asked.
+ * statements. Read by the legacy bridge alone, which offers `console.endScope` exactly where it
+ * holds, so every caller that ends a run's scope asks the same provider the same question
+ * (docs/providers/CONTRACT.md, clause C-60).
  */
 export function endsOpenQueryTransactions(
   provider: DatabaseProvider,
@@ -2175,7 +2246,13 @@ export interface DatabaseProvider {
   /** Database type identifier */
   readonly type: DatabaseType;
 
-  /** Connection configuration */
+  /**
+   * The connection this provider was built from, as `providerConnection` (./provider-connection) hands it to a provider:
+   * a copy of the caller's record holding only the fields its engine declares (`providerFields`) and core's markers, the
+   * tunnel's route under `TUNNEL_ROUTE` (@/lib/types) for a record that carries a tunnel. A local-file
+   * engine's connection (`OPENS_LOCAL_FILE`) also carries `ADMITTED_FILE` (@/lib/types), the file the factory admitted,
+   * and an engine whose `HOST_PATH_FIELDS` row names fields carries `ADMITTED_HOST_PATHS`, the files it admitted for them.
+   */
   readonly config: DatabaseConnection;
 
   /**
@@ -2278,6 +2355,11 @@ export interface DatabaseProvider {
    * Optional on purpose: only providers with a verified boundary implement it, and
    * execution-profile acquisition (`acquireExecutionProfileProvider` in factory.ts) refuses
    * provider types that lack it rather than falling back to `query()` (fail closed).
+   *
+   * Implementing it is required and never sufficient: the acquisition and the core read path
+   * (`runReadOnlyReading`) also require the engine on Studio's review record
+   * (`AGENT_EXECUTION_ENGINES` in compatibility.ts), and refuse one off it by name with
+   * `PROFILE_ENGINE_NOT_REVIEWED` before this method is reached.
    */
   queryReadOnly?(
     statement: string,
@@ -2644,7 +2726,10 @@ export interface DatabaseProvider {
    */
   engineUser?(): string | undefined;
 
-  /** The provider for one catalog of a server-level connection, owned (and closed) by this one (#1530). */
+  /**
+   * The provider for one catalog of a server-level connection, owned (and closed) by this one (#1530).
+   * Called only where `catalogChoice` honours the connection (M-57).
+   */
   forCatalog?(catalog: string): Promise<DatabaseProvider>;
 
   /**
@@ -2703,6 +2788,10 @@ export interface ProviderOptions {
  * For an embedder of `@libredb/studio/providers` the posture is a behaviour change: a
  * factory called without a context opens a DuckDB handle with file access denied, see
  * `allowExternalFileAccess`.
+ *
+ * The factory hands a provider a copy of this context with core's egress decision and, for the engines that take it,
+ * core's trust material added, as `ProviderBuildContext`, so `createDatabaseProvider` refuses a context that is not
+ * plain data with a `DatabaseConfigError`.
  */
 export interface ProviderExecutionContext {
   /**
@@ -2807,6 +2896,50 @@ export type EditorExecutionContext = Pick<
   ProviderExecutionContext,
   "allowExternalFileAccess" | "owner" | "ownerPoolMax"
 >;
+
+/**
+ * The egress decision: which way the process decided `DB_HTTP_BLOCK_PRIVATE_HOSTS`, and whether that is the
+ * documented default (an unset, empty or blank variable). Core takes it once per process (`./egress-decision`); it
+ * lives here, beside `ProviderBuildContext`, so a provider names the type without importing the module that reads the
+ * variable.
+ */
+export interface EgressDecision {
+  readonly blocksPrivateHosts: boolean;
+  readonly source: "default" | "set";
+}
+
+/**
+ * The trust material: the certificate blocks of the file `NODE_EXTRA_CA_CERTS` names, in the file's order, each from its
+ * `-----BEGIN CERTIFICATE-----` line through its `-----END CERTIFICATE-----` line, with every other text of the file
+ * dropped; no certificate when the variable is unset or empty. Core reads it once per process (`./trust-material`); it
+ * lives here, beside `ProviderBuildContext`, so a provider names the type without importing the module that reads the
+ * file. It holds certificates only, never the path. Frozen, with its list.
+ */
+export interface TrustMaterial {
+  readonly certificates: readonly string[];
+}
+
+/**
+ * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context,
+ * `egress`, the egress decision core took, and `trust`, the trust material core read (FND-2, the provider plugins
+ * design section 0.1). The factory builds it; `egress` and `trust` are always core's, never a caller's. A provider whose
+ * connections pass the shared egress guard keeps `egress` and, when it builds its origin, transport or dial, hands
+ * `requireEgressDecision(context.egress)` from `./http/egress-policy` to the guard, so a provider built without a
+ * decision refuses by name and dials nothing.
+ * Internal: the package exports `ProviderExecutionContext`, not this type.
+ */
+export interface ProviderBuildContext extends ProviderExecutionContext {
+  readonly egress?: EgressDecision;
+  /**
+   * Core's trust material, for an engine whose `READS_TRUST_MATERIAL` row in `./compatibility` is true, the engines
+   * whose TLS library does not read Node.js's trust store and so never sees `NODE_EXTRA_CA_CERTS` on its own (Db2
+   * today); `undefined` for every other engine, whose TLS Node.js already gives the variable's certificates. Such a
+   * provider hands `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a
+   * connection verifies against the system trust store, so built without it the provider refuses by name and dials
+   * nothing.
+   */
+  readonly trust?: TrustMaterial;
+}
 
 // ============================================================================
 // Internal Types
@@ -3073,16 +3206,21 @@ export interface MonitoringData {
   /**
    * Every panel is optional, and ABSENCE is not ZERO here - the same distinction the
    * `activeConnections` comment above draws for a single field, applied to a whole panel.
-   * `getMonitoringData` reads the seven panels independently, so one read failing costs
-   * only its own panel: the field it would have filled is left absent and its own message
-   * is recorded under `errors`. An absent panel means "this engine could not answer",
-   * which is a different fact from an empty array or a zero - StarRocks 3.3 has no
-   * `information_schema.PROCESSLIST`, so `activeSessions` is absent there while an idle
-   * PostgreSQL answers `[]`. Rendering the first as the second would claim a measurement
-   * the engine refused to make (the very error `QueriesTab` in
-   * `src/components/monitoring/tabs/QueriesTab.tsx` documents for `slowQueries`). A
-   * consumer therefore gates on the field being present, and shows the `errors` entry in
-   * place of that panel.
+   * `getMonitoringData` reads the panels the engine offers independently, so one read failing
+   * costs only its own panel. A panel is in one of four states:
+   *
+   * - answered: the field is present;
+   * - failed: the field is absent and `errors` carries the engine's own sentence;
+   * - not requested: the field is absent, with no `errors` entry, and not listed in `notOffered`;
+   * - not offered: the field is absent and listed in `notOffered`; it was never read.
+   *
+   * A failed panel means "this engine could not answer", which is a different fact from an
+   * empty array or a zero - StarRocks 3.3 has no `information_schema.PROCESSLIST`, so
+   * `activeSessions` is absent there while an idle PostgreSQL answers `[]`. Rendering the
+   * first as the second would claim a measurement the engine refused to make (the very error
+   * `QueriesTab` in `src/components/monitoring/tabs/QueriesTab.tsx` documents for
+   * `slowQueries`). A consumer therefore gates on the field being present, shows the `errors`
+   * entry in place of a failed panel, and draws nothing for a panel not offered.
    */
   overview?: DatabaseOverview;
   performance?: PerformanceMetrics;
@@ -3096,11 +3234,17 @@ export interface MonitoringData {
    * ENGINE's own sentence (`Error.message`, not a generic stand-in), because it is the only
    * text that tells the user what the database actually refused. Absence of a panel plus its
    * entry here is how a partial read is reported; a panel that is absent with no entry here
-   * was simply not requested (`includeTables` and friends).
+   * was not requested (`includeTables` and friends) or is listed in `notOffered`.
    */
-  errors?: Partial<
-    Record<"overview" | "performance" | "slowQueries" | "activeSessions" | "tables" | "indexes" | "storage", string>
-  >;
+  errors?: Partial<Record<MonitoringPanel, string>>;
+  /**
+   * Every panel the engine does not offer, in `MONITORING_PANELS` order, whether or not the
+   * caller requested it: the engine's `ENGINE_FACETS` row says it has nothing to read for it,
+   * so it was never read, and no surface draws it. `getMonitoringData` always sets it (`[]`
+   * on an engine that offers all seven). Optional because a payload an embedding host builds
+   * itself may predate it.
+   */
+  notOffered?: readonly MonitoringPanel[];
   /**
    * The connected provider's maintenance declaration, added by `POST /api/db/monitoring` (#1387).
    *

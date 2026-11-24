@@ -7,7 +7,7 @@ import type { ZodError } from "zod";
 import { authProvider } from "@/lib/config/auth-provider";
 import { mergeDefaults } from "../connection-filter";
 import { SeedConfigSchema, type SeedConfig } from "../types";
-import { OperatorSourceError, type OperatorEntry } from "./types";
+import { OperatorSourceError, type OperatorEntry, type OperatorUnavailableEntry } from "./types";
 
 export type SeedConfigFormat = "json" | "yaml";
 
@@ -57,7 +57,8 @@ function validateCustomRoles(config: SeedConfig, origin: string): void {
   const isOidc = authProvider() === "oidc";
   const prefix = process.env.OIDC_ROLE_PREFIX;
 
-  for (const conn of config.connections) {
+  // An entry whose type names no provider (FND-1) is held to the same rules: its roles decide who it is listed for.
+  for (const conn of [...config.connections, ...config.unavailable]) {
     for (const role of conn.roles) {
       if (STANDARD_ROLES.has(role)) continue;
       if (RESERVED_ROLES.has(role.toLowerCase())) {
@@ -102,4 +103,17 @@ export function parseSeedConfigText(text: string, origin: string, format: SeedCo
 /** One entry per connection, `mergeDefaults(conn, config.defaults)` applied, all with this origin and literal flag. */
 export function entriesFromConfig(config: SeedConfig, origin: string, literal: boolean): OperatorEntry[] {
   return config.connections.map((conn) => ({ connection: mergeDefaults(conn, config.defaults), literal, origin }));
+}
+
+/**
+ * One entry per seed entry whose type names no provider this Studio has (FND-1), with this origin, its `environment`
+ * defaulted from `defaults.environment` as `mergeDefaults` defaults a connection's. No other default applies: such an
+ * entry carries only the fields Studio reads from it, and it is listed managed whatever the file says.
+ */
+export function unavailableFromConfig(config: SeedConfig, origin: string): OperatorUnavailableEntry[] {
+  const environment = config.defaults?.environment;
+  return config.unavailable.map((entry) => ({
+    entry: entry.environment === undefined && environment !== undefined ? { ...entry, environment } : entry,
+    origin,
+  }));
 }

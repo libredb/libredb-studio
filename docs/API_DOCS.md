@@ -55,7 +55,7 @@ Responses are JSON. There is **no global envelope** — each endpoint returns it
 { "ok": true }
 
 // Errors
-{ "error": "Human-readable message" }   // route handlers that call createErrorResponse also add "code" and "statusCode" (and sometimes "retryable" / "details"); handlers that return errors inline may send just "error"
+{ "error": "Human-readable message" }   // route handlers that call createErrorResponse also add "code" and "statusCode" (and sometimes "retryable" / "details"), and for a database error "kind" and "outcome"; handlers that return errors inline may send just "error"
 ```
 
 ---
@@ -520,12 +520,54 @@ Under that cap, a result of exactly `limit` rows has `wasLimited: false` and `ha
 `POST /api/db/transaction` answers a query inside a transaction by the same rule. Because the statement that runs asks for one row more, a `SELECT ... FOR UPDATE` without its own `LIMIT` in a held transaction now locks `limit + 1` rows.
 `options.limit` and `options.offset` must be non-negative integers below `Number.MAX_SAFE_INTEGER` (9007199254740991) when sent, which keeps the `limit + 1` above a safe integer too; anything else is answered `400` before a provider is reached.
 `POST /api/db/multi-query` holds a script's `options` to the same rule, with the same `400` and sentence, before it splits anything.
+On this route the connection's `queryTimeout`, when it is set, must be a whole number of milliseconds from 1 to 2147483647, the connection dialog's bounds; anything else is answered `400` with `{ "error": "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647." }` before a provider is reached.
 
 `hasMore` is `wasLimited && rows.length > limit` over the probed statement, with `wasLimited` read from the server's own limiter alone, and both halves matter.
 A bound the provider reported sets `wasLimited` and never `hasMore`, because no `offset` can advance a bound the server did not write.
 A statement the server returned **untouched** — one carrying its own `LIMIT n`, or one whose end the limiter declined to cut into — runs identically at every `offset`, because the requested offset is discarded along with the rewrite. `hasMore` is `false` for those however many rows come back, and re-requesting with a higher `offset` would return the same rows again. Where `hasMore` is `true`, re-request with `offset` advanced by the number of rows you received. See [`docs/editor/query-optimization.md`](editor/query-optimization.md).
 
 Not every engine can serve a positive `offset`. Cassandra and Elasticsearch answer one with HTTP 400 rather than silently returning page one; MongoDB, Redis, LibreDB, Prometheus, InfluxDB (InfluxQL), Kafka, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Firestore ignore it. `POST /api/db/provider-meta` reports each one's `capabilities.supportsResultPagination`, which is the same flag the app reads before offering its Load More control.
+
+**How long the server waits, how large a page may be, and a caller that leaves:**
+
+The statement runs through the provider host core ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clauses C-48 to C-51), which waits for it at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s.
+A provider that applies the statement timeout itself answers its engine's timeout within those 10 s, `504 TIMEOUT_ERROR` with `kind: "timeout"` and the shared sentence "Query timed out. Please try a simpler query or increase timeout.".
+A statement still unanswered at the server's deadline, on any engine, is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and the server sends the run's cancel when the request named a `queryId` and the provider can cancel.
+Every `studio-timeout-refusal` 504 carries Studio's own sentence, which names what Studio waited for; for this deadline: "The statement did not answer within its timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.", with the connection's own timeout in place of 60 seconds.
+That deadline is how a statement ends on an engine whose provider applies no statement timeout of its own.
+Whether a provider applies the statement timeout itself, and whether it can cancel a run, is in its engine's document under [`docs/providers/`](providers/); each document whose provider applies none states this deadline and whether the run is cancelled.
+A request whose deadline has already passed when the statement is to start runs nothing and answers the same 504 with `outcome: "not-sent"`.
+Before the statement, the server waits for the connection to open at most its engine's connect budget ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause M-51): 70 s, the pools' 60 s connect bound (`acquireTimeout`) plus 10 s for the provider's own connect failure to arrive, unless the engine's document states another, as BigQuery's (140 s) and Snowflake's (80 s) do, so a provider that bounds its connect answers in its own words.
+A connection still not open at that point answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`: "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.", with the engine's connect budget in place of 70 seconds.
+The open itself ends at the same budget for every request waiting for it on every route that opens a connection, each answered the same 504 ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-55).
+The next request after it opens the connection afresh rather than waiting on an open that may never settle.
+On an open connection, a provider that takes a connection from its pool before it sends the statement (each engine's document says whether it does, in its `Failed statement outcome` row) answers a failure of that checkout with `outcome: "not-sent"`.
+A checkout that waits out the pool's own bound answers `503 CONNECTION_ERROR` with `kind: "connection"` and `outcome: "not-sent"`: "No connection of the pool came free or opened within 60 seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.", with the time it waited.
+The statement's own deadline starts once the connection is open, so it stays the statement timeout plus 10 s.
+
+A page holds at most 32 MiB of rows, each measured as the UTF-8 length of its JSON text.
+A result larger than that is answered with the rows that fit, `rowCount` and `pagination.totalReturned` naming how many, and `pagination.wasLimited` true.
+When the server's own limiter bounded the statement, `pagination.hasMore` is true too, and the next page is requested as any other, with `offset` advanced by the rows received, so it continues after the last row answered; a statement the limiter did not bound answers `hasMore: false`.
+A single row larger than 32 MiB answers `400 QUERY_ERROR` with `kind: "studio-byte-budget-refusal"` and `outcome: "unknown"`, naming the row's size and the page's budget.
+A page larger than one batch, 1 MiB, waits while another such page is answered: the server answers one at a time per process ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-53).
+Each such page waits within its own statement's deadline, and a page of one batch never waits.
+A page whose deadline passes while it waits answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, since the statement ran: "The statement answered, but its page waited for another large page to be answered past its timeout of 60 seconds and 10 seconds more, so Studio stopped waiting for it.", with the connection's own timeout in place of 60 seconds.
+A caller that goes away while its page waits is answered `499 QUERY_CANCELLED` with `outcome: "unknown"`.
+
+A transaction the statement left open, on an engine whose provider can end one, is rolled back after the run through the provider host core ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-60), and the answer then carries `openTransaction: "rolled-back"`.
+That rollback is waited for at most 10 seconds of its own, never ended by the request's leaving.
+Past that the answer is `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`: "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it."
+A rollback that fails is answered in the statement's place, its own error and status.
+After a caller went away, the transaction is rolled back once the statement's own end arrives, and a failure there is logged by its kind and code, never its text.
+`POST /api/db/multi-query` ends a transaction its script left open the same way, once every statement it ran has answered, under the same 10 seconds and the same 504.
+
+A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
+The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.
+A request already aborted when the statement is to start runs nothing and answers `499 QUERY_CANCELLED` with `outcome: "not-sent"`.
+A caller that goes away while its connection opens is answered at once with `499 QUERY_CANCELLED` and `outcome: "not-sent"`; the open goes on, so the next request finds the connection open, and an open that then fails is logged by the connection's id, the error's kind and its code, never its text.
+`POST /api/db/cancel` runs through the same host core: a cancel request already aborted calls nothing and answers `499 QUERY_CANCELLED`, it waits for its connection to open within the same connect budget and while the request stays, and the server waits for the engine's cancel at most 10 s, after which it answers `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"`: "The cancel did not answer within 10 seconds, so Studio stopped waiting for it.".
+When several of its checks fail, a cancel request gets the answer of the first, in this order: the session and rate limit guard; a body that is not a JSON object, `400`; the connection's resolution, with its own refusals; a missing `queryId`, `400`; a `queryId` that is not a string, `400`; the provider's checks before its open, with their own errors; a request already aborted, `499 QUERY_CANCELLED`, answered at the open, before any provider is built, unless the provider is already open; the provider's open, with its own errors; a provider that cannot cancel, `400` "Query cancellation is not supported for this database type".
+So a request already aborted for an engine that cannot cancel answers `499`.
 
 **The database a run reads (optional):**
 ```json
@@ -567,10 +609,11 @@ and a request that runs somewhere names the database by name in `catalog`, besid
 (it is not `database`, which is Redis's number). The same field is read by `/api/db/multi-query`,
 `/api/db/transaction` (owner recorded per database), `/api/db/monitoring`, `/api/db/pool-stats`,
 `/api/db/health`, `/api/db/profile` and both maintenance routes. Every refusal is `400` with
-`code: "CONFIG_ERROR"`: a `catalog` that is not a non-blank string, a connection that declares no
-`catalogSessions`, a database the role cannot CONNECT to, or no `catalog` on a server-level
+`code: "CONFIG_ERROR"`: a `catalog` that is not a non-blank string, a connection on which Studio
+honours no catalog sessions, a database the role cannot CONNECT to, or no `catalog` on a server-level
 connection for a statement, transaction or maintenance. Five databases already open and all busy
 answers `503 POOL_EXHAUSTED`.
+Studio honours a connection's catalog sessions only where its provider declares `catalogSessions`, `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds its engine, and it names no database and no connection string (`catalogChoice` in `src/lib/db/catalog-scope.ts`), and where the provider declares sessions Studio does not honour, the refusal says which condition fails.
 
 **A `sql` that is not a string:**
 
@@ -586,9 +629,16 @@ The same answer comes from `POST /api/db/multi-query`, `/api/db/transaction`, `/
 `POST /api/db/monitoring` answers JSON that is not an object the same way, and keeps `400 { "error": "Invalid JSON in request body" }` for text that is not JSON.
 Its `options`, when sent, must be an object as well: anything else (`null`, a number, an array) answers `400 { "error": "options must be an object" }` before any connection resolves.
 
-**An inline connection with no type, or a type or name that is not a string:**
+**An inline connection whose type names no provider, or whose name is not a string:**
 
-An inline `connection` whose `type` is missing, empty or not a string, or whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }` when the connection resolves, before any provider is built; a `connection` that is not an object is refused the same way.
+An inline `connection` whose `type` is missing, `null` or empty answers `400 { "error": "This connection names no type, so no provider in this LibreDB Studio can open it.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }` when the connection resolves, before any registry is read or any provider built.
+One whose `type` is present and not a string, such as a number, an array or an object, answers `400 { "error": "This connection's type is not text, so it is not a type id, and no provider in this LibreDB Studio can open it.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }`, which repeats no part of the value.
+One whose `type` is a string that is not exactly a type id, a case variant such as `"Postgres"` or a padded value included, answers `400 { "error": "No provider for the connection type \"acmefoo\" is installed in this LibreDB Studio.", "code": "PROVIDER_UNKNOWN", "statusCode": 400 }`, the type quoted as it was sent.
+The quote is the JSON string of the type, with C1 control characters, the Unicode line and paragraph separators and all twelve bidirectional controls of Unicode's `Bidi_Control` property also escaped as `\uXXXX`, so the sentence stays one line and reads in order.
+Release 1.3.0 answered all three with `400 CONFIG_ERROR`: a missing, empty or non-string type in the sentence below, and an unknown string in the factory's `Unknown database type` sentence once its provider was about to be built.
+A `connectionId` that names a seed entry whose type has the shape of a type id and names no provider answers the same `400 PROVIDER_UNKNOWN`, with the sentence that quotes its type, after the role check ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)); release 1.3.0 answered every `seed:` id of such a file `500 INTERNAL_ERROR`.
+A seed entry whose type is absent, not text, or text of any other shape fails the whole seed file instead, so every `seed:` id of that file answers `500 INTERNAL_ERROR`.
+A `connection` whose `name` is present and not a string, `null` included, answers `400 { "error": "Valid connection configuration is required", "code": "CONFIG_ERROR", "statusCode": 400 }`, and a `connection` that is not an object is refused the same way.
 A `connection` without a `name` is still accepted, as a connection with no name.
 Every route that takes a `connection` answers it the same way, `POST /api/db/test-connection` included, and `POST /api/admin/fleet-health` reports it as that item's `error`.
 `POST /api/db/disconnect` reads the record's `id` before it resolves anything, so a `connection` that is not an object, or a record with no `id`, answers its own `400 { "success": false, "error": "Either connection or connectionId is required" }`.
@@ -597,7 +647,7 @@ While custom connections are off, an inline connection answers `403 CUSTOM_CONNE
 
 **A connection type's console text bound:**
 
-A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in the provider's `destructive.ts` module.
+A connection type can declare a bound on its statement text in UTF-8 bytes, on its row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/destructive-commands.ts`), declared in its statement language's family module or, for a row its slice has not moved yet, in the provider's `destructive.ts` module.
 For such a type this route counts the bytes of `sql` after resolving the connection and before reading `params`, building the provider or preparing the statement, so an oversize text opens no socket.
 The bound is read after the request body is parsed, because the type that selects it is inside the body.
 
@@ -622,8 +672,31 @@ Milvus, Qdrant and Weaviate each declare a bound of 1,048,576 bytes and InfluxDB
 Each element must be a string, number, boolean or `null`; anything else is rejected with 400 rather than handed to the driver. `POST /api/db/transaction` accepts the same field for its `query` action.
 
 **`inTransaction` in a transaction `query` answer.** `POST /api/db/transaction` answers its `query` action with `inTransaction`, and `false` there means the server ended the transaction while running the statement: a typed `COMMIT` or `ROLLBACK`, or a statement the engine commits implicitly (MySQL DDL). The answer does not say whether the work was kept, because the server reports the same state after either; the session is released, and a following `rollback` answers 400 "No active transaction" rather than reporting a rollback that undid nothing. A `begin` the server accepts without opening a transaction (RisingWave's `BEGIN`) answers 400 with the reason, and nothing has been held. A `begin` answer carries `stateReported`: `false` when the server opened the transaction without reporting any transaction state (Databend, StarRocks and Apache Doris over the MySQL wire), `true` when it reported an open one, `null` when the provider does not say. A `begin` sent with `requireReportedState: true`, which is what SANDBOX sends, answers 400 on a `stateReported: false` server instead, with nothing left open.
+`inTransaction` is `null` while Studio cannot tell the session state, which is neither `true` nor `false`: a client that tests `!inTransaction` reads it as closed, and should not.
 
-**Several statements in a transaction `query`.** When the `sql` of a `query` action holds more than one statement under the connection's dialect (a fragment of comments only does not count), `POST /api/db/transaction` runs them one by one, in order, on the transaction's connection and stops at the first one that fails. The answer has the shape `POST /api/db/multi-query` gives a script: `multiStatement: true`, `statementCount`, `executedCount`, `hasError`, `statements` with each statement's outcome, and the last result that has rows as `rows`/`fields`, plus `inTransaction`. A failure is part of that 200 answer, not an error status: the statements before it ran inside the transaction and stay there to commit or roll back. There is no `pagination`, because a next page would run every statement again. A request with `params` is one statement, as before. Measured on MySQL 26.7.0 before this: two `UPDATE` lines sent inside BEGIN answered 500 "You have an error in your SQL syntax ... at line 2".
+**The transaction route on the server's provider host.** Every call `POST /api/db/transaction` makes on the session, its `begin`, a statement, `commit`, `rollback` and the state read every request makes first, runs through the server's provider host (docs/providers/CONTRACT.md, C-59).
+A `begin`, a statement, a `commit` and a `rollback` wait at most the connection's statement timeout plus 10 seconds, and the state read 10 seconds; past that the answer is 504 `TIMEOUT_ERROR`, kind `studio-timeout-refusal`, outcome `unknown`, in a sentence naming the statement, the wait and what it may have left, such as "The COMMIT did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it, and the transaction may have been committed or rolled back."
+A request that goes away while its call runs is answered 499 `QUERY_CANCELLED` at once, outcome `unknown`, or `not-sent` when it went before the call; the statement or `COMMIT` goes on in the database, and its own end records nothing.
+On 499 and 504 the transaction and its owner are kept, and the editor keeps its transaction mode.
+The connection opens within its engine's connect budget and while the request stays, as on `POST /api/db/query`: a request that leaves while it opens answers 499 not-sent, and an open past the budget 504 not-sent.
+A statement's page is held to the host's 32 MiB page budget, with `rowCount`, `pagination.totalReturned`, `wasLimited` and `hasMore` as `POST /api/db/query` answers them, and a row over 32 MiB answers 400 `QUERY_ERROR` with kind `studio-byte-budget-refusal`.
+A script of several statements keeps its own answer, which has no page, and only the state after it is read through the host.
+While the session state is unknown, after a call Studio stopped waiting for, the status and query answers carry `inTransaction: null`, and the next request's state read resolves it once that call has settled.
+A read taken while that call still runs, or while another call of the owner's has been sent and has not answered yet, keeps the transaction and its owner, whatever it finds, and the `status` action then answers `inTransaction: null`, as it does when the owner's transaction record changed while its read ran.
+While that call still runs, a `begin`, a `query`, a `commit` or a `rollback` of the owner's is refused before it is sent with 409 `TRANSACTION_CALL_RUNNING`, never queued behind that call, which may end the transaction first, in a sentence naming what was not sent, such as "The ROLLBACK was not sent: a call Studio stopped waiting for is still running on this connection's transaction. Send it again once that call has finished; the status action reads the transaction's state."
+The `status` action is still answered, and the editor keeps its transaction mode.
+A `begin` whose caller left or whose deadline passed, on a connection with no transaction held, makes its caller the owner of whatever it may have opened: another session is answered 409 `TRANSACTION_NOT_OWNED` until a read taken after that `begin` settled finds no transaction, or the owner's lease lapses.
+
+**A failed `begin`, `commit` or `rollback`.**
+A `begin` whose connection the provider could not take from its pool answers that failure with `outcome: "not-sent"`, since nothing was sent (the engine's document says whether it can tell, in its `Failed statement outcome` row).
+A pool wait that ran out answers `503 CONNECTION_ERROR`, `outcome: "not-sent"`, in the sentence a statement's checkout answers: "No connection of the pool came free or opened within <n> seconds, so the statement was not sent: ...", where the statement is the `BEGIN`.
+A `begin`, `commit` or `rollback` the database or its driver refused answers that error's class with `outcome: "unknown"`, as a statement's failure does: a lost connection `500 DATABASE_ERROR`, a deferred constraint a PostgreSQL COMMIT checks `400 QUERY_ERROR`.
+Oracle answers a `commit` or `rollback` by its own outcome even when closing the connection afterwards fails, and holds no transaction after either.
+
+**A batch's own result sets inside a script.** When the script's last unit is itself a batch of several statements that answered several result sets (a T-SQL batch on SQL Server), `POST /api/db/multi-query` returns the batch's last result set, empty or not, preserving that set's `fields` and `columnTypes` when present in the API response - the same rule the script's statements follow, so a script ending in a `SELECT` over a table an earlier statement emptied shows that empty set instead of resurrecting an earlier set's rows. A trailing statement in the same batch that returns no set at all does not replace the batch's last set. The shown `rowCount` is the shown set's own rows, not the engine's (SQL Server reports the first statement's `rowsAffected[0]`). The grid's empty-state rendering is unchanged: empty results do not render column headers.
+
+**Several statements in a transaction `query`.** When the `sql` of a `query` action holds more than one statement under the connection's dialect (a fragment of comments only does not count), `POST /api/db/transaction` runs them one by one, in order, on the transaction's connection and stops at the first one that fails. The answer has the shape `POST /api/db/multi-query` gives a script: `multiStatement: true`, `statementCount`, `executedCount`, `hasError`, `statements` with each statement's outcome, and the last successful statement's `rows`/`fields`/`rowCount` as the main result, including an empty result, plus `inTransaction`. A failure is part of that 200 answer, not an error status: the statements before it ran inside the transaction and stay there to commit or roll back. There is no `pagination`, because a next page would run every statement again. A request with `params` is one statement, as before. Measured on MySQL 26.7.0 before this: two `UPDATE` lines sent inside BEGIN answered 500 "You have an error in your SQL syntax ... at line 2".
+When the state read after the statements fails, the answer still reports their results, with `inTransaction: null`, and the transaction and its owner are kept.
 
 **Query plan (optional):**
 ```json
@@ -697,7 +770,9 @@ Three refusals, each a 400 that runs nothing:
   "error": "Query timed out. Please try a simpler query or increase timeout.",
   "code": "TIMEOUT_ERROR",
   "statusCode": 504,
-  "retryable": true
+  "retryable": true,
+  "kind": "timeout",
+  "outcome": "unknown"
 }
 ```
 
@@ -706,6 +781,109 @@ Chromium sends a POST answered 408 on a reused keep-alive connection again witho
 `retryable` is a hint for the person reading the error: no Studio client sends the request again on it.
 
 A deadline met while Studio opens the connection, before any statement is sent, is not a query timeout: it is answered with HTTP 503, code `CONNECTION_ERROR`, and "The connection got no answer after [seconds] seconds: check the address, the port, the network path and that the server is running."
+That answer carries `outcome` `not-sent` ([Error kind and outcome](#error-kind-and-outcome)).
+
+##### Server confirmation of a run
+
+`POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` classify every statement they are sent, on the server, with the confirmation gate's readers: the ones the web editor's safety dialog and [`POST /api/db/statement/analyze`](#post-apidbstatementanalyze) read.
+A statement the gate asks about needs a confirmation before it runs.
+Whether a request without one is refused is the request's own choice in the default mode, except on a production connection, and every caller's in `required` mode (`LIBREDB_RUN_CONFIRMATION`, see [Environment Variables](#environment-variables)).
+A connection type's claim that would spare a statement, that its own vocabulary is the whole answer, that a form led by a shared keyword does not ask, or that its text is not SQL, counts only where Studio's review record of such claims lists it (`CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`); any other such claim is read as if it were not made, so the statement needs a confirmation wherever its SQL reading or the type's own vocabulary asks.
+
+The request's `confirmation` field:
+
+| Value | Meaning |
+|---|---|
+| absent | The caller does not take part in the confirmation, except on a production connection, where it is asked as `"ask"` is. |
+| `"ask"` | Answer 428 rather than run when the statement needs a confirmation, in either mode. The standalone web editor sends it on every run that is not an explain. |
+| `{ "token": "<string>" }` | A confirmed run: the token of a 428 answer, sent back with the same request. |
+| `{ "token": "<string>", "typed": "<string>" }` | A confirmed run with what the person typed, for a statement whose 428 named a `typedConfirmation`. |
+
+Any other value, a `typed` that is not a string, or any other key, is answered `400 { "error": "confirmation must be \"ask\" or { \"token\": string, \"typed\"?: string }" }` before anything is classified or built.
+
+The gate reads the connection the request resolved, its environment included.
+On a connection whose `environment` is `production`, every statement the gate asks about is confirmed by typing the connection's name, whatever the statement's own ask: a connection type's text ask (an etcd prefix, start key or lease id) becomes the one target of the name ask, so the person still sees what the statement reaches, and a statement whose type asks nothing typed asks the name with no target.
+Advisory mode spares no request there: a request that sends no `confirmation` field is answered as one that sends `"ask"`, with a 428 naming the name, because leaving the field out would skip the ask.
+A read the gate does not ask about runs on production as anywhere else.
+A production connection with no name, or an empty one, cannot confirm such a statement, and it is refused as any name ask on a nameless connection is.
+The environment of a seed or governed connection is the operator's record, never the caller's copy of it; the environment of an inline connection is what the caller sent.
+
+| Mode | `confirmation` | The gate does not ask | The gate asks, nothing typed | The gate asks, a value typed | The statement is confirmed by typing the connection's name, and the connection has none |
+|---|---|---|---|---|---|
+| `advisory` (default) | absent, on a connection that is not `production` | runs | runs, and the answer carries `"confirmation": "unconfirmed"` | runs, and the answer carries `"confirmation": "unconfirmed"` | runs, and the answer carries `"confirmation": "unconfirmed"` |
+| `advisory` (default) | absent, on a `production` connection | runs | `428` naming the name | `428` naming the name | `400` with that refusal |
+| `advisory` | `"ask"` | runs | `428` | `428` naming the value | `400` with that refusal |
+| `required` | absent or `"ask"` | runs | `428` | `428` naming the value | `400` with that refusal |
+| either | `{ "token" }` | the token is verified, then the statement runs | the token is verified, then the statement runs | `428` naming the value, with a new token; the sent token is not verified and stays unspent | `400` with that refusal |
+| either | `{ "token", "typed" }` | `400` `CONFIRMATION_INVALID` | `400` `CONFIRMATION_INVALID` | the typed value is compared, then the token is verified, then the statement runs | `400` with that refusal |
+
+An advisory run the gate asks about also writes one warning line naming the route, the connection type and the user, never the statement.
+`POST /api/db/multi-query` reads the whole submitted script and its answer carries the same field; so does the transaction route's answer to a `query` action, a script included.
+An explain request (`explain` present) is not classified: the server builds the EXPLAIN only for a statement its strategy accepts and never runs the submitted statement.
+A later page (`options.offset` above 0) is classified like any run, because it runs the statement again.
+`begin`, `commit`, `rollback` and `status` on the transaction route are not classified.
+A request refused for its connection, its body or its fields keeps that answer whatever `confirmation` holds: the gate reads the request after those checks, after the `database` override of `POST /api/db/query`, and before the admission gate and any provider.
+
+**Response (428 Precondition Required):** nothing was built, opened or run, and no query event was recorded.
+A statement that asks for nothing typed:
+```json
+{
+  "error": "This statement needs a confirmation before it runs: send the same request again with the confirmation token in this answer.",
+  "code": "CONFIRMATION_REQUIRED",
+  "confirmation": {
+    "token": "<token>",
+    "expiresAt": "2026-11-22T12:05:00.000Z",
+    "unreadable": false,
+    "typedConfirmation": null,
+    "classificationFailed": false
+  }
+}
+```
+
+A write on a production connection named `orders-prod`, which asks for its name:
+```json
+{
+  "error": "This statement needs a typed confirmation before it runs: send the same request again with the confirmation token in this answer and, as typed, the value its typedConfirmation expects.",
+  "code": "CONFIRMATION_REQUIRED",
+  "confirmation": {
+    "token": "<token>",
+    "expiresAt": "2026-11-22T12:05:00.000Z",
+    "unreadable": false,
+    "typedConfirmation": { "type": "connection-name", "expected": "orders-prod", "targets": [] },
+    "classificationFailed": false
+  }
+}
+```
+
+`unreadable` says part of the statement could not be read, which is a reason the gate asks; `typedConfirmation` is what a person types before it runs, `{ "type": "text", "expected" }` or `{ "type": "connection-name", "expected", "targets" }`, as [`POST /api/db/statement/analyze`](#post-apidbstatementanalyze) answers it; `classificationFailed` says a reader failed on the statement, so the gate asks, and on a production connection it still asks for the name.
+
+The server checks the typed value.
+Where `typedConfirmation` is not null, the confirmed request carries `typed` beside the token, and the server compares it exactly, case and whitespace included, with `expected` as it reads it from the resolved connection at that moment.
+It compares before it verifies the token, so a refused typed value spends no token.
+The token's reading of the statement includes the typed confirmation, so a token issued before the connection was renamed, or before its environment changed, is refused as issued for another reading.
+The typed value proves that the request carries the expected text, not that a person typed it.
+Nothing is remembered between runs: every run of a statement the gate asks about asks again, and a token is accepted once.
+
+The token lives five minutes and is accepted once in each server process.
+It confirms only the request it was issued for: the same session, the same server and catalog (after the `database` override), the same route, the same `sql` and bound `params`, and the same reading of the statement.
+A token that does not confirm the request is answered `400 { "error": "<reason>", "code": "CONFIRMATION_INVALID" }` and nothing runs, with one of these reasons:
+
+- `this confirmation could not be verified`
+- `this confirmation has expired`
+- `this confirmation was issued for another route`
+- `this confirmation was issued for another session`
+- `this confirmation was issued for another connection`
+- `this confirmation was issued for another statement`
+- `this confirmation was issued for another reading of the statement`
+- `this confirmation has already been used`
+- `this statement asks for no typed confirmation`, for a `typed` sent where `typedConfirmation` is null
+- `the typed confirmation does not match what this statement asks to be typed`
+
+A present token is verified even for a statement the gate does not ask about.
+The confirmation is an explicit second step, not an authorization check: any caller with a session can ask for a token and send it back ([`SECURITY.md`](./SECURITY.md#known-limits), control 3.47).
+
+The VS Code extension's backend child holds the same contract on its JSON-RPC protocol, with the same gate, mode and production rule: its `query/target` answers the verdict with a token, and its `query/run`, a page read included, answers a statement the gate asks about with a JSON-RPC error of code 428 carrying this offer, or runs it with that token.
+Its route is `vscode/query/run`, and its tokens are signed under a secret the child draws at random when it starts and bound to a session of its own, so a token is accepted only by the child that issued it ([VS Code extension](./VSCODE_EXTENSION.md#5-running-a-query-end-to-end)).
 
 ##### MongoDB Query Format
 
@@ -1061,7 +1239,8 @@ Redis is a key-value store, so the `sql` field carries a Redis command instead o
 What Run would do with the editor's text, decided as the web editor decides it: the statement to send, where it sits, whether the connection type refuses it, whether to ask before it runs and what to type, and which route it takes.
 It runs nothing and opens no database connection: it builds the connection's provider only to read its capabilities, as `POST /api/db/provider-meta` does.
 It records no query event and logs no part of the text, of the statement or of the refusal.
-It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and `POST /api/db/query` does not require it.
+It is advisory, like the web editor's confirmation dialog: it is not an authorization check, and the run routes do not require it.
+They classify every run themselves with the same readers, and in `required` mode refuse a statement the gate asks about unless it carries a confirmation token they issued (see [Server confirmation of a run](#server-confirmation-of-a-run)).
 
 **Authentication:** Required, the `auth-token` cookie or, where that channel is on, a bearer access token (see [Authentication](#authentication)), and no admin role.
 Each request spends one slot of the `query` budget (see [Rate Limiting](#rate-limiting)).
@@ -1107,13 +1286,19 @@ Every field a decision lists is present, and no other field is; a client that re
 `unreadable` is `true` when part of the statement could not be read, a run that never closes or a lone carriage return in a line comment, which is a reason to ask; it is `false` wherever the confirmation gate does not read the text as SQL, and the embedded LibreDB store's text is read as SQL, so its unclosed literal is unreadable.
 `typedConfirmation` is `null`, or `{ "type": "text", "expected": "..." }`, or `{ "type": "connection-name", "expected": "<the connection's name>", "targets": ["..."] }`, whose `targets` name what the statement reaches, for display; the user types `expected` exactly, case and whitespace included.
 A statement confirmed by typing the connection's name answers `refuse` on a connection with no name, because an empty expected value would let an empty field confirm it.
+The route reads the resolved connection's `environment`: on a `production` connection every `confirm` asks for the connection's name, a connection type's text ask becomes its one target, and a statement whose type asks nothing typed answers `targets` empty, as the run routes ask it ([Server confirmation of a run](#server-confirmation-of-a-run)).
 
 **Errors:** the connection is resolved before any field is read, so a connection the caller may not resolve answers its `403`, `404` or `503` whatever the body holds.
-A type the server cannot build, one `LIBREDB_ENABLED_PROVIDERS` leaves out, an unknown type or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+An inline connection whose type is absent, not text or names no provider, or a seed entry named by `connectionId` whose type has the shape of a type id and names no provider, is refused when the connection resolves, `400 PROVIDER_UNKNOWN` (see [`POST /api/db/query`](#post-apidbquery)).
+A seed entry whose type is absent, not text, or text of any other shape fails the whole seed file instead, so every `seed:` id of that file answers `500` ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
+A type `LIBREDB_ENABLED_PROVIDERS` leaves out, or a `readOnly` its provider does not enforce, is refused after the field checks, when the provider is built.
+So is a connection whose engine refuses a denied file-access posture when the caller's posture is denied, SQLite for every role but `admin` and on any seed a non-admin role can use, `400 CONFIG_ERROR` with that engine's own sentence, before Studio reads the path the connection names.
+So is a file connection that names one of Studio's own storage files, or whose file Studio cannot check against them, and an OPC UA connection whose client certificate or private key path does, `400 CONFIG_ERROR`.
+An inline connection that sets a field only the operator's seed file sets (`securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` or `agentReadRoots`) is refused when the connection resolves, `400`, in a sentence naming the field ([DatabaseConnection](#databaseconnection)).
 
 | Status | When |
 |--------|------|
-| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `type` is missing, empty or not a string or whose `name` is present and not a string, `null` included (see [`POST /api/db/query`](#post-apidbquery)), or a type `LIBREDB_ENABLED_PROVIDERS` leaves out |
+| `400` | A body that is not a JSON object, `{ "error": "Invalid request body" }`; a field of the wrong type, `text must be a string`, `selection must be an object`, `selection.start must be an integer`, `selection.end must be an integer` or `cursor must be an integer`; offsets outside the text, in the run target's own sentence, which names numbers only, such as `run target: cursor 99 is not within a text of length 24`; and, with code `CONFIG_ERROR`, the connection errors every database route answers, such as `Either connection or connectionId is required`, `Valid connection configuration is required` for an inline connection whose `name` is present and not a string, `null` included, or a type `LIBREDB_ENABLED_PROVIDERS` leaves out; and, with code `PROVIDER_UNKNOWN`, an inline connection whose `type` is absent, not text or names no provider, or a named seed entry whose `type` has the shape of a type id and names no provider (see [`POST /api/db/query`](#post-apidbquery)); a seed `type` of any other shape fails the whole seed file, `500`, instead ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) |
 | `413` | A text over 1,000,000 UTF-16 code units: `The text is <n> UTF-16 code units long, over the 1000000-unit limit for statement analysis. Shorten it to run it.` |
 | `401` | No session (`AUTH_REQUIRED`) |
 | `403` | `CUSTOM_CONNECTIONS_DISABLED` for an inline connection while custom connections are off, or, without governance and the Kubernetes access review, `AUTH_ERROR` for a seed the caller's role may not use |
@@ -1236,12 +1421,20 @@ Redis `analyze` is the only operation that fills them today: it runs `INFO` and 
 **Response (400 Bad Request):**
 ```json
 {
-  "error": "Operation 'vacuum' not supported for this database. Supported: analyze, optimize, check, kill"
+  "error": "\"vacuum\" is not a maintenance operation LibreDB Studio offers on MySQL, which offers analyze, optimize, check, kill; no connection was opened and nothing was run.",
+  "code": "FACET_NOT_OFFERED",
+  "statusCode": 400
 }
 ```
 
-The handler validates against the target provider's capabilities: `type` is required (`{ "error": "Maintenance type is required" }`), the provider must support maintenance at all, and the requested operation must be in that provider's supported set (see the matrix above) — otherwise a `400` is returned listing what the provider does support.
+The handler checks a request in this order, and runs and records nothing for a request refused on the way.
 A body that is not JSON, or JSON that is not an object, answers `400` with `{ "error": "Invalid request body" }` before any provider is opened.
+`type` is required (`{ "error": "Maintenance type is required" }`), and a `type` that is not a string answers `{ "error": "\"type\" must be a string naming a maintenance operation" }`, which repeats nothing of the value.
+`container` and `target` are type-checked next, as the paragraphs below describe.
+Then the operation must be one the connection's engine offers: the `maintenance` list of its `ENGINE_FACETS` row, stated in the `Engine facets` subsection of each `docs/providers/<type-id>.md` (see the matrix above).
+Any other operation answers `400` with code `FACET_NOT_OFFERED`, in a sentence naming the operation, the engine and the operations it offers, before any provider is built, any SSH tunnel opened or any connection made.
+Only then is the provider opened, and the operation must also be one the connected server accepts, with the same code (see the PostgreSQL and MySQL paragraph below), before the placement check.
+Earlier releases answered these refusals with a sentence and no `code`, after connecting; a client reads the code.
 
 `container` is type-checked before any provider is opened: a value that is neither absent nor a string
 answers `{ "error": "\"container\" must be a string naming the target's container" }` with `400`.
@@ -1264,11 +1457,11 @@ operation that has no whole-database form. An operation whose declaration offers
 is not refused: its target is a session or query id that neither half describes (every engine's
 `kill`), so the request passes through.
 
-A `druid` connection fails the second check whatever the `type` is, with `{ "error": "Maintenance operations not supported for this database" }`: no maintenance operation is reachable from Druid SQL, so its supported set is empty by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
+A `druid` connection is refused whatever the `type` is, by name with `FACET_NOT_OFFERED` and before any provider is built, in a sentence ending "which offers none": no maintenance operation is reachable from Druid SQL, so its row offers none by design. Compaction and retention are Coordinator and task concerns, and Druid publishes no catalog of running queries, so there is no id for `kill` to name.
 
-A `trino` connection passes it for `kill` and fails it for everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
+A `trino` connection is offered `kill` and refused everything else, which is the difference between an empty supported set and a set of one: `CALL system.runtime.kill_query` really terminates a statement (verified end to end - the target then fails `ADMINISTRATIVELY_KILLED`), while vacuum, reindex, optimize, check and analyze all describe work that belongs to the connector behind a catalog rather than to the engine.
 
-On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused gets the same `400` as any other unsupported operation, before anything is sent. The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
+On a `postgres` or `mysql` connection the supported set and its placements are the CONNECTED server's, measured when the provider connects, and not the type id's (#1387): CockroachDB keeps only a targeted `analyze`, RisingWave keeps only `kill`, YugabyteDB loses `reindex`, TiDB keeps `analyze` and Vitess loses `check`. A request for an operation the server refused is answered after connect with the same `400` and code `FACET_NOT_OFFERED`, before anything is sent, in its own sentence naming what the connected server accepts, for example `"reindex" is not a maintenance operation the PostgreSQL server this connection reaches accepts, which accepts vacuum, analyze, kill; nothing was run.` The per-engine measurements are in `docs/providers/postgres.md` section 9.1 and `docs/providers/mysql.md` section 9.1.
 
 When the engine itself refuses the statement, the reply is the engine's answer, not a server fault (#1387): the thrown driver error is typed by `mapDatabaseError`, and one whose driver code says the statement is at fault answers `400` with `code: "QUERY_ERROR"` and the engine's own sentence, for example `{ "error": "at or near \"vacuum\": syntax error", "code": "QUERY_ERROR", "statusCode": 400 }`. Any other thrown error keeps a `5xx`.
 
@@ -1309,14 +1502,14 @@ It calls the provider's `previewMaintenance(type, path)` and nothing else, and w
 `preview` is a `MaintenancePreview`, published from `@libredb/studio/types`.
 A dialog that receives a `refusal` shows it and offers no confirm button.
 
-**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a body that is not a JSON object, a missing `type`, a non-string `container`, maintenance unsupported, an operation the provider does not declare, an operation that takes no target), and these two:
+**Response (400 Bad Request):** the checks of `POST /api/db/maintenance`, made in the same order before the provider's method runs (a body that is not a JSON object, a missing `type`, a `type` that is not a string, a non-string `container`, an operation the engine's `ENGINE_FACETS` row does not offer, answered `FACET_NOT_OFFERED` before any provider is built, an operation the connected server does not accept, answered with the same code, an operation that takes no target), and these two:
 
 | Condition | Body |
 |---|---|
 | `target` absent, empty or not a string | `{ "error": "\"target\" must name the object the operation would run on" }` |
 | The operation's spec does not declare `perEntity: true` and `preview: true`, or the provider does not implement `previewMaintenance` | `{ "error": "This operation has no preview" }` |
 
-A missing `type`, a non-string `container` and a missing `target` are refused before any provider is opened.
+A missing `type`, a `type` that is not a string, a non-string `container`, a missing `target` and an operation the engine does not offer are refused before any provider is opened.
 Whether the object exists is the provider's to say: its `previewMaintenance` raises a `QueryError` naming what is missing, answered with `400`.
 
 **Declaring a per-object operation.** A provider declares it on the operation's `MaintenanceOperationSpec` in `maintenanceOperationSpecs`:
@@ -1391,6 +1584,20 @@ A search is refused before its first listing when the container and kind pairs i
 
 The `code` tells this refusal apart from the plain `{ "error" }` 400 a missing `term` or a malformed `kinds` gets, and `limit` and `pairs` carry the bound and the count without the sentence.
 Naming fewer kinds brings the search under the bound; a search under it still answers every match.
+
+#### Deadlines and a caller that leaves on the tree reads
+
+Every read of `POST /api/db/objects/containers`, `counts`, `list`, `describe`, `search` and `inventory`, each container listing, count, object listing and description, waits at most the connection's statement timeout plus 10 seconds.
+Past that the route answers 504 `TIMEOUT_ERROR`, `kind: "studio-timeout-refusal"`, outcome `unknown`, with the read's sentence, for example "The object listing did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it."
+A request that leaves while a read runs is answered 499 `QUERY_CANCELLED` at once, outcome `unknown`, and the read goes on in the database; a request already gone when a read is to start is answered 499 `QUERY_CANCELLED`, outcome `not-sent`, and the read is never sent.
+An inventory or a search gives each read its own deadline rather than one for the whole request, since a whole walk is a sum of round trips that grows with the server's distance, and a request that leaves between two reads sends no further read.
+The connection's open is unchanged: these routes do not bound it by the request.
+
+| Condition | Status | Body |
+|-----------|--------|------|
+| a read with no answer at the statement timeout plus 10 s | `504` | `{ "error": "The object listing did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.", "code": "TIMEOUT_ERROR", "kind": "studio-timeout-refusal", "outcome": "unknown", ... }` |
+| the request left while a read ran | `499` | `{ "code": "QUERY_CANCELLED", "kind": "cancelled", "outcome": "unknown", ... }` |
+| the request was gone before a read started | `499` | `{ "code": "QUERY_CANCELLED", "kind": "cancelled", "outcome": "not-sent", ... }` |
 
 #### POST /api/db/objects/describe
 
@@ -1829,7 +2036,7 @@ eight paths, eleven handlers, under `src/app/api/agent/`. They drive the read-on
 behaviour in [`docs/AGENT.md`](AGENT.md), the surface in [`docs/AGENT_GUIDE.md`](AGENT_GUIDE.md), and
 what a run sends to a model provider in [`docs/AGENT_DATA_FLOW.md`](AGENT_DATA_FLOW.md).
 
-Three properties hold across the whole family and are not repeated per route:
+Four properties hold across the whole family and are not repeated per route:
 
 - **Every handler verifies its own caller.** Middleware is an optimisation, not the authorization
   boundary.
@@ -1840,6 +2047,19 @@ Three properties hold across the whole family and are not repeated per route:
 - **When the server runs no agents, the run-reaching handlers answer `404`** — after the session
   check, so an unauthenticated caller cannot learn whether an agent surface exists. `GET
   /api/agent/config` is the deliberate exception: `{"enabled": false, …}` *is* its answer.
+- **A run whose ledger names a statement language, workflow or goal rule this Studio does not have, or has retired, is refused by name.**
+  Every per-run route below answers the run's owner `409` with code `AGENT_RUN_UNAVAILABLE` and a sentence that names the id, before anything is resolved, built or replayed, and anyone else the `404` "No such agent run" of the ownership property above.
+  `POST /api/agent/drive` has no session: it answers the same `409` to the holder of the drive credential that names the run.
+  The ledger is kept as it was, and a Studio that has the id reads it.
+
+```json
+// 409 Conflict - to the run's owner
+{
+  "error": "This run was recorded in the statement language \"cobol\", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.",
+  "code": "AGENT_RUN_UNAVAILABLE",
+  "statusCode": 409
+}
+```
 
 #### GET /api/agent/config
 
@@ -1877,12 +2097,20 @@ still opens as the right one.
 **Request:**
 
 ```json
-{ "objective": "Why is the orders page slow?" }
+{ "objective": "Why is the orders page slow?", "connectionId": "seed:sales", "mode": "agent" }
 ```
 
 `objective` is required, non-empty, and bounded by the same 4000 characters `POST /api/agent/runs`
 applies — an objective this route would classify but that one would refuse is a model call spent on
 a run that cannot open.
+
+| Field | Meaning |
+|-------|---------|
+| `connectionId` | Optional. The connection the run will open on, resolved under the caller's session; the model is told each workflow in that engine's terms |
+| `mode` | Required with `connectionId`, `"planning"` or `"agent"`: the mode the run will open in. Not read without a connection |
+
+With a connection, the model is offered only the workflows that open on its engine in that mode, so an objective is never classified into a workflow `POST /api/agent/runs` would then refuse.
+Plan mode opens every workflow; agent mode opens no operations workflow on an engine that offers agent mode no curated reading, and no statement workflow on an engine with no statement language.
 
 **Response (200 OK):**
 
@@ -1892,8 +2120,8 @@ a run that cannot open.
 
 | Field | Meaning |
 |-------|---------|
-| `workflowType` | One of the five ids `POST /api/agent/runs` accepts |
-| `outcome` | `"classified"` when the model named one of the five; `"unclassified"` when it did not |
+| `workflowType` | One of the five ids `POST /api/agent/runs` accepts; with a connection, one of the workflows that open on its engine in `mode` |
+| `outcome` | `"classified"` when the model named one of the workflows it was offered; `"unclassified"` when it did not |
 
 **There is no failure response for the classification itself.** A model error, a timeout, an empty
 reply and a reply that is not one of the five ids all answer `200 { "workflowType":
@@ -1907,8 +2135,9 @@ its answer, reaches nothing a caller could not reach without it. It is metered o
 bucket like the run routes, because classification doubles the per-run request count against the
 model provider.
 
-**Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `401` without a
+**Refusals:** `400` for a missing, non-string, empty or oversized `objective`; `400` with `mode must be "planning" or "agent" when connectionId is provided` for a `connectionId` sent without a valid `mode`, before the connection is resolved; `401` without a
 session; `404` when this server runs no agents.
+A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers `400 PROVIDER_UNKNOWN` in the shared error shape, `error` plus `code` plus `statusCode`, with the sentence that quotes its type, and nothing is classified.
 
 ---
 
@@ -1988,8 +2217,8 @@ Opens a run and returns immediately; the drive happens in the background.
 | `workflowReading` | string | No | How that decision WENT, as against who made it: `"classified"` (a classifier named this workflow), `"unclassified"` (a classifier was asked and reached its fallback) or `"unrecorded"` (nothing classified anything — what a caller naming its own workflow sends). Absent means `"unrecorded"`. An unrecognised value is **refused, not defaulted**, for the reason `workflowSource` is: the surface reads this field back to choose which of three sentences it says about the run, and a fallback presented as a verdict is the one it may not say |
 | `objective` | string | Yes | Non-empty, at most 4000 characters |
 | `connectionId` | string | Yes | Must resolve **server-side**. An inline `connection` object in the body is refused |
-| `catalog` | string | On a server-level connection | The database the run reads on a connection that reaches a whole server (#1530). **Required** exactly when the connection declares `catalogSessions` and refused on every other connection, both with `400`; a database the role cannot open is refused before the run exists. It is recorded on the run and echoed back, part of the run's connection identity, and the run, its resumed drives and its hand-over read that database alone |
-| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined` — `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses — the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally: the decline is one question long, not a state the connection is left in — `"disabled"` when the server has conversations switched off, `"error"` on an unreadable ledger, and `"unavailable"` for the five remaining causes, which are deliberately not told apart. Only a value that is not a non-empty string is refused, with `400` — that is a malformed request rather than a runtime condition |
+| `catalog` | string | On a server-level connection | The database the run reads on a connection that reaches a whole server (#1530). **Required** exactly where Studio honours the connection's catalog sessions (its provider declares `catalogSessions`, `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds its engine, and it names no database and no connection string) and refused on every other connection, both with `400`, the refusal saying which condition fails where the provider declares sessions Studio does not honour; a database the role cannot open is refused before the run exists. It is recorded on the run and echoed back, part of the run's connection identity, and the run, its resumed drives and its hand-over read that database alone |
+| `previousRunId` | string | No | Continue the **conversation** a run this session opened belongs to. The server derives the earlier steps' objectives and the most recent step's report from those runs' own ledgers, verifies the named run belongs to this session, is on this connection and has ended, and persists the result as `thread` on the new run's header. A run it cannot reach **does not refuse the start**: the run opens carrying no conversation and the response says so through `thread.declined`: `"repointed"` when the predecessor was reachable but was established against a different database than this connection now addresses (the run still opens, and it records the connection as it now addresses it, so a follow-up naming **that** run carries normally, because the decline is one question long, not a state the connection is left in); `"disabled"` when the server has conversations switched off; `"error"` on an unreadable ledger, including the caller's own ledger that names a statement language, workflow or goal rule this Studio does not have; and `"unavailable"` for the five remaining causes, which are deliberately not told apart, someone else's such ledger among them. Only a value that is not a non-empty string is refused, with `400`: that is a malformed request rather than a runtime condition |
 
 **Response (202 Accepted):**
 
@@ -2019,7 +2248,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it takes the operational readings this engine offers agent mode. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 
@@ -2034,14 +2263,15 @@ could arrive twice.
 }
 ```
 
-> **The engine refusal is a `400`, and it changed this contract.** Since #512 an `agent` run whose
-> `workflowType` sends a statement — every workflow but `operations` — is refused here when the
-> connection's provider implements no read-only statement path, and `error` carries the
-> posture's whole paragraph. It is refused **before a run id exists**: a client that used to receive
+> **The engine refusal is a `400`, and it changed this contract.**
+> Since #512 an `agent` run whose `workflowType` sends a statement, which is every workflow but `operations`, is refused here when the connection's engine is not on Studio's review record (`AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts`), and `error` carries the posture's whole paragraph.
+> It is refused **before a run id exists**: a client that used to receive
 > `202` for `investigation` on Oracle and then read `engine-unsupported` off the run receives `400`
-> and no run. `operations` is admitted on every engine because it sends no statement at all, and a
-> `planning` run is never refused this way — it executes nothing anywhere. The refusal reads the
-> same fact the provider factory does (`typeof provider.queryReadOnly`), so the two cannot disagree.
+> and no run. `operations` is admitted on every engine that offers agent mode a curated reading, because it sends no statement at all, and a
+> `planning` run is never refused this way: it executes nothing anywhere.
+> On an engine that offers no curated reading to the agent (MQTT, Sparkplug B, OPC UA and MTConnect), an `agent` `operations` run is refused `400` with the same `refused` value and the `agent-readings` requirement's sentence.
+> The refusal reads the same record the provider factory does, not `typeof provider.queryReadOnly`, so the two cannot disagree.
+> An engine with a statement language that the record does not list is answered in a sentence of its own naming it, under the same `refused` value.
 >
 > **It is the only `400` here that carries `refused`**, and the value is `"engine-unsupported"` —
 > the same name the fact travels under as an `AgentRunFailureReason` on a run that ended this way,
@@ -2057,6 +2287,9 @@ could arrive twice.
 > of a second copy (#513). A client that ignores the field and renders `error` is correct; a client
 > that discriminates on the `400` alone is not, and would relabel a malformed `mode`, or an
 > `autoExecute` asked for on a workflow that presents no answer, as the engine's refusal.
+>
+> A `connectionId` naming a seed entry whose type names no provider ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)) answers in that shared shape too, with `code` `"PROVIDER_UNKNOWN"`, the sentence that quotes its type and no `refused`.
+> It is answered before the engine check and before the model is probed.
 
 > `422` rather than `400`: the request is well-formed and it is the server's configuration that
 > cannot honour it. Only a **positively established** incapability refuses this way — a bad key, a
@@ -2140,6 +2373,7 @@ and the auto-execute gate declined it (`handover` is `applied` or `none`), with 
 warning in the message — the statement belongs in the editor unrun, and this route will not do what
 the run decided against. A row or byte budget overrun **refuses** rather than truncating, exactly as
 the agent's own read path does.
+A failure whose text held a credential of the connection keeps its own status, `code`, `kind` and `outcome`, with only its text replaced, as [Error Response Format](#error-response-format) describes.
 
 #### POST /api/agent/drive
 
@@ -2150,6 +2384,8 @@ it names one run, authorizes one thing — driving it — and its signing key is
 one: `401 { "error": "A valid agent drive credential is required" }`, audited as a
 `permission_denied` event. `404` for an unknown run, `409` for a run that has already ended (the
 message is not retryable, so a queue should stop delivering it).
+A run whose ledger names an id this Studio does not have answers `409` with code `AGENT_RUN_UNAVAILABLE` too, before its connection is resolved or a provider or model is built, for the same reason: no delivery to this server can drive it.
+Any other failure answers as the agent runs route does, with its own status, code, kind and outcome, and a text that held a credential of the run's connection replaced by Studio's sentence.
 
 Nothing in the product produces a drive delivery yet, so this route's callers today are its tests.
 
@@ -2264,7 +2500,21 @@ Auth required. Merges a client's localStorage payload into server storage on fir
 Auth required. Returns seed/managed connections for the current user's role. A `managed: true` connection has every secret-classified field stripped (`password`, `connectionString`, `apiKeyId`, `apiKeySecret`, `ssl.clientKey`); a `managed: false` one is returned whole, because the browser edits it. `cacheHint` is the client cache TTL in ms (`SEED_CACHE_TTL_MS`, default 60000). See [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md).
 
 ```json
-{ "connections": [], "cacheHint": 60000 }
+{ "connections": [], "cacheHint": 60000, "pendingSeeds": [], "unavailableSamples": [] }
+```
+
+`pendingSeeds` lists the seed ids of the built-in samples whose copy at boot is still in flight, `sqlite-embedded-sample` and `libredb-embedded-sample`, in that order; a client polls while it is not empty, so a sample appears without a page refresh.
+`unavailableSamples` lists the built-in samples offered to the session's roles whose copy failed, whose target was refused or could not be checked, or whose file was lost after boot, so they have no file and are not in `connections` ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+The SQLite sample is offered to the `admin` role only, and the LibreDB sample to every role.
+Each entry carries `seedId`, `name`, `reason` (`asset-directory-unset`, `asset-missing`, `asset-unreadable`, `digest-mismatch`, `copy-failed`, `copy-defect`, `target-unreadable`, `target-reserved`, `target-conflict` or `target-lost`) and `sentence`, which a client shows and which names no path:
+
+```json
+{
+  "seedId": "sqlite-embedded-sample",
+  "name": "Sample (Employees)",
+  "reason": "asset-missing",
+  "sentence": "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied. The server log names the path."
+}
 ```
 
 A failure the endpoint attributes to its **own seed configuration** says so, so a client can tell
@@ -2275,6 +2525,9 @@ its seeds":
 { "error": "Failed to load managed connections", "reason": "seed-config-unreadable" }
 ```
 
+A seed entry whose type names no provider this Studio has is listed for the roles it names, after the file's other connections, as a record of the fields Studio reads from it and no others: `id`, `name`, `type` as written, `environment`, `group`, `color` and `mcp` where the file sets them, `managed: true` whatever the file says, `roles`, `seedId` and `createdAt` ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
+A client reads whether a listed connection is available from its `type`, as it does for a stored one; every route that names such a record answers `400 PROVIDER_UNKNOWN`.
+
 `500` with `reason: "seed-config-unreadable"` means `seed-connections.yaml` could not be read or
 parsed. A `500` **without** `reason` is any other failure of the request and is not a claim about
 that file. The browser holds the second as an unread seed list rather than an empty one, which is
@@ -2284,7 +2537,7 @@ configuration is what failed.
 In governance mode (`GOVERNANCE_SOURCE` set, [`docs/GOVERNANCE.md`](GOVERNANCE.md)) it lists the connections the session's identity provider subject holds an unexpired grant on, by name, for an admin as for a user, and nothing for a session without a subject.
 Each is a `managed: true` record of the credential of the grant's level, with every secret-classified field stripped and `queryTimeout: 60000`, and no server-only field.
 Its `access` is `"read"` or `"write"`, the level of that credential, so a client can show a connection as read only before a write fails.
-`cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` is `[]`.
+`cacheHint` is `10000`, so a grant made or revoked in the control plane reaches the list within seconds, and `pendingSeeds` and `unavailableSamples` are `[]`.
 While the governance snapshot cannot be served (still loading, older than `GOVERNANCE_MAX_STALENESS_MS`, misconfigured or incompatible) it answers `503` instead of an empty list:
 
 ```json
@@ -2337,7 +2590,7 @@ While the governance snapshot cannot be served, every such request answers `503`
 
 A connection the request supplies is refused with `403` and the code `CUSTOM_CONNECTIONS_DISABLED` in every state, as `GET /api/connections/policy` describes.
 
-With the runtime setting `queryLog.onSinkFailure` set to `refuse`, a request that would run a statement answers `503` before the statement reaches the database while Studio cannot record query events: it is backing off after a failed insert of query events, or its query event queue holds at least 9000 events, 90% of its capacity ([`docs/GOVERNANCE.md`](GOVERNANCE.md#query-events)).
+With the runtime setting `queryLog.onSinkFailure` set to `refuse`, a request that would run a statement answers `503` before the statement reaches the database while Studio cannot record query events: it is backing off after a failed insert of query events, its query event queue holds at least 9000 events, 90% of its capacity, or the shutdown has closed its query event sink ([`docs/GOVERNANCE.md`](GOVERNANCE.md#query-events)).
 A row the governance source refused for good never causes it, and with `continue`, the default, no request is refused:
 
 ```json
@@ -2361,6 +2614,7 @@ Nothing of the request runs, and no connection is opened with the new credential
 ```
 
 `rolledBack` is `false` when the rollback failed or did not finish within 5 seconds: the error then says that Studio could not confirm it, and the failure is logged.
+It is also `false` when a call of the caller's was still running on the transaction, one Studio stopped waiting for or one not answered yet, or when a call whose outcome Studio does not know left no transaction to roll back: that call may have ended the transaction first, so the error says Studio cannot tell whether its changes were committed or rolled back: "Your access to this connection changed while your transaction was open, so the transaction cannot continue. A call of yours whose outcome Studio does not know may have ended it before Studio's rollback, so Studio cannot tell whether its changes were committed or rolled back; check the data before you run its work again. Begin a new transaction to continue with your current access."
 The transaction is released either way, so the next request runs with the new credential, and a `begin` opens a new transaction there.
 
 ---
@@ -2380,6 +2634,8 @@ Events of type `agent_operation` come from the agent execution path (#328) and a
 Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing. `401` with no session, `403` with a session that is not an admin — see the note above.
 Each connection is resolved the way the db routes resolve one: a managed seed by its `seedId`, a copy that claims a `seed:` id by the operator's record (so a seed that no longer exists is an `error` row), and an inline connection as sent, or as an `error` row while `ALLOW_CUSTOM_CONNECTIONS` is off.
 `status` is `healthy`, `degraded` (the check took over 5 s), `error`, or `not-checked`.
+`databaseSizeBytes` comes from the engine's overview panel, read only where the engine's `ENGINE_FACETS` row offers it; elsewhere the field is absent and no overview is read.
+It is also absent where the engine offers the overview but the overview read failed: the row does not report that failure, and its `status` still comes from the health read alone.
 A `not-checked` row is a connection whose provider declares `resumesBilledCompute`: the route reads that from an unconnected provider and answers with `latencyMs: 0`, caching no provider and sending no statement, since a check would resume compute the engine bills for (a suspended Databend Cloud warehouse).
 The admin Overview shows it as not checked and keeps it out of the health score and the average latency.
 
@@ -2428,14 +2684,16 @@ It answers `500` only when building the status throws, such as when the keyring 
 
 The status of the operator seed sources ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#diagnostics)), read by the admin Overview page.
 It goes through the shared route guard: `401` with no session, `403` for a non-admin.
-It answers `{ "sources": [{ "source", "location", "state", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "id", "name", "type" }], "skipped": [{ "id", "origin", "reason", "variable"?, "field"? }], "notes": [...] }] }`, one entry per enabled source in load order, where `state` is `ok`, `empty`, `missing` or `error`.
+It answers `{ "sources": [{ "source", "location", "state", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "id", "name", "type" }], "skipped": [{ "id", "origin", "reason", "variable"?, "field"? }], "notes": [...], "unavailable": [{ "id", "name", "type", "origin", "reason" }] }] }`, one entry per enabled source in load order, where `state` is `ok`, `empty`, `missing` or `error`.
+`unavailable` lists the entries whose type names no provider this Studio has, each with its type as written and, in `reason`, the sentence every route refuses it with; a source that lists anything, connected or unavailable, is `ok`.
 The only operator source today is `SEED_CONFIG_PATH`, so `sources` holds at most that one entry: `source` is `"SEED_CONFIG_PATH"` and `location` is the seed file's path.
 In governance mode (`GOVERNANCE_SOURCE` set) no operator source is read, so it answers `{ "sources": [] }` ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
 `missing` is a file named explicitly in `SEED_CONFIG_PATH` that does not exist; the default path absent is `empty`.
 `error.code` is `unreadable`, `unparseable`, `invalid` or `duplicate-id`.
 `notes` is always empty.
 Further operator sources add their own entries, error codes and notes; the response shape does not change.
-Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file.
+Every message, skip and note names files, variables, fields and ids only, never a value, and the answer never quotes a seed file, with one exception: an entry listed in `unavailable` carries its type as written, in `type` and quoted in `reason`.
+Only a type shaped as a type id can be listed so ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
 A source that fails is reported here with `state: "error"` while `GET /api/connections/managed` answers `500` with `reason: "seed-config-unreadable"`; this route answers `500` only when reading the status itself throws.
 
 ---
@@ -2465,9 +2723,10 @@ The object is one shape on the wire. Fields the server reads from a request body
 change how a connection is opened — are the coordinates and credentials (`id`, `name`, `type`,
 `host`, `port`, `user`, `password`, `database`, `schema`, `connectionString`), plus `ssl`,
 `sshTunnel`, `serviceName` (Oracle), `instanceName` (MSSQL), `localDataCenter` (Cassandra),
-`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath` (OPC UA), `authMethod`, `privateKey`, `privateKeyPassphrase` and `role` (Snowflake), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
+`authSource` (MongoDB), `saslMechanism` (Kafka), `allowInsecureAuth` (Db2, InfluxDB, InfluxDB 3, Oxia, Databend, S3, MQTT, RabbitMQ, SNMP), `dataServers` (Oxia), `warehouse` (Databend, Snowflake), `region` (S3), `apiPath` (Kubernetes, RabbitMQ), `namespaces` and `tlsServerName` (Kubernetes), `location` (BigQuery), `amqpPort` (RabbitMQ), `securityMode` and `serverCertificateThumbprint` (OPC UA), `authMethod` and `role` (Snowflake), `privateKey` and `privateKeyPassphrase` (Snowflake, NETCONF), `hostKeyFingerprint` (NETCONF), `queryTimeout`, `agentUser`, `agentPassword`, `apiKeyId`/`apiKeySecret`
 (Elasticsearch, #708), and `readOnly` (#1089). `color`, `environment`, `group`,
 `managed`, `seedId`, and `createdAt` are client-side bookkeeping that travel in the same object.
+OPC UA's `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath`, and `agentReadRoots`, are set only by the operator's seed file: a connection a request body supplies inline that sets one is refused with `400`, naming the field, and `GET /api/connections/managed` never lists them.
 
 ```typescript
 interface DatabaseConnection {
@@ -2502,15 +2761,15 @@ interface DatabaseConnection {
   tlsServerName?: string; // Kubernetes only: the host name the API server's certificate is checked against and sent as SNI (kubeconfig tls-server-name)
   securityMode?: string;  // OPC UA only: the security mode asked of the server, None, Sign or SignAndEncrypt. Studio's own SSLMode does not map onto these, so the field carries OPC UA's own name; a mode the server does not offer is refused rather than quietly weakened
   serverCertificateThumbprint?: string; // OPC UA only: the SHA-256 thumbprint the server's certificate must present, 64 hexadecimal characters (colons and spaces ignored). Without it any certificate the trust list accepts is accepted, and the library's default trust list accepts a server on first sight
-  securityPolicyUri?: string; // OPC UA only, seed file only (no dialog field): the security policy to insist on. An endpoint is a mode AND a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair
-  clientCertificatePath?: string; // OPC UA only, seed file only (no dialog field): the client certificate to present, as a path on the host. Supplied with clientPrivateKeyPath or not at all; absent, the library generates one under the PKI root
-  clientPrivateKeyPath?: string;  // OPC UA only, seed file only (no dialog field): the private key for clientCertificatePath. A path and never a key, so the key itself never enters a connection record
+  securityPolicyUri?: string; // OPC UA only, seed file only (no dialog field): the security policy to insist on. An endpoint is a mode AND a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair; never listed to the browser, refused inline
+  clientCertificatePath?: string; // OPC UA only, seed file only (no dialog field): the client certificate to present, as a path on the host. Supplied with clientPrivateKeyPath or not at all; absent, the library generates one under the PKI root; refused when it names one of Studio's own storage files, never listed to the browser, refused inline
+  clientPrivateKeyPath?: string;  // OPC UA only, seed file only (no dialog field): the private key for clientCertificatePath. A path and never a key, so the key itself never enters a connection record; refused when it names one of Studio's own storage files, never listed to the browser, refused inline
   location?: string;    // BigQuery only: where jobs run (EU, US, europe-west3, ...); absent, the provider detects it from the datasets. Not a secret
   amqpPort?: string;    // RabbitMQ only: the AMQP 0-9-1 port of stream reads; empty means browse only.
   authMethod?: 'keypair' | 'pat'; // Snowflake only: the sign-in method, a key-pair JWT signed with privateKey or a programmatic access token in password; absent means keypair. Not the SSH tunnel's sshTunnel.authMethod. Not a secret
-  privateKey?: string;  // Snowflake only: the PEM private key's contents, PKCS#8 or PKCS#1, encrypted or not; never a path. Secret-classified
-  privateKeyPassphrase?: string;
-  hostKeyFingerprint?: string; // Snowflake only: the passphrase of an encrypted privateKey. Secret-classified
+  privateKey?: string;  // Snowflake and NETCONF: a private key's contents, never a path; Snowflake signs the key-pair JWT with it (PEM, PKCS#8 or PKCS#1, encrypted or not), NETCONF signs in to the device's SSH server with it. Secret-classified
+  privateKeyPassphrase?: string; // Snowflake and NETCONF: the passphrase of an encrypted privateKey. Secret-classified
+  hostKeyFingerprint?: string; // NETCONF only: the SSH host key the device must present, pinned. Public key material, readable and identity-classified, so it is bound into every sealed credential of the connection
   role?: string;        // Snowflake only: the role every statement runs as, sent on every request; part of the connection's identity. Not a secret
   skipObjectScan?: boolean; // read no catalog when this connection opens: zero reads on connect, so the editor is usable immediately and the object tree offers a load action instead of scanning (#765, an Oracle owner with 43,512 tables froze the browser on connect). It defers the CATALOG, not the walk: a connection that also declares `keyScan` keeps the sidebar's Objects / Keys switch, and the switch reads nothing, because the key panel mounts only when Keys is chosen and then takes the same bounded sample (#1169)
   readOnly?: boolean;      // refuse writes, value edits and maintenance before any request (#1089). Accepted only where the engine's provider enforces it: true anywhere else is refused at seed load and before any provider is built, and a value that is not a boolean is refused everywhere
@@ -2519,7 +2778,7 @@ interface DatabaseConnection {
   agentUser?: string;      // optional least-privilege principal every agent execution profile and MCP call signs in as (#328); a seed may set it, on a managed seed only (docs/SEED_CONNECTIONS.md)
   agentPassword?: string;  // that principal's secret, or the agent's whole token or key; secret-classified, sealed at rest by connection-secrets; a seed may set it, on a managed seed only
   agentReadRoots?: readonly string[]; // OPC UA only: the read roots, node ids written with their namespace URI, beneath which agent mode and MCP read; set only by the seed file, never listed to the browser, refused inline
-  apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not public like user. OpenSearch refuses the pair
+  apiKeyId?: string;       // Elasticsearch only (#708): API key pair, sent in preference to user/password when both halves are set (trimmed). Secret-classified like agentPassword, not readable like user. OpenSearch refuses the pair
   apiKeySecret?: string;   // the pair's secret half; either alone (after trim) falls back to user/password rather than sending a key built from an empty half
   registerMap?: string;    // Modbus only: the register map, as the JSON document the provider parses - a list of points, each naming a unit, a table, a zero-based PDU address and a type. Bounded at 65536 bytes, checked before the parse; public-classified, because Modbus TCP defines no authentication and the document carries nothing to leak
 }
@@ -2695,6 +2954,7 @@ interface ActiveSession {
 | `401` | Unauthorized - Missing or invalid authentication |
 | `403` | Forbidden - Insufficient permissions: a database refused a statement for a privilege its credential lacks (`PERMISSION_DENIED`), or Studio's own policy refused the request; or the request's Origin does not match this deployment (`ORIGIN_MISMATCH`) |
 | `413` | Payload Too Large - the request body, or one part's text, is above the object edit routes' own bound, or a statement is above the console text bound its connection type declares (`POST /api/db/query`) |
+| `428` | Precondition Required - the statement needs a confirmation before it runs (`CONFIRMATION_REQUIRED`): send the request again with the token in the answer (see [Server confirmation of a run](#server-confirmation-of-a-run)) |
 | `429` | Too Many Requests - Rate limit exceeded. Applies to `POST /api/auth/login` and every session-guarded route (see "Rate Limiting" below), not only the AI endpoints |
 | `499` | Client Closed Request - Query cancelled by the client |
 | `500` | Internal Server Error |
@@ -2710,6 +2970,16 @@ interface ActiveSession {
   "code": "ERROR_CODE"
 }
 ```
+
+On every route under `/api/db` that answers a provider's error (the object routes under `/api/db/objects` among them; `POST /api/db/disconnect` answers none, since the factory logs a provider's failure to disconnect), on `POST /api/admin/fleet-health` and on `POST /api/agent/runs`, `POST /api/agent/runs/{runId}/handover` and `POST /api/agent/drive`, an error of any class whose text holds a credential of the request's connection, in any form Studio derives from it, answers Studio's own sentence in `error`, naming the error's class and saying its text was withheld, and the server log line written for it carries that sentence in place of the error.
+The provider factory's log lines about a provider or an SSH tunnel that failed to roll back, disconnect or close, `POST /api/db/disconnect`'s among them, carry Studio's sentence naming the error's class in place of an error whose text holds a credential of the connection that provider was built for.
+The HTTP status, `code`, `kind`, `outcome` and `retryable` are the error's own, and an answer that is already a fixed sentence of Studio's keeps it.
+A database error's `details` then keeps only `position`, and `fixStatement` is left out.
+A script statement's `error` and every warning's `message`, string `code` and `severity` follow the same rule, and a warning field that holds such a form answers `(Studio withheld this text because it contained a credential of this connection)`.
+An object read's `unavailable`, `sampledFrom`, `indexes.unavailable` and the provider's `truncated.reason`, and a source part's `unavailable`, `truncated.reason` and refused `edit.reason`, follow the same rule and answer that sentence; a source part that the route also bounded keeps Studio's bound sentence after it.
+A monitoring answer's `errors` entries, a maintenance answer's `message`, a maintenance preview's `summary`, `refusal` and `note`, a key page's `skipped.reason`, `readOutcome.endReason` and each `readOutcome.provenLoss` entry, an object edit refusal's `sentence`, `code` and `hint`, a plan's unavailable `revision.reason`, a pre-image's `truncated.reason`, and an apply outcome's conflict `sentence` and `code`, `current.truncated.reason`, interrupted `sentence` and unavailable `revision.reason` follow the same rule and answer that sentence.
+Figures, rows, facts, key names and an object's text are answered as the database gave them.
+A column profile's `error` and `warnings` and a fleet health item's `error` follow it as well, and answer Studio's sentence naming the error's class.
 
 ### Error Codes
 
@@ -2729,14 +2999,18 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 |------|-------------|
 | `QUERY_ERROR` | SQL syntax or execution error (400) |
 | `QUERY_CANCELLED` | Query cancelled by the client (499) |
-| `CONFIG_ERROR` | Invalid database configuration (400) |
+| `CONFIG_ERROR` | Invalid database configuration (400), or a `LIBREDB_RUN_CONFIRMATION` value the run routes or the VS Code extension's backend cannot read (400 on every run they classify) |
+| `CONFIRMATION_REQUIRED` | The statement needs a confirmation before it runs (428): the request asked, `LIBREDB_RUN_CONFIRMATION` is `required`, or the request sent a token without the typed value its statement asks for. Nothing ran; the body's `confirmation` carries the token and the `typedConfirmation` to send back as `typed`. Answered by the run routes rather than `createErrorResponse`, and by the VS Code extension backend's `query/run` as a JSON-RPC error of code 428 with the offer in `data.confirmation`; see [Server confirmation of a run](#server-confirmation-of-a-run) |
+| `CONFIRMATION_INVALID` | The confirmation the request sent does not confirm it (400): the sentence says whether the token could not be verified, expired, was already used, or was issued for another route, session, connection, statement or reading of the statement, or whether the typed value does not match or was sent for a statement that asks none. Nothing ran. The VS Code extension backend's `query/run` answers it too |
+| `PROVIDER_UNKNOWN` | The connection's `type` is absent, not text, or names no provider this Studio has (400), answered before any provider is built or any SSH tunnel opened, with a sentence that quotes the type when it is a non-empty string; the type ids are the `type DatabaseType` union this page lists |
+| `FACET_NOT_OFFERED` | The request names a maintenance operation the connection's engine does not offer (400), answered before any provider is built or any SSH tunnel opened, or one the connected server does not accept, answered after connect; the sentence names the operation and the engine (`POST /api/db/maintenance` and its preview) |
 | `AUTH_ERROR` | A database refused the credential (401), read from the driver's code as the paragraph above says |
 | `PERMISSION_DENIED` | A database accepted the credential and refused the statement for a privilege that credential lacks (403), with `"Permission denied: "` in front of the engine's own sentence; read from the driver's code as the paragraph above says. The browser treats it as the statement's error and never signs in again for it |
 | `CUSTOM_CONNECTIONS_DISABLED` | `ALLOW_CUSTOM_CONNECTIONS` is off, or governance mode is on, and the request supplied a connection that is not a seed (403); see `GET /api/connections/policy`. A seed the caller's role may not open is refused with `AUTH_ERROR` (403) instead |
 | `CONNECTION_NOT_FOUND` | Governance mode only: the connection a request names does not exist or is not granted to the caller (404), and the two are indistinguishable; see [Connections under governance](#connections-under-governance) |
 | `GOVERNANCE_UNAVAILABLE` | Governance mode only: the governance snapshot is still loading, too old, misconfigured or incompatible (503), so `GET /api/connections/managed` and every database route that opens a connection answer it instead, and `GET /api/ready` names the state; see [Connections under governance](#connections-under-governance) and [GOVERNANCE.md](./GOVERNANCE.md#api-codes) |
-| `AUDIT_UNAVAILABLE` | Governance mode only: the runtime setting `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events, because it is backing off after a failed insert of query events or its query event queue is at least 90% full (503), so the request was refused before any statement ran; see [Connections under governance](#connections-under-governance) |
-| `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
+| `AUDIT_UNAVAILABLE` | Governance mode only: the runtime setting `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events, because it is backing off after a failed insert of query events, its query event queue is at least 90% full, or the shutdown has closed its query event sink (503), so the request was refused before any statement ran; see [Connections under governance](#connections-under-governance) |
+| `TRANSACTION_CREDENTIAL_CHANGED` | Governance mode only: the caller's grant level or the connection's credential changed while the caller's transaction was open, so `POST /api/db/transaction` rolled it back and answered this instead of the request (409), with `rolledBack` saying whether the rollback was confirmed and the transaction is known to have been rolled back. Answered by the route rather than `createErrorResponse`; see [Connections under governance](#connections-under-governance) |
 | `AI_DISABLED` | Governance mode only: the control plane set the runtime setting `ai.enabled` to `false`, so a route of the AI bucket refused a signed-in caller before any LLM provider was built (403). Answered by the route guard rather than `createErrorResponse`; see [AI API](#ai-api) |
 | `AUTH_REQUIRED` | No Studio session, or one that no longer verifies (401). Answered by the middleware and the route-level session checks rather than `createErrorResponse`; the only 401 the browser answers by sending the user to sign in |
 | `ACCOUNT_STORE_UNAVAILABLE` | The account store could not be read to check whether the signed-in account is still permitted (503). Answered by the route guard (`guardRoute`), `GET /api/auth/me`, and `/api/mcp` without deleting the session cookie; a client keeps its credentials and retries (#1942) |
@@ -2744,7 +3018,10 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 | `BEARER_NO_ROLE` | A bearer access token verified, but its claims map to no role Studio accepts (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
 | `BEARER_NO_IDENTITY` | A bearer access token verified, but it carries no `sub` or no username Studio can use (403). Answered by the middleware; a fresh token is refused the same way until an administrator changes the account |
 | `ADMIN_REQUIRED` | The session is valid and the route is for admins only (403). Answered by the route rather than `createErrorResponse` |
+| `AGENT_RUN_UNAVAILABLE` | An agent run's ledger names a statement language, workflow or goal rule this Studio does not have, or has retired (409). Answered by the agent run routes and `POST /api/agent/drive` rather than `createErrorResponse`. The run routes answer it to the run's owner alone, and anyone else the `404` of a missing run; the drive route answers it to the holder of the drive credential that names the run (see [Agent API](#agent-api)) |
 | `TRANSACTION_NOT_OWNED` | The transaction open on the connection belongs to another session (409), with `startedAt` and `availableAt`. Answered by `POST /api/db/transaction` rather than `createErrorResponse` |
+| `TRANSACTION_CALL_RUNNING` | A call of the caller's that Studio stopped waiting for is still running on the caller's own transaction (409), so a `begin`, `query`, `commit` or `rollback` was refused before it was sent; the `status` action is still answered, and the request succeeds once that call has finished. Answered by `POST /api/db/transaction` rather than `createErrorResponse` |
+| `TRANSACTION_LOST` | The database session the open transaction ran on has ended, so the server ended the transaction with it and the provider holds none (503, not `retryable`). Answered by `POST /api/db/transaction` for a statement, COMMIT or ROLLBACK; the editor leaves transaction mode on it. The answer carries `outcome: "not-sent"` where the provider found the session ended before sending the call (PostgreSQL's document says so). A COMMIT that reached the server before the session ended stays committed, so the data is checked before the work runs again ([PostgreSQL §8.0.2](./providers/postgres.md#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 | `WORKSPACE_OWNER_MISMATCH` | The request's `X-LibreDB-Workspace-Owner` header names an account other than the signed-in one (409). Answered by the middleware rather than `createErrorResponse`; the browser reloads the tab for it (see [Storage API](#storage-api)) |
 | `TIMEOUT_ERROR` | Query exceeded time limit (504, never 408, which a browser sends again); `POST /api/ai/query-safety` answers it with 504 when the model does not answer in time |
 | `CONNECTION_ERROR` | Database connection failed (503) |
@@ -2766,6 +3043,58 @@ These are the values of the `code` field emitted by `createErrorResponse` (`src/
 The Origin-mismatch 403 (see "CSRF: Origin Check" below) is not in this table: it is returned
 directly by the request middleware (`src/proxy.ts`), before a request ever reaches
 `createErrorResponse`, and carries `code: "ORIGIN_MISMATCH"` instead of one of the codes above.
+
+### Error kind and outcome
+
+Every database error body `createErrorResponse` answers carries `kind` and `outcome` beside `code`.
+An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
+Both are closed vocabularies and never hold the error's text.
+A route that resolves the calling connection and reaches its provider (every such route under `/api/db`, the object routes among them, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
+An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
+
+`kind` names the class of failure, so a client can branch on it without reading the sentence:
+
+| Kind | Failure |
+|------|---------|
+| `database` | A database error no narrower kind names |
+| `config` | The connection's configuration is missing or refused |
+| `unknown-provider` | The connection's type names no provider this Studio has |
+| `not-offered` | The request names a facet member the engine does not offer |
+| `connection` | The connection could not be opened, or broke |
+| `transaction-lost` | The database session of the open transaction has ended |
+| `authentication` | The database refused the credential |
+| `permission` | The database refused the statement for a privilege the credential lacks |
+| `pool-exhausted` | No connection was free in the pool |
+| `query` | The statement failed on the database, or a bound Studio set on it refused it |
+| `offset-unsupported` | The engine's query language cannot page a result by offset |
+| `refused-before-send` | Studio or the provider refused the statement before sending it |
+| `read-allowance-exceeded` | The read would spend more billed reads than the run has left |
+| `row-budget-refusal` | A provider refused its answer for holding more rows than the read's row budget, on the agent, hand-over or MCP read path |
+| `byte-budget-refusal` | A provider refused its answer for holding more bytes than the read's byte budget, on the agent, hand-over or MCP read path |
+| `time-budget-refusal` | A provider refused a read that outlasted the read's time budget, on the agent, hand-over or MCP read path |
+| `cut-value-refusal` | A provider refused a value the server cut at the byte ceiling, which the byte budget cannot measure whole (SQL Server) |
+| `serialised-result-refusal` | A provider refused a FOR JSON or FOR XML result, one serialised value the row budget cannot bound (SQL Server) |
+| `studio-row-budget-refusal` | Studio's own row budget refused a provider's answer for holding more rows than the read's row budget, on the agent, hand-over or MCP read path |
+| `studio-byte-budget-refusal` | Studio's own byte budget refused a provider's answer for holding more bytes than the read's byte budget, on the agent, hand-over or MCP read path |
+| `studio-time-budget-refusal` | Studio stopped waiting for a provider's answer at the read's time budget, on the agent, hand-over or MCP read path |
+| `timeout` | The statement reached its time limit |
+| `studio-timeout-refusal` | A time limit Studio set on its own read ran out, such as the agent's statistics read |
+| `cancelled` | The statement was cancelled |
+| `execution-profile` | A provider refused the read-only execution profile |
+| `studio-profile-refusal` | Studio refused the read-only execution profile |
+| `provider-text-withheld` | Studio withheld the error's text because it held a credential of the connection |
+| `internal` | Any other failure |
+
+No route body carries `execution-profile`, `studio-profile-refusal` or `internal`: the routes answer those failures as `INTERNAL_ERROR`, which carries no kind.
+
+A provider's budget refusal made before it sent anything answers `refused-before-send`, and one a provider raises as a timeout answers `timeout`.
+
+`outcome` says whether the statement may have reached the database:
+
+- `not-sent`: the provider's connect failed, Studio refused the connection while building its provider, Studio refused the statement before sending it, the provider could not take a connection from its pool before sending the statement (the engine's document says whether it can tell), or the provider found the held transaction's session already ended and sent nothing, so the database never received it.
+- `unknown`: any other failure. The statement may have reached the database and run even though the answer is an error, so check the data before running work that changes it again.
+
+Neither value makes any Studio client send the request again, as for `retryable`.
 
 ---
 
@@ -3038,7 +3367,8 @@ async function streamAIExplanation(query: string, explainPlan: string) {
 | `ADMIN_EMAIL` | No | Admin login email (default `admin@libredb.org`) |
 | `USER_PASSWORD` | No | Optional lower-privilege account password; the `user` account exists only when this is set |
 | `USER_EMAIL` | No | Regular-user login email (default `user@libredb.org`, only used when `USER_PASSWORD` is set) |
-| `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset. `true`, `on`, or `1` blocks HTTP database requests, RabbitMQ's AMQP dial and MQTT's dial to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. Invalid values fail closed for HTTP databases, RabbitMQ and MQTT. Other non-HTTP drivers and SSH tunnel hosts are outside this guard; HTTP and MQTT connections through an SSH tunnel are refused while it is enabled. MQTT's dial also refuses link-local and instance metadata addresses whatever the flag says. |
+| `DB_HTTP_BLOCK_PRIVATE_HOSTS` | No | Off when unset or empty. `true`, `on`, or `1` (trimmed, any case) blocks the connections of the engines that [`SECURITY.md`](./SECURITY.md#known-limits) "Known limits" lists under the HTTP destination guard (their HTTP requests, the AMQP, MQTT, Modbus, NETCONF and Sparkplug B dials and SNMP's agent lookup) to loopback, private, link-local, unique-local and selected special-use addresses; `false`, `off`, or `0` allows them. DNS answers are checked at socket connection time. With it on, the transports that otherwise use `fetch` (ClickHouse, Druid, Trino, libSQL, Elasticsearch, OpenSearch, and Couchbase and Prometheus without TLS) send through Node's `http.request` or `https.request` and decode a gzip, deflate or br answer themselves: an answer with no body (204, 205, 304, or the answer to HEAD) is handed on without one and nothing is decoded, and a body that fails to decode fails the read with an error naming zlib's reason and code, such as `incorrect header check (Z_DATA_ERROR)`. Studio reads it once per process and logs the decision and whether it is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides; any other value stops the server at boot, naming the variable, and in the published package and the VS Code extension refuses every provider call. Engines that list does not name, and SSH tunnel hosts, are outside this guard; HTTP and MQTT connections through an SSH tunnel are refused while it is enabled. MQTT's dial also refuses link-local and instance metadata addresses whatever the flag says. |
+| `LIBREDB_RUN_CONFIRMATION` | No | `advisory` when unset or empty, or `required` (trimmed, any case, one pair of quotes stripped). Decides who the run routes refuse when a statement the confirmation gate asks about carries no confirmation token: in `advisory` mode only a request that asks (`"confirmation": "ask"`) or one on a `production` connection, and in `required` mode every request. Any other value stops the server at boot, naming the variable, and is refused on every run the routes classify. The VS Code extension's backend reads it from the environment VS Code was started with and refuses an unreadable value on every run it classifies. See [Server confirmation of a run](#server-confirmation-of-a-run) |
 | `ALLOW_CUSTOM_CONNECTIONS` | No | On when unset, and off in governance mode whatever its value. `false`, `0`, `off` or `no`, or any unrecognised value (it fails closed and logs an error), refuses, with 403, every connection a request supplies that is not a seed, on every route that builds a database provider; see `GET /api/connections/policy` |
 | `LLM_PROVIDER` | No | AI provider: gemini, openai, ollama, custom |
 | `LLM_API_KEY` | No | AI provider API key |

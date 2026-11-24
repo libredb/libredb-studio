@@ -43,6 +43,7 @@ import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -149,6 +150,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider: DatabaseProvider = await acquireExecutionProfileProvider(target, profile);
@@ -289,7 +291,7 @@ async function main(): Promise<void> {
       `refused: ${what} fenced, in its own words (${code}), nothing acquired`,
     );
     check(
-      textOf(unfenced.result).includes(NOT_SENT) && opened === 1,
+      providerRefusalText(unfenced.result, "mqtt").startsWith(NOT_SENT) && opened === 1,
       `refused: ${what} unfenced, refused after the handshake alone (${opened} session)`,
     );
     refused.push({

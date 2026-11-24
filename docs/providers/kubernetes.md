@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/kubernetes/`](../../tests/unit/db/kubernetes/), [`tests/i
 | | |
 |---|---|
 | **Write reach** | none: the request policy, `admitRequest`, admits `GET` and the three self reviews only, before any socket; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 
@@ -40,8 +41,12 @@ The clock, the sleep, the randomness and the transport factory are one injected 
 | `discovery.ts`, `resolve.ts` | Aggregated discovery, its admission and cache, and kubectl's name resolution |
 | `kinds.ts`, `objects.ts`, `source.ts` | The kind table, the tree surface and the YAML view |
 | `table.ts`, `redaction.ts` | Table answers to grids with the paged walk, and the one place Secret data is removed |
-| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every cap |
-| `console/` | The kubectl subset: lexer, command table, parser, one reader per command family, paging |
+| `errors.ts`, `labels.ts`, `monitoring.ts`, `connect-warnings.ts`, `limits.ts` | Studio's error sentences, the labels, health, Test Connection's warnings, every other cap |
+| `console/` | One reader per command family, the run that sends a parsed statement to it, and the console's context |
+
+The kubectl statement language lives in its core family module, `src/lib/languages/kubectl/`, which the provider imports.
+The editor, the confirmation gate, the agent and the provider read the kubectl subset from it: the lexer, the command table, the parser, the paging clause, the confirmation row, the five caps a statement is read against (`constants.ts`) and the quantity reader (`quantity.ts`).
+`tests/unit/db/kubernetes/browser-modules.test.ts` holds every module of the kubectl family to family members, the shared console modules and types.
 
 ## 3. Design decisions
 
@@ -64,7 +69,11 @@ The clock, the sleep, the randomness and the transport factory are one injected 
 | `apiPath` | API path | Optional path every request goes under, such as `/k8s/clusters/c-m-abc12` |
 | `tlsServerName` | TLS server name | Optional name the server's certificate is checked against, a kubeconfig's `tls-server-name` |
 
-There is no User field: basic authentication is refused, and a user name from a seed or the API is refused naming the field.
+There is no User field: basic authentication is refused.
+A user name from a seed or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
+
+> Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.
+
 The SSL / TLS panel carries the CA and a client certificate and key; the SSH tunnel is offered.
 
 ### 4.2 What is refused at connect
@@ -261,6 +270,11 @@ The connection's `agentPassword` alone is the agent's bearer token, because Kube
 Without an agent token, the agent uses the connection's own token.
 That identity's RBAC decides what the agent can see, so give it a ServiceAccount bound to `view`, and to `studio-reader` for the cluster-scoped kinds, as section 4.5 creates.
 
+### 4.12 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+Link-local and instance metadata addresses are never dialled, whatever the variable says, as [section 11](#11-the-read-only-guarantee) says.
+
 ### Connection string
 
 `kubernetes` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/platform/kubernetes/connection-string.ts)).
@@ -319,13 +333,13 @@ The grid pages the list form of a single-type `get` with a paging line of Studio
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
 Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
-Those flags are the console's own `CREDENTIAL_FLAGS` list, which the dialect's row in `QUERY_DIALECTS` names: the row is declared in [`query-dialect.ts`](../../src/lib/db/providers/platform/kubernetes/query-dialect.ts).
+Those flags are the console's own `CREDENTIAL_FLAGS` list in the kubectl family module ([`src/lib/languages/kubectl/commands.ts`](../../src/lib/languages/kubectl/commands.ts)), which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) reads, so the two cannot drift.
 
 ### 5.1 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/platform/kubernetes/sql-grammar.ts`](../../src/lib/db/providers/platform/kubernetes/sql-grammar.ts), the `kubernetes` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kubernetes` takes one kubectl subset statement, words split by POSIX shell rules, and a SQL span reader would report its quoting as unreadable and prompt on every run.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/platform/kubernetes/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kubectl/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -355,7 +369,29 @@ A folder lists the first 1,000 objects; past that its count is "1,000 or more", 
 ## 7. Monitoring & health
 
 Health reads `/readyz` and `/version`; the overview counts nodes and namespaces from the same capped walk as the tree.
-Kubernetes keeps no query log, lists no client sessions and has no tables, so those panels say so.
+Kubernetes keeps no query log, lists no client sessions and has no tables, so only the overview panel is offered: the others are never read and not drawn.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `kubernetes` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/platform/kubernetes/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 
@@ -378,11 +414,12 @@ Plan mode:
 Agent mode:
 - Agent mode runs every workflow on Kubernetes, each as its kubectl variant.
 - The agent reads through `kubectl.query.read`, one kubectl read of at most 4,096 characters under the statement row cap; a watch and the paging clause `# libredb:page` are refused.
-- A statement the console cannot read, a watch and the paging clause are refused before any request as `RefusedBeforeSendError`, so the rail shows them as refused before the database and MCP answers them in Studio's words.
+- A statement the console cannot read, a watch and the paging clause are refused before any request as `RefusedBeforeSendError`, so the rail shows them as refused before the database, and MCP answers them as "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, "Kubernetes provider, bundled with Studio".
 - Resource efficiency adds `inspect_usage` (`cluster.usage.read`), one row per container of a namespace with its metrics-server usage against its requests and limits.
 - Cluster health adds `profile_workloads` (`cluster.workloads.read`), one row per workload of a namespace with its desired and ready counts, restarts, missing requests, limits and probes, and its Warning events.
 - A workload is a Deployment, StatefulSet, DaemonSet, Job, CronJob or bare Pod, or any other controller that owns a pod there, such as an operator's custom resource, a Rollout or an orphan ReplicaSet, whose row has no desired count.
 - Each of the two readings is one statement charge and is refused past 500 rows: `inspect_usage` with advice to narrow by a label selector or ask for a smaller namespace, `profile_workloads`, which takes no selector, with advice to profile a smaller namespace or read the workloads in question with `run_read_query`.
+- Studio holds the rows each reading answers to the same 500-row ceiling and to the run's byte budget again, each row's UTF-8 JSON bytes summed, with the same advice, and stops waiting at the statement timeout (`runReadOnlyReading` in [`read-only-statement.ts`](../../src/lib/db/operations/read-only-statement.ts), [`tests/unit/lib/agent/kubectl-tools.test.ts`](../../tests/unit/lib/agent/kubectl-tools.test.ts)).
 - The agent runs as the agent token of section 4.11 when one is set, else as the connection's token.
 
 What the agent reads is masked in machine mode before it is written, at any depth of any object, pod templates, a ControllerRevision's `data` and pod specs inside custom resources included; keys are kept and values become `<redacted>`:
@@ -412,7 +449,7 @@ MCP:
 - Its admission refuses what an agent run's does, exec, writes and the paging line among them, before anything is acquired; a watch is refused by the machine read; a read past the 1000-row budget is refused with the command's own row-cap advice, and it takes no `offset` and no `database` ([`docs/MCP.md`](../MCP.md)).
 - `inspect_schema` refuses a Kubernetes connection by name and names `run_kubectl_read` in its refusal: it lists the kinds an engine declares as relations, and every Kubernetes kind is `config`, so it has no table to list; the refusal is answered as soon as the connection resolves, before anything is acquired or sent, so no object name, a Secret's included, reaches it.
 - A seed may opt a Kubernetes connection in with `mcp: true`; every MCP read runs as its agent token, `agentPassword` ([an agent credential](../SEED_CONNECTIONS.md#an-agent-credential)), when it sets one, and as its `password`, the ServiceAccount token, otherwise.
-- The operations workflow opens on Kubernetes in both modes, as on every engine, because it sends no statement; its reports of sessions, slow queries, health, storage, table statistics and index usage come back empty or N/A here.
+- The operations workflow opens on Kubernetes in both modes, because it sends no statement; in agent mode it offers only the `health` reading, which comes back with N/A figures here, and refuses every other kind by name before the cluster is reached.
 
 ### 9.1 Agent language pack
 

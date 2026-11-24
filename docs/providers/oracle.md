@@ -12,7 +12,7 @@
 | **Status** | ✅ Implemented & shipped |
 | **Database type id** | `oracle` |
 | **Family** | SQL (relational) |
-| **Driver** | `oracledb` — **Thin mode** (no Instant Client) |
+| **Driver** | `oracledb` 26.0.0 in **Thin mode** (no Instant Client), pinned and patched ([§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read)) |
 | **Query language** | `sql` |
 | **Default port** | `1521` |
 | **Connection pooling** | Yes — `oracledb` pool (`poolMin`/`poolMax`/`poolTimeout`) |
@@ -22,8 +22,9 @@
 | **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
 | **Source** | [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
-| **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
+| **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts), and over the real Thin transport [`tests/integration/db/oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `kill`) and the transaction route all send writes |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.getConnection()`) for a statement or for a transaction's begin, which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -81,7 +82,7 @@ Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
 ```ts
 case 'oracle': {
   const { OracleProvider } = await import('./providers/sql/oracle/index');
-  return new OracleProvider(connection, options);
+  return new OracleProvider(connection, options, context);
 }
 ```
 
@@ -289,7 +290,8 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 
 > ⚠️ `acquireTimeout` (from `DEFAULT_POOL_CONFIG`) and `queryTimeout` (a **separate**
 > `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
-> provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
+> provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation), and Studio's own
+> deadline on an editor statement sends it).
 
 `connect()` is idempotent; `getPoolStats()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`.
@@ -353,6 +355,12 @@ container. An attempted `initOracleClient()` fails with the driver's own NJS-045
 tells the operator to use Thin mode. So an Oracle 12.1+ server works on every tag; an 11.2 server
 needs the default one.
 
+**No Thick mode on macOS on Intel.**
+node-oracledb 26.0.0 ships no prebuilt Thick-mode addon for darwin-x64: its `build/Release` holds darwin-arm64, linux-x64, linux-arm64 and win32-x64.
+So the darwin-x64 standalone tarball, and with it `npx @libredb/studio` and Homebrew on an Intel Mac, runs Oracle in Thin mode only, and an 11.2 server is out of reach there.
+[`scripts/build-standalone-payload.sh`](../../scripts/build-standalone-payload.sh) names darwin-x64 as the one payload target without the addon and still fails the build when any other target lacks it.
+Thin mode is unaffected.
+
 node-oracledb's Thin/Thick choice is a **process-wide singleton** — `initOracleClient()` throws if
 called more than once, or after any connection/pool already exists. This is why the setting is a
 process-level env var rather than a per-connection config field: every `OracleProvider` in the
@@ -390,6 +398,8 @@ Measured with Instant Client 19.28 against Oracle Free 23ai: with either of thos
 `initOracleClient({ libDir })` succeeds (`oracledb.thin === false`, client 19.28.0.0.0) and
 `v$session_connect_info.client_driver` reports `node-oracledb : 6.10.0 thk`. Without them, only
 `DPI-1047`.
+node-oracledb 26 loads the client by its unversioned name `libclntsh.so`, which the Instant Client 19.28 Basic zip ships as a symlink to `libclntsh.so.19.1`.
+Measured 2026-11-21 with the recipe below in a container of the published image, against Oracle Free 23.26.3: `oracledb.thin === false`, client 19.28.0.0.0, and `client_driver` reports `node-oracledb : 26.0.0 thk`.
 
 There is a second Linux prerequisite on Debian 13 (the runtime base): the client links against
 `libaio.so.1`, but trixie's `libaio1t64` package installs only `libaio.so.1t64`, so
@@ -498,6 +508,53 @@ or the container has to run as root long enough to create it, which is why the d
 the supported path. A first-class, separately-published Thick-mode image variant is a possible future
 addition.
 
+### 4.5 A proxy that refuses the CONNECT, and a packet header the driver cannot read
+
+Studio installs `oracledb` 26.0.0, pinned to that exact version, with one patch ([`patches/oracledb@26.0.0.patch`](../../patches/oracledb@26.0.0.patch), listed in [TOOLCHAIN.md, "Patched dependencies"](../TOOLCHAIN.md#patched-dependencies)).
+The cases below fail the connect with a named error, and the socket is closed when the call answers.
+[`oracle-thin-transport.test.ts`](../../tests/integration/db/oracle-thin-transport.test.ts) holds each against the real driver, with peers that answer as a refusing proxy and a broken listener do.
+The proxy cases run in the test process.
+The packet header cases run in a Node child with a 256 MB heap limit and a hard timeout ([`oracle-thin-transport-harness.ts`](../../tests/integration/db/oracle-thin-transport-harness.ts)), because oracledb 6.10.0 answered that header by looping forever in its socket `data` handler while allocating, so a driver that does so again fails the test at the child's heap limit within seconds.
+
+**A proxy that refuses the CONNECT.**
+A TCPS descriptor can name an HTTPS proxy, `(ADDRESS=(PROTOCOL=TCPS)(HOST=...)(PORT=...)(HTTPS_PROXY=<host>)(HTTPS_PROXY_PORT=<port>))`, and a pasted descriptor reaches the driver unchanged ([§4.1](#41-configuration)).
+When the proxy answers the CONNECT with any status but 200 (403 from a proxy whose policy refuses the port, 407 from one that wants credentials), the connect fails with:
+
+```
+Failed to connect to Oracle: NJS-504: connection establishment through a web proxy at host <proxy> port <port> failed. (CONNECTION_ID=...)
+403
+```
+
+The last line is the status the proxy answered.
+The patch is the part that destroys the socket: the unpatched driver kept no reference to the socket the proxy answered on and gave it no `error` listener, so it stayed open until the proxy closed it, and a reset from the proxy was thrown out of the socket's event handler instead of reaching any caller.
+Every release up to 26.0.0, the latest, has that flaw, so the patch stays until a release closes the socket itself.
+
+**A packet header the driver cannot read.**
+A TNS packet header is 8 bytes, and its first field is the packet's length.
+When a peer sends a header whose length is below 8, the connect fails with:
+
+```
+Failed to connect to Oracle: NJS-500: connection to Oracle Database was closed or broken
+NJS-501: connection to host <host> port <port> terminated unexpectedly. (CONNECTION_ID=...)
+Invalid packet length: 0 (must be at least 8)
+```
+
+The check is the driver's own since node-oracledb 7.0.0, which is why Studio moved from 6.10.0 to 26.0.0.
+The check sits in the handler that reads every packet of a session, not only the answer to the connect (read in `lib/thin/sqlnet/ntTcp.js`; measured only on the connect).
+
+**The same header after the client closed the session.**
+When the client closes a session itself, for example after refusing a server older than 12.1 with `NJS-138` ([§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir)), it ends the socket gracefully and drops its reference to it, while the socket can still deliver data.
+The unpatched 26.0.0 refused a header shorter than 8 bytes that arrived then through the reference it had already dropped, so the refusal failed inside the socket's event handler instead of reaching the caller.
+The patch refuses the header on the socket that read it, so that socket is destroyed and the connect fails with its own error, here the `DatabaseConfigError` for `NJS-138`.
+Every release since 7.0.0 has that flaw, so this part of the patch stays until a release refuses the header on the socket that read it.
+
+**The move from 6.10.0 to 26.0.0.**
+Measured 2026-11-21 against Oracle Free 23.26.3 (`gvenzl/oracle-free:slim`), Thin mode, under both versions: `tests/live/oracle-column-type.ts`, `oracle-zoneless-values.ts`, `oracle-mcp-boundary.ts` and `oracle-agent-boundary.ts` printed the same results line for line, apart from generated table names, and interval, `TIMESTAMP WITH LOCAL TIME ZONE` and `NUMBER` values read through the provider were identical under `TZ=UTC` and `TZ=Europe/Istanbul`.
+Thick mode is covered in [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir), including the darwin-x64 addon that 26.0.0 no longer ships.
+The measurements elsewhere in this document that name 6.10.0 were taken on that version.
+
+An application that embeds the npm library installs `oracledb` itself, and the patch is not part of the published package, so it applies the same patch file with its own package manager.
+
 ### Connection string
 
 The scheme shown for Oracle is `oracle://`.
@@ -509,7 +566,7 @@ It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the fo
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oracle` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`oracle-execution-ui.ts`](../../src/lib/db/providers/sql/oracle-execution-ui.ts).
-What a tree click and Generate Query write is `ORACLE_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port, declared in [`oracle-generators.ts`](../../src/lib/db/providers/sql/oracle-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is `ORACLE_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`oracle-generators.ts`](../../src/lib/db/providers/sql/oracle-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its Thin-mode refusals, its statement and access-refusal error numbers and its ORA- connection and missing-table words, is the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`oracle-driver-errors.ts`](../../src/lib/db/providers/sql/oracle-driver-errors.ts).
 
 ---
@@ -605,6 +662,9 @@ A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(q
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `connection.break()`, when the request named a `queryId`.
+
 ### 5.3 What each Oracle type arrives as
 
 Every row below was measured on 2026-08-24 through `createDatabaseProvider({type:"oracle"})` against
@@ -628,7 +688,12 @@ summary all read.
 | `INTERVAL DAY TO SECOND` | `IntervalDS` | `"+05 06:07:08.9"` | its Oracle literal — [§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be) |
 | `XMLTYPE` | `string` | `"<r>\n  <a>1</a>\n</r>\n"` | the serialized document |
 | `JSON` | plain object | `{"k":[1,2]}` | that object, as JSON |
+| `VECTOR` of `FLOAT32`, `FLOAT64` or `INT8`, and a flexible `VECTOR(*, *)` row stored in one of them | array of numbers (see below) | `[0.10000000149011612,1.5,-2.25]` | that array, as JSON |
+| `VECTOR(n, ..., SPARSE)` | `{ numDimensions, indices, values }`, two arrays of numbers (see below) | `{"numDimensions":5,"indices":[0,3],"values":[1.5,2.5]}` | that object, as JSON |
+| `VECTOR(n, BINARY)`, and a flexible row stored as `BINARY` | `Uint8Array` (see below) | `{"0":255,"1":1}` | that object, as JSON |
 | any of the above, `NULL` | `null` | `null` | empty |
+
+The `VECTOR` rows were measured on 2026-11-23 through this provider against Oracle 23.26.3 Free with oracledb 26.0.0 in Thin mode, by [`tests/live/oracle-vector-values.ts`](../../tests/live/oracle-vector-values.ts) ([§12.4](#124-optional-verifying-against-a-live-oracle)).
 
 #### A LOB used to fail the whole query, not just the cell
 
@@ -636,6 +701,7 @@ summary all read.
 ([oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts)) that maps `CLOB` and `NCLOB` to
 `oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Apart from `DATE` and `TIMESTAMP`, which it gives a
 converter ([below](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
+and `VECTOR`, which it gives one too ([below](#a-vector-arrives-as-an-array-of-numbers)),
 every other column keeps the driver's own default:
 `RAW` is already a `Buffer` and `VARCHAR2` already a string, and restating them would put this
 provider in charge of types it has no reason to touch.
@@ -752,6 +818,24 @@ script ([§12.4](#124-optional-verifying-against-a-live-oracle)) holds it agains
 - **Library surface:** an in-process consumer now receives strings, not `Date` objects, for these two
   types. The SQL export reads the text back into an Oracle literal, and inline row editing binds `:n`
   through the same conversion functions ([§5.5](#the-sql-export-writes-an-oracle-date-literal-not-an-iso-string)).
+
+#### A VECTOR arrives as an array of numbers
+
+node-oracledb decodes a `VECTOR` value into a typed array: a `Float32Array`, `Float64Array` or `Int8Array` for a `FLOAT32`, `FLOAT64` or `INT8` vector, a `Uint8Array` for a `BINARY` one, and its own `SparseVector` class, a dimension count with a `Uint32Array` of positions and a typed array of values, for a sparse one.
+A flexible `VECTOR(*, *)` column carries neither a format nor a dimension count in its metadata, and each of its rows arrives in the format it was stored in.
+Before, the editor route wrote each typed array as an index-keyed object (`{"0":0.10000000149011612,"1":1.5,"2":-2.25}`), which nothing in the product reads and Oracle refuses back (`ORA-51804`), and MCP refused the whole answer, since its value codec does not take a typed array of numbers or the driver's class: `The result holds a value this server cannot answer: The value codec cannot encode a Float32Array, at "/0/F32".`
+Now the per-call handler of `query()`, `queryInTransaction()` and `queryReadOnly()` gives a `VECTOR` column a converter, `vectorValue` in [oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts), which reads the form from each value, never from the column, so a flexible column is read row by row.
+A dense vector of numbers becomes a plain array of the driver's numbers, nothing rounded: a `FLOAT32` element is its float32 value widened to a double, so `0.1` reads `0.10000000149011612`, which Oracle stores back as the same float32.
+A vector cannot hold NaN or an infinity (`ORA-51805` on insert), so every element is a finite JSON number.
+A sparse vector becomes `{ numDimensions, indices, values }`, the three fields the driver's own `SparseVector.toJSON` names, with both arrays plain.
+A binary vector stays the driver's `Uint8Array`: its elements are bits, and MCP answers it as the value codec's `bytes` tag (`{"$":"bytes","v":"/wE="}`); the editor route still writes it as an index-keyed object until that route answers through the value codec too.
+A `NULL` stays `null`.
+Any other value is refused with a `QueryError` naming its form (`Oracle handed a VECTOR value as a Uint16Array, which this provider does not read`): the pinned driver makes no other form, so this is the answer to a driver upgrade that adds one, never a silent pass-through.
+A fetch type of `oracledb.STRING` was the alternative not taken: it answers Oracle's own text, `[1.00000001E-001,1.5E+000,-2.25E+000]`, which every reader would have to parse back into numbers.
+The SQL INSERT export writes the array as its quoted JSON, `'[0.10000000149011612,1.5,-2.25]'`, which Oracle reads back into a `FLOAT32`, `FLOAT64` or `INT8` column as the same values; before, the export of any vector row was refused on replay (`ORA-51804`).
+A flexible column's rows replay their numbers too, but Oracle stores a text literal there as `FLOAT32`, so a row stored as `INT8` or `FLOAT64` comes back as `FLOAT32`.
+The export of a sparse or a binary vector is still refused on replay (`ORA-51804`): Oracle reads a sparse literal as `[5,[0,3],[1.5,2.5]]` and a binary one as `[255,1]`, and refuses `HEXTORAW` into a `VECTOR` (`ORA-00932`).
+A `JSON` value that carries a vector, such as `JSON_OBJECT('v' VALUE f32 RETURNING JSON)`, is not a `VECTOR` column and is not converted: it arrives with typed arrays inside, and MCP refuses that answer.
 
 #### `NUMBER` still loses digits, and that is a separate defect
 
@@ -1175,7 +1259,7 @@ A check read that fails, past the deadline included, is reported as a connection
   A session keeps what a statement set on it, and the `USER_*` views the check reads follow `CURRENT_SCHEMA`: measured, an agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and on a pooled session the next calls read `APP_OWNER` as their schema.
   The Thin driver of node-oracledb 6.10 returns a pooled session to its pool even when `close({ drop: true })` asks it to drop it (measured), so the session is never taken from the pool at all.
 
-Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts) or the server's own error.
 The estimate-plan session mode is refused: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY user is refused, so the agent composes no estimating plan here (B147).
 The run read allowance is not charged: Oracle does not bill per read.
 
@@ -1283,7 +1367,7 @@ LIBREDB_LIVE_ORACLE_PORT=15217 LIBREDB_LIVE_ORACLE_PASSWORD=<SYS and SYSTEM pass
 
 MCP's `run_read_query` serves Oracle through the agent's own path: it takes the connection under the agent read-only profile and sends the statement through `queryReadOnly`, so each call opens a session of its own, `SET TRANSACTION READ ONLY`, runs the check above on that session and then the statement.
 The check runs before every statement, as in agent mode, not once at the open: a grant or a policy added between two calls refuses the next call, and a lifted refusal admits it.
-MCP signs in as the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and as the seed's own user otherwise, and that user must be one the check admits, the READ ONLY user of "The agent user" above; any other is refused from the statement call, in the tool's sentence (`run_read_query cannot run on this connection: The agent read-only execution profile refuses the Oracle user ...`) behind the untrusted-data notice, since it quotes names users of the database chose, and its statement is never sent: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or a grant on a schema Oracle maintains beyond the two policy catalogs, and any user while the database holds a database link or a policy item 7 or 8 refuses.
+MCP signs in as the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and as the seed's own user otherwise, and that user must be one the check admits, the READ ONLY user of "The agent user" above; any other is refused from the statement call, in the tool's sentence (`run_read_query cannot run on this connection: The agent read-only execution profile refuses the Oracle user ...`) behind a notice naming the provider that wrote it, "Oracle provider, bundled with Studio", since it quotes names users of the database chose, and its statement is never sent: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or a grant on a schema Oracle maintains beyond the two policy catalogs, and any user while the database holds a database link or a policy item 7 or 8 refuses.
 What the user reads is what it is granted: READ ONLY stops writes, not reads, so item 13 and item 11 keep the dictionary, the audit trail, other sessions and every schema it is not granted out of reach, and what `PUBLIC` may read stays readable, as for every user of the database.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth: DML, DDL, `LOCK TABLE`, `SELECT ... FOR UPDATE`, a PL/SQL block, `CALL`, `ALTER SESSION`, `ALTER SYSTEM`, `GRANT`, `COMMIT`, `SET TRANSACTION` and a second statement.
 It runs a `SELECT` (a `WITH` is fine): a bare `VALUES` and `TABLE` answer `ORA-00900` and `EXPLAIN` without `PLAN` `ORA-02000`, and `EXPLAIN PLAN FOR`, which the fence admits (it refuses the form that sets a `STATEMENT_ID`), writes its rows into `PLAN_TABLE` and is refused inside the call's read-only transaction with `ORA-01456`.
@@ -1293,6 +1377,7 @@ Those refusals name Oracle's own clauses, `FETCH FIRST n ROWS ONLY` to add and `
 A read past `timeout_ms` is answered as the timeout: the driver's `callTimeout`, set to the time left, ends the statement's session, which stops it on the server.
 A client that closes its request stops the wait only: the statement runs on until that call timeout.
 Measured on 2026-11-02 by watching `V$SESSION` as SYSTEM: two seconds after a three-second `timeout_ms` the statement's session was gone, and after a cancel 1.5 seconds into a 12-second `timeout_ms` a three-way join of `ALL_OBJECTS` was still active at 11.5 seconds and gone at 14.
+A `VECTOR` column answers as the array of numbers or the sparse object [§5.3](#a-vector-arrives-as-an-array-of-numbers) describes, and a binary one as the value codec's `bytes` tag.
 `inspect_schema` opens under the operations profile, which sends no statement, so the check does not run there: it lists what the seed's user may see in the `ALL_*` views, as the editor does.
 
 [`tests/live/oracle-mcp-boundary.ts`](../../tests/live/oracle-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the 26ai Free 23.26.3 container `run.sh` names, and passed on 2026-11-02 (83 checks).
@@ -1338,9 +1423,9 @@ Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Checks out a connection, marks active. Throws if one is active. |
+| `beginTransaction()` | Checks out a connection through `checkoutPhase`, marks active. Throws if one is active. A failed checkout answers `not-sent`, since the checkout is all a begin does ([§11](#11-error-handling)). |
 | `queryInTransaction(sql, params?)` | Runs on that connection with `autoCommit: false`, through the same `buildQueryResult()` — so a DML statement reports its own `rowsAffected` here too. Throws if none active. |
-| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`, then closes the connection. Throws if none active. |
+| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`, then closes the connection. Throws if none active. A failed `commit()` or `rollback()` answers its mapped class with `outcome` `unknown`. The provider keeps the transaction while the call runs and holds none after it, whatever the call or the close answers. A close that fails is logged (`[Oracle] Closing the connection of an ended transaction failed: <driver message>`) and never replaces the call's own answer, so a COMMIT that committed answers success. A second end of the same transaction, sent while the first one closes the connection, closes nothing. |
 | `isInTransaction()` | Current state. |
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the engine has no transaction to leave open
@@ -2407,6 +2492,28 @@ configured login name: a proxy login (`app[report]`) or a quoted lower-case user
 
 A table stored in a `CLUSTER` has no segment of its own (the cluster holds it), so it reads 0 B.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `oracle` offers is its row in `ENGINE_FACETS`, declared in [`oracle-engine-facets.ts`](../../src/lib/db/providers/sql/oracle-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `analyze`, `optimize`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 9. Maintenance
@@ -2606,6 +2713,8 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 | A privilege the user lacks, by `errorNum`: `ORA-01031` insufficient privileges, `ORA-01045` no `CREATE SESSION` | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential, by `errorNum`: `ORA-01017` an invalid credential, `ORA-01005` a null password, `ORA-28000` a locked account, `ORA-28001` an expired one | `AuthenticationError`, answered `401 AUTH_ERROR`; a message with no `errorNum` is still read by its words (*ORA-01017*, *password*) |
 | `ORA-12541` / `ORA-12154` / `TNS:` | `ConnectionError` |
+| `NJS-504` (an HTTPS proxy refused the CONNECT; the status follows on the last line) | `ConnectionError` from `connect()`; `DatabaseError` from a later call, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
+| `NJS-500` with `Invalid packet length` (a TNS header the driver cannot read) | `ConnectionError` from `connect()`, see [§4.5](#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read) |
 | `ORA-00942` (table or view does not exist) | `QueryError` |
 | `NJS-138` (server predates Oracle 12.1, Thin-mode incompatible) | `DatabaseConfigError`, **not retryable** — see [§4.4](#44-thick-mode-opt-in-oracle_client_lib_dir) |
 | `NJS-116` (account has only a 10G password verifier) | `DatabaseConfigError`, **not retryable**. Checked *before* the generic *password* branch, which would otherwise report it as an authentication failure. The message also names the DBA-side fix (a password reset writes a 12C verifier) |
@@ -2619,7 +2728,14 @@ A zoned column is written through `FROM_TZ(..., 'UTC')`, which keeps the instant
 | `connection.break()`-interrupted query | maps via the generic path (the driver's `ORA-01013` / "user requested cancel"); other `ORA-*` codes fall through to `QueryError`/`DatabaseError` with the original message |
 
 There is **no** provider-driven server-side query timeout (no `queryTimeout` wiring), so a
-`TimeoutError` only arises from a driver-level timeout message.
+`TimeoutError` arises from a driver-level timeout message, or from Studio's own deadline on an editor statement, which answers it with `kind: "studio-timeout-refusal"` ([§5.2](#52-query-cancellation)).
+
+The editor's statement (`query`) takes its connection from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `oracledb` error maps to: `NJS-503` a `ConnectionError`, `NJS-065` (a closed pool) a `PoolExhaustedError`, a refused credential an `AuthenticationError` ([CONTRACT](./CONTRACT.md), E-5).
+A checkout that waits out the pool's `queueTimeout` (`NJS-040`, 60 s by default) is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
+A connection lost after it was taken (`NJS-500`) answers `unknown`, since the statement may have reached the server.
+A transaction's `commitTransaction()` and `rollbackTransaction()` answer a failed `commit()` or `rollback()` in its mapped class with `outcome` `unknown`, `ORA-02091` (a deferred constraint a COMMIT checks) and `NJS-500` a `DatabaseError` (`500 DATABASE_ERROR`), and closing the connection afterwards never replaces that answer ([§6](#6-transactions)).
+A transaction's `beginTransaction()` takes its connection the same way, and sends nothing besides, so a failed checkout there answers `not-sent` in the same class, and a `queueTimeout` that ran out the same `503 CONNECTION_ERROR` and sentence.
+The other paths that take a connection (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 
@@ -2644,7 +2760,7 @@ the two `INTERVAL` identities and the `IntervalYM`/`IntervalDS` field shapes
 ([§5.5](#55-an-interval-is-normalized-to-its-oracle-literal-a-time-zone-cannot-be)) — and those
 constants are typed as the driver's `DbType` from `src/types/db-drivers.d.ts`, which is what keeps
 the mock and the provider reading the same declaration. That declaration is hand-written because
-**`oracledb` publishes none** (verified on 6.10.0: no `types`/`typings` field, no `.d.ts` in the
+**`oracledb` publishes none** (verified on 6.10.0 and again on 26.0.0: no `types`/`typings` field, no `.d.ts` in the
 package, and no `@types/oracledb` dependency here), so a driver upgrade that changes a shape is
 caught by a live probe, not by `tsc`.
 
@@ -2673,7 +2789,9 @@ left alone and that a `BLOB` reaches `asBytes` in both its live and its serializ
 precision, `NULL`, both query paths, and that a result with no interval column keeps the driver's own
 rows array), **the `DATE`/`TIMESTAMP` wall clock** (#1131: the same row read under `UTC`,
 `Europe/Istanbul` and `America/Los_Angeles`, the fraction, padding and a BC year, `NULL`, both query
-paths, the two zoned types as untouched controls, and the SQL INSERT export of the read), error mapping,
+paths, the two zoned types as untouched controls, and the SQL INSERT export of the read), **the `VECTOR`
+converter** (the dense, flexible, sparse and binary forms, `NULL`, the refusal of an unknown form, all
+three row paths, the SQL INSERT export of the read, and MCP's answer), error mapping,
 and **every `ssl.mode` branch** (the TCPS switch, the
 DN-match flag, the concatenated `walletContent`, and a pasted connect string keeping its own
 protocol) asserted against the attributes `createPool` received.
@@ -2712,6 +2830,15 @@ the container:
 
 ```bash
 ORACLE_TEST_PORT=1521 ORACLE_TEST_PASSWORD="$PROBE_PASSWORD" bun tests/live/oracle-zoneless-values.ts
+```
+
+`tests/live/oracle-vector-values.ts` ([§5.3](#a-vector-arrives-as-an-array-of-numbers)) holds the `VECTOR` reading against the server.
+It checks that the raw driver still hands the typed arrays and `SparseVector`, reads every form through `query()`, flexible rows included, replays the SQL INSERT export of the dense columns into an empty copy and lets the server compare it, and reads every vector column through MCP's `run_read_query` as a READ ONLY user.
+MCP's first read of the freshly created table is refused with `ORA-01466` (`unable to read data - table definition has changed`), a read-only transaction meeting fresh DDL, so the script calls it again every two seconds while that is the answer, and prints how long it waited: measured, the first read was refused in nine of twelve runs, and the script with that retry answered after one refusal and about 5.6 seconds in each of its three runs.
+It runs against the container `tests/fixtures/oracle/23.26.3-free/agent-boundary/run.sh` pins, and passed on 2026-11-23 (52 checks):
+
+```sh
+LIBREDB_LIVE_ORACLE_PORT=15299 LIBREDB_LIVE_ORACLE_PASSWORD="$PROBE_PASSWORD" bun tests/live/oracle-vector-values.ts
 ```
 
 For the object surface, use the compose service instead, which mounts the fixture
@@ -2841,9 +2968,9 @@ the object tree's own routes under `POST /api/db/objects/*`
   silently ran the **unmodified** query instead of producing a plan. *Future:* build
   `EXPLAIN PLAN FOR …` followed by `SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY())`, then re-enable the
   capability.
-- **No server-side query timeout.** `queryTimeout` is not wired into the pool; runaway queries must
-  be cancelled explicitly via `cancelQuery()` (`connection.break()`). *Future:* set
-  `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.
+- **No server-side query timeout.** `queryTimeout` is not wired into the pool, so the provider stops no statement on its own.
+  An editor statement still running at `queryTimeout` plus 10 s is answered `504` by Studio and cancelled with `connection.break()` ([§5.2](#52-query-cancellation)); any other statement runs until it ends or is cancelled explicitly via `cancelQuery()`.
+  *Future:* set `connection.callTimeout` (node-oracledb's per-round-trip timeout) from `queryTimeout`.
 - **`kill` and full monitoring require elevated privileges.** `ALTER SYSTEM KILL SESSION` needs the
   `ALTER SYSTEM` privilege; the `V$` monitoring views need `SELECT` on the `V_$` views. A
   least-privilege application user can neither kill sessions nor read most monitoring (the queries

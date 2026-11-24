@@ -85,11 +85,11 @@ The webview build swaps three imports for shims through `shimPlugin` in `scripts
 
 | Component | Extension's own code | Reused from Studio | Notes |
 |-----------|----------------------|--------------------|-------|
-| Connection profiles and secrets | `src/host/connections/profile.ts` (`readProfiles`, `toEntry`, `toWireConnection`), `connection-store.ts` (`ConnectionStore`), `secret-keys.ts` (`secretKey`, `SECRET_PATHS`) | `src/lib/storage/secret-fields.ts` (`secretFieldValues`, `withoutSecretFields`, `withSecretFieldValues` and its field classification maps), `EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts` | The profile sits in the `libredb.connections` setting; every secret sits in SecretStorage |
+| Connection profiles and secrets | `src/host/connections/profile.ts` (`readProfiles`, `toEntry`, `toWireConnection`), `connection-store.ts` (`ConnectionStore`), `secret-keys.ts` (`secretKey`, `SECRET_PATHS`) | `src/lib/storage/secret-fields.ts` (`secretFieldValues`, `withoutSecretFields`, `withSecretFieldValues` and its field classification maps), `EXTERNAL_DATABASE_TYPES` in `src/lib/db/compatibility.ts`, `typeIdRefusal` in `src/lib/db/type-id.ts` | The profile sits in the `libredb.connections` setting; every secret sits in SecretStorage |
 | Add Connection | `src/host/connections/add-connection-flow.ts` (`AddConnectionFlow`, a pure state machine), `add-connection-ui.ts` (`addConnection`), `field-prompts.ts` (`FIELD_PROMPTS`), `src/backend/engine-catalog.ts` (`engineCatalog`) | `CONNECTION_FORM`, `CONNECTION_PICKER_ORDER` and the `connectionField*` helpers in `src/lib/db/connection-form.ts`, `CONNECTION_FIELDS` and `PLACEABLE_FIELDS` in `src/lib/db/connection-fields.ts`, `CONNECTION_STRING` in `src/lib/db/connection-string`, `parseConnectionString` in `src/lib/connection-string-parser.ts`, `PASTE_FORMATS_TEXT` in `src/lib/connection-paste-formats.ts` (the catalogue's `pasteFormats`, so the host bundles no provider), `testConnection` in `src/lib/api/test-connection.ts`, `newLocalId` in `src/lib/ids.ts` | The flow names no engine: every per-engine fact comes from the `engines/list` catalogue |
 | Connections tree | `src/host/tree/connections-tree.ts` (`ConnectionsTree`), `nodes.ts`, `tree-items.ts`, `icons.ts` | The kind helpers in `src/lib/db/object-kinds.ts` (`containerDepth`, `enumerableKinds`, `findKind`, `kindGroup`, ...), and in the child the provider methods `listContainers`, `countObjects`, `listObjects`, `describeObject` | Levels, folders and labels come from the provider's capabilities, recorded in `OpenConnections` |
-| Editor binding, Run, Cancel, status bar | `src/host/editor/` (`BindingStore`, `RunRegistry`, `RunService`, `runQuery`, `newQuery`, `selectRows`, `cancelQuery`, `changeConnection`, `ConnectionStatusBar`, `ContextKeys`, `DocumentLifecycle`) | In the child: `runnableTarget` in `src/lib/sql/run-target.ts`, `isDangerousQuery` in `src/lib/sql/dangerous-query.ts`, `resolveSqlGrammar`, `generateTableQuery` in `src/lib/query-generators.ts`, `editorLanguageOf` in `src/lib/editor/tab-language.ts` | Bindings live in memory only, so a window reload forgets them |
-| Backend handlers and registry | `src/backend/handlers.ts` (`createHandlers`, `registerHandlers`, `toResponseError`), `registry.ts` (`ConnectionRegistry`), `start.ts` (`startBackend`), `main.ts` | `getOrCreateProvider`, `removeProvider`, `clearProviderCache`, `enabledProviderTypes` in `src/lib/db/factory.ts`; `checkEditorQuery` and `runEditorQuery` in `src/lib/api/editor-query.ts`; `databaseErrorBody` and `internalErrorBody` in `src/lib/api/error-body.ts`; `supportsQueryCancel`, `scopeToCatalog`, `executionUiFor` | `query/run` re-does the steps of `POST /api/db/query` for one statement through the same functions |
+| Editor binding, Run, Cancel, status bar | `src/host/editor/` (`BindingStore`, `RunRegistry`, `RunService`, `runQuery`, `askToRun`, `newQuery`, `selectRows`, `cancelQuery`, `changeConnection`, `ConnectionStatusBar`, `ContextKeys`, `DocumentLifecycle`) | In the child: `runnableTarget` in `src/lib/sql/run-target.ts`, `gateRun` in `src/lib/api/run-confirmation.ts` and the run confirmation token in `src/lib/api/run-confirmation-token.ts`, `resolveSqlGrammar`, `generateTableQuery` in `src/lib/query-generators.ts`, `editorLanguageOf` in `src/lib/editor/tab-language.ts` | Bindings live in memory only, so a window reload forgets them |
+| Backend handlers and registry | `src/backend/handlers.ts` (`createHandlers`, `registerHandlers`, `toResponseError`), `registry.ts` (`ConnectionRegistry`), `start.ts` (`startBackend`), `main.ts` | `getOrCreateProvider`, `removeProvider`, `clearProviderCache`, `enabledProviderTypes` in `src/lib/db/factory.ts`; `checkEditorQuery`, `runEditorQuery` and `cancelEditorRun` in `src/lib/api/editor-query.ts`; `databaseErrorBody` and `internalErrorBody` in `src/lib/api/error-body.ts`; `supportsQueryCancel`, `scopeToCatalog`, `executionUiFor` | `query/run` re-does the steps of `POST /api/db/query` for one statement through the same functions |
 | Backend lifecycle | `src/host/backend-supervisor.ts` (`BackendSupervisor`), `fork-options.ts`, `channel.ts` (`ENABLED_PROVIDERS`) | None; `RESTART_DELAYS_MS` copies `desktop/src-tauri/src/backoff.rs` | |
 | JSON-RPC protocol | `src/protocol.ts` (`BackendApi`, `METHODS`, `PROTOCOL_VERSION`), `src/host/backend-client.ts` (`BackendClient`, `BackendError`) | Types only (`DatabaseConnection`, `ProviderCapabilities`, `EditorQueryBody`, `ApiErrorCode`, ...) | Every Studio import in `protocol.ts` is type-only, so it adds no provider code to the host |
 | Results webview | `src/host/results/` (`ResultsViewProvider`, `ResultsViewPresenter`, `renderResultsHtml`, `toRunFailure`), `src/results-protocol.ts`, `src/webview/` (store, reducer, `ResultsApp`, shims, `theme.ts`, `vscode-bridge.css`) | `ResultsGrid` in `src/components/ResultsGrid.tsx` and `src/components/results-grid/`, the `context-menu`, `sheet`, `button` and `scroll-area` UI components, `src/styles/theme.css`, `appendResultPage` in `src/lib/results/append-page.ts` | The grid is Studio's; the host keeps everything a page read needs |
@@ -118,7 +118,9 @@ Reading the setting needs no backend, the tree's root lists the store only, and 
 `BackendSupervisor.connection()` is the only way to the child, and the first call to it forks one.
 In practice that is the first expand of a connection in the tree, the first Add Connection, or the first Run.
 The supervisor sends `initialize` with `PROTOCOL_VERSION`; the child answers its runtime and enabled providers, or refuses with `PROTOCOL_MISMATCH` or `RUNTIME_UNSUPPORTED` (a Node older than the root `package.json` `engines.node`).
+`PROTOCOL_VERSION` is 2 since the child holds the run confirmation contract (section 5): a host and a child of different versions refuse each other, so a host that asks no question never meets a child that runs what it is sent.
 Concurrent callers share one start.
+The child's entry, `src/backend/main.ts`, is its composition root: it installs the process's one provider host core (`installHostCore(createHostCore(), "vscode-backend")`, `src/lib/provider-host/instance.ts`) before it starts the backend, as `register()` does for the server, so every `query/run` and `query/cancel` reads that core ([Architecture](ARCHITECTURE.md), "The provider host core").
 
 ```mermaid
 stateDiagram-v2
@@ -149,6 +151,8 @@ The supervisor keeps the last 50 stderr lines of the child and logs them on a cr
 `stop` fires `onWillStop` (the client cancels every `query/run` in flight), then sends `shutdown`, which makes the child call `clearProviderCache` and refuse every later request with `SHUTTING_DOWN`, then sends the `exit` notification.
 If any step does not finish within `STOP_STEP_MS` (2 s), the supervisor sends `SIGTERM`, and then `SIGKILL`.
 On its side, `startBackend` in `src/backend/start.ts` listens for the IPC channel's `disconnect`, closes every pool within `DISCONNECT_CLOSE_MS` and exits 0, so a child whose host died does not linger.
+It does the same on `SIGTERM` and `SIGINT`, once whichever comes first, because importing the provider factory adds no signal listener of its own.
+A close that fails, or that is still running at `DISCONNECT_CLOSE_MS`, writes one line on stderr naming what started it, the host going away, `SIGTERM` or `SIGINT`, and the child still exits 0.
 
 ## 5. Running a query end to end
 
@@ -172,15 +176,16 @@ sequenceDiagram
   B->>P: getOrCreateProvider
   B-->>C: ProviderDescription
   R->>C: runTarget
-  C->>B: query/target with text, selection, cursor
-  B-->>R: statement, range and dangerous
-  R->>U: confirm, when dangerous
-  R->>S: execute
+  C->>B: query/target with text, selection, cursor, catalog
+  B->>B: gateRun with ask
+  B-->>R: statement, range and the offer or null
+  R->>U: modal, then the typed value, when offered
+  R->>S: execute with the token and the typed value
   S->>V: runStarted
   V->>W: runStarted
-  S->>C: runQuery with queryId, limit, offset 0
+  S->>C: runQuery with queryId, limit, offset 0, confirmation
   C->>B: query/run
-  B->>B: checkEditorQuery, scopeToCatalog
+  B->>B: checkEditorQuery, gateRun, scopeToCatalog
   B->>P: runEditorQuery, prepareQuery and query
   P-->>B: rows
   B-->>C: QueryPage
@@ -195,12 +200,17 @@ Step by step, with the code that does it:
 1. `runQuery` in `src/host/editor/run-query.ts` finds the editor, reads its binding from `BindingStore` (or binds it through `pickConnection`), refuses a second run in the same document with `ALREADY_RUNNING`, and reads `libredb.query.rowLimit` (1 to 10000, default 500) with `readRowLimit`.
 2. `RunRegistry.prepare` registers a preparing run with its own cancellation token, so Cancel works even while the connection opens.
 3. `BackendClient.ensureOpen` returns the connection's `ProviderDescription`, opening it first when needed; where the capabilities declare catalog sessions, the person picks a catalog once per binding.
-4. `query/target` sends the whole text, the selection and the cursor; the child applies the web editor's run target rule through `runnableTarget`, with the engine's grammar and the editor language `editorLanguageOf` reads from its capabilities, and a target that holds no code becomes "Nothing to run.".
-   The answer also says whether the web editor would ask before running that statement: the child reads it with `isDangerousQuery` under the connection's type, the gate behind the web editor's Query Safety dialog.
-   The range that will run is highlighted for one second, and a statement the gate flags then asks in a modal `showWarningMessage` that shows it and offers Run Anyway; Cancel or Escape runs nothing.
-5. `RunService.execute` mints a fresh `queryId`, turns the preparing run into a running `RunEntry`, tells the presenter, and sends `query/run` inside a progress shown on the Results view.
-6. In the child, `createHandlers().runQuery` checks the params, runs `checkEditorQuery` (the page bounds, and the console text bound, which answers `TEXT_TOO_LARGE`), resolves the provider through `getOrCreateProvider` and `scopeToCatalog`, and calls `runEditorQuery`, the same function `POST /api/db/query` uses.
-7. The answer is a `QueryPage`: the route's `EditorQueryBody` (first result set, `pagination` always present), plus `resultSetCount` when the text produced more than one result set.
+4. `query/target` sends the whole text, the selection, the cursor and the binding's catalog; the child applies the web editor's run target rule through `runnableTarget`, with the engine's grammar and the editor language `editorLanguageOf` reads from its capabilities, and a target that holds no code becomes "Nothing to run.".
+   The answer also carries the server's run gate's verdict on that statement: the child calls `gateRun` with `"ask"`, under the same `LIBREDB_RUN_CONFIRMATION` mode and production rule as the run routes ([API reference](API_DOCS.md#server-confirmation-of-a-run)), and answers `confirmation: null` where the gate does not ask, or the offer of the routes' 428 (`token`, `expiresAt`, `unreadable`, `typedConfirmation`, `classificationFailed`).
+   The range that will run is highlighted for one second.
+   For an offer, `askToRun` in `src/host/editor/run-confirmation.ts` asks a modal `showWarningMessage` that shows the statement and offers Run Anyway, then, where `typedConfirmation` is not null, one input box that names what to type (the connection's name, with the targets of a name ask, or the row's text, such as an etcd lease) and accepts only that value, compared exactly.
+   Cancel or Escape at either step runs nothing.
+5. `RunService.execute` mints a fresh `queryId`, turns the preparing run into a running `RunEntry`, tells the presenter, and sends `query/run` inside a progress shown on the Results view, with `confirmation` set to the offer's token and the typed value, or to `"ask"` where nothing was offered.
+   Neither the token nor the typed value is kept past that request: they are not in `RunStart`, the run registry or the presenter's record.
+6. In the child, `createHandlers().runQuery` checks the params, runs `checkEditorQuery` (the page bounds, the connection's statement timeout, and the console text bound, which answers `TEXT_TOO_LARGE`), then `gateRun` under the route `vscode/query/run`, before any provider: a statement the gate asks about runs only with a token the child minted for that statement, connection and catalog, once.
+   It then resolves the provider through `getOrCreateProvider` and `scopeToCatalog`, and calls `runEditorQuery`, the same function `POST /api/db/query` uses.
+   It waits for the provider's open as the route does, through `openWithinCall`: at most its engine's connect budget, 70 s unless the engine's document states another, then `TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, and the open goes on for the next request ([API reference](API_DOCS.md)).
+7. The answer is a `QueryPage`: the route's `EditorQueryBody` (first result set, `pagination` always present), plus `resultSetCount` when the text produced more than one result set, and `confirmation: "unconfirmed"` where advisory mode ran a statement the gate asks about without its confirmation.
 8. `ResultsViewPresenter.runSucceeded` keeps the page in the document's record and posts `runSucceeded` with a `GridContext` built by `gridContextOf`; `fanOut` also hands every event to `LogResultsPresenter`, which writes a log line per run event and never the statement or a row.
 9. In the webview, `startResultsView` (`src/webview/start.tsx`) has already rendered `ResultsApp`, which renders Studio's `ResultsGrid` with the page, `supportsResultPagination`, `databaseType` and `EXTENSION_MASKING_CONFIG`.
 
@@ -209,7 +219,8 @@ Step by step, with the code that does it:
 `ResultsGrid` calls `onLoadMore`, and the webview posts `loadMore` with the `runId` only.
 `ResultsViewProvider.receive` checks the message with `parseWebviewMessage` and calls `ResultsViewPresenter.loadMore`.
 The presenter refuses unless the run succeeded, `hasMore` is true, the engine supports result pagination and no read is in flight (`LOAD_MORE_REFUSED`).
-It then posts `pageStarted`, builds the `PageRead` from its own record (statement, catalog, connection, `limit`, `nextOffset`) and calls `RunService.runPage`, which sends another `query/run` under a new `queryId` at that offset.
+It then posts `pageStarted`, builds the `PageRead` from its own record (statement, catalog, connection and its name, `limit`, `nextOffset`) and calls `RunService.runPage`, which sends another `query/run` under a new `queryId` at that offset, with `confirmation: "ask"`.
+A page read runs the statement again, so the child classifies it like any run, and the person is asked again, from the 428's offer, for a statement the gate asks about.
 The answer is posted as `pageAppended`, which the webview reducer merges with `appendResultPage`; a failure is posted as `pageFailed`.
 
 ### Cancel
@@ -239,17 +250,36 @@ sequenceDiagram
 The Cancel button shows only for documents in `libredb.cancellableQueries`.
 A running run is cancellable only when its connection's description has `supportsQueryCancel`, computed in the child as `POST /api/db/provider-meta` computes it.
 `cancelled: false` shows "The server did not stop the statement.".
-Separately, the `query/run` request carries a JSON-RPC cancellation token: the client cancels it when the supervisor is about to stop and when a connection is removed (`cancelRuns`), and in the child that token aborts the `AbortController` that `runEditorQuery` bridges to the provider's cancel.
+Separately, the `query/run` request carries a JSON-RPC cancellation token: the client cancels it when the supervisor is about to stop and when a connection is removed (`cancelRuns`), and in the child that token aborts the `AbortController` whose signal `runEditorQuery` runs the statement under.
+The same signal ends the run's wait for its provider's open, so a run cancelled while its connection opens is answered at once, `QUERY_CANCELLED` with the outcome not-sent, and runs nothing.
+The run is then answered at once, `QUERY_CANCELLED` with the outcome unknown, and the provider host core sends the provider's cancel under the run's `queryId`; the statement's own end arrives later and is only logged when it fails.
+`query/cancel` reaches the provider through the same host core's cancel call, `cancelEditorRun`, which waits for the engine at most 10 s.
+It waits for its provider's open within the same connect budget as `query/run`, and its own JSON-RPC request's cancellation is its caller signal: a `$/cancelRequest` for it ends the wait for the open and for the engine's answer at once, `QUERY_CANCELLED`, and a request already cancelled calls nothing.
+The extension's own client sends no cancellation for `query/cancel`, so only a JSON-RPC client that cancels the request reaches that signal.
+`objects/containers`, `objects/counts`, `objects/list`, `objects/describe` and the describe `objects/selectStatement` makes read through the same host core's tree call, `objectTree`, with the same deadline as the object routes, the connection's statement timeout plus 10 s from each read's start.
+Their JSON-RPC request's cancellation is their caller signal: a `$/cancelRequest` ends the read's wait at once, `QUERY_CANCELLED` with the outcome unknown, and a request already cancelled reads nothing, `QUERY_CANCELLED` with the outcome not-sent.
+A read past its deadline answers `TIMEOUT_ERROR`, naming the read, the statement timeout and the slack.
 
 ### Errors
 
 The child never answers a raw exception.
 `toResponseError` in `src/backend/handlers.ts` passes through its own refusals, maps a database error class through `databaseErrorBody`, and answers anything else as `INTERNAL_ERROR`; the JSON-RPC error code is the HTTP status the route would answer, and `data.code` is a `BackendErrorCode`.
 `BackendErrorCode` is Studio's `ApiErrorCode` plus six of the extension's own: `CONNECTION_NOT_OPEN`, `SHUTTING_DOWN`, `PROTOCOL_MISMATCH`, `RUNTIME_UNSUPPORTED`, `TEXT_TOO_LARGE` and `CANCEL_UNSUPPORTED`.
+For a database error, `data` also carries `kind` and `outcome`, as the route body does ([API reference](API_DOCS.md#error-kind-and-outcome)); an `INTERNAL_ERROR` and the extension's own refusals carry neither.
+A handler that reaches a provider runs that step inside `answeringFor`, which answers every failure of that step through `toResponseError` with the connection's scrub.
+On a database error whose text was not withheld, `data` then also carries `sqlState`, the SQLSTATE the driver reported, when there is one, as the route body does.
+An error whose text holds a credential of the connection is answered as the routes answer it: the JSON-RPC code and the `data` fields stay the error's own, the message is Studio's sentence naming the error's class, `data.details` keeps only `position`, and `data.fixStatement` is left out ([API reference](API_DOCS.md#error-response-format)).
+A warning field of `query/run` that holds such a credential is withheld the same way.
+An `objects/counts` answer's `unavailable` and `sampledFrom` sentences and an `objects/describe` answer's `indexes.unavailable` sentence that hold such a credential answer `(Studio withheld this text because it contained a credential of this connection)`, as the object routes answer them.
 
-On the host, `toBackendError` turns the answer into a `BackendError` with `status` and `code`, or into a `BackendExitedError` when the request died with its child.
+The run gate's answers keep the route's status and sentence: a 428 carries `data.code` `CONFIRMATION_REQUIRED` and the offer in `data.confirmation`, a 400 `CONFIRMATION_INVALID` the reason, and a refusal without a code (a malformed `confirmation`, a name ask on a nameless connection) no `data`.
+An unreadable `LIBREDB_RUN_CONFIRMATION` is a `DatabaseConfigError`, answered 400 `CONFIG_ERROR` on every `query/target` and `query/run`.
+
+On the host, `toBackendError` turns the answer into a `BackendError` with `status` and `code`, and a 428's offer as `confirmation`, or into a `BackendExitedError` when the request died with its child.
 Decisions read the class and `code`, never the message text.
-`toRunFailure` in `src/host/results/failure.ts` maps them to the view's `RunFailure`: `QUERY_CANCELLED` is `cancelled`, `BackendExitedError` is `backendExited`, any other error is `error` with its message, the detail and the `fixStatement` when present.
+`RunService` answers a 428 to a request that sent `"ask"` (Select Rows, Load More) by asking the person with the offer it carries and sending the request once more under the same `queryId` with the token and the typed value.
+A declined question rejects with `RunNotConfirmedError`; a 428 to a request that carried a token, a second 428 and every `CONFIRMATION_INVALID` end the run with the child's sentence, with no second question.
+`toRunFailure` in `src/host/results/failure.ts` maps them to the view's `RunFailure`: `QUERY_CANCELLED` and `RunNotConfirmedError` are `cancelled`, `BackendExitedError` is `backendExited`, any other error is `error` with its message, the detail and the `fixStatement` when present.
 
 Two codes trigger recovery in `BackendClient`:
 
@@ -263,6 +293,7 @@ Two codes trigger recovery in `BackendClient`:
 
 A connection profile is one entry of the `libredb.connections` setting, declared with `"scope": "application"` and written by `connectionsSetting` to `ConfigurationTarget.Global`, so it lives in user settings.
 An entry holds the public fields (`id`, `name`, `type`, `host`, `port`, `user`, `database`, `ssl`, ...) and `secretFields`, the list of secret paths stored for it.
+An optional `environment` is one of `production`, `staging`, `development`, `local` or `other`, and `readProfiles` refuses any other value by name; on `production` the run gate asks for the connection's name to be typed before every statement it asks about.
 Each secret is stored in VS Code's SecretStorage under `connection/<id>/<path>` (`secretKey`).
 Which paths are secret comes from Studio's classification maps in `src/lib/storage/secret-fields.ts`, so the host names no secret field itself.
 `ConnectionStore.add` stores the secrets first and the setting second, and undoes the secrets when the setting write fails.
@@ -277,7 +308,7 @@ The child builds the catalogue with `engineCatalog` from `CONNECTION_PICKER_ORDE
 2. Pick a method, when the engine has a connection string scheme: paste a connection string or enter the details.
 3. Paste the string (parsed in the child by `connection/parse` with `parseConnectionString`), or answer one input box per field, with secret fields masked.
 4. Optionally open Review with the gear button, for SSL mode and advanced fields.
-5. Test: `connection/test` runs Studio's `testConnection` within `TEST_DEADLINE_MS` (11 s).
+5. Test: `connection/test` runs Studio's `testConnection`, which answers within the engine's connect budget, 70 s unless the engine's document states another ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-56): at it the test answers `CONNECTION_ERROR` naming the budget, and the provider it built is closed once its connect settles.
    A failed test offers Test Again or Back to Review; a degraded answer or one with warnings offers Save Anyway or Back to Review.
 6. Name the connection, then save.
 
@@ -304,6 +335,7 @@ flowchart TD
 ### From a tree expand to Studio schema reads
 
 The tree's root is the store's list, with an `invalid` node for each entry `readProfiles` refused and the reason as its tooltip.
+An entry whose `type` is missing, not text or names no provider is refused with the sentence Studio refuses that type with, from `typeIdRefusal`, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`, and an entry of the type `libredb`, Studio's embedded store, as one that is not a database LibreDB Studio connects to.
 Expanding a connection calls `BackendClient.ensureOpen`, which reads the profile and its secrets through `ProfileConnectionSource.read` (asking in a masked box for any secret this machine lacks), sends `connection/open`, and records the answered `ProviderDescription` in `OpenConnections`.
 Secrets typed into a box are stored only after the open succeeds (`SourcedConnection.opened`).
 In the child, `openConnection` stores the connection in `ConnectionRegistry`, calls `getOrCreateProvider`, and answers the provider's capabilities and labels plus `supportsQueryCancel`, the editor language and the commit keyword.
@@ -362,6 +394,11 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
   `renderResultsHtml` in `src/host/results/html.ts` builds the page from extension constants only, with the CSP `default-src 'none'`, scripts by nonce, and styles from the webview's source, the nonce and one fixed hash (`RADIX_SCROLL_AREA_STYLE_HASH` in `src/host/results/csp.ts`) for the one style Radix ScrollArea writes without a nonce.
   `resolveWebviewView` enables scripts, disables forms and limits local resources to `dist/webview`.
   Every message is parsed by a guard in `src/results-protocol.ts` (`parseHostMessage`, `parseWebviewMessage`) with exact keys and a version check, and `loadMore` names a run only, so the webview cannot choose a statement, connection or offset.
+- **The child enforces the run confirmation.**
+  Every `query/run`, a page read included, passes `gateRun` before any provider, so a statement the gate asks about runs only with a token `query/target` or a 428 minted for it; the host asks the person on every confirmation the child asks for and confirms nothing by itself.
+  The child signs its tokens under 32 random bytes and binds them to a random session id, both drawn when its handlers are created (`runConfirmationIssuerForProcess`) and held only in its memory: a token is accepted once, within five minutes, by the child that minted it, and a token from another child or from before a restart is answered "this confirmation could not be verified".
+  The mode is `LIBREDB_RUN_CONFIRMATION` as the child inherits it from the environment VS Code was started with; on a `production` connection the name is asked in both modes.
+  No log line carries a token or a typed value.
 - **Commands from other extensions.**
   Select Rows accepts only a node the tree itself issued (`isIssuedNode`), and `activate` exports no API.
 
@@ -369,10 +406,10 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
 
 - **No login or roles.** The extension serves one person's VS Code: no host or backend code signs anyone in or checks a role, and the host bundle check refuses `src/lib/config/auth-env.ts`.
 - **No storage layer or sync.** Connections are the setting plus SecretStorage, not `src/lib/storage`; the webview's `@/lib/storage` shim throws on any use; editor bindings are in memory only.
-- **A plainer dangerous-query confirmation.** The statement is read by the web editor's own `isDangerousQuery`, but the question is one modal button: no AI risk analysis, and no typed confirmation where the web editor asks for one (an etcd range delete or lease revoke).
-  Nor does Run apply the connection type's refusal: a statement the web editor refuses before sending it (a Redis `GET a` with `DEL b` on the line after it, or `kubectl delete pod web-1`) reaches `query/run` without a question, and only the provider's own guard stops it (`docs/BACKLOG.md` U201).
-  Select Rows and Load More ask nothing: the first runs the read the engine's generator built for the object (a SELECT, a find, a `get`, an `aws s3 ls`), and the second reads more pages of a statement already confirmed.
-  That differs from the web editor on purpose, whose table click goes through the gate, so a generated read on an object whose name the gate cannot read safely (a ClickHouse table named `a$$b`) asks there and not here.
+- **A plainer run confirmation.** The child holds the routes' contract, but the question is a modal, then an input box where a value is typed: no AI risk analysis.
+  Nor does Run apply the connection type's refusal: a statement the web editor refuses before sending it (a Redis `GET a` with `DEL b` on the line after it, or `kubectl delete pod web-1`) reaches the gate, and only the gate's question or the provider's own guard stops it (`docs/BACKLOG.md` U201).
+  Select Rows and Load More ask only where the gate asks, as the web editor's table click does, so a generated read on an object whose name the gate cannot read safely (a ClickHouse table named `a$$b`) asks in both.
+  Load More asks again for every page of a statement the gate asks about, since a page runs the statement again; the web editor's page path resends a 428 that asks nothing typed with its token, and the extension asks the person instead.
 - **No query events or governance.** The child bundle refuses `src/lib/governance/start.ts` and `src/lib/query-events/sink.ts`, and `query/run` runs no admission gate.
 - **Masking starts off.** The view's saved state starts with `maskingEnabled: false` (`INITIAL_VIEW_STATE`); the person can switch it on and reveal values, since `EXTENSION_MASKING_CONFIG` gives the `user` role both rights.
 - **Some engines are held back.** `ENABLED_PROVIDERS` in `src/host/channel.ts` is every engine of `EXTERNAL_DATABASE_TYPES` except the ones `HELD_BACK` lists with a reason; the catalogue and the factory both follow it.

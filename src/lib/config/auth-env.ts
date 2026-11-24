@@ -116,3 +116,22 @@ export function sessionTtlSeconds(): number {
   }
   return seconds;
 }
+
+/** A bare hostname: labels of letters, digits and hyphens, at least one dot, no scheme, path or user. */
+const BARE_HOSTNAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+const ALLOWED_EMAIL_DOMAINS_INVALID_MESSAGE =
+  "OIDC_ALLOWED_EMAIL_DOMAINS must be a comma list of bare hostnames such as example.com";
+
+/**
+ * The domains OIDC_ALLOWED_EMAIL_DOMAINS lists, lowercased, or empty when unset. A set value that names no domain, or
+ * an entry that is not a bare hostname, throws: the list would refuse every sign-in or admit more than it names.
+ */
+export function allowedEmailDomains(): string[] {
+  const raw = (process.env.OIDC_ALLOWED_EMAIL_DOMAINS ?? "").trim();
+  if (!raw) return [];
+  const domains = raw.split(",").map((domain) => domain.trim().toLowerCase());
+  if (domains.some((domain) => !BARE_HOSTNAME.test(domain)))
+    throw new AuthConfigError(ALLOWED_EMAIL_DOMAINS_INVALID_MESSAGE);
+  return domains;
+}

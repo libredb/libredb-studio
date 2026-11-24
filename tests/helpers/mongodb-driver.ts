@@ -11,7 +11,10 @@
  * counts of the documents a test configured.
  *
  * The BSON values are the REAL driver's (`BSON`, taken before the module is replaced): a `raw` cursor yields each
- * document's real BSON bytes, and the provider decodes them with the real parser. `ObjectId`, `Binary` and
+ * document's real BSON bytes, and the provider decodes them with the real parser. A value the real serializer never
+ * writes, such as BSON's deprecated undefined (type 6) inside an array, which it writes as null, is served from bytes
+ * a test builds itself: `bsonUndefinedFor` turns a document's null elements into undefined ones, and
+ * `bsonDocumentBytes` makes a document a raw cursor serves as exactly those bytes. `ObjectId`, `Binary` and
  * `Decimal128` are this file's own classes, which the editor's serialization tests construct with any string; a value
  * the real parser decodes is the real class, so an agent read's rows here hold plain values.
  *
@@ -473,6 +476,71 @@ function defaultExplainReply(namespace: string, command: unknown): Doc {
   };
 }
 
+/** The key under which `bsonDocumentBytes` keeps a document's own BSON bytes: a symbol, so no read sees it as a field. */
+const BSON_BYTES = Symbol("bsonBytes");
+
+/**
+ * A document that carries its own BSON bytes: a `raw` cursor serves it as exactly those bytes, and every other read
+ * sees the fields the REAL parser decodes from them, so a value only hand-built bytes hold reaches both paths.
+ */
+export function bsonDocumentBytes(bytes: Uint8Array): Doc {
+  return Object.assign(realMongoDriver.BSON.deserialize(bytes), { [BSON_BYTES]: bytes });
+}
+
+/** BSON's null and its deprecated undefined: element types with no payload. */
+const BSON_NULL = 0x0a;
+const BSON_UNDEFINED = 0x06;
+
+/**
+ * The real serializer's bytes of `document`, with the type byte of every null element, at any depth, set to BSON's
+ * deprecated undefined (0x06). Both carry no payload, so nothing else moves. It sizes a double, a string, a document,
+ * an array, a null and an int32, and refuses any other element type by name rather than guess its width.
+ */
+export function bsonUndefinedFor(document: Doc): Uint8Array {
+  const bytes = new Uint8Array(realMongoDriver.BSON.serialize(document));
+  markNullsUndefined(bytes, 0);
+  return bytes;
+}
+
+/** Walks the BSON document starting at `start`, marking its null elements and those of every document inside it. */
+function markNullsUndefined(bytes: Uint8Array, start: number): void {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  // The document's length counts its own four bytes and its trailing 0x00.
+  const end = start + view.getInt32(start, true) - 1;
+  let at = start + 4;
+  while (at < end) {
+    const type = bytes[at];
+    const nameEnd = bytes.indexOf(0, at + 1);
+    const value = nameEnd + 1;
+    switch (type) {
+      case BSON_NULL:
+        bytes[at] = BSON_UNDEFINED;
+        at = value;
+        break;
+      case 0x01: // double
+        at = value + 8;
+        break;
+      case 0x02: // string: its length, then that many bytes
+        at = value + 4 + view.getInt32(value, true);
+        break;
+      case 0x03: // document
+      case 0x04: // array
+        markNullsUndefined(bytes, value);
+        at = value + view.getInt32(value, true);
+        break;
+      case 0x10: // int32
+        at = value + 4;
+        break;
+      default: {
+        const name = new TextDecoder().decode(bytes.subarray(at + 1, nameEnd));
+        throw new Error(
+          `bsonUndefinedFor does not size the BSON element type 0x${type.toString(16).padStart(2, "0")} of "${name}"`,
+        );
+      }
+    }
+  }
+}
+
 class MockCursor {
   readonly record: MockCursorRecord;
   private readonly answer: () => Doc[];
@@ -531,7 +599,9 @@ class MockCursor {
     const document = documents[this.record.pulled];
     if (document === undefined) return null;
     this.record.pulled += 1;
-    return this.record.options.raw === true ? Buffer.from(realMongoDriver.BSON.serialize(document)) : document;
+    if (this.record.options.raw !== true) return document;
+    const own = (document as { [BSON_BYTES]?: Uint8Array })[BSON_BYTES];
+    return Buffer.from(own ?? realMongoDriver.BSON.serialize(document));
   }
 
   async close(): Promise<void> {

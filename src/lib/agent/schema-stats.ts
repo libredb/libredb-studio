@@ -50,6 +50,7 @@ import { addressableObjects } from "./inventory-objects";
 import { engineServerDialect } from "./languages/engines/server";
 import { fenceUntrustedContent } from "./untrusted-content";
 import type { AgentInventory } from "./types";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import type { DatabaseType } from "@/lib/types";
 
 /** Why a run has no statistics. All four are states the run continues from. */
@@ -136,8 +137,9 @@ const unavailable = (reasonCode: AgentStatisticsUnavailableCode): AgentSchemaSta
  * running the probe first is what lets it be reported as "no statistics" instead of
  * as a database error the model would try to repair.
  *
- * The cost is therefore ONE statement on PostgreSQL and TWO on SQLite, out of the
- * same per-run statement budget every other read is drawn from.
+ * The cost is therefore ONE statement on PostgreSQL and SQL Server and TWO on SQLite
+ * and libSQL, which probes the same way, out of the same per-run statement budget
+ * every other read is drawn from.
  */
 export async function readSchemaStatistics(context: AgentToolContext): Promise<AgentSchemaStatistics> {
   const dialect = context.connection.type;
@@ -329,6 +331,8 @@ export function packSchemaStatistics(
     label: "estimated table statistics",
     operationId: "agent/schema-stats",
     reference: `${statistics.dialect} engine estimates`,
+    // The statistics were read through the run's connection, whose type `dialect` is.
+    relayedBy: providerAuthor(statistics.dialect),
   };
 
   const close = (body: string, omitted: number): string =>

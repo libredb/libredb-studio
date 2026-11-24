@@ -6,10 +6,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import type { OpcuaEndpoint } from "@/lib/db/providers/industrial/opcua/client";
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import {
   openReadOnlySession,
+  OPCUA_PKI_ROOT_MISSING,
   OPCUA_TRANSPORT_SETTINGS,
   type OpcuaLibraryBridge,
 } from "@/lib/db/providers/industrial/opcua/session";
@@ -94,6 +96,36 @@ const fresh = () => ({
   browseNextRelease: [] as boolean[],
   history: [] as unknown[],
   options: [] as OpcuaConnectionOptions[],
+});
+
+/**
+ * The PKI root is decided by Studio's provider factory and handed to the provider (FND-2 slice 3), so a connection that
+ * reaches the session with none was built without the factory: refused by name, before GetEndpoints or anything else
+ * asks the library for a directory it would have to guess.
+ */
+describe("the PKI root", () => {
+  test("a connection with no PKI root is refused by name before the library is asked for anything", async () => {
+    const asked: string[] = [];
+    const library: OpcuaLibraryBridge = {
+      ...bridge([endpoint("None")], fresh()),
+      readEndpoints: async () => {
+        asked.push("readEndpoints");
+        return [endpoint("None")];
+      },
+      openSession: async () => {
+        asked.push("openSession");
+        throw new Error("should not have been reached");
+      },
+    };
+    const rootless: OpcuaConnectionOptions = { ...options({ mode: "None" }), pkiRoot: undefined };
+    const refused = await openReadOnlySession(library, rootless).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as Error).message).toBe(OPCUA_PKI_ROOT_MISSING);
+    expect(asked).toEqual([]);
+  });
 });
 
 describe("the security mode is never weakened", () => {
@@ -483,6 +515,30 @@ describe("a library throw becomes a sentence, and the code in it is read", () =>
     } catch (error) {
       expect(String((error as Error).message)).not.toContain("plant-reader");
     }
+  });
+
+  /**
+   * A REQUEST THE CLIENT STOPPED WAITING FOR IS NAMED AS ONE, because the session pool acts on it: a channel that left
+   * a request unanswered cannot be trusted with the next one, so the session that carried the request is replaced
+   * rather than handed the next one. The library's own words travel with the sentence, since they say which
+   * request and how long.
+   */
+  test("a request that got no answer within the library's timeout is reported as unanswered, by name", async () => {
+    const client = await openReadOnlySession(
+      throwingBridge(new Error("Transaction has timed out ( timeout = 15000 ms , request = ReadRequest)"), [
+        endpoint("SignAndEncrypt", PLC_THUMB),
+      ]),
+      options(),
+    );
+    const failure = await client.read(["ns=3;s=X"]).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(String((failure as Error).message)).toBe(
+      "A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest). " +
+        "The session it was sent on is closed without waiting for the server any longer, and a new session is opened for the next request.",
+    );
   });
 
   /**

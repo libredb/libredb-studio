@@ -12,6 +12,7 @@ import {
   testConnection,
   transportDeps,
 } from "../../../helpers/databend-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /**
  * Which hosts are Databend Cloud's, and the warehouse an older one names (section 4.4 of the provider doc).
@@ -77,6 +78,7 @@ describe("a Databend Cloud host through the provider", () => {
     const provider = new DatabendProvider(
       testConnection({ host: OLDER, port: 443, warehouse: "", ssl: { mode: "verify-system" } }),
       { queryTimeout: 60_000 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
       time.deps,
     );
     await provider.connect();

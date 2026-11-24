@@ -47,11 +47,16 @@ import { randomBytes } from "node:crypto";
 import neo4j, { type Driver } from "neo4j-driver-lite";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
+
+/** The notice an answer carrying database content opens with on this file's neo4j connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("neo4j"));
 
 function env(name: string): string {
   const value = process.env[name];
@@ -105,6 +110,7 @@ function contextOf(connection: ManagedConnection, acquired: ExecutionProfile[]):
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -149,8 +155,8 @@ if (process.env.NEO4J_MCP_CE_PORT !== undefined && process.env.NEO4J_MCP_CE_PORT
   const refused = await mcp(community, { statement: "MATCH (n) RETURN count(n) AS nodes" });
   check(
     refused.result.isError === true &&
-      textOf(refused.result).startsWith("run_cypher_read cannot run on this connection: ") &&
-      textOf(refused.result).includes("this server is Neo4j Community Edition"),
+      providerRefusalText(refused.result, "neo4j").startsWith("run_cypher_read cannot run on this connection: ") &&
+      providerRefusalText(refused.result, "neo4j").includes("this server is Neo4j Community Edition"),
     `Community Edition is refused at open through MCP: ${textOf(refused.result).slice(0, 160)}`,
   );
   clearProviderCache();
@@ -268,7 +274,7 @@ try {
     JSON.stringify(rowsOf(served.result)) === JSON.stringify([{ name: "Ada" }, { name: "Bob" }]) &&
       served.acquired.join(",") === "agent-read-only" &&
       served.result.content[0]?.type === "text" &&
-      (served.result.content[0] as { text: string }).text === MCP_UNTRUSTED_NOTICE,
+      (served.result.content[0] as { text: string }).text === DATABASE_CONTENT_NOTICE,
     `the proved reader is served under the agent read-only profile (${served.acquired.join(",")}), behind the notice`,
   );
   for (const [name, connection, words] of [
@@ -279,8 +285,8 @@ try {
     const refused = await mcp(connection, { statement: "MATCH (n:LmPerson) RETURN n.name AS name" });
     check(
       refused.result.isError === true &&
-        textOf(refused.result).startsWith("run_cypher_read cannot run on this connection: ") &&
-        textOf(refused.result).includes(words),
+        providerRefusalText(refused.result, "neo4j").startsWith("run_cypher_read cannot run on this connection: ") &&
+        providerRefusalText(refused.result, "neo4j").includes(words),
       `${name} is refused at open, before a statement is sent: ${textOf(refused.result).slice(47, 200)}`,
     );
   }
@@ -311,8 +317,10 @@ try {
     check(
       textOf(fenced.result).startsWith("The statement was refused before it reached the database (") &&
         fenced.acquired.length === 0 &&
-        textOf(unfenced.result).includes("The statement was refused before it reached the database: ") &&
-        textOf(unfenced.result).endsWith("Nothing was sent."),
+        providerRefusalText(unfenced.result, "neo4j").startsWith(
+          "The statement was refused before it reached the database: ",
+        ) &&
+        providerRefusalText(unfenced.result, "neo4j").endsWith("Nothing was sent."),
       `${statement}: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent`,
     );
   }
@@ -468,7 +476,7 @@ try {
   });
   check(
     noAccess.result.isError === true &&
-      textOf(noAccess.result).startsWith(
+      providerRefusalText(noAccess.result, "neo4j").startsWith(
         'run_cypher_read cannot run on this connection: The agent read-only profile needs a user with ACCESS on the connection\'s database, and the server refuses this user ACCESS on the database "lmother", so this user is not proved read-only and is refused.',
       ),
     `a seed bound to a database its user may not access is refused as missing that access: ${textOf(noAccess.result).slice(47, 220)}`,

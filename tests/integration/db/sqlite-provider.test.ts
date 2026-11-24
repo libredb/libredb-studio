@@ -8,7 +8,9 @@
  */
 
 import { describe, test, expect, afterEach, beforeAll, beforeEach, afterAll, spyOn } from "bun:test";
-import { spawnSync } from "node:child_process";
+import * as childProcess from "node:child_process";
+import { once } from "node:events";
+import { spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { Database as BunDatabase, constants as sqliteConstants } from "bun:sqlite";
 import {
   chmodSync,
@@ -39,7 +41,7 @@ import {
   readDbstatSizes,
 } from "@/lib/db/providers/sql/sqlite";
 import { resolveSQLiteDriverName } from "@/lib/db/providers/sql/sqlite-driver";
-import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
+import { SQLITE_OPEN_BUSY_TIMEOUT_MS, SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
 import { SQLITE_CREATE_TABLE } from "@/lib/db/providers/sql/sqlite-create-table";
 import {
   containerDepth,
@@ -54,6 +56,8 @@ import type { SQLiteDatabase, SQLiteStatement } from "@/lib/db/providers/sql/sql
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import type { ObjectKindSpec, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   ConnectionError,
@@ -76,20 +80,25 @@ import {
   makeFifo,
   runInChild,
 } from "../../helpers/special-files";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Helpers
 // ============================================================================
 
+/**
+ * A SQLite connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided (FND-2 slice 3).
+ */
 function makeSQLiteConfig(overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
-  return {
+  return admittedFileConnection({
     id: "test-sqlite",
     name: "Test SQLite",
     type: "sqlite",
     database: ":memory:",
     createdAt: new Date(),
     ...overrides,
-  };
+  });
 }
 
 /**
@@ -212,18 +221,23 @@ describe("SQLiteProvider", () => {
       rmSync(sameVolumeTmpDir, { recursive: true });
     });
 
-    test("a path containing a NUL byte throws DatabaseConfigError without claiming traversal protection", async () => {
-      provider = new SQLiteProvider(makeSQLiteConfig({ database: "data/evil\0.db" }));
+    test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+      const dbPath = join(pathTmpDir, "never-admitted.db");
+      provider = new SQLiteProvider({
+        id: "raw",
+        name: "raw",
+        type: "sqlite",
+        database: dbPath,
+        createdAt: new Date(),
+      });
       const error = await provider.connect().then(
         () => null,
         (e: unknown) => e,
       );
       expect(error).toBeInstanceOf(DatabaseConfigError);
-      const message = (error as Error).message;
-      expect(message).toContain("NUL");
-      // The only path validation is NUL rejection; the message must not promise
-      // traversal protection the code does not provide.
-      expect(message.toLowerCase()).not.toContain("traversal");
+      expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
+      expect(provider.isConnected()).toBe(false);
+      expect(existsSync(dbPath)).toBe(false);
     });
 
     test("a relative path with '..' segments is accepted and resolves to an absolute location", async () => {
@@ -354,6 +368,8 @@ describe("SQLiteProvider", () => {
     // case connects in a child under a hard limit, so a regression fails here instead of hanging.
     describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO", () => {
       const sqliteModule = join(REPO_ROOT, "src/lib/db/providers/sql/sqlite.ts");
+      // The child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+      const providerFilesModule = join(REPO_ROOT, "src/lib/db/provider-files.ts");
 
       test.each([
         ["the editor", "644", {}],
@@ -441,7 +457,8 @@ describe("SQLiteProvider", () => {
               'process.env.LIBREDB_SQLITE_WORKER = "1";',
               'const fs = await import("node:fs");',
               `const { SQLiteProvider: Provider } = await import(${JSON.stringify(sqliteModule)});`,
-              `const provider = new Provider(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}, {}, ${JSON.stringify(execution)});`,
+              `const { admittedFileConnection } = await import(${JSON.stringify(providerFilesModule)});`,
+              `const provider = new Provider(admittedFileConnection(${JSON.stringify({ id: "r", name: "r", type: "sqlite", database: dbPath })}), {}, ${JSON.stringify(execution)});`,
               "await provider.connect();",
               `fs.renameSync(${JSON.stringify(fifo)}, ${JSON.stringify(dbPath)});`,
               "provider.worker.terminate();",
@@ -558,6 +575,37 @@ describe("SQLiteProvider", () => {
       expect((result.rows[0] as Record<string, unknown>).body).toBe("first");
     });
 
+    test("an infinite REAL reads back as Infinity on an on-disk database, as it does in memory", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "libredb-sqlite-nonfinite-"));
+      const previousWorker = process.env.LIBREDB_SQLITE_WORKER;
+      process.env.LIBREDB_SQLITE_WORKER = "1";
+      try {
+        const answers: unknown[] = [];
+        for (const database of [join(dir, "nonfinite.db"), ":memory:"]) {
+          provider = new SQLiteProvider(makeSQLiteConfig({ database }));
+          await provider.connect();
+          await provider.query("CREATE TABLE t (id INTEGER PRIMARY KEY, r REAL, big INTEGER, b BLOB)");
+          await provider.query(
+            "INSERT INTO t VALUES (1, 1e999, 9223372036854775807, x'00ff'), (2, -1e999, 1, x''), (3, 2.5, -9007199254740993, NULL)",
+          );
+          const rows = (await provider.query("SELECT r, big, b FROM t ORDER BY id")).rows as Record<string, unknown>[];
+          answers.push(rows.map((row) => ({ r: row.r, big: row.big, b: Buffer.isBuffer(row.b) ? [...row.b] : row.b })));
+          await provider.disconnect();
+        }
+        const expected = [
+          { r: Number.POSITIVE_INFINITY, big: "9223372036854775807", b: [0x00, 0xff] },
+          { r: Number.NEGATIVE_INFINITY, big: 1, b: [] },
+          { r: 2.5, big: "-9007199254740993", b: null },
+        ];
+        expect(answers[0]).toEqual(expected);
+        expect(answers[1]).toEqual(expected);
+      } finally {
+        if (previousWorker === undefined) delete process.env.LIBREDB_SQLITE_WORKER;
+        else process.env.LIBREDB_SQLITE_WORKER = previousWorker;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     test("query against a missing table is mapped through mapDatabaseError", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
@@ -631,6 +679,25 @@ describe("SQLiteProvider", () => {
       });
       expect(Object.keys(caps.maintenanceOperationSpecs ?? {}).sort()).toEqual([...caps.maintenanceOperations].sort());
     });
+    test("an admitted :memory: keeps the in-process capabilities, and one admitted to a file keeps the worker answers", () => {
+      const driver = process.env.LIBREDB_SQLITE_DRIVER;
+      const worker = process.env.LIBREDB_SQLITE_WORKER;
+      delete process.env.LIBREDB_SQLITE_DRIVER;
+      delete process.env.LIBREDB_SQLITE_WORKER;
+      try {
+        const raw = { id: "caps", name: "caps", type: "sqlite" as const, createdAt: new Date() };
+        const memory = new SQLiteProvider(admittedFileConnection({ ...raw, database: ":memory:" })).getCapabilities();
+        expect([memory.blocksServerWhileRunning, memory.supportsQueryCancel]).toEqual([true, false]);
+        const file = new SQLiteProvider(
+          admittedFileConnection({ ...raw, database: join(tmpdir(), "caps-never-opened.db") }),
+        ).getCapabilities();
+        expect([file.blocksServerWhileRunning, file.supportsQueryCancel]).toEqual([false, true]);
+      } finally {
+        if (driver !== undefined) process.env.LIBREDB_SQLITE_DRIVER = driver;
+        if (worker !== undefined) process.env.LIBREDB_SQLITE_WORKER = worker;
+      }
+    });
+
     test("returns correct SQLite capabilities", () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       const caps = provider.getCapabilities();
@@ -1303,6 +1370,144 @@ describe("SQLiteProvider", () => {
       expect(overview.tableCount).toBe(1);
     });
 
+    // §3.2: the open waits for another connection's lock for SQLITE_OPEN_BUSY_TIMEOUT_MS, and only
+    // the open: a WAL recovery, a last close's checkpoint or a reader of a rollback-journal file used
+    // to fail it at once with "database is locked", while a statement after it still never waits.
+    describe("the open's busy bound", () => {
+      /** A file under a rollback journal, so the open's switch to WAL needs every other reader gone. */
+      function rollbackJournalFile(name: string): string {
+        const dbPath = join(fileTmpDir, name);
+        const setup = new BunDatabase(dbPath);
+        setup.exec("PRAGMA journal_mode = DELETE");
+        setup.exec("CREATE TABLE j (id INTEGER PRIMARY KEY)");
+        setup.close();
+        return dbPath;
+      }
+
+      /** A file already in WAL mode with no `-wal` or `-shm` beside it, as the seed publishes the sample. */
+      function walFile(name: string): string {
+        const dbPath = join(fileTmpDir, name);
+        const setup = new BunDatabase(dbPath);
+        setup.exec("PRAGMA journal_mode = WAL");
+        setup.exec("CREATE TABLE j (id INTEGER PRIMARY KEY)");
+        setup.close();
+        return dbPath;
+      }
+
+      /**
+       * Another connection in its own process that holds `dbPath` for `holdMs` once it says "held",
+       * then lets go. "reader" holds a read transaction; "exclusive" holds the file's exclusive lock,
+       * as a WAL recovery or a last close's checkpoint does for its moment. Its own process, because
+       * the in-process open waits on this thread and a holder here could not let go while it does.
+       */
+      async function holderInChild(
+        dbPath: string,
+        hold: "reader" | "exclusive",
+        holdMs: number,
+      ): Promise<{ exited: Promise<unknown> }> {
+        const child = childProcess.spawn(
+          "node",
+          [
+            "-e",
+            [
+              'const { DatabaseSync } = require("node:sqlite");',
+              hold === "reader"
+                ? `const db = new DatabaseSync(${JSON.stringify(dbPath)}, { readOnly: true });\ndb.exec("BEGIN");`
+                : `const db = new DatabaseSync(${JSON.stringify(dbPath)});\ndb.exec("PRAGMA locking_mode = EXCLUSIVE");\ndb.exec("BEGIN EXCLUSIVE");`,
+              'db.prepare("SELECT COUNT(*) AS n FROM j").get();',
+              'process.stdout.write("held\\n");',
+              `setTimeout(() => { db.exec("COMMIT"); db.close(); }, ${holdMs});`,
+            ].join("\n"),
+          ],
+          { stdio: ["ignore", "pipe", "inherit"] },
+        );
+        const exited = once(child, "exit");
+        const [line] = (await once(child.stdout, "data")) as [Buffer];
+        expect(line.toString()).toBe("held\n");
+        return { exited };
+      }
+
+      afterEach(() => {
+        delete process.env.LIBREDB_SQLITE_WORKER;
+      });
+
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s an open waits for a reader of a rollback-journal file that lets go within the bound",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          const dbPath = rollbackJournalFile(`journal-wait-${worker}.db`);
+          const reader = await holderInChild(dbPath, "reader", 300);
+
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+          await provider.connect();
+          await reader.exited;
+
+          expect(provider.isConnected()).toBe(true);
+          expect([...readFileSync(dbPath).subarray(18, 20)]).toEqual([2, 2]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      // A WAL-mode file has no switch to make, yet its open still reads the file under another
+      // connection's lock: the first open of a file with no -shm recovers the WAL index under an
+      // exclusive lock, and a last close checkpoints under one. Either used to fail a concurrent open.
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s an open of a WAL-mode file waits for another connection's exclusive lock that lets go within the bound",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          const dbPath = walFile(`wal-wait-${worker}.db`);
+          const holder = await holderInChild(dbPath, "exclusive", 300);
+
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+          await provider.connect();
+          await holder.exited;
+
+          expect(provider.isConnected()).toBe(true);
+          expect((await provider.query("SELECT COUNT(*) AS n FROM j")).rows).toEqual([{ n: 0 }]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "an open beside a reader held past the bound fails with database is locked once the bound is spent",
+        async () => {
+          const dbPath = rollbackJournalFile("journal-held.db");
+          const reader = new BunDatabase(dbPath, { readonly: true });
+          reader.exec("BEGIN");
+          reader.query("SELECT COUNT(*) FROM j").get();
+          const started = performance.now();
+          let failure: unknown = null;
+          try {
+            provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
+            await provider.connect();
+          } catch (error) {
+            failure = error;
+          } finally {
+            reader.exec("COMMIT");
+            reader.close();
+          }
+
+          expect(String(failure)).toBe("ConnectionError: Failed to open SQLite database: database is locked");
+          expect(performance.now() - started).toBeGreaterThanOrEqual(SQLITE_OPEN_BUSY_TIMEOUT_MS / 2);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+
+      test.each(["1", "0"])(
+        "with LIBREDB_SQLITE_WORKER=%s the bound covers the open only, and a statement after it does not wait",
+        async (worker) => {
+          process.env.LIBREDB_SQLITE_WORKER = worker;
+          provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, `bound-${worker}.db`) }));
+          await provider.connect();
+
+          const busy = await provider.query("PRAGMA busy_timeout");
+
+          expect(busy.rows).toEqual([{ timeout: 0 }]);
+        },
+        CHILD_TEST_TIMEOUT_MS,
+      );
+    });
+
     test("getStorageStats lists the main database plus WAL and SHM sidecar files", async () => {
       const dbPath = join(fileTmpDir, "storage.db");
       provider = new SQLiteProvider(makeSQLiteConfig({ database: dbPath }));
@@ -1590,6 +1795,175 @@ describe("SQLiteProvider", () => {
         expect(held.filter((target) => target === notADatabase)).toEqual([]);
       }
     });
+
+    describe("a statement larger than the pipe buffer, stopped while it is still being written", () => {
+      /** Far past the 64 KiB pipe buffer, so the write is still queued when the child is killed. */
+      const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
+
+      /**
+       * A statement the child takes minutes to answer: a billion-row recursive count, in
+       * constant memory, at about 12 million rows a second on node:sqlite. The child answers
+       * one line at a time, so while it counts it reads nothing more from its stdin.
+       */
+      const BUSY =
+        "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000000000) SELECT count(*) FROM n";
+
+      /**
+       * Connect a provider on a fresh file and hand back its worker, plus a promise that
+       * settles once the worker's stdin has closed: the statement is written to that
+       * stream, and when the child is killed the part still queued fails (EPIPE on Linux
+       * and macOS) or, when the exit reaches the client first, is dropped by the runtime.
+       *
+       * `events` records the worker's pipe failures, its stdin closing and its exit, in
+       * the order the runtime delivers them, after the client's own listeners. Either the
+       * failed write or the exit can come first: Linux and macOS fail the write first, and
+       * windows-latest can deliver the exit first, after which the runtime destroys stdin
+       * (Node's and Bun's `ChildProcess` both do, just before they emit `exit`) and the
+       * rest of the write is dropped without a stdin error.
+       *
+       * The child is given BUSY first, written to its stdin by the test itself under an id
+       * the client never issues, so the statement under test stays queued in the pipe
+       * however late the stop comes. Without it the child could read the whole statement
+       * before a late stop, as it did on a slow windows-latest runner, and then no write
+       * was left to fail.
+       */
+      async function connectLarge(name: string, queryTimeout?: number) {
+        provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, name) }), { queryTimeout });
+        await provider.connect();
+        const worker = (provider as unknown as { worker: SQLiteWorkerClient }).worker;
+        const child = (worker as unknown as { child: ChildProcessWithoutNullStreams }).child;
+        const stdin = child.stdin;
+        const events: Array<
+          | { event: "stream-error"; stream: "stdin" | "stdout" | "stderr"; error: Error }
+          | { event: "stdin-close" }
+          | { event: "exit" }
+        > = [];
+        for (const stream of ["stdin", "stdout", "stderr"] as const) {
+          child[stream].on("error", (error) => events.push({ event: "stream-error", stream, error }));
+        }
+        child.once("exit", () => events.push({ event: "exit" }));
+        // Not `events.once`, which would reject on the very `error` event under test.
+        const closed = new Promise<void>((resolve) =>
+          stdin.once("close", () => {
+            events.push({ event: "stdin-close" });
+            resolve();
+          }),
+        );
+        stdin.write(`${JSON.stringify({ id: 0, op: "get", sql: BUSY })}\n`);
+        return { worker, closed, events };
+      }
+
+      /** Record every uncaught exception and unhandled rejection until `stop()`. */
+      function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
+        const seen: unknown[] = [];
+        const record = (error: unknown): void => {
+          seen.push(error);
+        };
+        process.on("uncaughtException", record);
+        process.on("unhandledRejection", record);
+        return {
+          seen,
+          stop() {
+            process.off("uncaughtException", record);
+            process.off("unhandledRejection", record);
+          },
+        };
+      }
+
+      async function whileRunning(worker: SQLiteWorkerClient, queryId: string): Promise<void> {
+        // oxlint-disable-next-line no-await-in-loop -- polls one turn of the event loop at a time.
+        while (!worker.isRunning(queryId)) await new Promise((resolve) => setImmediate(resolve));
+      }
+
+      test.each([
+        ["the query timeout", "deadline.db", 1, async () => {}, "SQLite worker timed out after 1ms (query)"],
+        [
+          "a cancel",
+          "cancel.db",
+          undefined,
+          async (worker: SQLiteWorkerClient) => {
+            await whileRunning(worker, "large-q");
+            expect(await provider.cancelQuery("large-q")).toBe(true);
+          },
+          "SQLite worker was terminated",
+        ],
+        [
+          "a disconnect",
+          "disconnect.db",
+          undefined,
+          async (worker: SQLiteWorkerClient) => {
+            await whileRunning(worker, "large-q");
+            await provider.disconnect();
+          },
+          "SQLite worker was terminated",
+        ],
+      ] as const)(
+        "%s rejects it with the worker's named error, and the failed write is reported on the stream rather than thrown",
+        async (_trigger, name, queryTimeout, stop, message) => {
+          const watch = watchUncaught();
+          const debug = spyOn(logger, "debug");
+          let worker: SQLiteWorkerClient | null = null;
+          try {
+            const large = await connectLarge(name, queryTimeout);
+            worker = large.worker;
+            const outcome = provider.query(LARGE, undefined, "large-q").then(
+              () => null,
+              (error: unknown) => error,
+            );
+            await stop(worker);
+
+            const failure = (await outcome) as Error;
+            expect(failure).toBeInstanceOf(DatabaseError);
+            expect(failure.message).toContain(message);
+            await large.closed;
+            await new Promise((resolve) => setImmediate(resolve));
+            expect(watch.seen).toEqual([]);
+            // The stream did not close cleanly before the child died. When the exit comes
+            // first this cannot tell a dropped write from a finished one; BUSY is what keeps
+            // the write queued, so the case above is not passing vacuously.
+            expect(large.events[0]?.event).not.toBe("stdin-close");
+            // A failed write is reported on the stream at debug level, not thrown.
+            expect(debug.mock.calls.filter(([line]) => String(line).startsWith("[sqlite-worker]"))).toEqual(
+              large.events.flatMap((entry) =>
+                entry.event === "stream-error"
+                  ? [[`[sqlite-worker] ${entry.stream} failed after terminate(): ${entry.error.message}`]]
+                  : [],
+              ),
+            );
+          } finally {
+            // A test that fails before its stop leaves the child counting BUSY for minutes.
+            worker?.terminate();
+            watch.stop();
+            debug.mockRestore();
+          }
+        },
+      );
+    });
+
+    test("a worker restart that cannot spawn rejects the statement, and a later statement starts a worker again", async () => {
+      provider = new SQLiteProvider(makeSQLiteConfig({ database: join(fileTmpDir, "restart-spawn.db") }));
+      await provider.connect();
+      (provider as unknown as { worker: SQLiteWorkerClient }).worker.terminate();
+      const realSpawn = childProcess.spawn;
+      const spawn = spyOn(childProcess, "spawn").mockImplementation(((
+        _command: string,
+        args: readonly string[],
+        options: childProcess.SpawnOptions,
+      ) => realSpawn("libredb-missing-sqlite-worker", args, options)) as unknown as typeof childProcess.spawn);
+      let failure: Error;
+      try {
+        failure = (await provider.query("SELECT 1 AS one").then(
+          () => null,
+          (error: unknown) => error,
+        )) as Error;
+      } finally {
+        spawn.mockRestore();
+      }
+
+      expect(failure).toBeInstanceOf(DatabaseError);
+      expect(failure.message).toMatch(/SQLite worker failed: .*libredb-missing-sqlite-worker/);
+      expect((await provider.query("SELECT 1 AS one")).rows).toEqual([{ one: 1 }]);
+    });
   });
 
   // --------------------------------------------------------------------------
@@ -1597,7 +1971,7 @@ describe("SQLiteProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("getMonitoringData()", () => {
-    test("returns monitoring data with all sections", async () => {
+    test("returns the sections SQLite offers and lists the three it does not", async () => {
       provider = new SQLiteProvider(makeSQLiteConfig());
       await provider.connect();
 
@@ -1606,9 +1980,13 @@ describe("SQLiteProvider", () => {
       const data = await provider.getMonitoringData();
       expect(data.timestamp).toBeInstanceOf(Date);
       expect(data.overview).toBeDefined();
-      expect(data.performance).toBeDefined();
-      expect(data.slowQueries).toBeArray();
-      expect(data.activeSessions).toBeArray();
+      expect(data.tables).toBeArray();
+      expect(data.indexes).toBeArray();
+      expect(data.storage).toBeArray();
+      expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions"]);
+      expect(data.performance).toBeUndefined();
+      expect(data.slowQueries).toBeUndefined();
+      expect(data.activeSessions).toBeUndefined();
     });
   });
 
@@ -1705,11 +2083,10 @@ describe("SQLiteProvider", () => {
     // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
     // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
     // extension. What it says now must not name one.
-    test("says SQLite keeps no statement statistics rather than naming a Postgres extension", () => {
+    test("declares no slow-query sentence, because SQLite offers no Queries panel to draw it", () => {
       const { slowQueriesEmptyState } = new SQLiteProvider(makeSQLiteConfig()).getLabels();
 
-      expect(slowQueriesEmptyState).toContain("SQLite keeps no statistics");
-      expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+      expect(slowQueriesEmptyState).toBeUndefined();
     });
 
     // SQLite declares the `reindex` maintenance operation and `runMaintenance()`
@@ -3565,6 +3942,8 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(thrown)).toBe("row-budget-refusal");
   });
 
   test("the row budget refusal a grounding capture records is parsed out of THIS message (B54)", async () => {
@@ -3593,12 +3972,13 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
       );
 
     expect(thrown).toBeInstanceOf(QueryError);
-    expect(rowBudgetIn((thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
+    expect(errorKind(thrown)).toBe("row-budget-refusal");
+    expect(rowBudgetIn(errorKind(thrown), (thrown as QueryError).message)).toEqual({ projected: 3, allowed: 2 });
 
     /*
       PostgreSQL raises the same sentence and cannot be driven from here without a
       server, so its call is pinned against the SOURCE: it builds the refusal with the
-      constructor SQLite's run above went through (D367). Weaker than the live arm above,
+      constructor SQLite's run above went through. Weaker than the live arm above,
       since it proves the call is there and not that a running engine reaches it, and
       still red if PostgreSQL types its own copy again.
     */
@@ -3619,8 +3999,9 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
-    // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON (D367).
+    // The whole sentence, numbers in order: [{"big":"<30 a>"}] is 42 bytes as JSON.
     expect((thrown as QueryError).message).toBe("Read-only execution exceeded the byte budget: 42 bytes > 8 allowed");
+    expect(errorKind(thrown)).toBe("byte-budget-refusal");
 
     // PostgreSQL's byte call, pinned against the source like its row call above.
     const postgresSource = readFileSync(join(REPO_ROOT, "src/lib/db/providers/sql/postgres.ts"), "utf8");
@@ -3643,6 +4024,35 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
         (error: unknown) => error,
       );
     expect(thrown).toBeInstanceOf(QueryError);
+    expect((thrown as QueryError).message).toBe("Read-only execution exceeded the time budget: 1ms allowed");
+    expect(errorKind(thrown)).toBe("time-budget-refusal");
+  });
+
+  test("under the synchronous driver a statement past the time budget has its result refused after it ends", async () => {
+    // With the worker turned off nothing can interrupt the statement, so the deadline is checked once it has run.
+    const previousWorker = process.env.LIBREDB_SQLITE_WORKER;
+    process.env.LIBREDB_SQLITE_WORKER = "0";
+    try {
+      const dbPath = await seedDatabase();
+      const profile = await openAgent(dbPath);
+
+      const thrown = await profile
+        .queryReadOnly(
+          "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < 400000) SELECT COUNT(*) AS n FROM c",
+          { ...AGENT_BUDGET, statementTimeoutMs: 1 },
+        )
+        .then(
+          () => null,
+          (error: unknown) => error,
+        );
+      expect((thrown as QueryError).message).toMatch(
+        /^Read-only execution exceeded the time budget: \d+ms > 1ms allowed$/,
+      );
+      expect(errorKind(thrown)).toBe("time-budget-refusal");
+    } finally {
+      if (previousWorker === undefined) delete process.env.LIBREDB_SQLITE_WORKER;
+      else process.env.LIBREDB_SQLITE_WORKER = previousWorker;
+    }
   });
 
   test.each([
@@ -3901,13 +4311,9 @@ describe("resolveSQLiteDriverName()", () => {
 
   test("provider connects and queries with an explicit LIBREDB_SQLITE_DRIVER=bun override", async () => {
     process.env.LIBREDB_SQLITE_DRIVER = "bun";
-    const provider = new SQLiteProvider({
-      id: "override-bun",
-      name: "Override Bun",
-      type: "sqlite",
-      database: ":memory:",
-      createdAt: new Date(),
-    });
+    const provider = new SQLiteProvider(
+      makeSQLiteConfig({ id: "override-bun", name: "Override Bun", database: ":memory:" }),
+    );
     try {
       await provider.connect();
       const result = await provider.query("SELECT 1 AS one");
@@ -4277,7 +4683,9 @@ describe.skipIf(!nodeDriverTestable)("SQLiteProvider with LIBREDB_SQLITE_DRIVER=
       throw new Error(`node harness ${howItFailed(run)}: ${run.stderr?.toString()}`);
     }
 
-    const report = JSON.parse(run.stdout.toString()) as Record<string, unknown>;
+    // The report is the last line; the logger writes to stdout too (the storage location the harness's first admission
+    // takes is logged once, at info).
+    const report = JSON.parse(run.stdout.toString().trim().split("\n").pop()!) as Record<string, unknown>;
 
     // Runtime and connection lifecycle
     expect(report.runtime).toBe("node");

@@ -99,9 +99,10 @@ export interface ObjectSourceViewProps {
    * prop could not take a null. A Source tab open when the last connection went away then came
    * back labelled `Source: <name>` over an EMPTY, EDITABLE buffer with a live Run button, which
    * is the composition this whole surface exists to prevent. The state is REACHED and not only
-   * admitted by the type: `use-connection-adapter.ts` auto-selects whenever the host's list is
-   * non-empty, so a null active connection means the host handed an empty array, which is what
-   * a host does when a person deletes the last connection in the host's own UI.
+   * admitted by the type: in the embedded shell a null active connection means the host handed an
+   * empty array, which is what a host does when a person deletes the last connection in the host's
+   * own UI, or, since FND-1, a list in which no connection's type names a provider, or one that
+   * retyped the open connection (`use-connection-adapter.ts`).
    */
   readonly connection: DatabaseConnection | null;
   readonly path: readonly string[];

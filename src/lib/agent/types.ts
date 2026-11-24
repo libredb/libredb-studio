@@ -44,6 +44,7 @@
 import type { Role } from "@/lib/auth";
 import type { LLMProviderType } from "@/lib/llm/types";
 
+import type { ErrorRecord } from "@/lib/db/error-record";
 import type { ExecutionProfileDenyCode } from "@/lib/db/errors";
 import type { PolicyDenyCode } from "@/lib/db/operations/policy";
 import type { AgentStatementViolation } from "@/lib/db/operations/statement-guard";
@@ -249,10 +250,13 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
  *
  * `operations` is the false one, and it is the whole reason this record exists rather
  * than a blanket rule about agent mode. Its tools are the curated provider readings
- * every engine implements, served under `AGENT_OPERATIONS_PROFILE`, whose acquisition
- * does not require `queryReadOnly` (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`).
- * A refusal that ignored this axis would withhold from MySQL, Oracle, SQL Server,
- * MongoDB, Redis and the rest a workflow that runs on them today (#411).
+ * the run's engine offers (its `ENGINE_FACETS` row's `agentReadings`), served under
+ * `AGENT_OPERATIONS_PROFILE`, whose acquisition does not require `queryReadOnly`
+ * (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`). A refusal that ignored this axis
+ * would withhold from MySQL, Oracle, SQL Server, MongoDB, Redis and the rest a workflow
+ * that runs on them today (#411). Where it does not open is decided by the other axis,
+ * the `agent-readings` requirement in `agent-manifest.ts`: an engine that offers no
+ * reading is refused the workflow in agent mode.
  *
  * It says nothing about PLAN mode, which drafts on every engine and executes nothing it
  * drafts: a caller reading this record has to have established the mode first, exactly
@@ -338,12 +342,16 @@ export type AgentRunFailureReason =
   | "model-unauthorized"
   /**
    * The connection's engine has no read-only statement path under a declared boundary,
-   * so this run could never have been permitted on it. A property of the connection the
+   * or is not on Studio's review record of the engines agent statements run on
+   * (`AGENT_EXECUTION_ENGINES`, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
+   * have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
-   * workflow's own reads go through the curated provider methods every engine
-   * implements, under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
+   * workflow's own reads go through the curated provider methods its engine offers to
+   * agent mode (its `ENGINE_FACETS` row's `agentReadings`; an engine that offers none is
+   * refused the workflow by the `agent-readings` requirement, not by this reason),
+   * under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
    * STATEMENT path; and since #411 it takes a server-side catalog capture before its
    * first turn, which does acquire a profile. WHICH profile depends on the reading, and
    * that is what keeps this reason out of an operations run (#414): the composed catalog
@@ -353,7 +361,10 @@ export type AgentRunFailureReason =
    * acquisition IS attempted on all nine — the sentence here used to say none was, which
    * was true only until the second reading existed. What survives is the conclusion: the
    * profile whose acquisition would be refused is never the profile that capture asks for
-   * on an engine that would refuse it.
+   * on an engine that would refuse it, while every engine whose overlay supplies a
+   * `catalogCapture` is on the review record, which the shipped record is and the language
+   * census holds. On such an engine off the record the capture is refused
+   * `PROFILE_ENGINE_NOT_REVIEWED` and a plan or operations run begins ungrounded.
    *
    * ONLY the engine's own refusal, since B47: the other causes of the same error type
    * are `agent-credential-unusable`, the three principal and server reasons and
@@ -437,6 +448,13 @@ export type AgentRunFailureReason =
   | "server-authorization-off"
   /** The run's persisted connection no longer resolves on the server. */
   | "connection-unresolvable"
+  /**
+   * The run's seed entry is still found and open to its actor, but its type names no provider this Studio has
+   * (`UnknownProviderError`, FND-1), so resolving the connection refuses it: a seed entry written for a newer Studio,
+   * or a type misspelt in it. Named after the API code it mirrors, `PROVIDER_UNKNOWN`. The run has ended `failed`, so
+   * the repair is the seed entry's `type`, or starting the question again in a Studio that has that provider.
+   */
+  | "provider-unknown"
   /** Anything else. Deliberately unspecific; the log carries the detail. */
   | "internal";
 
@@ -462,7 +480,21 @@ export type AgentRunStopReason =
   /** One model call did not return within its own ceiling. Retrying is reasonable. */
   | "model-timeout"
   /** The model-turn ceiling was reached with work still in flight. */
-  | "turn-limit";
+  | "turn-limit"
+  /**
+   * The model's own answer was stopped at the endpoint's output limit, and the run ended there.
+   *
+   * A different bound from every other entry here, which is why it is its own reason: the run had
+   * turns and seconds left, and the model was still talking. Nothing about the run's budget was
+   * exhausted. The provider stopped ONE answer part way through because it had grown past what a
+   * single response may be.
+   *
+   * The loop asks once when it sees this (see `AGENT_MODEL_OUTPUT_LIMIT_ASKS`); a run that is cut a
+   * second time ends here, because the sentence it was given had already told it to write less and
+   * it did not. Ending as `model-stopped` instead, as the loop did before the finish reason was
+   * read at all, told the user the model had nothing more to say about a turn the server had cut.
+   */
+  | "model-output-limit";
 
 /**
  * Who started the run, persisted at start and the sole authority for authorizing
@@ -863,12 +895,30 @@ export type AgentToolRefusal =
        */
       readonly answered?: boolean;
       /**
-       * `false` when this server refused the statement before sending it (`RefusedBeforeSendError`: a provider's own
-       * fence, or the run's read allowance), so `message` is this server's sentence and the database never saw the
-       * statement. It is still a statement the run spent and a repair attempt, because the rewrite is the model's to
-       * author. Absent for a failure the database raised, and on every refusal recorded before this field existed.
+       * `false` when the statement was refused before it was sent (`RefusedBeforeSendError`: a provider's own fence,
+       * or the run's read allowance), so the database never saw the statement and `message` is not the database's:
+       * `refusedBy` says whose sentence it is. It is still a statement the run spent and a repair attempt, because the
+       * rewrite is the model's to author. Absent for a failure the database raised, and on every refusal recorded
+       * before this field existed.
        */
       readonly sent?: false;
+      /**
+       * Whose sentence `message` is, where it is not the database's. `"studio"` for this server's own refusal, said in
+       * this server's voice: before sending (the run's read allowance, with `sent: false`) or after (core's row, byte or
+       * time refusal of the statement's answer, with `sent` absent). `"provider"` only before sending, for the
+       * provider's own refusal, which a prompt carries fenced as the provider's text naming it. Absent on a sent
+       * statement: the database's text, relayed by the provider and fenced naming it. Absent with `sent: false`: a
+       * refusal recorded before this field existed, read as the provider's, the conservative reading.
+       */
+      readonly refusedBy?: "studio" | "provider";
+      /**
+       * The failure's error record (src/lib/db/error-record.ts): its kind, code, outcome and, where its text was not
+       * withheld, its SQLSTATE, as closed fields with no text of the error. Built by `errorRecord` with the call's own
+       * scrub, and what the tool layer decides a failure by; `message` stays beside it for the model's repair and
+       * decides nothing. Absent on every refusal recorded before this field existed, which a reader treats as an
+       * unknown class, never as any kind.
+       */
+      readonly record?: ErrorRecord;
     }
   | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number }
   /**
@@ -937,6 +987,17 @@ export type AgentGuidanceNotice =
    * PASSING run took 183s.
    */
   | "turn-cut-off"
+  /**
+   * A turn the ENDPOINT stopped at its output limit, on a run that still has turns and time.
+   * Delivered as a `user` message and the turn is taken again, with the sentence naming the reason
+   * it was cut: the answer was too long for one turn. Bounded by `AGENT_MODEL_OUTPUT_LIMIT_ASKS`, counted
+   * off the ledger, so the sentence is said once per RUN rather than once per process.
+   *
+   * The sibling of `turn-cut-off` and not the same thing: that one is this server's per-call clock,
+   * this one is the provider's per-response length. A run can meet either, and what it is told has
+   * to say which, because the repair is the opposite: wait less, or write less.
+   */
+  | "model-output-limit"
   /**
    * A run within the turn or time reserve of a ceiling. Delivered as a `user` message
    * riding the turn about to be taken; once per run.
@@ -1850,9 +1911,24 @@ export interface AgentRunRecord {
    * selection, narrowing, the prompt, the verifier and a resumed drive all read it from the record, never
    * from the live connection, so a run is the same run in a process that cannot reach its database.
    *
-   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run.
+   * Optional, and absent reads as `sql`: every ledger written before this field was an SQL run. A header
+   * naming a language this build does not hold is refused when the ledger is read (`runHeaderRefusal`),
+   * so a folded record only ever carries an id this build holds.
    */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /**
+   * The type id of the run's connection when it opened, which picks the curated `inspect_operations` readings
+   * the run is offered (its `ENGINE_FACETS` row's `agentReadings`).
+   *
+   * Decided once at open and read by tool selection and the curated reading, never from the live connection,
+   * for the reason `statementLanguage` gives.
+   *
+   * Optional, because a header written before this field records none, and such a run is offered the six
+   * curated readings it was opened with. A header naming a value that is not a type id, or an agent-mode
+   * operations run on an engine that offers agent mode no reading, is refused when the ledger is read
+   * (`runHeaderRefusal`).
+   */
+  readonly engine?: DatabaseType;
   /**
    * The rule this run is judged against, decided once at open from its workflow variant.
    *
@@ -1861,7 +1937,10 @@ export interface AgentRunRecord {
    * manifest that may have changed since.
    *
    * Optional, and absent reads as the verifier of the run's variant (for a ledger written before this field,
-   * the SQL workflow's verifier), which is what judged every run written then.
+   * the SQL workflow's verifier), which is what judged every run written then. An agent-mode header naming a
+   * verifier with no rule, or a retired one, or a workflow with no variant on its language, is refused when the
+   * ledger is read (`runHeaderRefusal`), so a folded agent-mode record only ever resolves to a rule `goalOf`
+   * judges. A plan is judged by the planning rule whatever this field holds, so it is not checked on a plan.
    */
   readonly verifier?: AgentGoalVerifierId;
   /**

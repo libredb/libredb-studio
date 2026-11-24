@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { ParenthesisedRuns } from "@/lib/sql/parenthesised";
 
 /**

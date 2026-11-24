@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE, workflowAvailability } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
@@ -12,7 +12,8 @@ import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operations/statement-guard";
-import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
@@ -487,8 +488,9 @@ describe.each(ENGINES)("%s", (type) => {
     expect(pack.server.grounding.omissionAdvice.length).toBeGreaterThan(0);
     for (const workflow of WORKFLOWS) {
       const bounds = AGENT_WORKFLOW_BUDGETS[workflow].policy.budgets;
-      for (const posture of [pack.client.posture.reads(bounds), pack.client.posture.widened(bounds)]) {
-        for (const field of [posture.headline, posture.qualifier, posture.title, posture.body]) {
+      const copies = [pack.client.posture.reads(bounds), pack.client.posture.widened?.(bounds)];
+      for (const copy of copies.filter((each) => each !== undefined)) {
+        for (const field of [copy.qualifier, copy.title, copy.body]) {
           expect(field.length, workflow).toBeGreaterThan(0);
         }
       }

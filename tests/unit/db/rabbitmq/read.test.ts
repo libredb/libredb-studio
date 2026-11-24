@@ -52,6 +52,7 @@ import {
   startFakePeer,
 } from "../../../helpers/rabbitmq-fake-peer";
 import { createManagementStub, type ManagementStub } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const STREAM_ANSWER = JSON.stringify({ type: "stream", online: ["rabbit@a"], members: ["rabbit@a"] });
 
@@ -120,7 +121,9 @@ function harness(overrides: Partial<ReadDependencies> = {}, connection: Partial<
   const clock = deadlines();
   const lifetime = new AbortController();
   opened.push(lifetime);
-  const endpoints = readConnectionOptions(rabbitmqConnection(connection));
+  const read = readConnectionOptions(rabbitmqConnection(connection), ALLOWS_PRIVATE_HOSTS);
+  // The AMQP endpoint carries the decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+  const endpoints = read.amqp === null ? read : { ...read, amqp: { ...read.amqp, egress: ALLOWS_PRIVATE_HOSTS } };
   const hanging = hangingDial();
   const queryTimeoutMs = overrides.queryTimeoutMs ?? 30_000;
   const deps: ReadDependencies = {
@@ -131,6 +134,7 @@ function harness(overrides: Partial<ReadDependencies> = {}, connection: Partial<
       deadlineSignal: clock.factory,
       queryTimeoutMs,
       lifetime: lifetime.signal,
+      egress: ALLOWS_PRIVATE_HOSTS,
       limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
     }),
     readLimiter: rabbitmqReadLimiter(),
@@ -782,7 +786,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, dial: hanging.dial },
     );
     await provider.connect();
@@ -799,7 +803,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, dial: hangingDial().dial },
     );
     await provider.connect();
@@ -817,7 +821,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection({ amqpPort: String(target.port) }),
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: connectedStub().factory, dial: recording.dial },
     );
     await provider.connect();

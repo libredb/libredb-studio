@@ -67,6 +67,8 @@ const DATABASE_ERROR: AgentToolRefusal = {
   // (#512). In the fixture rather than left out, because the shape a
   // run written by this build produces is the one worth pinning.
   elapsedMs: 31,
+  // The failure's error record: its class, as closed fields, beside the engine's words.
+  record: { kind: "query", code: "QUERY_ERROR", outcome: "unknown" },
 };
 
 /**
@@ -411,6 +413,7 @@ describe("contract shapes", () => {
     };
 
     expect("elapsedMs" in older).toBe(false);
+    expect("record" in older).toBe(false);
   });
 
   test("a chart spec cannot ask for a histogram, because the run has no bins to show", () => {

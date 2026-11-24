@@ -122,7 +122,7 @@ It prints one banner that names every variable to fix and never prints a secret,
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` is set to anything but empty or a value that switches it off: `false`, `off` or `0`.
 - `GOVERNANCE_POSTGRES_URL`, `GOVERNANCE_INSTANCE_ID`, `GOVERNANCE_PRIVATE_KEYS_FILE` or `STORAGE_POSTGRES_SCHEMA` is missing.
 - The keyring file does not load, for one of the reasons [keyring](#keyring) lists.
-- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine Studio has no connection type for.
+- A variable of the table above has an invalid value, `GOVERNANCE_SOURCE` included, or `GOVERNANCE_ALLOWED_ENGINES` names an engine this Studio has no provider for, which the banner names in the sentence Studio refuses such a connection type with, such as `No provider for the connection type "postgress" is installed in this LibreDB Studio.`
 
 ### What governance mode switches off
 
@@ -144,6 +144,7 @@ Studio checks the session of every request against these rules:
 - A password, passkey or launch session carries no subject and is refused, and so is a session whose subject is empty or whose issuer is not `OIDC_ISSUER`.
   With `OIDC_ISSUER` unset or not a URL every session is refused, and a changed `OIDC_ISSUER` ends the sessions of the previous issuer.
 - A session issued at or before its subject's latest `revoked_before` in [`bridge.session_revocations_v1`](#row-semantics) is refused, typically within a second of the commit that adds the row, because its change notification reloads the snapshot.
+  An instance whose shutdown hooks have started, at SIGTERM or SIGINT or, where Studio's handler owns the exit, once the drain ends, at most 5 seconds after the signal, applies no such row until it exits ([operating notes](#operating-notes)).
   A session's issue time is its token's `iat`, in whole seconds, so a session signed within the second of `revoked_before` counts as issued before it.
   A sign-in after that second gets a session the row does not refuse, so a control plane that means to keep someone out also disables them at the identity provider.
 - The OIDC callback applies the same rule to the session it is about to mint: when the subject's latest `revoked_before` is at or after the current second, as when the control plane's clock runs ahead of Studio's or the row's `revoked_before` cannot be read, the sign-in ends on `/login?error=oidc_session_revoked` with no session, and the audit trail records `login_failure` with reason `oidc_session_revoked`.
@@ -287,8 +288,11 @@ When a reload takes a person's access to a connection away or changes it, Studio
   So a revoked person's uncommitted changes are discarded, typically within a second of the change that revoked them.
 - Then the provider's database sessions are closed, and Studio waits at most 10 seconds for that.
   Sessions that do not close in time are abandoned and logged, so a database that hangs never holds the next reload.
+- A provider of that person still opening when the reload closes their providers is closed as soon as it has connected, and never kept.
+  A request that was waiting for that open is answered 503 `CONNECTION_ERROR`, saying the connection was closed while it was opening and nothing was sent.
 - The person's next request on the connection is answered from the new snapshot: 404 `CONNECTION_NOT_FOUND` without a grant, or 409 `TRANSACTION_CREDENTIAL_CHANGED` when their transaction was open under a level or credential that changed.
-- A provider idle for 30 minutes, and every provider at shutdown, is closed the same way, its open transaction rolled back first.
+- A provider idle for 30 minutes, and every provider at a shutdown Studio's handler owns ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)), is closed the same way, its open transaction rolled back first.
+  At a shutdown this holds for every provider, not only a person's own: a provider every person shares is rolled back and closed under the same deadlines.
 
 Without governance every person who opens a connection with the same credential shares one provider, as before.
 
@@ -415,7 +419,15 @@ How an instance connects to the governance source:
 - Each pooled connection names itself `libredb-studio-governance` in `application_name`, and the listener's connection `libredb-studio-governance-listener`, so they show up as such in `pg_stat_activity`.
 - A load waits at most 5 seconds for a connection, each statement runs under a `statement_timeout` of 10 seconds and is abandoned by Studio after 15, and the whole load gives up after 20 seconds, so a governance source that hangs never holds a load for long.
   Studio closes the connection of a load that gave up, and a statement still running on it keeps its server process busy until it ends, at most the 10 seconds of `statement_timeout`, because PostgreSQL notices a closed connection only when it next reads from it.
-- On SIGTERM or SIGINT Studio first inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, and then closes its connections to the users' databases and exits.
+- Where Studio's handler owns the exit (`NEXT_MANUAL_SIG_HANDLE=true`, which the images and every launcher on Node.js set), on SIGTERM or SIGINT Studio first stops accepting connections and waits at most 5 seconds for the requests in flight, so their query events are in the insert.
+  A request that starts after the drain, on a connection whose next request had already begun, is not waited for ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  It then inserts the [query events](#query-events) it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it, then closes its connections to the users' databases and exits ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+- Where Next.js's handler owns the exit, where the variable is unset or empty, as on Bun or for a `server.js` no launcher starts, on SIGTERM or SIGINT Studio inserts the query events it still holds, for at most 4 seconds, and closes the listener's connection and the governance pool, waiting at most 5 seconds for all of it.
+  That insert runs beside Next.js's own shutdown and is cut when Next.js exits, within milliseconds on an idle server, so query events still queued can be lost.
+  Next.js then goes on serving the requests in flight and the connections open at the signal until they end.
+  When the process recorded a query event before the signal, the insert at the signal closed the query event sink once it ended, so the query events of the statements run after that are never inserted; without such an event the sink stays open and inserts them as usual.
+  Studio's line at the exit counts every event left unsent as `queryEventsLost`, unless the platform's SIGKILL ends the process, and `queryLog.onSinkFailure` set to `refuse` refuses those statements instead ([query events](#query-events)).
+- Closing the listener and stopping the reloads when the shutdown hooks start, at the signal where Next.js's handler owns the exit and after the drain where Studio's does, means that from then on the instance applies no further change of grants or sessions, a revocation included: until the process exits it authorizes requests by the snapshot it held then.
 
 ## Admin status
 
@@ -534,7 +546,8 @@ A control plane reads `bridge.studio_instance` to show its Studio instances:
 ## Versioning and upgrade order
 
 - `bridge.contract` keeps its shape forever.
-- Within a version the only changes allowed are nullable columns appended to a view with `CREATE OR REPLACE VIEW`, new engines, new allowlisted settings and new sources of rows with the same meaning.
+- Within a version the only changes allowed are nullable columns appended to a view with `CREATE OR REPLACE VIEW`, new engines, new allowlisted settings, new skip codes and new sources of rows with the same meaning.
+- A new skip code can take over cases an older code covered, as `PROVIDER_UNKNOWN` took the engines that name no provider from `ENGINE_UNSUPPORTED`: the manifest of the release that first writes it lists it, the control plane vendors that release before Studio is upgraded, and an instance of an earlier release reports those rows under the older code until it is upgraded.
 - Anything else is a new version, published as `_v2` objects next to the `_v1` ones, with `bridge.contract` listing both.
 - Studio declares the versions it supports, `[1]` in this release, uses the highest version both sides have, and reports it in its heartbeat and in `GET /api/ready`.
 - A control plane keeps version 1 until its `sunset_after` has passed and no heartbeat has reported version 1 for 7 days.
@@ -547,7 +560,7 @@ A control plane reads `bridge.studio_instance` to show its Studio instances:
 Studio checks each `bridge.connections_v1` row in order and skips a row with a code instead of failing the whole snapshot:
 
 1. `connection_id` has the published format, and no id appears twice.
-2. The engine is in `GOVERNANCE_ALLOWED_ENGINES` (by default `postgres,mysql,mssql,oracle,mongodb,redis`) and opens no local file: `sqlite`, `duckdb` and `libredb` are never governed.
+2. The engine names a provider this Studio has, opens no local file (`sqlite`, `duckdb` and `libredb` are never governed), and is in `GOVERNANCE_ALLOWED_ENGINES` (by default `postgres,mysql,mssql,oracle,mongodb,redis`).
 3. A PostgreSQL definition without a `database` is skipped, because a server-level connection opens sessions to every database the credential can reach.
 4. The definition holds only keys of the allowlist below, each with a value in its domain.
 5. The read envelope opens, and the record merged from the row and the read credential passes Studio's own connection validation.
@@ -557,6 +570,7 @@ Studio checks each `bridge.connections_v1` row in order and skips a row with a c
    A write envelope that does not open, or whose record fails, keeps the row with read access only.
 
 A row reports only its first fault, checked in this order: the id, the engine, the definition, the read envelope with the record merged from it, then the write envelope with its record.
+Within the engine, one that names no provider is reported before one that opens a local file, and that before one outside `GOVERNANCE_ALLOWED_ENGINES`.
 Within the definition, a credential key is reported as `DEFINITION_HAS_SECRET` before any other key is checked.
 A skip at the write level, one that carries `"level": "write"`, is the only one whose row stays admitted, with read access only; every other skip leaves the row out.
 
@@ -566,7 +580,8 @@ A skip at the write level, one that carries `"level": "write"`, is the only one 
 | `WRITE_SECRET_UNOPENABLE` | The write envelope did not open, so the row is kept with read access only. |
 | `DEFINITION_INVALID` | The id, a definition key or a value is not one the contract admits. |
 | `DEFINITION_HAS_SECRET` | The definition carries a credential, which belongs in an envelope. |
-| `ENGINE_UNSUPPORTED` | The engine is not a Studio type id, or it opens a local file. |
+| `PROVIDER_UNKNOWN` | The engine names no provider this Studio has: it is not one of its connection type ids, such as a misspelt engine or one only a newer Studio serves. |
+| `ENGINE_UNSUPPORTED` | The engine is a Studio type id that opens a local file, which governance never serves. |
 | `ENGINE_NOT_ALLOWED` | The engine is a Studio type id outside `GOVERNANCE_ALLOWED_ENGINES`. |
 | `SERVER_LEVEL_NOT_ALLOWED` | A PostgreSQL definition has no `database`. |
 | `SETTING_INVALID` | A runtime setting's value is outside its key's domain, so Studio ignores it. |
@@ -645,8 +660,8 @@ Studio records one query event per executed unit:
 | --- | --- |
 | `editor` | One per editor statement; `explain` is set for a plan request. |
 | `multi-query` | One per executed unit of a multi-statement run, with `unit_index`; units that never ran leave no row. |
-| `transaction` | One per statement in an interactive transaction (`transaction_outcome` `open`), plus one when it ends: `committed`, `rolled-back` or `timed-out`. All rows of one transaction share `transaction_id`. |
-| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id and the statement the plan sends: its statements one per line, or its command line. The status is `success` when the edit applied, and `error` for any other outcome, with the engine's code when it refused the edit; an apply refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
+| `transaction` | One per statement in an interactive transaction (`transaction_outcome` `open`), plus one when it ends: `committed`, `rolled-back`, `timed-out` or `unknown`. All rows of one transaction share `transaction_id`. |
+| `object-edit` | One per applied object edit, with `correlation_id` set to the edit plan's id and the statement the plan sends: its statements one per line, or its command line. The status is `success` when the edit applied, and `error` for any other outcome, with the engine's code when it refused the edit, and no code when that code holds a credential of the connection; an apply refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
 | `maintenance` | One per administrator maintenance action, with status `error` when the action threw or the engine reported it did not run. The statement is NULL, because the engine's provider builds it and Studio's route never sees its text; an action refused with `AUDIT_UNAVAILABLE` records one `refused` event instead. |
 | `profile` | One per data profile run (`POST /api/db/profile`), which reads aggregates of user data. Its statement is the profiled object's path as the route quotes it into its reads, such as `"public"."orders"`, or for MongoDB the JSON address of the collection, such as `{"database":"shop","collection":"items"}`; its `statement_type` is `SELECT` on every engine, and `row_count` is NULL. |
 | `key-scan` | One per page of a key scan (`POST /api/db/keys/scan`), which reads key names. Its statement is the page request, `SCAN <cursor> [MATCH <pattern>] COUNT <count>` on every engine that walks a key space, its `statement_type` is `OTHER`, and `row_count` is the number of keys the page returned. |
@@ -659,17 +674,31 @@ Exactly one terminal row ends a transaction, with `statement_type` `OTHER`:
 
 - `committed`, statement `COMMIT`, for the person's commit.
 - `rolled-back`, statement `ROLLBACK`, for the person's rollback and for the rollbacks Studio makes itself: when the grant level or credential under the transaction changed (409 `TRANSACTION_CREDENTIAL_CHANGED`, with `status` `error` when Studio could not confirm the rollback), and when a reload takes the grant away and closes the person's providers.
+  A reload that closes them while a call of the person's is still running on the transaction records `unknown` instead, since that call, a `COMMIT` among them, may end the transaction before the close's rollback.
   A close that fails records nothing and keeps the transaction's record, because the transaction may still be open, and is logged as `Governance teardown failed` with `transactionOutcome` `unknown`; the path that later sees the transaction end records its row.
 - `timed-out`, with no statement and `status` `cancelled`, when the database driver rolled the transaction back at its five-minute limit, which Studio notices at most 1 second after the limit or at the person's next request.
+- `unknown`, when Studio cannot tell how the transaction ended (docs/providers/CONTRACT.md, C-58).
+  With no statement and `status` `cancelled` when Studio found the transaction ended after a call it had stopped waiting for: a `COMMIT` it stopped waiting for may have committed, so neither `timed-out` nor `rolled-back` is claimed, and the same holds for any other end Studio sees in that state, its own rollbacks included.
+  The same row ends a transaction a new `BEGIN` of the person's replaced before any other path recorded its end, which happens when it ended while one of their calls was still running on it.
+  With statement `COMMIT` and `status` `error` when a `COMMIT` failed after it may have reached the database and left no transaction: the database may have committed it or rolled it back, so check the data before the work runs again.
+  With statement `ROLLBACK` when the grant level or credential under the transaction changed while a call of the person's was still running on it, or after a call whose outcome Studio does not know when no transaction was left to roll back: that call may have ended the transaction before Studio's rollback, which the 409 `TRANSACTION_CREDENTIAL_CHANGED` then answers with `rolledBack` `false`.
+  With no statement and `status` `success` when a statement or script the person ran answered and left no transaction open: it may have ended the transaction itself, a typed `COMMIT` or `ROLLBACK` or an implicit commit, or the database driver's five-minute limit may have ended it while the statement ran.
 
-A `COMMIT` or `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
-A statement that itself ends the transaction, such as a typed `COMMIT`, records only its `open` row.
+A `COMMIT` that fails records `status` `error`: `open` when the transaction is still open or its state unknown, `rolled-back` when it ended and the `COMMIT` cannot have reached the database, and `unknown` when it ended otherwise, as above.
+A `ROLLBACK` that fails records `status` `error`: `rolled-back` when the transaction ended with it, else `open`.
+A statement, `COMMIT` or `ROLLBACK` whose caller left or whose deadline passed records an `open` row with `status` `error` and code `QUERY_CANCELLED` or `TIMEOUT_ERROR`, keeps the transaction, and may still have run.
+Until that call has settled, nothing about the transaction's state is known: a `BEGIN`, statement, `COMMIT` or `ROLLBACK` the person sends meanwhile is refused with 409 `TRANSACTION_CALL_RUNNING` before it reaches the database and records nothing, since it would queue behind that call, which may end the transaction first.
+A statement that itself ends the transaction, such as a typed `COMMIT`, records its `open` row and then the terminal `unknown` row above.
+A statement that fails and leaves no transaction open records the terminal `rolled-back` row with its own text and `status` `error` instead: a typed `COMMIT` the server ended in failure, or a statement answered 503 `TRANSACTION_LOST` because the transaction's database session ended.
 A statement, `COMMIT` or `ROLLBACK` request from a person who holds no open transaction on the connection, such as one sent right after the five-minute limit, is refused with 400 `QUERY_ERROR` and the sentence `No active transaction` before anything reaches the database, so no statement runs in a transaction without its row.
 It is the sentence the database providers answer for a statement outside a transaction, so the editor leaves transaction mode on either.
 
 How the editor and a multi-statement run record:
 
 - An `editor` event has `status` `success`, `error` or `cancelled`, `row_count` when the engine reported a count, and `access_level`, the level of the grant the statement ran with.
+  An editor statement whose caller left while it ran, or whose server deadline passed (its statement timeout plus 10 s), is recorded when Studio stops waiting for it: `cancelled` with code `QUERY_CANCELLED` for a caller that left, and `error` with code `TIMEOUT_ERROR` at the deadline.
+  The statement may still have run after that moment, and its own later end records nothing.
+  An editor statement whose caller left while its connection opened, or whose connection did not open within its engine's connect budget, is recorded the same way, `cancelled` with `QUERY_CANCELLED` or `error` with `TIMEOUT_ERROR`, although nothing reached the database: the answer says so with `outcome: "not-sent"` ([API reference](API_DOCS.md)).
 - The `multi-query` events of one request share one `correlation_id`, a UUIDv7, and `unit_index` counts its units from 0.
   A run stops at its first failing unit, so the units after it leave no row.
 - A request for a well-formed `seed:` id that Studio refuses before anything runs records one `refused` event with the refusal's API code in `error_code`.
@@ -690,10 +719,16 @@ Delivery:
   Each is logged as one line on standard output, `{"type":"query_event_rejected","event_id":"<uuid>","sqlstate":"23514","constraint":"query_event_not_future"}`, which carries neither the statement nor the server's message, because that can quote the row; `constraint` is null when the server names none.
   A refusal for good is not a reason to wait, so Studio does not back off after it.
 - At shutdown Studio inserts every queued event at once, batch after batch and without waiting out a backoff, for at most 4 seconds, and logs how many events it could not send.
-- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events.
-  It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events.
+  The insert runs only when the process recorded an event before the shutdown hooks started, which is the signal where Next.js's handler owns the exit and the end of the drain where Studio's does, and it sends the events recorded while it runs.
+  It then closes the query event sink: an event recorded after it is queued and never sent.
+  Where Studio's handler owns the exit, as in the images and under every launcher on Node.js, it first waits at most 5 seconds for the requests in flight, so their events are in the insert, and the process waits for the insert; where Next.js's handler owns it, where the variable is unset or empty, as on Bun or for a `server.js` no launcher starts, the insert starts at the signal and Next.js's exit can cut it ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  Either way, the line Studio logs as the process exits, unless the platform's SIGKILL ends it, counts the events left unsent, those recorded after the insert included, as `queryEventsLost`, and where Studio's handler owns the exit any such event makes the exit code 143 or 130.
+  An uncaught exception ends the process without that insert ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)): the events still queued are not inserted, and the line Studio logs for that exit counts them as `queryEventsLost`.
+  The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
+- With `queryLog.onSinkFailure` set to `refuse`, Studio refuses new executions with 503 `AUDIT_UNAVAILABLE` while it is backing off or its queue is at least 90% full, which is 9000 events, and from the shutdown's insert on, which closes the query event sink, until the process exits.
+  It checks before a statement reaches the database, for an interactive transaction's `BEGIN`, statements, `COMMIT` and `ROLLBACK` alike, so a refused request runs nothing, and it admits executions again once an insert settles its whole batch and the queue holds fewer than 9000 events; the refusal after the shutdown's insert lasts until the exit.
   A row the database refused for good never trips it, because Studio drops that row and goes on without backing off.
-  The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when it applies.
+  The sink state's `backingOff` and `queued`, in the [heartbeat](#heartbeat) and on the [admin status](#admin-status), show when the backoff or the full queue applies; the refusal after the shutdown's insert shows in neither.
 - With `continue`, the default, Studio keeps executing while it cannot record query events: their events wait in the queue, and once it is full the newest are dropped and counted in `dropped`.
 
 Capture follows `queryLog.statementCapture`, which is `none` while the control plane sets no valid value:
@@ -702,7 +737,7 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 | --- | --- | --- | --- |
 | `none` | NULL | NULL | NULL |
 | `redacted` | the statement with every string, number and comment replaced by `?` and white space collapsed, cut to `queryLog.maxStatementBytes` | the lowercase hex SHA-256 of the whole redacted text | NULL |
-| `full` | the statement as submitted, with the value after `PASSWORD` or `IDENTIFIED BY` and the user information of every URI replaced by `[REDACTED]`, cut to `queryLog.maxStatementBytes` | NULL | the error text, masked the same way and cut to 1000 characters |
+| `full` | the statement as submitted, with the value after `PASSWORD` or `IDENTIFIED BY` and the user information of every URI replaced by `[REDACTED]`, cut to `queryLog.maxStatementBytes` | NULL | the error text, masked the same way and cut to 1000 characters; on the `editor`, `multi-query`, `transaction`, `key-scan` and `profile` events, an error text that holds a credential of the connection is stored as Studio's withheld sentence |
 
 - The statement is the text the user submitted, never one Studio built around it, such as an `EXPLAIN` or an added row limit.
 - A statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, and `statement_truncated` is true when it was.
@@ -710,6 +745,7 @@ Capture follows `queryLog.statementCapture`, which is `none` while the control p
 - `redacted` reads a statement the way its engine reads it: SQL under the engine's own rules for literals and comments, a MongoDB command with its keys, operation, collection and database kept, and a Redis command with only its name kept.
   A password written as a bare word after `IDENTIFIED BY` is replaced as well, and the statement of an engine Studio has no reader for is stored as a single `?`.
 - `full` keeps every other secret written into a statement, such as a Redis `AUTH` argument, and an error text that quotes a statement in the driver's own words can carry one, so choose it only where the statements themselves must be kept.
+- On the `editor`, `multi-query`, `transaction`, `key-scan` and `profile` events, an error whose text holds a credential of the connection, in any form Studio derives from it, is stored as Studio's sentence naming the error's class, and its `error_code` is the error's API code rather than its SQLSTATE.
 - A refused request whose connection did not resolve, such as one for a connection the caller holds no grant on, stores no statement and no error text in any mode, because the engine that would read them is unknown.
 - In every mode `statement_type` is `SELECT`, `INSERT`, `UPDATE` or `DELETE` from the keyword that operates the statement, also behind a `WITH`, `DDL` for `CREATE`, `ALTER`, `DROP` and `TRUNCATE`, and `OTHER` for any other statement, for a unit without text and for every engine whose statements are not SQL.
   A `SELECT` behind a `WITH` whose CTE body writes takes the type of that write, so `WITH d AS (DELETE … RETURNING *) SELECT * FROM d` is `DELETE`, and a `MERGE` or `UPSERT` body is `OTHER`.
@@ -836,6 +872,6 @@ Under governance Studio's API answers these codes in the `code` field of an erro
 | --- | --- | --- |
 | `CONNECTION_NOT_FOUND` | 404 | The connection does not exist or is not granted to the caller; the two are indistinguishable. |
 | `GOVERNANCE_UNAVAILABLE` | 503 | The snapshot is loading, too old, misconfigured or incompatible. |
-| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert or its queue is at least 90% full, so the request was refused before any statement ran. |
-| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback. |
+| `AUDIT_UNAVAILABLE` | 503 | `queryLog.onSinkFailure` is `refuse` and Studio cannot record query events: it is backing off after a failed insert, its queue is at least 90% full, or the shutdown has closed its query event sink, so the request was refused before any statement ran. |
+| `TRANSACTION_CREDENTIAL_CHANGED` | 409 | The grant level or credential under the caller's open transaction changed, and Studio rolled the transaction back; `rolledBack` is `false` when it could not confirm the rollback, or when a call of the caller's whose outcome is not known may have ended the transaction first. |
 | `AI_DISABLED` | 403 | `ai.enabled` is `false`, and a route of the AI bucket refused a signed-in caller before any LLM provider was built. |

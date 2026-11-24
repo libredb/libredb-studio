@@ -19,9 +19,9 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import type { OxiaInt64, OxiaRpc } from "./client";
+import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
 import {
   OXIA_ADMIN_PORT,
-  OXIA_DEFAULT_PORT,
   OXIA_LEADER_MAX_BYTES,
   OXIA_RECEIVE_CAP_BYTES,
   OXIA_RUN_BYTE_BUDGET,

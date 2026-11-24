@@ -94,7 +94,7 @@ src/lib/db/
 │   ├── keyvalue/               # Key-Value Providers
 │   │   ├── redis.ts            # Redis Strategy
 │   │   ├── etcd/               # etcd Strategy (client.ts, grpc-client.ts, lexer.ts, commands.ts, objects.ts, ... index.ts)
-│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, commands.ts, ... index.ts)
+│   │   └── oxia/               # Oxia Strategy (client.ts, grpc-client.ts, routing.ts, walks.ts, ... index.ts)
 │   ├── timeseries/             # Time-Series Providers
 │   │   ├── prometheus/         # Prometheus Strategy (PromQL over the Prometheus HTTP API, no driver)
 │   │       ├── index.ts        #   PrometheusProvider: lifecycle and composition only
@@ -116,7 +116,7 @@ src/lib/db/
 │   │       ├── client.ts       #   the route-table client over the shared node transport
 │   │       ├── versions.ts     #   the reported version and the per-generation table
 │   │       ├── run-database.ts #   the database a run reads, and the _internal rule
-│   │       ├── influxql-lexer.ts, influxql-policy.ts, influxql-quote.ts, influxql-generators.ts # browser-safe InfluxQL core
+│   │       ├── influxql-quote.ts, influxql-generators.ts # browser-safe InfluxQL quoting and generators
 │   │       ├── sql-policy.ts   #   the influxdb3 read policy under the DataFusion grammar row
 │   │       ├── influxql-results.ts, sql-results.ts # answers -> rows and fields
 │   │       ├── influxql-objects.ts, sql-objects.ts # kinds and the object surface of each type
@@ -335,7 +335,7 @@ There are four:
 - `transaction`: `POST /api/db/transaction`, offered wherever a provider has the transaction methods.
 
 Schema Diff migration DDL is shown and copied, never run; plan mode drafts and never runs; and the agent and MCP open every handle read-only under their own boundary, `queryReadOnly`, which this record does not describe.
-The browser's destructive-statement confirmation is not a gate: Proceed skips it.
+The destructive-statement confirmation, in the browser and on the run routes, is not a gate: Proceed, or the confirmation token the server issues, gets past it.
 
 Each engine takes one of three values:
 
@@ -486,9 +486,52 @@ const { details } = await provider.describeObjects(['public'], 'table');
 await provider.disconnect();
 ```
 
+`createDatabaseProvider` opens no SSH tunnel.
+To reach a database through one, build, connect, use and disconnect the provider inside the callback of `withOneShotTunnel`, which closes its tunnel when the callback returns, or use `getOrCreateProvider`, which opens one for the provider it caches.
+Both open a tunnel exactly when Studio's decision about the connection's `sshTunnel` says so ([SSH tunnels](./providers/README.md#ssh-tunnels-bastion-host-key-verification)): its `enabled` is `true` and the connection names a `host` and a `port`.
+A tunnel that is on is refused with a `DatabaseConfigError` before anything is dialled when it is malformed, when the engine takes no tunnel (its `SSH_TUNNEL_REFUSAL` row), or when the connection names no `host` and `port` to forward to, such as a connection-string record.
+Without either, `createDatabaseProvider` refuses a connection whose `sshTunnel` is on and was not opened, with a `DatabaseConfigError` that says to build the provider inside `withOneShotTunnel` or get it from `getOrCreateProvider`, and builds nothing, so no provider connects to the record's own `host` and `port` past the tunnel the connection asked for.
+It also refuses a tunnel's far end (`TUNNEL_FAR_END`) handed over on a connection whose tunnel is not on.
+Before this rule, most engines connected to the record's own address with no error; an embedder that built a tunnelled connection's provider directly now gets the refusal instead.
+The provider `createDatabaseProvider` returns is built from a copy of the connection without `sshTunnel`, with the tunnel's route under `TUNNEL_ROUTE`; the tunnel's fields, its secrets included, stay in the record the caller passed, so `provider.config` is not that record whenever it carries an `sshTunnel` object, and `provider.config.sshTunnel` is `undefined`.
+An embedder that read `provider.config.sshTunnel` reads the connection it passed instead.
+A copy loses a field defined on the prototype or as not enumerable, and reads an own getter once, so a connection with an `sshTunnel`, and the tunnel itself, must be plain data, as parsed JSON is.
+A non-object `sshTunnel`, a class instance, a getter or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, by `createDatabaseProvider` and by `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` before they dial the tunnel.
+
+`provider.config` is always a new object, never the connection passed in, so a later change to that connection does not reach a built provider.
+It holds only the fields the engine declares (`providerFields` in `src/lib/db/provider-connection.ts`): its connection fields, its seed-only fields, `connectionString` where the engine accepts one, `ssl` where the engine takes the TLS panel, `host` and `port` where it takes an SSH tunnel, and Studio's own `id`, `name`, `type`, `queryTimeout`, `readOnly`, `managed` and `seedId`.
+So it carries no `agentUser`, `agentPassword`, `createdAt`, `color`, `environment`, `group` or `skipObjectScan`, no field of another engine such as `schema` on a PostgreSQL connection or `database` on Kafka, and no symbol key of the embedder's own.
+A field the engine does not declare is dropped, never refused, except a field the engine refuses by name.
+A connection that sets a field its engine does not take and refuses by name (`REFUSED_CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`: `user` on Qdrant, Weaviate, InfluxDB 3, Oxia, Apache Spark and Kubernetes; `database`, `namespaces` and `tlsServerName` on RabbitMQ; `apiKeyId` and `apiKeySecret` on OpenSearch) is refused before the provider is built, by `createDatabaseProvider` and `getOrCreateProvider`, with a `DatabaseConfigError` carrying the field's sentence from that row, so no provider receives a field its engine refuses.
+Such a field counts as set whatever its value but `undefined`, `null` and `""`: a value that is not text answers the field's sentence, and an OpenSearch API key half of only spaces is refused.
+`provider.config` holds none of those fields.
+Every connection must be plain data, with or without a tunnel: a class instance, an inherited field, an accessor or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built.
+An MSSQL connection that names only a connection string is refused by name, because SQL Server builds from its host and database fields.
+A connection without a secret its engine declares required (today Snowflake's private key under Key pair and its access token under a programmatic access token) is refused with a `DatabaseConfigError` carrying the dialog's sentence for it, before the provider is built, when that secret is absent, not text or only whitespace; before, the provider was built and `connect()` refused.
+Every error raised while the provider is built answers `outcome` `not-sent`, on the error and in every route body built from it ([Error kind and outcome](./API_DOCS.md#error-kind-and-outcome)).
+A provider carries no protected `getSafeConfig` or `getConnectionInfo` helper; no exported type declared either.
+
+`createDatabaseProvider`, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` take the process's egress decision before they look in a cache, dial a tunnel or build a provider.
+The first call reads `DB_HTTP_BLOCK_PRIVATE_HOSTS`, logs which way it decided and whether that is the default in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, and keeps the decision for the life of the process, so set the variable before the first call: a later change takes effect when the process restarts.
+A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused with a `DatabaseConfigError` naming the variable, on that call and every later one, and nothing is built.
+A standalone Studio takes the decision at boot instead, and refuses to start on such a value.
+Every provider but Spark is built with that decision, and Spark passes no guard, so no provider reads the variable itself.
+
+A Db2 provider is built with the CA certificates of the file `NODE_EXTRA_CA_CERTS` names, since its TLS library, unlike Node.js's, does not read that variable.
+The first Db2 build of a process reads the file and keeps its certificates for the life of the process, logging how many in one info line, which a `LOG_LEVEL` of `warn` or `error` hides, so set the variable before the first call: a later change takes effect when the process restarts, as it does for Node.js itself.
+A file that is missing, unreadable, empty, holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed is refused with a `DatabaseConfigError` naming the variable, on that Db2 build and every later one, and nothing is built; other engines are built as before.
+A standalone Studio reads the file at boot instead, and refuses to start on such a file.
+
+`createDatabaseProvider` decides the file a SQLite, DuckDB or LibreDB connection names before it builds the provider: a relative path is resolved against the working directory of that call, a path with a NUL byte, one of Studio's own storage files, a path the reserved check cannot read and a SQLite connection string that names no file after `file:` are refused with a `DatabaseConfigError` and nothing is built, and the provider opens the absolute path; `provider.config.database` stays as passed.
+A path whose resolution follows more than 40 symbolic links is one the reserved check cannot read, refused with `ELOOP` as its reason.
+An OPC UA connection's `clientCertificatePath` and `clientPrivateKeyPath` are admitted the same way, each refusal starting with the field's name, and the provider reads the absolute paths the factory admitted; the fields stay as passed, and a provider built without the factory refuses a connection that sets either one.
+The first call of a process, whatever engine it builds, takes Studio's storage location from `STORAGE_SQLITE_PATH` and the working directory, logs it once at info and keeps it for the life of the process.
+
 ### DuckDB file access and the execution context
 
 Both factories take a third argument, a server-side execution context.
+`createDatabaseProvider` takes only a plain-data context, as an object literal or parsed JSON is: a class instance, a getter, an inherited field or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built, because the provider receives a copy of it.
+`getOrCreateProvider` reads only the context's fields, so it does not refuse such an object.
 Several providers read its `readOnly` field, but only DuckDB reads its `allowExternalFileAccess` field.
 Without it, a DuckDB handle opens with `enable_external_access: 'false'`: a statement that reads or writes a file or reaches the network (`read_csv`, `COPY`, `ATTACH` of a file, `INSTALL`) is refused outside the handle's private temp directory and its database's own file names ([section 3.16 of the DuckDB page](providers/duckdb.md)), while the database the connection names stays writable.
 That default is fail-closed on purpose, and it changed what a call without the argument does: before it, every DuckDB handle had that reach.
@@ -591,6 +634,7 @@ try {
 ```
 DatabaseError (base)
 ├── DatabaseConfigError    - Configuration errors
+│   └── UnknownProviderError - The connection's type is absent, not text, or names no provider (code PROVIDER_UNKNOWN)
 ├── ConnectionError        - Connection failures
 ├── AuthenticationError    - Invalid credentials
 ├── PermissionDeniedError  - A privilege the credential lacks

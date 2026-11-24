@@ -7,8 +7,16 @@
 // quirks (phantom lines from load-only processes, non-executable lines) are
 // already handled upstream by scripts/merge-lcov.mjs — anything this script
 // flags is a genuine uncovered line.
+//
+// With --packages-from=<root>, every workspace package under <root> that has a src/
+// directory (scripts/workspace-packages.mjs) must contribute at least one record:
+// a package no test loads has no record at all, so it could never show a gap. The
+// root's coverage:check passes it; a partial run's merge and the VS Code extension's
+// gate do not, since a package they never load rightly contributes nothing there.
 
 import fs from "node:fs";
+import path from "node:path";
+import { workspacePackageDirectories } from "./workspace-packages.mjs";
 
 function compressRanges(lines) {
   if (lines.length === 0) return "";
@@ -28,8 +36,28 @@ function compressRanges(lines) {
   return out.join(",");
 }
 
+/** `{ reportPath, packagesFrom }` from the command line; exits 1 on a --packages-from with no directory. */
+function parseArguments(args) {
+  const option = args.find((arg) => arg === "--packages-from" || arg.startsWith("--packages-from="));
+  const positional = args.filter((arg) => arg !== option);
+  const packagesFrom = option === undefined ? null : option.slice("--packages-from=".length);
+  if (packagesFrom === "") {
+    console.error("check-coverage: --packages-from needs a directory, as in --packages-from=.");
+    process.exit(1);
+  }
+  return { reportPath: positional[0] || "coverage/lcov.info", packagesFrom };
+}
+
+/** The workspace packages under `root` that have a src/ directory and no record in `files`. */
+function packagesWithoutRecords(root, files) {
+  return workspacePackageDirectories(root).filter(
+    (directory) =>
+      fs.existsSync(path.join(root, directory, "src")) && !files.some((file) => file.startsWith(`${directory}/src/`)),
+  );
+}
+
 function main() {
-  const reportPath = process.argv[2] || "coverage/lcov.info";
+  const { reportPath, packagesFrom } = parseArguments(process.argv.slice(2));
 
   let content;
   try {
@@ -43,10 +71,12 @@ function main() {
   let coveredLines = 0;
   let currentFile = "";
   const gaps = new Map();
+  const files = [];
 
   for (const line of content.split("\n")) {
     if (line.startsWith("SF:")) {
       currentFile = line.slice(3).trim();
+      files.push(currentFile);
     } else if (line.startsWith("DA:")) {
       // Gate contract: fail loudly on malformed input instead of producing
       // confusing output (empty filenames, NaN line numbers). The optional
@@ -70,6 +100,19 @@ function main() {
         fileGaps.push(lineNo);
         gaps.set(currentFile, fileGaps);
       }
+    }
+  }
+
+  if (packagesFrom !== null) {
+    const missing = packagesWithoutRecords(packagesFrom, files);
+    if (missing.length > 0) {
+      console.error(
+        `check-coverage: FAIL, ${missing.length} workspace package(s) have source and no record in ${reportPath}:`,
+      );
+      for (const directory of missing) {
+        console.error(`  ${directory}: no coverage record under ${directory}/src/, so no test loads its source`);
+      }
+      process.exit(1);
     }
   }
 

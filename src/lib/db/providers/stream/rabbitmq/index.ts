@@ -24,14 +24,16 @@
 import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
   ContainerLevels,
   DatabaseObject,
   DatabaseOverview,
+  EgressDecision,
   HealthInfo,
   IndexStats,
   KindCount,
@@ -42,7 +44,7 @@ import type {
   PerformanceMetrics,
   ProviderCapabilities,
   ProviderLabels,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderOptions,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -185,7 +187,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     seams: Partial<RabbitMQSeams> = {},
   ) {
     super(config, options);
@@ -292,8 +294,11 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
     if (this.lifetime.signal.aborted) throw this.closedError();
     if (this.session !== null) return;
     let endpoints: RabbitMQEndpoints;
+    let egress: EgressDecision;
     try {
-      endpoints = readConnectionOptions(this.config);
+      egress = requireEgressDecision(this.execution.egress);
+      const read = readConnectionOptions(this.config, egress);
+      endpoints = read.amqp === null ? read : { ...read, amqp: { ...read.amqp, egress } };
     } catch (error) {
       throw rabbitmqBoundary(error, { site: "connect", endpoint: "", route: label("whoami") });
     }
@@ -306,6 +311,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
         deadlineSignal: this.seams.deadlineSignal,
         queryTimeoutMs: this.queryTimeout,
         lifetime: this.lifetime.signal,
+        egress,
         limiters: { management: this.managementLimiter, bindings: this.bindingsLimiter },
       });
       await management.get("whoami", {}, { site: "connect" });

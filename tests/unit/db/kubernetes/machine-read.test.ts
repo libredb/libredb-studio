@@ -6,7 +6,7 @@ import {
   type KubectlContext,
   machineRowLimit,
 } from "@/lib/db/providers/platform/kubernetes/console/context";
-import { AGENT_PAGING_SENTENCE } from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { AGENT_PAGING_SENTENCE } from "@/lib/languages/kubectl/paging";
 import { runKubectl } from "@/lib/db/providers/platform/kubernetes/console/run";
 import {
   MACHINE_DEADLINE_SENTENCE,
@@ -27,6 +27,7 @@ import {
   textAnswer,
 } from "../../../helpers/kubernetes-console";
 import { jsonAnswer, type KubernetesAnswerFn } from "../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 262_144 };
 
@@ -130,7 +131,9 @@ describe("readKubectlForMachine", () => {
       undefined,
       options,
     );
-    await expect(refusal).rejects.toThrow("Read-only execution exceeded the row budget: 5 rows > 4 allowed");
+    const refused = await refusal.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 5 rows > 4 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     // MCP's run_read_query reads this very refusal as too large, not as an engine error.
     expect(classifyReadQueryFailure(await refusal.catch((error: unknown) => error), 0, 1)).toMatchObject({
       kind: "too-large",
@@ -147,7 +150,9 @@ describe("readKubectlForMachine", () => {
       undefined,
       options,
     );
-    await expect(refusal).rejects.toThrow(/Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed/);
+    const refused = await refusal.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
     expect(classifyReadQueryFailure(await refusal.catch((error: unknown) => error), 0, 1)).toMatchObject({
       kind: "too-large",
       text: expect.stringContaining("larger than 1 MiB"),
@@ -171,9 +176,17 @@ describe("an over-size document on the agent path", () => {
       data: Object.fromEntries(Array.from({ length: 20_000 }, (_, index) => [`key-${index}`, "x"])),
     };
     const { session, options } = machine(routes({ "GET /api/v1/namespaces/shop/configmaps/big": jsonAnswer(big) }));
-    await expect(
-      readKubectlForMachine(session, "get configmap big -n shop -o yaml", BUDGET, undefined, options),
-    ).rejects.toThrow(/Read-only execution exceeded the byte budget: \d+ bytes > 262144 allowed/);
+    const refused = await readKubectlForMachine(
+      session,
+      "get configmap big -n shop -o yaml",
+      BUDGET,
+      undefined,
+      options,
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(
+      /Read-only execution exceeded the byte budget: \d+ bytes > 262144 allowed/,
+    );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a named read refused as too large is the byte sentence at the cap it passed", async () => {
@@ -184,9 +197,17 @@ describe("an over-size document on the agent path", () => {
         },
       }),
     );
-    await expect(
-      readKubectlForMachine(session, "get configmap huge -n shop -o json", BUDGET, undefined, options),
-    ).rejects.toThrow("Read-only execution exceeded the byte budget: 2097152 bytes > 262144 allowed");
+    const refused = await readKubectlForMachine(
+      session,
+      "get configmap huge -n shop -o json",
+      BUDGET,
+      undefined,
+      options,
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
+      "Read-only execution exceeded the byte budget: 2097152 bytes > 262144 allowed",
+    );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 });
 
@@ -198,9 +219,11 @@ describe("the agent path stops reading at maxRows + 1", () => {
     ["top pod -n shop", "/apis/metrics.k8s.io/v1beta1/namespaces/shop/pods"],
   ])("%s asks for 201 rows and is refused past 200", async (statement, path) => {
     const { session, options, transport } = machine(fakeCluster({ lists: { [path]: manyRows("x", 600) } }));
-    await expect(readKubectlForMachine(session, statement, BUDGET, undefined, options)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 201 rows > 200 allowed",
+    const refused = await readKubectlForMachine(session, statement, BUDGET, undefined, options).catch(
+      (caught: unknown) => caught,
     );
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 201 rows > 200 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     const reads = transport.calls.map((call) => call.method).filter((line) => line.includes(path));
     expect(reads).toHaveLength(1);
     expect(reads[0]).toContain("limit=201");
@@ -217,9 +240,11 @@ describe("the agent path stops reading at maxRows + 1", () => {
         ? tableAnswer([{ name: "Name" }], [{ cells: ["web"] }])
         : cluster(request, line),
     );
-    await expect(
-      readKubectlForMachine(session, "describe pod web -n shop", BUDGET, undefined, options),
-    ).rejects.toThrow(/Read-only execution exceeded the row budget/);
+    const refused = await readKubectlForMachine(session, "describe pod web -n shop", BUDGET, undefined, options).catch(
+      (caught: unknown) => caught,
+    );
+    expect((refused as Error).message).toMatch(/Read-only execution exceeded the row budget/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     const reads = transport.calls.map((call) => call.method).filter((line) => line.includes(path));
     expect(reads).toHaveLength(1);
     expect(reads[0]).toContain("limit=201");
@@ -302,9 +327,15 @@ describe("logs on the agent path", () => {
     const { session, options, transport } = machine(
       routes({ [`${POD}/web`]: jsonAnswer(pod("web", ["a", "b", "c"])) }),
     );
-    await expect(
-      readKubectlForMachine(session, "logs web --all-containers --tail=100", BUDGET, undefined, options),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 300 rows > 200 allowed");
+    const refused = await readKubectlForMachine(
+      session,
+      "logs web --all-containers --tail=100",
+      BUDGET,
+      undefined,
+      options,
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 300 rows > 200 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(sentLines(transport)).toEqual([`${POD}/web`]);
     expect(logQueries(transport)).toEqual([]);
   });
@@ -358,9 +389,15 @@ describe("logs on the agent path", () => {
         [logLine("web", "c", 50)]: textAnswer(""),
       }),
     );
-    await expect(
-      readKubectlForMachine(session, "logs web --all-containers --tail=50", BUDGET, undefined, options),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 250 rows > 200 allowed");
+    const refused = await readKubectlForMachine(
+      session,
+      "logs web --all-containers --tail=50",
+      BUDGET,
+      undefined,
+      options,
+    ).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 250 rows > 200 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(logQueries(transport).map((query) => query.container)).toEqual(["a"]);
   });
 });

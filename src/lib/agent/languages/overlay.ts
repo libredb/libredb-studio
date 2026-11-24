@@ -28,6 +28,10 @@ import type { FacetOverrides } from "./pack";
  *
  * Client overlays stay dialect-only: `copy`, `variants` and `planEstimateOperation` are projected per family into
  * browser tables, and `posture.handoverTerms` is read by language (B123).
+ *
+ * An engine declaration states the grounding override alone, at `agent.overlay.grounding`; the other two members are
+ * not in the provider contract yet, so the declaration generator refuses either by name until the contract states it
+ * (docs/providers/CONTRACT.md, clause M-67).
  */
 export const ENGINE_OVERRIDABLE_SERVER_MEMBERS = Object.freeze([
   "grounding",

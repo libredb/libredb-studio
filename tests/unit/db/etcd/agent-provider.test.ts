@@ -11,12 +11,13 @@ import { ETCD_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/etcd/agent-sta
 import { type EtcdClient, EtcdError, type EtcdPermission } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { ALL_KEYS, fromHexId } from "@/lib/db/providers/keyvalue/etcd/keys";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { capturedClient, principalCapture } from "../../../helpers/etcd-agent";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { permissionDenied } from "../../../helpers/etcd-key-space";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET = { maxResultRows: 200, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -307,9 +308,9 @@ describe("queryReadOnly", () => {
 
   test("a deadline is the time budget's refusal", async () => {
     const provider = await opened(statusFailsAfterConnect(new EtcdError("deadline-exceeded", "Cancelled on client")));
-    await expect(provider.queryReadOnly("endpoint status", BUDGET)).rejects.toThrow(
-      `${TIME_BUDGET_PREFIX}: no answer within 10000ms`,
-    );
+    const refused = await provider.queryReadOnly("endpoint status", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(`${TIME_BUDGET_PREFIX}: no answer within 10000ms`);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("a defect surfaces as itself", async () => {
@@ -334,6 +335,7 @@ describe("queryReadOnly", () => {
     );
     expect(failure).toBeInstanceOf(QueryError);
     expect(failure?.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 10000ms`);
+    expect(errorKind(failure)).toBe("time-budget-refusal");
   });
 
   test("a proof read that fails is worded by its category, without etcd's words", async () => {

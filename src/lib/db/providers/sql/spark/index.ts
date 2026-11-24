@@ -382,8 +382,6 @@ export class SparkProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Not Run from Studio",
       vacuumGlobalDesc: SPARK_PROVIDER_SENTENCES.vacuumGlobalDesc,
       statementLanguage: "Spark SQL",
-      slowQueriesEmptyState: SPARK_MONITORING_LABELS.slowQueriesEmptyState,
-      sessionsEmptyState: SPARK_MONITORING_LABELS.sessionsEmptyState,
     };
   }
 

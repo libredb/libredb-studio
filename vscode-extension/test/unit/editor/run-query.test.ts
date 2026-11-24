@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { RunConfirmationOffer } from "@/lib/api/run-confirmation";
 import type { Container } from "@/lib/db/types";
 import { BackendError } from "../../../src/host/backend-client";
 import { CredentialsNotGivenError } from "../../../src/host/connections/connection-source";
@@ -12,23 +13,25 @@ import {
   NO_ACTIVE_EDITOR,
   NOTHING_TO_RUN,
   ROW_LIMIT_MAX,
-  RUN_ANYWAY,
   RowLimitError,
   readRowLimit,
   runQuery,
   untilCancelled,
 } from "../../../src/host/editor/run-query";
+import { RUN_ANYWAY } from "../../../src/host/editor/run-confirmation";
 import type { RunRequest } from "../../../src/host/editor/run-service";
 import type { ContainersParams, ProviderDescription, RunTargetParams, RunTargetResult } from "../../../src/protocol";
 import { FakeTextDocument, FakeTextEditor } from "../../fakes/documents";
 import { CATALOG_SESSIONS, ONE_LEVEL, ZERO_LEVELS } from "../../fakes/descriptions";
 import { MONGO, PG } from "../../fakes/profiles";
 import {
+  answerInputBoxes,
   answerMessages,
   answerQuickPicks,
   CancellationTokenSource,
   decorationTypes,
   settings,
+  shownInputBoxes,
   shownMessages,
   shownQuickPicks,
   ThemeColor,
@@ -70,7 +73,7 @@ function setup(text = "select 1;") {
   const scripts = {
     ensureOpen: (connectionId: string): Promise<ProviderDescription> => Promise.resolve(descriptions[connectionId]),
     runTarget: (params: RunTargetParams): Promise<RunTargetResult> =>
-      Promise.resolve({ statement: params.text, dangerous: false }),
+      Promise.resolve({ statement: params.text, confirmation: null }),
     listContainers: (): Promise<Container[]> => Promise.resolve([SHOP]),
     execute: (): Promise<void> => Promise.resolve(),
   };
@@ -450,6 +453,17 @@ describe("runQuery", () => {
       });
     });
 
+    it("sends the binding's catalog to query/target, and no catalog key without one", async () => {
+      const env = setup("select 1;");
+      env.descriptions[PG.id] = CATALOG_SESSIONS;
+      env.bindings.bind(UNTITLED, { connectionId: PG.id, catalog: "shop" });
+      await runQuery(env.deps);
+      const [, params] = env.calls.find(([method]) => method === "runTarget") as Call;
+      assert.equal((params as RunTargetParams).catalog, "shop");
+      const plain = await sentFor(3, 3);
+      assert.equal("catalog" in plain, false);
+    });
+
     it("sends a selection and its active end", async () => {
       const params = await sentFor(10, 18);
       assert.deepEqual(params.selection, { start: 10, end: 18 });
@@ -501,7 +515,7 @@ describe("runQuery", () => {
 
   it("step 10: a target with no code answers Nothing to run. and starts no run", async () => {
     const { deps, scripts, runs, executed } = bound("-- only a comment");
-    scripts.runTarget = () => Promise.resolve({ statement: "", dangerous: false });
+    scripts.runTarget = () => Promise.resolve({ statement: "", confirmation: null });
     await runQuery(deps);
     assert.deepEqual(messages(), [{ level: "info", message: "Nothing to run.", items: [] }]);
     assert.deepEqual(executed, []);
@@ -512,7 +526,7 @@ describe("runQuery", () => {
     it("highlights the target's range and disposes the decoration after HIGHLIGHT_MS", async () => {
       const { deps, editor, scripts, timers } = bound("select 1;\nselect 2;");
       scripts.runTarget = () =>
-        Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 }, dangerous: false });
+        Promise.resolve({ statement: "select 2;", range: { start: 10, end: 19 }, confirmation: null });
       await runQuery(deps);
       assert.equal(decorationTypes.length, 1);
       const [type] = decorationTypes;
@@ -536,7 +550,7 @@ describe("runQuery", () => {
       const open = deferred<ProviderDescription>();
       scripts.ensureOpen = () => open.promise;
       scripts.runTarget = () =>
-        Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 }, dangerous: false });
+        Promise.resolve({ statement: "select 1;", range: { start: 0, end: 9 }, confirmation: null });
       const run = runQuery(deps);
       await settle();
       document.edit("delete from t;\nselect 1;");
@@ -558,30 +572,71 @@ describe("runQuery", () => {
 
   describe("step 11b: the confirmation", () => {
     const DELETE = "delete from t";
-    const asks = () => {
-      const env = bound(DELETE);
-      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE, dangerous: true });
-      return env;
+    const MODAL = {
+      level: "warning",
+      message: "This statement may change data, database objects, or permissions. Review it before running it on shop.",
+      options: { modal: true, detail: DELETE },
+      items: ["Run Anyway"],
     };
 
-    it("asks in a modal that shows the statement, and runs it once the person chooses Run Anyway", async () => {
-      const { deps, executed } = asks();
+    /** A target that offers a confirmation, with a token generated for the test. */
+    function offered(typedConfirmation: RunConfirmationOffer["typedConfirmation"] = null): RunConfirmationOffer {
+      return {
+        token: crypto.randomUUID(),
+        expiresAt: new Date(0).toISOString(),
+        unreadable: false,
+        typedConfirmation,
+        classificationFailed: false,
+      };
+    }
+
+    const asks = (offer = offered()) => {
+      const env = bound(DELETE);
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE, confirmation: offer });
+      return { ...env, offer };
+    };
+
+    it("asks in a modal that shows the statement, and hands the service the offer's token on Run Anyway", async () => {
+      const { deps, executed, offer } = asks();
       answerMessages(() => RUN_ANYWAY);
       await runQuery(deps);
-      assert.deepEqual(shownMessages, [
-        {
-          level: "warning",
-          message:
-            "This statement may change data, database objects, or permissions. Review it before running it on shop.",
-          options: { modal: true, detail: DELETE },
-          items: ["Run Anyway"],
-        },
-      ]);
+      assert.deepEqual(shownMessages, [MODAL]);
+      assert.deepEqual(shownInputBoxes, []);
       assert.equal(executed.length, 1);
       assert.equal(executed[0][1].statement, DELETE);
+      assert.deepEqual(executed[0][1].confirmation, { token: offer.token });
     });
 
-    it("sends nothing and settles the run when the person dismisses it", async () => {
+    it("asks the modal, then the input box for a typed ask, and hands the token and the value", async () => {
+      const name = crypto.randomUUID();
+      const { deps, executed, offer } = asks(offered({ type: "connection-name", expected: name, targets: ["t"] }));
+      answerMessages(() => RUN_ANYWAY);
+      answerInputBoxes(() => name);
+      await runQuery(deps);
+      assert.equal(shownMessages.length, 1);
+      assert.equal(shownInputBoxes.length, 1);
+      assert.equal(
+        shownInputBoxes[0].prompt,
+        `Type the connection's name, ${name}, to run this statement. It reaches t.`,
+      );
+      const validate = shownInputBoxes[0].validateInput;
+      assert.ok(validate !== undefined);
+      assert.equal(validate(crypto.randomUUID()), `Type ${name} exactly.`);
+      assert.equal(validate(name), undefined);
+      assert.deepEqual(executed[0][1].confirmation, { token: offer.token, typed: name });
+    });
+
+    it("sends nothing and settles the run when the person escapes the input box", async () => {
+      const name = crypto.randomUUID();
+      const { deps, runs, executed } = asks(offered({ type: "connection-name", expected: name, targets: [] }));
+      answerMessages(() => RUN_ANYWAY);
+      await runQuery(deps);
+      assert.equal(shownInputBoxes.length, 1);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
+    });
+
+    it("sends nothing and settles the run when the person dismisses the modal", async () => {
       const { deps, runs, executed } = asks();
       await runQuery(deps);
       assert.equal(shownMessages.length, 1);
@@ -589,7 +644,7 @@ describe("runQuery", () => {
       assert.deepEqual(runs.running(), []);
     });
 
-    it("sends nothing when the run is cancelled during the question, whatever the person then chose", async () => {
+    it("sends nothing when the run is cancelled during the modal, whatever the person then chose", async () => {
       const { deps, runs, executed } = asks();
       answerMessages(() => {
         runs.of(UNTITLED)?.tokenSource.cancel();
@@ -600,22 +655,37 @@ describe("runQuery", () => {
       assert.deepEqual(runs.running(), []);
     });
 
-    it("asks when the child answer leaves the verdict out, and sends nothing when declined", async () => {
-      const env = bound(DELETE);
-      // A stale or hand-swapped child can answer without the field; the type cannot stop that at runtime.
-      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE } as unknown as RunTargetResult);
-      await runQuery(env.deps);
-      assert.equal(shownMessages.length, 1);
-      assert.equal(shownMessages[0].options?.modal, true);
-      assert.deepEqual(env.executed, []);
-      assert.deepEqual(env.runs.running(), []);
+    it("sends nothing when the run is cancelled during the input box, whatever the person then typed", async () => {
+      const name = crypto.randomUUID();
+      const { deps, runs, executed } = asks(offered({ type: "connection-name", expected: name, targets: [] }));
+      answerMessages(() => RUN_ANYWAY);
+      answerInputBoxes(() => {
+        runs.of(UNTITLED)?.tokenSource.cancel();
+        return name;
+      });
+      await runQuery(deps);
+      assert.deepEqual(executed, []);
+      assert.deepEqual(runs.running(), []);
     });
 
-    it("asks nothing for a target the child did not flag", async () => {
+    it("asks nothing and hands no token for a target the child offers no confirmation for", async () => {
       const { deps, executed } = bound("select 1;");
       await runQuery(deps);
       assert.deepEqual(shownMessages, []);
       assert.equal(executed.length, 1);
+      assert.equal("confirmation" in executed[0][1], false);
+    });
+
+    it("asks again on the next Run of the same statement: nothing is remembered", async () => {
+      const env = bound(DELETE);
+      const tokens = [offered(), offered()];
+      env.scripts.runTarget = () => Promise.resolve({ statement: DELETE, confirmation: tokens.shift() ?? null });
+      answerMessages(() => RUN_ANYWAY);
+      await runQuery(env.deps);
+      await runQuery(env.deps);
+      assert.equal(shownMessages.length, 2);
+      assert.equal(env.executed.length, 2);
+      assert.notDeepEqual(env.executed[0][1].confirmation, env.executed[1][1].confirmation);
     });
   });
 

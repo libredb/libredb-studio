@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -15,9 +15,15 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const baseMockProvider = createMockProvider();
@@ -92,7 +98,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -126,6 +131,26 @@ describe("POST /api/db/cancel", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(
+        createMockRequest("/api/db/cancel", { method: "POST", body: { queryId: "query-123", connection } }) as never,
+      );
+    mockCancelProvider.cancelQuery.mockRejectedValueOnce(new QueryError(`cancel refused for ${password}`, "postgres"));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockCancelProvider.cancelQuery.mockRejectedValueOnce(new QueryError("cancel refused", "postgres"));
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "cancel refused" });
   });
 
   test("returns 401 when no session exists", async () => {
@@ -213,6 +238,61 @@ describe("POST /api/db/cancel", () => {
     expect(res.status).toBe(400);
     expect(data.cancelled).toBe(false);
     expect(data.error).toContain("not supported");
+  });
+
+  test("a cancel whose caller already left calls nothing and answers 499", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const res = await POST(
+      new Request("http://localhost:3000/api/db/cancel", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ queryId: "query-123", connection: validConnection }),
+        signal: controller.signal,
+      }) as never,
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body.code).toBe("QUERY_CANCELLED");
+    expect(body.outcome).toBe("not-sent");
+    expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
+  });
+
+  test("a cancel that leaves while its connection opens answers 499 not-sent and cancels nothing", async () => {
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    const waits: { signal: AbortSignal }[] = [];
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) => {
+      const wait = args[3] as { signal: AbortSignal };
+      waits.push(wait);
+      reached();
+      // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    });
+    const controller = new AbortController();
+    const request = new Request("http://localhost:3000/api/db/cancel", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ queryId: "query-123", connection: validConnection }),
+      signal: controller.signal,
+    });
+    const answer = POST(request as never);
+    await opening;
+    const reason = new Error(`left ${crypto.randomUUID()}`);
+    controller.abort(reason);
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(waits[0]?.signal.reason).toBe(request.signal.reason);
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    expect(mockCancelProvider.cancelQuery).not.toHaveBeenCalled();
   });
 
   test("cancelQuery returning false returns cancelled:false", async () => {

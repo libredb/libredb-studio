@@ -20,9 +20,9 @@
  * answered (an exact read does not echo the id it named), and no metric name, value, property, dataset, template or
  * alias is read into a row: a payload is decoded only to count its metrics, and its contents go nowhere.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
 import { isTlsFailureCode } from "@/lib/db/http/node-transport";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -429,7 +429,7 @@ export function sparkplugAgentResult(
   const projected = projectMetadata(PROJECTIONS[answer.plan.op], [answer]);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), SPARKPLUG_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), SPARKPLUG_TYPE, statement);
   }
   return {
     fields: projected.fields,
@@ -458,7 +458,7 @@ export function sparkplugAgentShortBudgetSentence(statementTimeoutMs: number): s
 export function sparkplugAgentFailure(error: unknown, deadlineMs: number, statement?: string): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, SPARKPLUG_TYPE, statement);
   if (error instanceof AgentDeadlineError) {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${deadlineMs}ms`, SPARKPLUG_TYPE, statement);
+    return new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: no answer within ${deadlineMs}ms`, SPARKPLUG_TYPE, statement);
   }
   return undefined;
 }

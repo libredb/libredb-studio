@@ -53,7 +53,7 @@ import type { AgentPackEvidenceRunEvent } from "./languages/client";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
 import { AgentRunStoreError } from "./run-store";
 import type { AgentLedgerEntry, AgentRunLedgerView, AgentRunStore, AgentSettledStepEvent } from "./run-store";
 import type { AgentOperationId, AgentToolName } from "./tools";
@@ -186,6 +186,8 @@ export interface AgentRunStartInput {
   readonly toolProtocol?: AgentToolProtocol;
   /** Defaults to `sql`; see `AgentRunRecord.statementLanguage`. */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /** The connection's type id; see `AgentRunRecord.engine`. */
+  readonly engine?: DatabaseType;
   /** Defaults to the variant's verifier; see `AgentRunRecord.verifier`. */
   readonly verifier?: AgentGoalVerifierId;
   /** The conversation this run continues; the route derives it, the store persists it. */
@@ -706,6 +708,11 @@ export class AgentRunService {
    * Ends a run: nothing in flight, then the ledger entry, then the resources, then
    * the stream.
    *
+   * It first waits until the run has no live execution. A statement Studio stopped
+   * waiting for at its timeout keeps its execution live until the provider's call
+   * settles (`executeAuditedOperation`), while the loop has already moved on, so the
+   * run's end waits for that call, as it waits for every statement the loop sends.
+   *
    * The live-execution check has to come FIRST, and the reason is a state that is
    * otherwise unrecoverable. `ExecutionBudgetTracker.endRun` refuses while an
    * execution is live — correctly, since dropping live usage would reset the
@@ -718,11 +725,12 @@ export class AgentRunService {
    *
    * The check's strength is exactly the single-writer premise and no more: it
    * reads process-local accounting before an `await`, so an execution starting
-   * during that append, or one live on another replica, is invisible to it. Both
+   * during that append, or one live on another replica, is invisible to it, and
+   * only an execution begun while the wait above settled is refused by it. Both
    * need a second writer on one run, which `docs/BACKLOG.md` B5 puts outside this
    * layer's contract; within one loop the reading is reliable, because
-   * `execution.ts` pairs `beginExecution`/`endExecution` on the throwing path too,
-   * so nothing is in flight while the loop sits at a checkpoint.
+   * `execution.ts` releases every execution it begins, on the throwing path too,
+   * and the wait above outlasts every provider call one still holds.
    *
    * Closing the stream sits in a `finally` for the same reason: whatever else
    * fails, a run whose ending is recorded must not leave readers waiting forever.
@@ -733,6 +741,7 @@ export class AgentRunService {
     ending: AgentRunEnding,
   ): Promise<AgentRunLedgerView> {
     const { reason, stopReason } = ending;
+    await this.resources.tracker.whenIdle(runId);
     const live = this.resources.tracker.usage(runId).activeExecutions;
     if (live > 0) {
       throw new AgentRunServiceError(

@@ -1,17 +1,17 @@
 /**
  * The agent's admission of one Kafka read request, next to the descriptor that reads it (`kafkaread.query.read`).
  *
- * It is the provider's own reader (`readKafkaAgentStatement` in `providers/stream/kafka/agent-statement.ts`), so the
- * agent's tool path and the provider, which reads the same text with the same reader before it sends anything, refuse
- * the same requests with the same sentence. Plus one refusal of the agent's own, 4,096 characters, for the reason the
- * kubectl and MongoDB contracts have one: a model has no reason to send a longer read, and a shorter contract is one it
- * can be told.
+ * It is the reader the provider runs (`readKafkaAgentStatement` in `src/lib/languages/kafkaread/agent-statement.ts`),
+ * so the agent's tool path and the provider, which reads the same text with the same reader before it sends anything,
+ * refuse the same requests with the same sentence. Plus one refusal of the agent's own, 4,096 characters, for the
+ * reason the kubectl and MongoDB contracts have one: a model has no reason to send a longer read, and a shorter
+ * contract is one it can be told.
  *
  * Not the boundary. The boundary is the provider's structural closed table, an agent client that holds the Metadata
  * and ListOffsets reads alone; this is what lets the model read why it was refused, before anything is sent.
  */
 import { z } from "zod";
-import { type KafkaAgentRefusalCode, readKafkaAgentStatement } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { type KafkaAgentRefusalCode, readKafkaAgentStatement } from "@/lib/languages/kafkaread/agent-statement";
 
 export const KAFKAREAD_AGENT_MAX_STATEMENT_CHARS = 4096;
 

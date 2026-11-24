@@ -5,6 +5,7 @@
  * Studio by category; budgets refuse rather than cut, at their edges.
  */
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import {
   createNetconfAgentClient,
@@ -23,7 +24,7 @@ import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests"
 import { NetconfSessionError } from "@/lib/db/providers/network/netconf/session";
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
-import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import {
   FAKE_HASH,
   FAKE_MODULES,
@@ -61,8 +62,8 @@ async function refused(text: string, options: FakeDeviceOptions = {}, budget = B
     budget,
   ).catch((error: unknown) => error);
   await Bun.sleep(0);
-  expect(caught).toBeInstanceOf(NetconfAgentError);
-  return { message: (caught as Error).message, device };
+  expect(caught).toBeInstanceOf(Error);
+  return { error: caught, message: (caught as Error).message, device };
 }
 
 /** Every RegExp metacharacter escaped, the backslash included, so a sentence matches as written. */
@@ -172,7 +173,9 @@ describe("refused after the check and before the read is sent", () => {
       ],
       ['{"datastore": "running", "path": "ex-if:users/user=guess"}', "users/user", "keyed by a withheld leaf"],
     ] as const) {
-      const { message, device } = await refused(text);
+      // oxlint-disable-next-line no-await-in-loop -- each read runs on a fake device of its own, one after the other.
+      const { error, message, device } = await refused(text);
+      expect(error).toBeInstanceOf(NetconfAgentError);
       expect(message).toBe(F.withheldPath(at, kind));
       noRead(device.sent);
     }
@@ -180,11 +183,15 @@ describe("refused after the check and before the read is sent", () => {
 
   test("a module or schema the library does not name", async () => {
     const read = await refused('{"datastore": "running", "path": "absent:x"}');
+    expect(read.error).toBeInstanceOf(NetconfAgentError);
     expect(read.message).toBe(F.notInLibrary("absent"));
     noRead(read.device.sent);
-    expect((await refused('{"schema": "absent"}')).message).toBe(F.notInLibrary("absent"));
+    const schema = await refused('{"schema": "absent"}');
+    expect(schema.error).toBeInstanceOf(NetconfAgentError);
+    expect(schema.message).toBe(F.notInLibrary("absent"));
     // A module named on a later node is Studio's refusal too, never worded as the device's answer.
     const later = await refused('{"datastore": "running", "path": "ex-if:interfaces/absent:interface"}');
+    expect(later.error).toBeInstanceOf(NetconfAgentError);
     expect(later.message).toBe(F.notInLibrary("absent"));
     noRead(later.device.sent);
   });
@@ -198,6 +205,7 @@ describe("refused after the check and before the read is sent", () => {
     const many = await refused(READ, {
       libraryReply: library(Array.from({ length: NETCONF_SCHEMA_BUDGET.maxTexts + 1 }, (_, index) => `m${index}`)),
     });
+    expect(many.error).toBeInstanceOf(NetconfAgentError);
     expect(many.message).toBe(F.schemaTooLarge);
     expect(many.device.sent.map((request) => request.operation)).toEqual(["get"]);
     // Each text just under the reader's cap for one message; the fifth passes the total, and nothing more is fetched.
@@ -207,6 +215,7 @@ describe("refused after the check and before the read is sent", () => {
       libraryReply: library(names),
       texts: Object.fromEntries(names.map((name) => [name, big])),
     });
+    expect(heavy.error).toBeInstanceOf(NetconfAgentError);
     expect(heavy.message).toBe(F.schemaTooLarge);
     expect(heavy.message).toContain("This is Studio's refusal, not the device's answer.");
     expect(heavy.device.sent.filter((request) => request.operation === "get-schema")).toHaveLength(5);
@@ -220,7 +229,9 @@ describe("refused after the check and before the read is sent", () => {
       { texts: { "ex-if": "module ex-if {" } },
       { libraryReply: "<not-xml" },
     ]) {
-      const { message, device } = await refused(READ, options);
+      // oxlint-disable-next-line no-await-in-loop -- each read runs on a fake device of its own, one after the other.
+      const { error, message, device } = await refused(READ, options);
+      expect(error).toBeInstanceOf(NetconfAgentError);
       expect(message).toBe(F.schemaUnread);
       expect(message).not.toContain(FAKE_SECRET);
       noRead(device.sent);
@@ -231,15 +242,22 @@ describe("refused after the check and before the read is sent", () => {
 describe("budgets refuse rather than cut, at their edges", () => {
   test("rows: exactly the budget is answered, one more is refused", async () => {
     expect((await run(READ, { data: interfacesData(10) })).answer.rows).toHaveLength(10);
-    expect((await refused(READ, { data: interfacesData(11) })).message).toBe(F.overRows(10));
+    const over = await refused(READ, { data: interfacesData(11) });
+    expect(over.message).toBe(F.overRows(10));
+    expect(errorKind(over.error)).toBe("row-budget-refusal");
   });
 
   test("the request's own limit: exactly the limit is answered, one more is refused, and a limit past the budget is the budget", async () => {
     const limited = '{"datastore": "running", "path": "ex-if:interfaces", "limit": 3}';
     expect((await run(limited, { data: interfacesData(3) })).answer.rows).toHaveLength(3);
-    expect((await refused(limited, { data: interfacesData(4) })).message).toBe(F.overLimit(3));
+    const overLimit = await refused(limited, { data: interfacesData(4) });
+    expect(overLimit.error).toBeInstanceOf(NetconfAgentError);
+    expect(overLimit.message).toBe(F.overLimit(3));
+    expect(errorKind(overLimit.error)).toBe("query");
     const wide = '{"datastore": "running", "path": "ex-if:interfaces", "limit": 50}';
-    expect((await refused(wide, { data: interfacesData(11) })).message).toBe(F.overRows(10));
+    const overBudget = await refused(wide, { data: interfacesData(11) });
+    expect(overBudget.message).toBe(F.overRows(10));
+    expect(errorKind(overBudget.error)).toBe("row-budget-refusal");
   });
 
   test("bytes and rows of a result are refused past the budget, warnings absent when nothing is withheld", () => {
@@ -250,10 +268,22 @@ describe("budgets refuse rather than cut, at their edges", () => {
       rowCount: 1,
       executionTime: 1,
     });
-    expect(() => netconfAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, 1)).toThrow(byteBudgetSentence(60, 10));
-    expect(() =>
+    const thrown = (result: () => unknown): unknown => {
+      try {
+        result();
+      } catch (error) {
+        return error;
+      }
+      throw new Error("the result was answered");
+    };
+    const overBytes = thrown(() => netconfAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, 1));
+    expect((overBytes as Error).message).toBe(byteBudgetSentence(60, 10));
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
+    const overRows = thrown(() =>
       netconfAgentResult({ ...answer, rows: [{ a: "1" }, { a: "2" }] }, { ...BUDGET, maxResultRows: 1 }, 1),
-    ).toThrow(rowBudgetSentence(2, 1));
+    );
+    expect((overRows as Error).message).toBe(rowBudgetSentence(2, 1));
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
   });
 
   test("time: a read past the budget is refused in Studio's words, and a session still opening is closed once it opens", async () => {
@@ -271,6 +301,7 @@ describe("budgets refuse rather than cut, at their edges", () => {
       { ...BUDGET, statementTimeoutMs: 5 },
     ).catch((error: unknown) => error);
     expect((caught as Error).message).toBe(F.time(5));
+    expect(errorKind(caught)).toBe("time-budget-refusal");
     expect(device.closed.count).toBe(0);
     release?.();
     await Bun.sleep(1);
@@ -300,6 +331,7 @@ describe("failures by category, never the device's or the credential's own text"
         (failure: unknown) => failure,
       );
       expect(caught).toBeInstanceOf(NetconfAgentError);
+      expect(errorKind(caught)).toBe("query");
       expect((caught as Error).message).toBe(sentence);
       expect((caught as Error).message).not.toContain(SECRET);
     }

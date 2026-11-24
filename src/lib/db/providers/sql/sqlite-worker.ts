@@ -20,17 +20,25 @@
  * its synchronous SQLite drivers, and `SIGKILL` can always stop it.
  *
  * THE BOUNDARY IS DELIBERATELY NARROW. The child opens the handle, runs SQL and reads
- * raw rows; every value it cannot JSON-encode is tagged and the tags are resolved on
- * the parent side:
+ * raw rows; every value crosses the line in Studio's value codec
+ * (`@libredb/provider-sdk/values`, `packages/provider-sdk/src/values/codec.ts`), in both directions:
  *
- * - a 64-bit integer is tagged `{ __libredb_sqlite_bigint: "..." }` and the parent
- *   resolves it through `normalizeSQLiteBigInt` — the ONE place that decides whether
- *   a 64-bit integer fits a JavaScript number, shared with the in-process driver;
- * - a BLOB (`Uint8Array`) is tagged `{ __libredb_sqlite_bytes: "<base64>" }` and the
- *   parent resolves it to a `Buffer`, exactly the shape the in-process driver hands out.
+ * - the parent encodes bound parameters with `encodeValue`, and decodes every answer
+ *   with `decodeValue`, then gives it the in-process driver's shapes: a 64-bit integer
+ *   goes through `normalizeSQLiteBigInt`, the ONE place that decides whether it fits a
+ *   JavaScript number, and a BLOB becomes a `Buffer`;
+ * - the child cannot import the module (it runs from `node -e`, below), so its
+ *   bootstrap carries a plain-JavaScript copy (`ser` and `deser`) restricted to what it
+ *   binds and reads: 64-bit integers (`i64`), BLOBs (`bytes`), infinities (`nf`) and
+ *   the `obj` escape, so a row whose columns are named `$` and `v` stays a row. It
+ *   refuses every other tag by name, so a `Date` parameter (`ts`) is answered as a
+ *   value the worker cannot bind rather than handed to the driver. The two copies are
+ *   held together by round trips through the real child in
+ *   `tests/integration/db/sqlite-worker.test.ts`.
  *
- * That is the whole reason this file can stay small: it duplicates no value logic. It
- * only moves values across a boundary the synchronous drivers cannot cross.
+ * That is the whole reason this file can stay small: it duplicates no value logic
+ * beyond that copy. It only moves values across a boundary the synchronous drivers
+ * cannot cross.
  *
  * The handle is ONE connection and requests are SERIALISED: a second request waits
  * for the first, exactly as the single in-process handle did. Cancelling or timing out
@@ -39,6 +47,9 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { once } from "node:events";
+import { logger } from "@/lib/logger";
+import { decodeValue, encodeValue, type WireValue } from "@libredb/provider-sdk/values";
 import { normalizeSQLiteBigInt, toSQLiteBindValue, type SQLiteDeclaredColumn } from "./sqlite-driver";
 
 // ============================================================================
@@ -75,66 +86,51 @@ export interface SQLiteHandle {
 }
 
 // ============================================================================
-// Wire tags
+// The wire: Studio's value codec
 // ============================================================================
 
-const BIGINT_TAG = "__libredb_sqlite_bigint";
-const BYTES_TAG = "__libredb_sqlite_bytes";
-
 /**
- * Tag every value the child cannot JSON-encode. Applied to BOUND PARAMETERS on the
- * way IN (after `toSQLiteBindValue` has already run on the parent) and to result cells
- * on the way OUT. A BigInt becomes its decimal text; a `Uint8Array` becomes a plain
- * array. Everything else passes through, recursing into arrays and records.
+ * Every bound parameter of one call, on the way IN: decimal 64-bit digits become a
+ * BigInt first (`toSQLiteBindValue`, the same conversion the in-process drivers apply),
+ * then the whole list is encoded at once, so a refusal names the parameter's place
+ * (`/0` is the first). Without the first step a decimal string read back from the
+ * provider would bind as TEXT and stop matching the INTEGER it was read from.
  */
-/**
- * A bound parameter on the way IN: decimal 64-bit digits become a BigInt first
- * (`toSQLiteBindValue`, the same conversion the in-process drivers apply), then
- * `serializeCell` tags the BigInt for the wire. Without the first step a decimal
- * string read back from the provider would bind as TEXT and stop matching the
- * INTEGER it was read from.
- */
-export function serializeBind(value: unknown): unknown {
-  return serializeCell(toSQLiteBindValue(value));
-}
-
-export function serializeCell(value: unknown): unknown {
-  if (value === null || value === undefined) return null;
-  if (typeof value === "bigint") return { [BIGINT_TAG]: value.toString() };
-  if (value instanceof Uint8Array) return { [BYTES_TAG]: Buffer.from(value).toString("base64") };
-  if (Array.isArray(value)) return value.map(serializeCell);
-  if (typeof value === "object") {
-    // `Object.fromEntries` rather than `out[key] = ...`: it defines OWN properties, so a cell
-    // key like "__proto__" writes an own property instead of replacing the prototype (CodeQL
-    // remote property injection). The same convention `declaredColumnTypes` uses for names.
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, cell]) => [key, serializeCell(cell)]),
-    );
-  }
-  return value;
+export function serializeBinds(params: readonly unknown[]): WireValue {
+  return encodeValue(params.map(toSQLiteBindValue));
 }
 
 /**
- * Resolve the tags `serializeCell` wrote, on the parent side. A tagged bigint goes
- * through `normalizeSQLiteBigInt` (number when lossless, decimal string otherwise);
- * a tagged byte array becomes a `Buffer`, the same shape the in-process driver
- * produces. Nothing else is reinterpreted.
+ * Give a decoded value the in-process driver's shapes, in place: a BigInt goes through
+ * `normalizeSQLiteBigInt` (number when lossless, decimal string otherwise) and a
+ * `Uint8Array` becomes a `Buffer` over the same memory. In place is safe here because
+ * `decodeValue` built every array and object this walks.
  */
-export function deserializeCell(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.map(deserializeCell);
-  if (typeof value === "object") {
+function toInProcessShapes(value: unknown): unknown {
+  if (typeof value === "bigint") return normalizeSQLiteBigInt(value);
+  if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) value[index] = toInProcessShapes(value[index]);
+  } else if (value !== null && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    if (typeof record[BIGINT_TAG] === "string" && Object.keys(record).length === 1) {
-      return normalizeSQLiteBigInt(BigInt(record[BIGINT_TAG] as string));
-    }
-    if (typeof record[BYTES_TAG] === "string" && Object.keys(record).length === 1) {
-      return Buffer.from(record[BYTES_TAG] as string, "base64");
-    }
-    return Object.fromEntries(Object.entries(record).map(([key, cell]) => [key, deserializeCell(cell)]));
+    for (const key of Object.keys(record)) record[key] = toInProcessShapes(record[key]);
   }
   return value;
 }
+
+/** Decode one value the child answered, then give it the in-process driver's shapes. */
+export function deserializeCell(value: unknown): unknown {
+  return toInProcessShapes(decodeValue(value));
+}
+
+/**
+ * How long an open waits for another connection's lock, in milliseconds, before it fails with
+ * "database is locked". It covers the open's PRAGMAs only and is set back to 0 after them, so a
+ * statement still fails at once on another writer's lock. Without it the open failed at once when
+ * it met another connection's WAL recovery, a last close's checkpoint, or a reader of a file still
+ * under a rollback journal (docs/providers/sqlite.md, "PRAGMAs on connect").
+ */
+export const SQLITE_OPEN_BUSY_TIMEOUT_MS = 2000;
 
 // ============================================================================
 // The child's program
@@ -155,31 +151,54 @@ const WORKER_BOOTSTRAP = [
   '  if (override === "bun" || override === "node") return override;',
   '  return typeof Bun === "undefined" ? "node" : "bun";',
   "}",
-  "function deser(v) {",
-  "  if (v === null || v === undefined) return v;",
-  "  if (Array.isArray(v)) return v.map(deser);",
-  '  if (typeof v === "object") {',
-  "    var keys = Object.keys(v);",
-  '    if (keys.length === 1 && typeof v.__libredb_sqlite_bigint === "string") return BigInt(v.__libredb_sqlite_bigint);',
-  '    if (keys.length === 1 && typeof v.__libredb_sqlite_bytes === "string") return new Uint8Array(Buffer.from(v.__libredb_sqlite_bytes, "base64"));',
-  "    var out = Object.create(null);",
-  "    for (var k = 0; k < keys.length; k++) out[keys[k]] = deser(v[keys[k]]);",
-  "    return out;",
-  "  }",
-  "  return v;",
+  "// The child's copy of Studio's value codec (packages/provider-sdk/src/values/codec.ts), restricted to",
+  "// what the child binds and reads. Its agreement with the module is held by round trips",
+  "// through this child in tests/integration/db/sqlite-worker.test.ts.",
+  "function pointerSegment(key) {",
+  '  return "/" + String(key).replace(/~/g, "~0").replace(/\\//g, "~1");',
   "}",
-  "function ser(v) {",
-  "  if (v === null || v === undefined) return null;",
-  '  if (typeof v === "bigint") { var t1 = {}; t1.__libredb_sqlite_bigint = v.toString(); return t1; }',
-  '  if (v instanceof Uint8Array) { var t2 = {}; t2.__libredb_sqlite_bytes = Buffer.from(v).toString("base64"); return t2; }',
-  "  if (Array.isArray(v)) return v.map(ser);",
-  '  if (typeof v === "object") {',
-  "    var out = Object.create(null);",
-  "    var keys = Object.keys(v);",
-  "    for (var k = 0; k < keys.length; k++) out[keys[k]] = ser(v[keys[k]]);",
-  "    return out;",
-  "  }",
-  "  return v;",
+  "function refuse(what, path) {",
+  '  var error = new Error("The SQLite worker cannot " + what + ", at " + (path === "" ? "the root" : JSON.stringify(path)) + ".");',
+  '  error.name = "SQLiteWorkerValueError";',
+  "  throw error;",
+  "}",
+  "function isTagShape(keys) {",
+  '  return keys.length === 2 && keys.indexOf("$") !== -1 && keys.indexOf("v") !== -1;',
+  "}",
+  "function deserRecord(v, keys, path) {",
+  "  var out = Object.create(null);",
+  "  for (var k = 0; k < keys.length; k++) out[keys[k]] = deser(v[keys[k]], path + pointerSegment(keys[k]));",
+  "  return out;",
+  "}",
+  "function deser(v, path) {",
+  '  if (v === null || typeof v === "string" || typeof v === "boolean" || typeof v === "number") return v;',
+  "  if (Array.isArray(v)) return v.map(function (item, index) { return deser(item, path + pointerSegment(index)); });",
+  "  var keys = Object.keys(v);",
+  "  if (!isTagShape(keys)) return deserRecord(v, keys, path);",
+  "  var payload = v.v;",
+  '  if (v.$ === "i64" && typeof payload === "string" && /^(?:0|-?[1-9][0-9]*)$/.test(payload)) return BigInt(payload);',
+  '  if (v.$ === "bytes" && typeof payload === "string") return new Uint8Array(Buffer.from(payload, "base64"));',
+  '  if (v.$ === "nf" && payload === "NaN") return NaN;',
+  '  if (v.$ === "nf" && payload === "Infinity") return Infinity;',
+  '  if (v.$ === "nf" && payload === "-Infinity") return -Infinity;',
+  '  if (v.$ === "obj" && payload !== null && typeof payload === "object" && isTagShape(Object.keys(payload))) return deserRecord(payload, Object.keys(payload), path);',
+  '  if (v.$ === "ts") refuse("bind a timestamp (ts) value", path);',
+  '  refuse("read a tagged value it does not carry", path);',
+  "}",
+  "function deserParams(params) {",
+  "  return (params || []).map(function (param, index) { return deser(param, pointerSegment(index)); });",
+  "}",
+  "function ser(v, path) {",
+  '  if (v === null || typeof v === "string" || typeof v === "boolean") return v;',
+  '  if (typeof v === "number") return isFinite(v) ? (v === 0 ? 0 : v) : { $: "nf", v: String(v) };',
+  '  if (typeof v === "bigint") return { $: "i64", v: v.toString() };',
+  '  if (v instanceof Uint8Array) return { $: "bytes", v: Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64") };',
+  "  if (Array.isArray(v)) return v.map(function (item, index) { return ser(item, path + pointerSegment(index)); });",
+  '  if (typeof v !== "object") refuse("read a value of type " + typeof v, path);',
+  "  var keys = Object.keys(v);",
+  "  var out = Object.create(null);",
+  "  for (var k = 0; k < keys.length; k++) out[keys[k]] = ser(v[keys[k]], path + pointerSegment(keys[k]));",
+  '  return isTagShape(keys) ? { $: "obj", v: out } : out;',
   "}",
   "function allRows(sql, params) {",
   "  var stmt = db.prepare(sql);",
@@ -194,6 +213,7 @@ const WORKER_BOOTSTRAP = [
   '    var node = require("node:sqlite");',
   "    db = new node.DatabaseSync(payload.dbPath, { readOnly: payload.readonly === true, readBigInts: true });",
   "  }",
+  `  db.exec("PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}");`,
   "  if (payload.queryOnly) {",
   '    db.exec("PRAGMA query_only = true");',
   '    var readback = allRows("PRAGMA query_only", []);',
@@ -211,6 +231,7 @@ const WORKER_BOOTSTRAP = [
   "    // The agent read-only profile skips this read, exactly as connectReadOnly did.",
   '    allRows("PRAGMA journal_mode", []);',
   "  }",
+  '  db.exec("PRAGMA busy_timeout = 0");',
   "}",
   "function query(sql, params) {",
   "  var stmt = db.prepare(sql);",
@@ -226,7 +247,7 @@ const WORKER_BOOTSTRAP = [
   "      try { values = stmt.all.apply(stmt, params) || []; } finally { stmt.setReturnArrays(false); }",
   "      columns = stmt.columns().map(function (column) { return [column.name, column.type === null ? undefined : column.type]; });",
   "    }",
-  "    return { values: values.map(function (row) { return row.map(ser); }), columns: columns, returnsRows: true, changes: 0 };",
+  '    return { values: ser(values, ""), columns: columns, returnsRows: true, changes: 0 };',
   "  }",
   "  // `changes` is `sqlite3_changes()`, which a statement that changes no row leaves as the",
   "  // previous write set it, so node:sqlite handed a DDL statement that count. If",
@@ -245,13 +266,13 @@ const WORKER_BOOTSTRAP = [
   '    if (req.op === "ping") return { ok: true };',
   '    if (req.op === "open") { open(req); return { ok: true }; }',
   '    if (req.op === "exec") { db.exec(req.sql); return { ok: true }; }',
-  '    if (req.op === "all") { return { ok: true, rows: allRows(req.sql, (req.params || []).map(deser)).map(ser) }; }',
+  '    if (req.op === "all") { return { ok: true, rows: ser(allRows(req.sql, deserParams(req.params)), "") }; }',
   '    if (req.op === "get") {',
   "      var stmt = db.prepare(req.sql);",
-  "      var row = stmt.get.apply(stmt, (req.params || []).map(deser));",
-  "      return { ok: true, row: row === undefined ? null : ser(row) };",
+  "      var row = stmt.get.apply(stmt, deserParams(req.params));",
+  '      return { ok: true, row: row === undefined ? null : ser(row, "") };',
   "    }",
-  '    if (req.op === "query") { return { ok: true, read: query(req.sql, (req.params || []).map(deser)) }; }',
+  '    if (req.op === "query") { return { ok: true, read: query(req.sql, deserParams(req.params)) }; }',
   '    if (req.op === "inTransaction") { return { ok: true, value: driver === "bun" ? db.inTransaction : db.isTransaction }; }',
   '    if (req.op === "close") {',
   '      if (driver === "bun") db.close(true); else db.close();',
@@ -396,6 +417,8 @@ export class SQLiteWorkerClient implements SQLiteHandle {
   private readonly queue: Array<{ run(): void; reject(error: Error): void; key?: string }> = [];
   private busy = false;
   private alive = true;
+  /** Whether `terminate()` stopped the child, as opposed to the child exiting on its own. */
+  private terminated = false;
   /** The `queryId` of the request the child is executing now; null for internal ops. */
   private runningKey: string | null = null;
 
@@ -425,9 +448,15 @@ export class SQLiteWorkerClient implements SQLiteHandle {
       }
     });
     child.stderr.on("data", (chunk) => process.stderr.write(`[sqlite-worker] ${String(chunk)}`));
+    child.stdin.on("error", (error) => this.onStreamError("stdin", error));
+    child.stdout.on("error", (error) => this.onStreamError("stdout", error));
+    child.stderr.on("error", (error) => this.onStreamError("stderr", error));
     child.on("error", (error) => this.failAll(new SQLiteWorkerError(`SQLite worker failed: ${error.message}`)));
     child.on("exit", (code, signal) => {
       this.alive = false;
+      // A child the client did not stop on purpose: name the exit code and signal, which
+      // a failed write that reached the client first does not carry.
+      if (!this.terminated) logger.warn(`[sqlite-worker] child exited (code ${code}, signal ${signal ?? "none"})`);
       this.failAll(new SQLiteWorkerError(`SQLite worker exited (code ${code}, signal ${signal ?? "none"})`));
     });
   }
@@ -438,6 +467,14 @@ export class SQLiteWorkerClient implements SQLiteHandle {
       stdio: ["pipe", "pipe", "pipe"],
       env: workerEnvironment(),
     });
+    if (child.pid === undefined) {
+      // The spawn failed: the executable is missing or not runnable, or no file descriptor
+      // was left for the pipes, which are then not created at all. Node reports the reason
+      // as the child's `error` event on the next tick; the listener is attached here, before
+      // anything touches a pipe.
+      const [error] = (await once(child, "error")) as [Error];
+      throw new SQLiteWorkerError(`SQLite worker failed: ${error.message}`);
+    }
     const client = new SQLiteWorkerClient(child);
     try {
       await client.request("open", open);
@@ -542,6 +579,30 @@ export class SQLiteWorkerClient implements SQLiteHandle {
     this.pump();
   }
 
+  /**
+   * A pipe to the child failed. Without a listener the stream's `error` event is thrown
+   * out of its event handler; here it is reported as the worker's named error instead.
+   *
+   * The usual case is a statement still being written when `terminate()` kills the
+   * child: the rest of the write meets a closed pipe (EPIPE). The request has already
+   * been rejected, by `terminate()` or by the deadline that called it, so this failure
+   * is the expected tail of a cancel, a deadline or a disconnect and is logged at debug
+   * level. Any other stream failure is unexpected (the child died on its own, or a pipe
+   * broke under a live child): it rejects every request with the named error, is logged
+   * as a warning, and stops the child, which can no longer be talked to, so the
+   * provider's next statement starts a fresh one. That stop is not a `terminate()`, so
+   * the child's exit is still logged with its code and signal. Nothing is retried.
+   */
+  private onStreamError(stream: "stdin" | "stdout" | "stderr", error: Error): void {
+    if (this.terminated) {
+      logger.debug(`[sqlite-worker] ${stream} failed after terminate(): ${error.message}`);
+      return;
+    }
+    logger.warn(`[sqlite-worker] ${stream} failed: ${error.message}`);
+    this.failAll(new SQLiteWorkerError(`SQLite worker ${stream} failed: ${error.message}`));
+    this.kill();
+  }
+
   private failAll(error: Error): void {
     for (const timer of this.timeouts.values()) clearTimeout(timer);
     this.timeouts.clear();
@@ -584,10 +645,17 @@ export class SQLiteWorkerClient implements SQLiteHandle {
    */
   terminate(): void {
     if (!this.alive) return;
+    this.terminated = true;
+    this.kill();
+    this.failAll(new SQLiteWorkerError("SQLite worker was terminated"));
+  }
+
+  /** End the child's stdin and SIGKILL it, leaving the client dead. */
+  private kill(): void {
+    if (!this.alive) return;
     this.alive = false;
     this.child.stdin.end();
     this.child.kill("SIGKILL");
-    this.failAll(new SQLiteWorkerError("SQLite worker was terminated"));
   }
 
   /** Whether the child is still running; false after `terminate()` or an exit. */
@@ -600,12 +668,12 @@ export class SQLiteWorkerClient implements SQLiteHandle {
   }
 
   async all(sql: string, params?: readonly unknown[]): Promise<unknown[]> {
-    const response = (await this.request("all", { sql, params: params?.map(serializeBind) })) as WorkerResponse;
+    const response = (await this.request("all", { sql, params: params && serializeBinds(params) })) as WorkerResponse;
     return ((response.rows ?? []) as unknown[]).map(deserializeCell);
   }
 
   async get(sql: string, params?: readonly unknown[]): Promise<unknown> {
-    const response = (await this.request("get", { sql, params: params?.map(serializeBind) })) as WorkerResponse;
+    const response = (await this.request("get", { sql, params: params && serializeBinds(params) })) as WorkerResponse;
     return deserializeCell(response.row ?? null);
   }
 
@@ -617,7 +685,7 @@ export class SQLiteWorkerClient implements SQLiteHandle {
   ): Promise<SQLiteRawRead> {
     const response = (await this.request(
       "query",
-      { sql, params: params.map(serializeBind) },
+      { sql, params: serializeBinds(params) },
       timeoutMs,
       queryId,
     )) as WorkerResponse;

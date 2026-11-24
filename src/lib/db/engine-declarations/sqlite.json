@@ -1,0 +1,464 @@
+{
+  "id": "sqlite",
+  "displayName": "SQLite",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "database"
+    ],
+    "defaults": {},
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": true,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": null,
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": true,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [],
+      "placeholders": [],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [
+      "vacuum",
+      "analyze",
+      "reindex",
+      "check"
+    ],
+    "maintenanceSpecs": [
+      {
+        "operation": "vacuum",
+        "label": "Vacuum Database",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "analyze",
+        "label": "Analyze Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "reindex",
+        "label": "Reindex Table",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "check",
+        "label": "Integrity Check",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
+    "agentReadings": [
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": "declaredSchema",
+          "retry": null,
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": {
+          "kind": "prefix",
+          "prefix": "EXPLAIN QUERY PLAN"
+        },
+        "profileComposition": {
+          "shapeTests": {
+            "email": "emailShapeTest",
+            "digitRun": "digitRunShapeTest"
+          },
+          "incomparableType": {
+            "source": "\\b(jsonb?|xml|point|line|lseg|box|path|polygon|circle)\\b",
+            "flags": "i"
+          },
+          "uncountableType": null
+        },
+        "statistics": {
+          "probe": "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
+          "build": "statisticsBuild",
+          "limitNote": "This engine records no per-column distinct count or null fraction at all, so none is shown for any column here, and none can be obtained without reading the data."
+        },
+        "catalogCapture": {
+          "kinds": [
+            "columns",
+            "indexes"
+          ],
+          "build": "captureBuild",
+          "kindWords": [
+            {
+              "word": "table",
+              "kind": "table"
+            },
+            {
+              "word": "view",
+              "kind": "view"
+            },
+            {
+              "word": "index",
+              "kind": "index"
+            },
+            {
+              "word": "trigger",
+              "kind": "trigger"
+            }
+          ]
+        }
+      },
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": {
+      "chip": "SQLite: killed at its timeout",
+      "sentence": "On SQLite a read that runs past its timeout is now killed mid-flight; the in-memory database is the exception and still blocks this application until the read finishes."
+    },
+    "fenceAliases": [
+      "sqlite3"
+    ],
+    "explainFormat": "sqlite-queryplan",
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "trigger-body",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [
+        [
+          "REPLACE",
+          "INTO"
+        ],
+        [
+          "INSERT",
+          "OR",
+          "REPLACE"
+        ]
+      ],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": "placeholder",
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [],
+      "exactDecimalTypeNames": [],
+      "float64TypeNames": "all",
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BLOB"
+      },
+      "standsAlone": [
+        "character varying",
+        "varchar",
+        "varchar2",
+        "nvarchar",
+        "nvarchar2",
+        "character",
+        "char",
+        "nchar",
+        "text",
+        "ntext",
+        "tinytext",
+        "mediumtext",
+        "longtext",
+        "clob",
+        "nclob",
+        "binary",
+        "varbinary",
+        "raw",
+        "blob",
+        "tinyblob",
+        "mediumblob",
+        "longblob",
+        "bytea",
+        "image",
+        "numeric",
+        "decimal",
+        "number",
+        "binary_double",
+        "binary_float",
+        "money",
+        "timestamp",
+        "timestamp without time zone",
+        "timestamp with time zone",
+        "datetime",
+        "datetime2",
+        "smalldatetime",
+        "datetimeoffset",
+        "year"
+      ],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "9e999",
+        "-Infinity": "-9e999"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": null,
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "A foreign key is declarable only as a CREATE TABLE constraint; recreate the table and copy the rows.",
+      "Requires table recreation."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": true,
+    "deniedFileAccessRefusal": "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

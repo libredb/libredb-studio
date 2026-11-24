@@ -25,14 +25,21 @@
  * is counted apart, against its own bound. A failure is worded by its category and the server's status name, never by
  * the library's or the server's own text, which can echo a node path or a value.
  */
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  DatabaseConfigError,
+  isBudgetRefusal,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import {
   byteBudgetSentence,
   measureResultBytes,
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { QueryResult, QueryWarning, ReadOnlyStatementBudget } from "@/lib/db/types";
 import {
   answerTimeOutside,
@@ -122,7 +129,7 @@ export const OPCUA_AGENT_FAILURE_SENTENCES = {
 const F = OPCUA_AGENT_FAILURE_SENTENCES;
 
 /** A refusal or failure worded by Studio. The class tells a caller that nothing in it came from the server's text. */
-export class OpcuaAgentError extends QueryError {
+class OpcuaAgentError extends QueryError {
   constructor(message: string) {
     super(message, OPCUA_TYPE);
     this.name = "OpcuaAgentError";
@@ -138,11 +145,12 @@ const fail = (sentence: string): never => {
 const statusCodeIn = (message: string): string | undefined => /\b(Bad[A-Za-z]+)\b/.exec(message)?.[1];
 
 /**
- * Any failure of an agent read, as Studio's own sentence: its own refusals as they are, a status code by the error
- * table's sentence for that code, and anything else by whether the session had opened. Never the error's own text.
+ * Any failure of an agent read, as Studio's own sentence: its own refusals and a budget refusal (`isBudgetRefusal`) as
+ * they are, so each keeps its class and kind, a status code by the error table's sentence for that code, and anything
+ * else by whether the session had opened. Never the error's own text.
  */
-export function agentFailure(error: unknown, sessionOpened: boolean): OpcuaAgentError {
-  if (error instanceof OpcuaAgentError) return error;
+export function agentFailure(error: unknown, sessionOpened: boolean): QueryError {
+  if (error instanceof OpcuaAgentError || isBudgetRefusal(error)) return error;
   if (error instanceof OpcuaReadRootsError) return new OpcuaAgentError(error.message);
   const code = statusCodeIn(messageOf(error));
   if (code !== undefined) return new OpcuaAgentError(F.status(code));
@@ -188,7 +196,7 @@ export function boundedAgentClient(
 ): OpcuaAgentClient & { readonly requests: () => number; readonly walk: OpcuaWalkClient } {
   let sent = 0;
   const due = (): void => {
-    if (bounds.now() >= bounds.deadlineAt) fail(F.time(bounds.timeoutMs));
+    if (bounds.now() >= bounds.deadlineAt) throw new TimeBudgetRefusal(F.time(bounds.timeoutMs), OPCUA_TYPE);
   };
   const charge = (): void => {
     due();
@@ -340,7 +348,7 @@ async function readHistoryOf(
     limit: cap,
   });
   if (history.values.length > budget.maxResultRows)
-    fail(F.historyOverRows(history.values.length, budget.maxResultRows));
+    throw new RowBudgetRefusal(F.historyOverRows(history.values.length, budget.maxResultRows), OPCUA_TYPE);
   const sentence = historyEndSentence(history.end, history.values.length, history.statusCode);
   // A cap is answered only when it is the request's own limit. Studio's cap is one value past the budget, and the
   // console's own cap of OPCUA_HISTORY_VALUE_CAP values stops a read first when the budget is that large, so a cap
@@ -364,7 +372,9 @@ async function readHistoryOf(
 function browseOf(nodeId: OpcuaNodeId, scope: OpcuaAgentScope, budget: ReadOnlyStatementBudget): OpcuaAgentAnswer {
   const fields = [...OPCUA_AGENT_BROWSE_COLUMNS];
   const rowsOf = (rows: readonly object[], warnings: readonly string[]): OpcuaAgentAnswer => {
-    if (rows.length > budget.maxResultRows) fail(F.browseOverRows(rows.length, budget.maxResultRows));
+    if (rows.length > budget.maxResultRows) {
+      throw new RowBudgetRefusal(F.browseOverRows(rows.length, budget.maxResultRows), OPCUA_TYPE);
+    }
     return { fields, rows: rows.map((row): Record<string, unknown> => ({ ...row })), warnings };
   };
   if (keyIn(nodeId, scope.table)?.key === OPCUA_OBJECTS_FOLDER_KEY)
@@ -406,9 +416,13 @@ export function opcuaAgentResult(
   executionTime: number,
 ): QueryResult {
   const rows = answer.rows.map((row) => ({ ...row }));
-  if (rows.length > budget.maxResultRows) fail(rowBudgetSentence(rows.length, budget.maxResultRows));
+  if (rows.length > budget.maxResultRows) {
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), OPCUA_TYPE);
+  }
   const bytes = measureResultBytes(rows);
-  if (bytes > budget.maxResultBytes) fail(byteBudgetSentence(bytes, budget.maxResultBytes));
+  if (bytes > budget.maxResultBytes) {
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), OPCUA_TYPE);
+  }
   const warnings: QueryWarning[] = answer.warnings.map((message) => ({ message }));
   return {
     fields: [...answer.fields],

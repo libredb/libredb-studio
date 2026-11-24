@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { getEventListeners } from "node:events";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import https from "node:https";
 import { join } from "node:path";
@@ -178,6 +179,28 @@ describe("openShiftApiCall", () => {
     });
   });
 
+  test.each(["upgrade", "upgrade-close"] as const)(
+    "fails as network at once on a 101 that announces an upgrade (%s), and closes the switched socket",
+    async (answer) => {
+      cluster.script("/apis/switch", answer);
+      const timeout = spyOn(AbortSignal, "timeout");
+      try {
+        const started = Date.now();
+        expect(await openShiftApiCall({ method: "GET", path: "/apis/switch", maxBytes: 64 })).toEqual({
+          kind: "failed",
+          reason: "network",
+        });
+        expect(Date.now() - started).toBeLessThan(OPENSHIFT_API_TIMEOUT_MS);
+        // The request is closed, so nothing is left listening on its deadline.
+        expect(getEventListeners(timeout.mock.results[0].value as AbortSignal, "abort")).toHaveLength(0);
+      } finally {
+        timeout.mockRestore();
+      }
+      expect(cluster.upgradedSockets).toHaveLength(1);
+      await Promise.all(cluster.upgradedSockets);
+    },
+  );
+
   test("returns a redirect as an answer and never follows it", async () => {
     cluster.script("/apis/moved", { status: 302, headers: { location: `${cluster.apiUrl}/apis/elsewhere` } });
     const result = await openShiftApiCall({ method: "GET", path: "/apis/moved", maxBytes: 64 });
@@ -250,6 +273,22 @@ describe("openShiftTokenFetch", () => {
       "form",
     );
     expect(cluster.requests).toEqual([]);
+  });
+
+  test("throws network at once on a 101 that announces an upgrade, and closes the switched socket", async () => {
+    cluster.script(TOKEN_PATH, "upgrade");
+    const fetcher = openShiftTokenFetch(cluster.issuerOrigin);
+    const started = Date.now();
+    // A plain await, so a call that never settles fails by the test's own timeout.
+    let failure: unknown;
+    try {
+      await fetcher(`${cluster.issuerOrigin}${TOKEN_PATH}`, tokenOptions());
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({ name: "OpenShiftCallError", reason: "network" });
+    expect(Date.now() - started).toBeLessThan(OPENSHIFT_TOKEN_TIMEOUT_MS);
+    await Promise.all(cluster.upgradedSockets);
   });
 
   test("throws on a failed call, so openid-client rejects", async () => {

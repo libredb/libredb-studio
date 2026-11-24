@@ -26,6 +26,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mssql-provider.test.ts`](../../tests/integration/db/mssql-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `check`, `optimize`, `kill`) and the transaction route all send writes |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `request.query()`, the call that sends the statement, so no failure can be shown to come before the send |
 
 ---
 
@@ -73,7 +74,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mssql': {
   const { MSSQLProvider } = await import('./providers/sql/mssql');
-  return new MSSQLProvider(connection, options);
+  return new MSSQLProvider(connection, options, context);
 }
 ```
 
@@ -260,7 +261,8 @@ const conn = {
 ```
 
 `validate()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) requires `host` **and**
-`database` (when no connection string is set — but note [§4.4](#44-connection-string-nuance)).
+`database`, whatever else the connection carries: a connection string never stands in for them
+(see [§4.4](#44-connection-string-nuance)).
 SQL authentication only (`user`/`password`); Windows/AAD auth is not wired.
 
 ### 4.2 Connection pooling
@@ -320,11 +322,12 @@ See the [non-Azure trust caveat](#15-known-limitations--future-work).
 `getCapabilities().supportsConnectionString` is `true` and the UI parser accepts both `mssql://` and
 `sqlserver://` URLs — but it **decomposes them into discrete fields** (`host`/`port`/`user`/`password`/
 `database`) before they reach the provider. `buildConfig()` itself **never reads
-`config.connectionString`**; it always builds from the discrete fields (defaulting `host` to
-`localhost`). So a config carrying *only* a raw `connectionString` would be built against
-`localhost` with the other fields unset — i.e. it targets an unintended server (and would likely
-fail on the missing user/password/database) rather than honouring the URL. In practice the
-connection always has discrete fields because the UI populates them.
+`config.connectionString`**, and the provider factory never hands it one: SQL Server does not
+accept a connection string (`CONNECTION_STRING_ACCEPTED`), so the field is not among those the
+provider receives. It always builds from the discrete fields, and `validate()` requires
+`host` and `database`. So a config carrying *only* a raw `connectionString` is refused by name
+(`Host is required for SQL Server`) when the provider is built, and nothing is dialled.
+In practice the connection always has discrete fields because the UI populates them.
 
 The decomposition includes TLS. An ADO.NET keyword string
 (`Server=host,1433;Database=db;Encrypt=True;TrustServerCertificate=True;`) and the query-string form
@@ -368,7 +371,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mssql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`mssql-execution-ui.ts`](../../src/lib/db/providers/sql/mssql-execution-ui.ts).
-What a tree click and Generate Query write is `MSSQL_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port, declared in [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is `MSSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its statement and access-refusal error numbers, its cannot-open-database words and its `ECANCEL` cancel code, is the `mssql` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts).
 
 ---
@@ -408,7 +411,7 @@ Each set of a multi-result batch is named on its own: `SELECT 1 AS a, 2 AS a; SE
 
 A text that returns several result sets still answers with its **first**, as `EXEC sp_help` always
 did, and carries every set in `resultSets` (#1312). `POST /api/db/query` and `POST /api/db/transaction` do not send that field; the
-multi-statement route reads it to show a batch's last result with rows.
+multi-statement route reads it to show a batch's last set, empty or not (#2286).
 
 **The editor sends a T-SQL batch whole.** The grammar's `script` fact for this dialect makes the unit
 of one request the batch between `GO` lines (`src/lib/db/providers/sql/mssql-sql-grammar.ts`), so `DECLARE @x INT = 5;
@@ -515,7 +518,7 @@ Before that mapping the route answered `500` *Canceled.*, measured on SQL Server
   Cassandra stopped spelling their bytes `0x…` in the provider.
 - **One result set is shown.** `query()` answers with the first result set and carries the others in
   `resultSets` (§5.1); the single-statement route shows the first and the multi-statement route a
-  batch's last one with rows.
+  batch's last set, empty or not (#2286).
 
 ### 5.4 Declared column types
 
@@ -593,10 +596,12 @@ with a 5-minute auto-rollback on an owned provider only ([§3.6](#36-transaction
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | `new mssql.Transaction(pool)` + `begin()`. Throws if one is active. |
+| `beginTransaction()` | `new mssql.Transaction(pool)` + `begin()`. Throws if one is active. A `begin()` that fails answers its mapped class with `outcome` `unknown`, since the driver takes the pooled connection inside `begin()` and no failure can be shown to come before the send. |
 | `queryInTransaction(sql, params?)` | Runs on a `new mssql.Request(transaction)`. Throws if none active. |
-| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. |
+| `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. A failure answers its mapped class with `outcome` `unknown`, and the provider holds no transaction after it. |
 | `isInTransaction()` | Current state. |
+
+A COMMIT or ROLLBACK sent while a statement of the same transaction runs is refused by the driver before it sends anything (`EREQINPROG`, "Can't commit transaction. There is a request in progress."), and the provider then holds no transaction although the server still does, with the connection and its locks held until the pool closes (D580 in [BACKLOG.md](../BACKLOG.md)).
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -622,7 +627,7 @@ So the absence is not the server's refusal, and it is not the pool's either: it 
 `SELECT @@SPID` issued afterwards is a NEW request, which the pool is free to place on another connection, and answering a question about the wrong session is how a rollback ends up rolling back somebody else's transaction.
 Closing that needs a different query path rather than a different question, which is its own change and is filed as D90.
 
-Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 The cost while it stands: an abandoned transaction holds its locks until the connection is reused by a caller that ends it, or the pool closes.
 
 ---
@@ -1425,6 +1430,28 @@ the driver returns no row, no expected column, or a non-finite value, the measur
 the string stays `N/A`. The shared `measuredNullableAggregate()` ([`measured-aggregate.ts`](../../src/lib/db/utils/measured-aggregate.ts))
 boundary preserves those states without a falsy test that would erase a genuine zero.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `mssql` offers is its row in `ENGINE_FACETS`, declared in [`mssql-engine-facets.ts`](../../src/lib/db/providers/sql/mssql-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `analyze`, `check`, `optimize`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 9. Maintenance
@@ -1560,13 +1587,13 @@ It writes a `datetime` or `smalldatetime` cell's `yyyy-mm-dd hh:mi:ss[.mmm]` tex
 
 | Situation | Error |
 |-----------|-------|
-| Missing `host`/`database` (no connection string) | `DatabaseConfigError` |
+| Missing `host`/`database` (a connection string does not stand in for them) | `DatabaseConfigError` |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails | `ConnectionError` (carries host/port) |
 | Message contains *cannot open database* (`4060`) | `ConnectionError`, matched **before** the access refusals, because the server's sentence ends in *The login failed.* (#1451) |
 | A permission the principal lacks, by the error number `mssql` carries: `229` on an object, `230` on a column, `262` in a database, `297` for an action, `300` on a server-level object, `916` a database the login may not enter | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | Message contains *login failed* | `AuthenticationError`, answered `401 AUTH_ERROR`. tedious raises a refused login as `ELOGIN` without the server's error number (`18456`), so the words decide this one |
-| A cancelled request, which `mssql` and tedious end as `RequestError('Canceled.', 'ECANCEL')`, read from the driver code `ECANCEL` because the sentence holds none of the cancellation words; also the cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError`, answered `499` with *Query was cancelled*, matched **before** the timeout check. A cancel the read-only profile's own deadline made is answered by `runWithDeadline` first, as its time-budget `QueryError` |
+| A cancelled request, which `mssql` and tedious end as `RequestError('Canceled.', 'ECANCEL')`, read from the driver code `ECANCEL` because the sentence holds none of the cancellation words; also the cancellation messages (*canceling statement*, *query was cancelled*, *query execution was interrupted*, *kill query*) | `QueryCancelledError`, answered `499` with *Query was cancelled*, matched **before** the timeout check. A cancel the read-only profile's own deadline made is answered by `runWithDeadline` first, as its `TimeBudgetRefusal` |
 | `requestTimeout` exceeded (message contains *timeout*) | `TimeoutError` |
 | Other errors | generic `QueryError` / `DatabaseError` with the original message |
 
@@ -1577,6 +1604,8 @@ error token but keeps only the last as `loginError`. `buildConfig()` installs a 
 that watches them, and `connect()` reports the 4060 sentence rather than the 18456 one (#1451). The
 ordering in the table above is the same problem from the other side: the real 4060 text ends in *The
 login failed.*, so testing *login failed* first would classify it as an `AuthenticationError`.
+
+A transaction's `begin()`, `commit()` and `rollback()` that fail are mapped like a statement's failure, and answer `outcome` `unknown` ([§6](#6-transactions)).
 
 Because `requestTimeout` *is* wired ([§3.5](#35-a-query-timeout-is-wired-driver-enforced)) — even
 though it's driver-enforced rather than server-side — an overrunning query genuinely produces a
@@ -1970,8 +1999,8 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 - **`connectionString` is ignored by the provider.** `getCapabilities().supportsConnectionString` is
   `true` and the UI accepts `mssql://`/`sqlserver://`, but `buildConfig()` builds only from discrete
   fields and never reads `config.connectionString` ([§4.4](#44-connection-string-nuance)). A
-  config carrying only a raw connection string would connect to `localhost`. *Future:* pass a raw
-  connection string through to the driver, or set the capability honestly.
+  config carrying only a raw connection string is refused by name for its missing host.
+  *Future:* pass a raw connection string through to the driver, or set the capability honestly.
 - **The EDITOR has no Explain button here; the AGENT has an estimating plan.** `supportsExplain` is
   `false`, so the UI hides the *Explain* action, and that half is unchanged: every strategy in
   `src/lib/explain` builds a single-statement PREFIX around the query

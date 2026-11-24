@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
@@ -15,16 +16,12 @@ import {
   vocabularyTypedConfirmation,
 } from "@/lib/db/destructive-commands";
 import { etcdTypedConfirmation } from "@/lib/db/providers/keyvalue/etcd/guard";
-import { redisRefusal } from "@/lib/db/providers/keyvalue/redis-command-text";
-import {
-  INFLUXQL_MAX_TEXT_BYTES,
-  INFLUXQL_POLICY_SENTENCES,
-  influxqlRefusal,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
-import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
-import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
-import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
+import { redisRefusal } from "@/lib/languages/rediscli/command-text";
+import { INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES, influxqlRefusal } from "@/lib/languages/influxql/policy";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";
+import { oxiaRefusal, OXIA_DESTRUCTIVE_OPERATIONS, readOxiaOperations } from "@/lib/languages/oxiacli/guard";
+import { KUBECTL_MAX_TEXT_BYTES } from "@/lib/languages/kubectl/commands";
+import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
 import { firestoreRefusal } from "@/lib/db/providers/document/firestore/console/guard";
 import { LIMITS as FIRESTORE_LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { milvusRefusal } from "@/lib/db/providers/vector/milvus/guard";
@@ -34,7 +31,9 @@ import { QDRANT_CONSOLE } from "@/lib/db/providers/vector/qdrant/routes";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
 import { readsSqlText } from "@/lib/sql/grammar";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
+import { statementLanguageFamilyDirectory } from "../../helpers/statement-language-family";
 
 // The facts behind the confirmation gate for the engines whose query text is not
 // SQL. The gate itself (`isDangerousQuery`) is tested in
@@ -395,7 +394,72 @@ describe("vocabularyDecidesAlone", () => {
   test("is false with no type at all", () => {
     expect(vocabularyDecidesAlone()).toBe(false);
   });
+
+  // The row is the gate's whole answer only where Studio's review record lists its claim (`CONFIRMATION_CLAIM_REVIEW`).
+  test("is false for a row whose claim the review record does not list", () => {
+    const remove = installStandInVocabulary({});
+    try {
+      expect(NON_SQL_DESTRUCTIVE_VOCABULARY[STAND_IN_TYPE]?.decidesAlone).toBe(true);
+      expect(vocabularyDecidesAlone(STAND_IN_TYPE)).toBe(false);
+    } finally {
+      remove();
+    }
+  });
 });
+
+/**
+ * Every property of the `NON_SQL_DESTRUCTIVE_VOCABULARY` table in `source` that is not an identifier imported from a
+ * row module, as `"<key> <specifier>"`, or `"<key> inline"` for a value that is not an imported identifier.
+ *
+ * A row module is the `destructive` module of the family directory of the key's own statement language
+ * (`statementLanguageFamilyDirectory(AGENT_STATEMENT_LANGUAGE[key])`), or a `destructive` module under
+ * `@/lib/db/providers/` for a row whose language slice has not moved it yet.
+ */
+function rowsNotFromARowModule(source: ts.SourceFile): string[] {
+  const importedFrom = new Map<string, string>();
+  let table: ts.ObjectLiteralExpression | undefined;
+  for (const statement of source.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings !== undefined && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) importedFrom.set(element.name.text, statement.moduleSpecifier.text);
+      }
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (
+          ts.isIdentifier(declaration.name) &&
+          declaration.name.text === "NON_SQL_DESTRUCTIVE_VOCABULARY" &&
+          declaration.initializer !== undefined &&
+          ts.isObjectLiteralExpression(declaration.initializer)
+        ) {
+          table = declaration.initializer;
+        }
+      }
+    }
+  }
+  if (table === undefined)
+    throw new Error(`${source.fileName} declares no NON_SQL_DESTRUCTIVE_VOCABULARY object literal`);
+  const offending: string[] = [];
+  for (const property of table.properties) {
+    const key = property.name?.getText(source) ?? property.getText(source);
+    const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
+    const from = value !== undefined && ts.isIdentifier(value) ? importedFrom.get(value.text) : undefined;
+    if (from === undefined) {
+      offending.push(`${key} inline`);
+      continue;
+    }
+    if (!Object.hasOwn(AGENT_STATEMENT_LANGUAGE, key)) throw new Error(`${key} is not a type id`);
+    const language = AGENT_STATEMENT_LANGUAGE[key as DatabaseType];
+    const familyRow =
+      language === null
+        ? undefined
+        : `@/${statementLanguageFamilyDirectory(language).replace(/^src\//, "")}/destructive`;
+    const besideItsProvider = from.startsWith("@/lib/db/providers/") && /(^|[/-])destructive$/.test(from);
+    if (from !== familyRow && !besideItsProvider) offending.push(`${key} ${from}`);
+  }
+  return offending;
+}
 
 describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
   test("carries a row for exactly the nineteen types whose text is not SQL", () => {
@@ -444,9 +508,11 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
     expect(Object.keys(NON_SQL_DESTRUCTIVE_VOCABULARY).sort()).toEqual([...notSql].sort());
   });
 
-  // The shared gate names no engine's vocabulary: each row is a module beside its provider, and this table only
-  // collects them, so a new engine adds a row file of its own and one line here.
-  test("collects rows each declared beside its provider, and declares none of its own", () => {
+  // The shared gate names no engine's vocabulary: each row is a module in its statement language's core family
+  // directory or, until that language's slice of the provider plugin program moves it, beside its provider, and this
+  // table only collects them, so a new engine adds a row file of its own and one line here. Which rows may still sit
+  // in a provider directory is the provider import guard's allowlist, not this test's.
+  test("collects rows each declared in its statement language's family module or beside its provider, and declares none of its own", () => {
     const path = "src/lib/db/destructive-commands.ts";
     const source = ts.createSourceFile(
       path,
@@ -454,38 +520,33 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
       ts.ScriptTarget.Latest,
       true,
     );
-    const importedFrom = new Map<string, string>();
-    let table: ts.ObjectLiteralExpression | undefined;
-    for (const statement of source.statements) {
-      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-        const bindings = statement.importClause?.namedBindings;
-        if (bindings !== undefined && ts.isNamedImports(bindings)) {
-          for (const element of bindings.elements) importedFrom.set(element.name.text, statement.moduleSpecifier.text);
-        }
-      }
-      if (ts.isVariableStatement(statement)) {
-        for (const declaration of statement.declarationList.declarations) {
-          if (
-            ts.isIdentifier(declaration.name) &&
-            declaration.name.text === "NON_SQL_DESTRUCTIVE_VOCABULARY" &&
-            declaration.initializer !== undefined &&
-            ts.isObjectLiteralExpression(declaration.initializer)
-          ) {
-            table = declaration.initializer;
-          }
-        }
-      }
-    }
-    expect(table).toBeDefined();
-    const inline = (table?.properties ?? [])
-      .filter((property) => {
-        const value = ts.isPropertyAssignment(property) ? property.initializer : undefined;
-        if (value === undefined || !ts.isIdentifier(value)) return true;
-        const from = importedFrom.get(value.text) ?? "";
-        return !(from.startsWith("@/lib/db/providers/") && /(^|[/-])destructive$/.test(from));
-      })
-      .map((property) => property.name?.getText(source));
-    expect(inline).toEqual([]);
+    expect(rowsNotFromARowModule(source)).toEqual([]);
+  });
+
+  test("refuses a row from another language's family module, a row declared inline and a row from a family module other than destructive", () => {
+    const planted = ts.createSourceFile(
+      "planted.ts",
+      [
+        'import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rediscli/destructive";',
+        'import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/command-text";',
+        'import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/graph/cypher/destructive";',
+        'import { ETCD_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/etcd/destructive";',
+        "export const NON_SQL_DESTRUCTIVE_VOCABULARY = {",
+        "  mongodb: MONGODB_DESTRUCTIVE_VOCABULARY,",
+        "  prometheus: { operations: new Set() },",
+        "  kafka: KAFKA_DESTRUCTIVE_VOCABULARY,",
+        "  neo4j: NEO4J_DESTRUCTIVE_VOCABULARY,",
+        "  etcd: ETCD_DESTRUCTIVE_VOCABULARY,",
+        "};",
+      ].join("\n"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    expect(rowsNotFromARowModule(planted)).toEqual([
+      "mongodb @/lib/languages/rediscli/destructive",
+      "prometheus inline",
+      "kafka @/lib/languages/kafkaread/command-text",
+    ]);
   });
 
   test("names no MongoDB operation the provider cannot dispatch", () => {
@@ -500,8 +561,9 @@ describe("NON_SQL_DESTRUCTIVE_VOCABULARY", () => {
 });
 
 // The two fields a row declares for the dialog rather than for the gate's yes or no (#1089, section 5.5 and E10).
-// These tests install a row of their own under a key no DatabaseType spells, and remove it after each test, so each
-// rule is pinned apart from any engine's grammar. etcd's row, the one shipped row that declares both fields, is
+// These tests install a row of their own under the stand-in type id, trino, which ships no row, and remove it after
+// each test, so each rule is pinned apart from any shipped vocabulary row; the readers tested here hand the text to
+// the row as written, so no grammar reads it. etcd's row, the one shipped row that declares both fields, is
 // pinned as well: its typed confirmation with its own commands in describe("the etcd row") below, and its
 // safetyAnalysis: false by the etcd test of describe("vocabularySendsToModel").
 
@@ -670,7 +732,8 @@ describe("the etcd row", () => {
 /**
  * The editor's refusal: a statement a row's `refuse` or `maxTextBytes` refuses is never sent
  * and never stored. The first test below holds which shipped rows declare both fields and that Redis's declares a
- * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any engine's grammar.
+ * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any shipped vocabulary
+ * row, and the readers tested here hand the text to the row as written, so no grammar reads it.
  * An engine's own row is pinned in its describe block below, Weaviate's in tests/unit/db/weaviate/routes.test.ts,
  * S3's in tests/unit/db/s3/provider-doc.test.ts and Redis's beside its reader in describe("isDestructiveNonSqlQuery").
  */
@@ -1028,6 +1091,53 @@ describe("the firestore row", () => {
     const over = `${READ} // ${"x".repeat(65536)}`.slice(0, 65537);
     expect(statementRefusal(over, "firestore")).toBe(
       "The statement is 65537 bytes in UTF-8, over the 65536-byte limit for this connection type. Shorten it to run it.",
+    );
+  });
+});
+
+describe("a type outside the union (FND-1)", () => {
+  // Each reader reads the row through the type-id check: `undefined` keeps the no-connection reading its docblock
+  // states, a type id reads its row or none, and anything else is refused by name, so a prototype key never reaches an
+  // `Object.prototype` member and a value that only spells a type id through coercion never reads that type's row.
+  const READERS: readonly (readonly [string, (databaseType: DatabaseType | undefined) => unknown])[] = [
+    ["vocabularyDecidesAlone", (type) => vocabularyDecidesAlone(type)],
+    ["isDestructiveNonSqlQuery", (type) => isDestructiveNonSqlQuery("FLUSHALL", type)],
+    ["vocabularyTypedConfirmation", (type) => vocabularyTypedConfirmation(type, "del /App/ --prefix")],
+    ["vocabularySendsToModel", (type) => vocabularySendsToModel(type)],
+    ["consoleTextByteLimit", (type) => consoleTextByteLimit(type)],
+    ["statementRefusal", (type) => statementRefusal("FLUSHALL", type)],
+  ];
+  const ROWS = READERS.flatMap(([reader, read]) =>
+    OUTSIDE_THE_UNION.map(([label, value]) => [reader, label, read, value] as const),
+  );
+
+  test.each(ROWS)("%s refuses %s by name", (_reader, _label, read, value) => {
+    expect(refusalThrownBy(() => read(value as DatabaseType))).toEqual(refusalOf(value));
+  });
+
+  test("with no type at all, each keeps the no-connection reading", () => {
+    expect(READERS.map(([reader, read]) => [reader, read(undefined)])).toEqual([
+      ["vocabularyDecidesAlone", false],
+      ["isDestructiveNonSqlQuery", false],
+      ["vocabularyTypedConfirmation", undefined],
+      ["vocabularySendsToModel", true],
+      ["consoleTextByteLimit", undefined],
+      ["statementRefusal", undefined],
+    ]);
+  });
+
+  test("a type id with no row reads none, and one with a row reads it", () => {
+    expect(READERS.map(([reader, read]) => [reader, read("postgres")])).toEqual([
+      ["vocabularyDecidesAlone", false],
+      ["isDestructiveNonSqlQuery", false],
+      ["vocabularyTypedConfirmation", undefined],
+      ["vocabularySendsToModel", true],
+      ["consoleTextByteLimit", undefined],
+      ["statementRefusal", undefined],
+    ]);
+    expect(isDestructiveNonSqlQuery("FLUSHALL", "redis")).toBe(true);
+    expect(vocabularyTypedConfirmation("etcd", "del /App/ --prefix")).toEqual(
+      etcdTypedConfirmation("del /App/ --prefix"),
     );
   });
 });

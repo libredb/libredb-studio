@@ -86,6 +86,7 @@ import {
   type AgentToolContext,
   readCatalogForGrounding,
   readObjectInventoryForGrounding,
+  refusedErrorKind,
 } from "./tools";
 import type {
   AgentContextSnapshot,
@@ -96,7 +97,9 @@ import type {
 } from "./types";
 import { fenceUntrustedContent, quoteIdentifierForPrompt } from "./untrusted-content";
 import { DatabaseError, ExecutionProfileError, type ExecutionProfileDenyCode } from "@/lib/db/errors";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import { declaredKinds, isIndexesUnavailable } from "@/lib/db/object-kinds";
+import { type ProviderTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -204,7 +207,8 @@ export type AgentContextCapture =
       /**
        * The two numbers a row-budget refusal named, when that is what refused this
        * capture: how many rows the catalog read projected, and how many the run's
-       * policy allows. Present only for that reason — see `rowBudgetIn`.
+       * policy allows. Present only when the refusal's class is a row budget's, read
+       * from that refusal's own sentence (`rowBudgetIn`).
        */
       readonly rowBudget?: AgentContextRowBudget;
       /**
@@ -391,21 +395,16 @@ export function fingerprintInventory(inventory: AgentInventory): string {
 // ============================================================================
 
 /**
- * The row budget a refusal named, read out of the sentence that named it.
+ * The row budget a refusal named: the two numbers, read out of the refusal's own sentence once its class says a row
+ * budget refused.
  *
- * A regex over a message is not the shape anybody would choose, and it is the only
- * shape available: the two numbers are formatted by the PROVIDER
- * (`postgres.ts`/`sqlite.ts` both refuse rather than truncate) into a `QueryError`
- * message, and neither the error nor the tool refusal that wraps it carries them as
- * fields. Reading them here is what turns the pair from prose the model was shown into
- * data the ledger can hold — which is the whole of B54's second half, since the reason
- * code alone says "somebody said no" where the numbers say "narrow the capture".
- *
- * Anchored on the whole phrase, so the `200` in the advice sentence the tool layer
- * appends ("add LIMIT 200") cannot be mistaken for a measurement. `otherStatementAdvice`
- * in `tools.ts` reads the same message with the same anchor; the duplication is deliberate
- * rather than shared, because the two answer different questions — one composes advice
- * for a model, the other records a fact — and either may be given a different source.
+ * The CLASS decides, never the words: `kind` is the refusal's error kind, from its ledger record, and only a row budget
+ * refusal (`row-budget-refusal`, the provider's, or `studio-row-budget-refusal`, Studio's own) answers a pair. Any other
+ * kind, and `undefined` (a refusal with no record, one recorded before records existed, or a capture that was not a
+ * refusal at all), answers none, whatever the detail says. The numbers themselves are still text: neither class
+ * carries them as fields (BACKLOG B73), so they are read from the sentence `rowBudgetSentence` formats, the one the
+ * provider or Studio wrote when it refused, anchored on the whole phrase so the `200` in the advice the tool layer
+ * appends ("add LIMIT 200") cannot be mistaken for a measurement.
  *
  * Absent when the refusal was about anything else, and absent is the honest answer:
  * this run met no budget, so a pair of zeros would be a measurement nobody took (#477).
@@ -416,21 +415,27 @@ export function fingerprintInventory(inventory: AgentInventory): string {
  * silent: reword the provider's sentence and this returns `undefined` for ever, the
  * ledger quietly loses the pair, and B54 re-opens with nothing going red. So
  * `tests/integration/db/sqlite-provider.test.ts` drives a REAL over-budget read through
- * `bun:sqlite`, catches the error the provider itself threw, and feeds its message
- * through here — and pins PostgreSQL's copy of the same sentence against its source.
+ * `bun:sqlite`, catches the error the provider itself threw, and feeds its kind and its
+ * message through here, and pins PostgreSQL's copy of the same sentence against its source.
  */
-export function rowBudgetIn(detail: string): AgentContextRowBudget | undefined {
+export function rowBudgetIn(kind: ErrorKind | undefined, detail: string): AgentContextRowBudget | undefined {
+  if (kind !== "row-budget-refusal" && kind !== "studio-row-budget-refusal") return undefined;
   const matched = /row budget: (\d+) rows > (\d+) allowed/.exec(detail);
   if (matched === null) return undefined;
   return { projected: Number(matched[1]), allowed: Number(matched[2]) };
 }
 
+/**
+ * An unavailable capture. `refusal` carries a profile refusal for the drive to act on, and the error kind of the
+ * failure that refused the read, which alone decides whether `rowBudgetIn` reads a pair from `detail`.
+ */
 function unavailable(
   reasonCode: AgentContextUnavailableCode,
   detail: string,
-  profileRefusal?: AgentContextProfileRefusal,
+  refusal: { readonly profileRefusal?: AgentContextProfileRefusal; readonly errorKind?: ErrorKind } = {},
 ): AgentContextCapture {
-  const rowBudget = rowBudgetIn(detail);
+  const rowBudget = rowBudgetIn(refusal.errorKind, detail);
+  const { profileRefusal } = refusal;
   return {
     kind: "unavailable",
     reasonCode,
@@ -480,6 +485,49 @@ export function reusableSnapshot(events: readonly AgentRunEvent[], connectionId:
     return snapshot;
   }
   return null;
+}
+
+/**
+ * A snapshot as a prompt carries it: every provider sentence on it (a kind's refused or sampled count, a parent the
+ * walk could not list, a refused index read, a bounded description's reason) passed through core's scrub once more,
+ * because a ledger recorded before the walk scrubbed them holds them raw, and a reused or held snapshot reaches a
+ * prompt from that ledger. Packing only: the snapshot itself, which the ledger and the hold keep, is not changed, so
+ * its fingerprint stays the identity of the reading it records. A capture taken since already carries scrubbed
+ * sentences, which this answers unchanged.
+ */
+export function scrubSnapshotSentences(snapshot: AgentContextSnapshot, scrub: ProviderTextScrub): AgentContextSnapshot {
+  const { kinds, truncated, unreadContainers } = snapshot;
+  return {
+    ...snapshot,
+    objects: snapshot.objects.map((object) =>
+      isIndexesUnavailable(object.indexes)
+        ? { ...object, indexes: { unavailable: scrubProviderText(scrub, object.indexes.unavailable) } }
+        : object,
+    ),
+    ...(kinds === undefined
+      ? {}
+      : {
+          kinds: kinds.map((kind) => ({
+            ...kind,
+            ...(kind.sampledFrom === undefined ? {} : { sampledFrom: scrubProviderText(scrub, kind.sampledFrom) }),
+            ...(kind.unavailable === undefined ? {} : { unavailable: scrubProviderText(scrub, kind.unavailable) }),
+          })),
+        }),
+    ...(truncated === undefined
+      ? {}
+      : { truncated: { ...truncated, reason: scrubProviderText(scrub, truncated.reason) } }),
+    ...(unreadContainers?.unlistedParents === undefined
+      ? {}
+      : {
+          unreadContainers: {
+            ...unreadContainers,
+            unlistedParents: unreadContainers.unlistedParents.map((parent) => ({
+              ...parent,
+              reason: scrubProviderText(scrub, parent.reason),
+            })),
+          },
+        }),
+  };
 }
 
 /**
@@ -549,7 +597,9 @@ async function readInventory(context: AgentToolContext): Promise<AgentContextCap
   try {
     for (const kind of plan.kinds) {
       const outcome = await readCatalogForGrounding(context, { kind });
-      if (outcome.kind !== "completed") return unavailable("CATALOG_READ_REFUSED", outcome.modelText);
+      if (outcome.kind !== "completed") {
+        return unavailable("CATALOG_READ_REFUSED", outcome.modelText, { errorKind: refusedErrorKind(outcome) });
+      }
       const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
       if (artifact === undefined) {
         return unavailable(
@@ -675,7 +725,9 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
       `This ${context.connection.type} database did not describe its own schema within the ${read.grantedMs}ms this run granted the reading.`,
     );
   }
-  if (read.kind === "unavailable") return unavailable("CATALOG_READ_REFUSED", read.modelText);
+  if (read.kind === "unavailable") {
+    return unavailable("CATALOG_READ_REFUSED", read.modelText, { errorKind: read.errorKind });
+  }
   if (read.kind === "unsupported") {
     return unavailable(
       "CATALOG_READ_REFUSED",
@@ -683,7 +735,12 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
     );
   }
 
-  const inventory = addressInventory(read.inventory, read.defaultContainer, context.capabilities);
+  const inventory = addressInventory(
+    read.inventory,
+    read.defaultContainer,
+    context.connection.type,
+    context.capabilities,
+  );
   return {
     kind: "captured",
     snapshot: {
@@ -725,10 +782,11 @@ async function captureFromProvider(context: AgentToolContext, nowMs: number): Pr
 function addressInventory(
   inventory: AgentInventory,
   defaultContainer: readonly string[] | undefined,
+  type: DatabaseType,
   capabilities: ProviderCapabilities,
 ): AgentInventory {
   const objects = inventory.objects.map((object) => {
-    const name = qualifiedName(object, capabilities);
+    const name = qualifiedName(object, { type, capabilities });
     return {
       ...object,
       name,
@@ -750,10 +808,13 @@ function addressInventory(
  * policy, so a run that copied it wrote a statement the server refuses. Any other path is no InfluxQL
  * measurement address and keeps the dotted spelling every engine shares.
  */
-function qualifiedName(object: AgentInventoryObject, capabilities?: ProviderCapabilities): string {
+function qualifiedName(
+  object: AgentInventoryObject,
+  declaration?: { readonly type: DatabaseType; readonly capabilities: ProviderCapabilities },
+): string {
   if (object.path === undefined) return object.name;
-  return capabilities?.queryLanguage === "influxql" && object.path.length === 2
-    ? quoteObjectPath(object.path, capabilities)
+  return declaration?.capabilities.queryLanguage === "influxql" && object.path.length === 2
+    ? quoteObjectPath(object.path, declaration.type, declaration.capabilities)
     : object.path.join(".");
 }
 
@@ -803,6 +864,9 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "The server accepted a write it should have refused, from a user whose privileges allow none or from no user at all, so it does not enforce authorization and no user is held read-only there. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a user holding only read privileges; changing the connection's user alone cannot help.",
   PROFILE_UNSUPPORTED_BY_PROVIDER:
     "This engine's provider implements no read-only statement path, so the profile cannot be granted on it at all.",
+  // Its own sentence: the provider may implement the path, so "implements no read-only statement path" would be false.
+  PROFILE_ENGINE_NOT_REVIEWED:
+    "Studio has not reviewed this engine's read-only statement path, so the profile is not granted on it, whatever its provider implements. Plan mode drafts here, and the operations workflow still runs.",
   // One code for several targets on several engines, so it says what the target is and names none of them.
   PROFILE_UNSUPPORTED_TARGET:
     "This engine can grant the profile, but not against this target: a server on the engine's wire protocol that is not, or does not identify itself as, the server its read-only enforcement was measured on, or an in-memory database, where a read-only handle has nothing to read. Point the connection at the measured engine itself, or at a database file.",
@@ -842,7 +906,7 @@ function environmentFailure(error: unknown, context: AgentToolContext): AgentCon
     return unavailable(
       "CATALOG_READ_REFUSED",
       `This server could not open a connection to this ${context.connection.type} database under the execution profile a grounding read takes, so its schema was not read for this run. ${PROFILE_REFUSAL_ADVICE[error.reasonCode]}`,
-      { reasonCode: error.reasonCode, error },
+      { profileRefusal: { reasonCode: error.reasonCode, error } },
     );
   }
   if (error instanceof DatabaseError) {
@@ -1366,7 +1430,8 @@ const SAMPLED_FIELDS_NOTE =
  *
  * Table and column names are DATABASE CONTENT and are therefore fenced as untrusted
  * input, exactly like rows: a column comment or a table name is writable by whoever
- * can write to the database.
+ * can write to the database. The fence names `relayedBy`, the provider that relayed the
+ * inventory (`providerAuthor` of the run's connection type); the snapshot carries no type.
  *
  * A `preface` is the SERVER's own sentence, placed ahead of the fence — a caller that
  * needs to say something about the inventory (how to cite it, say) cannot say it
@@ -1394,6 +1459,7 @@ const SAMPLED_FIELDS_NOTE =
 export function packContextForTask(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   options: {
     readonly maxChars?: number;
     readonly preface?: string;
@@ -1414,6 +1480,7 @@ export function packContextForTask(
     label: "schema inventory",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
+    relayedBy,
   };
 
   // The capture time is named because the inventory can be REUSED: a run resumed
@@ -1490,6 +1557,7 @@ export function packContextForTask(
  */
 export function packOperationsInventory(
   snapshot: AgentContextSnapshot,
+  relayedBy: string,
   options: { readonly maxChars?: number; readonly preface?: string; readonly noun?: AgentInventoryNoun } = {},
 ): string {
   const lead = options.preface === undefined ? "" : `${options.preface}\n`;
@@ -1499,6 +1567,7 @@ export function packOperationsInventory(
     label: "schema inventory: names and indexes",
     operationId: "agent/context-snapshot",
     reference: snapshot.fingerprint,
+    relayedBy,
   };
 
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;

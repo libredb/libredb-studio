@@ -1,7 +1,7 @@
 /**
- * The seam of the SQL grammar registry: an engine's module reaches the contract's types and the
- * shared building blocks and nothing else, so no engine can read, reuse or reshape another
- * engine's facts (spec 5.5). Two leaves are listed by name, each importing nothing: the record
+ * The seam of the SQL grammar registry: an engine's module reaches the contract's types, the
+ * shared building blocks and the SDK's SQL grammar facts (`@libredb/provider-sdk/sql`) and
+ * nothing else, so no engine can read, reuse or reshape another engine's facts (spec 5.5). Two leaves are listed by name, each importing nothing: the record
  * check MongoDB's command redaction needs and the Redis command-text reader.
  *
  * The fresh-process half loads each engine, and the three readers of the registry, as the first
@@ -17,11 +17,12 @@ import { engineModules, importsOf, REGISTRY_DIR, REGISTRY_INDEX, ROOT, resolveSp
 
 const TYPES = "@/lib/db/sql-grammar/types";
 const SHARED = "@/lib/db/sql-grammar/shared";
+const SDK_SQL = "@libredb/provider-sdk/sql";
 
 /** The one non-contract import each listed engine module may make. */
 const LEAVES: Readonly<Record<string, string>> = {
   mongodb: "@/lib/is-record",
-  redis: "./redis-command-text",
+  redis: "@/lib/languages/rediscli/command-text",
 };
 
 const MODULES = engineModules();
@@ -44,12 +45,15 @@ describe("the engine modules the registry imports", () => {
 
 describe("each engine module imports only the contract", () => {
   for (const engine of MODULES) {
-    test(`${engine.id} imports the types, the shared blocks and its listed leaf only`, () => {
+    test(`${engine.id} imports the types, the shared blocks, the SDK's grammar facts and its listed leaf only`, () => {
       const leaf = LEAVES[engine.id];
       const imports = importsOf(engine.path);
       const offending = imports.filter(
         (entry) =>
-          !(entry.specifier === TYPES && entry.typeOnly) && entry.specifier !== SHARED && entry.specifier !== leaf,
+          !(entry.specifier === TYPES && entry.typeOnly) &&
+          entry.specifier !== SHARED &&
+          entry.specifier !== SDK_SQL &&
+          entry.specifier !== leaf,
       );
       expect({ id: engine.id, offending }).toEqual({ id: engine.id, offending: [] });
       if (leaf !== undefined) expect(imports.some((entry) => entry.specifier === leaf)).toBe(true);
@@ -72,8 +76,8 @@ describe("each engine module imports only the contract", () => {
     expect(importers).toEqual(["libsql", "sqlite"]);
   });
 
-  test("no engine module imports the no-connection or unknown-type spec", () => {
-    const named = new Set([join(REGISTRY_DIR, "no-connection.ts"), join(REGISTRY_DIR, "unknown-type.ts")]);
+  test("no engine module imports the no-connection spec", () => {
+    const named = new Set([join(REGISTRY_DIR, "no-connection.ts")]);
     const importers = MODULES.filter((engine) =>
       importsOf(engine.path).some((entry) => named.has(resolveSpecifier(entry.specifier, engine.path) ?? "")),
     ).map((engine) => engine.id);
@@ -88,9 +92,9 @@ describe("the contract's own modules", () => {
     expect(imports.filter((entry) => !entry.typeOnly)).toEqual([]);
   });
 
-  test("shared.ts imports only ./types, type-only", () => {
+  test("shared.ts imports only the SDK's SQL grammar facts", () => {
     const imports = importsOf(join(REGISTRY_DIR, "shared.ts"));
-    expect(imports.map((entry) => [entry.specifier, entry.typeOnly])).toEqual([["./types", true]]);
+    expect(imports.map((entry) => [entry.specifier, entry.typeOnly])).toEqual([[SDK_SQL, false]]);
   });
 });
 

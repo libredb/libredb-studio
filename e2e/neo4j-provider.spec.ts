@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 5 for the Neo4j provider (#424): the connection dialog offers it, draws its fields, and refuses
@@ -32,8 +33,7 @@ test.describe("Neo4j in the connection dialog", () => {
     await page.goto("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 

@@ -33,13 +33,18 @@ import {
   isAgentRuntimeEnabled,
   resolveAgentLedgerDirectory,
 } from "./config";
-import { AGENT_LEDGER_STREAM_PREFIX } from "./run-store";
+import { AGENT_LEDGER_STREAM_PREFIX, AgentRunUnavailableError } from "./run-store";
 import type { AgentRunService, AgentRunStatusReport } from "./run-service";
 
 /** The outcome of one sweep pass, for the operator's log line. */
 export interface ResumeSweepOutcome {
   readonly claimed: number;
   readonly skipped: number;
+  /**
+   * Runs whose ledger names a statement language, workflow or goal rule this build does not have: left as they are and
+   * never driven, on this pass and every later one, since the ledger is what names them and nothing here changes it.
+   */
+  readonly unavailable: number;
 }
 
 /**
@@ -102,13 +107,36 @@ export async function listLocalAgentRunIds(directory = resolveAgentLedgerDirecto
 }
 
 /**
+ * The ids of the runs this process has already reported as unavailable to the sweep. Such a run stays `running` on its
+ * ledger and is met again on every pass, while no history list or rail names it, so the first meeting is logged at warn
+ * and later passes stay quiet: one line per stranded run per process, not one per pass. Process memory on purpose: a
+ * restarted process reports each such run again, once.
+ */
+const REPORTED_UNAVAILABLE_RUNS = new Set<string>();
+
+function reportUnavailableRun(error: AgentRunUnavailableError): void {
+  if (REPORTED_UNAVAILABLE_RUNS.has(error.runId)) return;
+  REPORTED_UNAVAILABLE_RUNS.add(error.runId);
+  logger.warn("agent resume sweep left a run it cannot read as it is", {
+    route: "agent-resume-sweep",
+    runId: error.runId,
+    field: error.refusal.field,
+    reason: error.refusal.reason,
+  });
+}
+
+/**
  * One pass over the candidate run ids: stale running runs are driven, and the
  * drive is the single-flight — `runInvestigation` claims the run before it
  * steps, so a run another drive already owns refuses with `RUN_ALREADY_DRIVEN`
  * and is skipped, not failed. The sweep holds no claim of its own: holding one
  * here would make the drive refuse itself. Each drive is tried in its own
  * `try/catch`, so one run's throw never prevents a later run id from being
- * reached.
+ * reached. A run whose ledger the store refuses as naming an id this build does
+ * not have (`AgentRunUnavailableError`) is counted as `unavailable` and left as
+ * it is, with one warn line the first time this process meets it
+ * (`REPORTED_UNAVAILABLE_RUNS`). Any other refusal of a status read still ends
+ * the pass (B174).
  */
 export async function sweepStaleRuns(options: {
   readonly service: AgentRunService;
@@ -121,9 +149,18 @@ export async function sweepStaleRuns(options: {
   const staleAfterMs = options.staleAfterMs;
   let claimed = 0;
   let skipped = 0;
+  let unavailable = 0;
 
   for (const runId of options.runIds) {
-    const report = await options.service.status(runId);
+    let report: AgentRunStatusReport | null;
+    try {
+      report = await options.service.status(runId);
+    } catch (error) {
+      if (!(error instanceof AgentRunUnavailableError)) throw error;
+      reportUnavailableRun(error);
+      unavailable += 1;
+      continue;
+    }
     if (report === null || !isStaleRun(report, now(), staleAfterMs)) continue;
 
     try {
@@ -134,7 +171,7 @@ export async function sweepStaleRuns(options: {
     }
   }
 
-  return { claimed, skipped };
+  return { claimed, skipped, unavailable };
 }
 
 /**
@@ -182,18 +219,21 @@ export async function runResumeSweepOnce(
   enabled: () => boolean = isAgentRuntimeEnabled,
   sweep: typeof sweepOnce = sweepOnce,
 ): Promise<ResumeSweepOutcome> {
-  if (!enabled()) return { claimed: 0, skipped: 0 };
+  if (!enabled()) return { claimed: 0, skipped: 0, unavailable: 0 };
   try {
     const { driveAgentRun, getAgentRunService } = await runtime();
     const service = await getAgentRunService();
     const outcome = await sweep({ service, drive: driveAgentRun });
+    // Only a claim or a skip makes the line: an unavailable run is left as it is on
+    // every pass by design and reports itself once (`REPORTED_UNAVAILABLE_RUNS`), so
+    // counting it alone would log the same line forever.
     if (outcome.claimed > 0 || outcome.skipped > 0) {
       logger.info("agent resume sweep finished", { route: "agent-resume-sweep", ...outcome });
     }
     return outcome;
   } catch (error) {
     logger.error("agent resume sweep failed", error, { route: "agent-resume-sweep" });
-    return { claimed: 0, skipped: 0 };
+    return { claimed: 0, skipped: 0, unavailable: 0 };
   }
 }
 

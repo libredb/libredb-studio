@@ -28,6 +28,7 @@ import { dialAndRead, SparkplugProvider, type SparkplugReader } from "@/lib/db/p
 import { readOnce, type Transport, type TransportFactory } from "@/lib/db/providers/industrial/sparkplug/session";
 import { parseTopic } from "@/lib/db/providers/industrial/sparkplug/topics";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const SEEDED = [
   "SekoyaPlant",
@@ -219,6 +220,7 @@ async function capture(port: number, container: string, image: string) {
       windowMs: 3_000,
       maxMessages: 10_000,
       maxBytes: 8 * 1024 * 1024,
+      egress: egressDecision(),
     });
     const nodes = new Set<string>();
     for (const message of outcome.messages) {

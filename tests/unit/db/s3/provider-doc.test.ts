@@ -14,7 +14,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import {
   connectionFieldHint,
   DB_UI_CONFIG,
@@ -23,6 +23,7 @@ import {
   READ_ONLY_FIXED_HINT,
 } from "@/lib/db-ui-config";
 import {
+  AGENT_EXECUTION_ENGINES,
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   MCP_AGENT_CREDENTIAL_REQUIRED,
@@ -91,6 +92,7 @@ import { resolveConnectionCredentials } from "@/lib/seed/credential-resolver";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import { readsSqlText } from "@/lib/sql/grammar";
 import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -145,6 +147,7 @@ function builderRefusal(overrides: Record<string, unknown>): string {
     buildS3ConnectionOptions({ ...CONNECTION, ...overrides } as DatabaseConnection & WithTunnelFarEnd, {
       executionReadOnly: false,
       queryTimeout: DEFAULT_QUERY_TIMEOUT,
+      egress: ALLOWS_PRIVATE_HOSTS,
     });
   } catch (error) {
     return (error as Error).message;
@@ -200,6 +203,7 @@ const OUTLINE: readonly string[] = [
   "### 6.4 The Keys panel",
   "### 6.5 Object edit (#789): nothing to write",
   "## 7. Monitoring & health",
+  "### Engine facets",
   "## 8. Maintenance",
   "## 9. Capabilities & labels",
   "### 9.1 SQL writing",
@@ -667,7 +671,7 @@ describe("docs/providers/s3.md: the console's notices, as its modules state them
 const provider = new S3Provider(
   CONNECTION,
   {},
-  {},
+  { egress: ALLOWS_PRIVATE_HOSTS },
   {
     createTransport: () => {
       throw new Error("the doc test never connects");
@@ -680,6 +684,7 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "constants.ts",
   "connection-string.ts",
   "execution-ui.ts",
+  "engine-facets.ts",
   "names.ts",
   "xml.ts",
   "shapes.ts",
@@ -1005,7 +1010,12 @@ const ERROR_ROWS: ReadonlyArray<readonly [string, () => string]> = [
 describe("docs/providers/s3.md: the probe, the declarations and the errors, as the code answers them", () => {
   test("24. the pinned probe is one ListObjectsV2 with the three parameters, and a non-S3 body fails it", async () => {
     const good = probeTransport(200, LIST_BUCKET_RESULT);
-    const pinned = new S3Provider({ ...CONNECTION, database: "studio-demo" }, {}, {}, { createTransport: good.create });
+    const pinned = new S3Provider(
+      { ...CONNECTION, database: "studio-demo" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: good.create },
+    );
     await pinned.connect();
     expect(good.sent).toHaveLength(1);
     expect(good.sent[0].method).toBe("GET");
@@ -1015,20 +1025,30 @@ describe("docs/providers/s3.md: the probe, the declarations and the errors, as t
     }
     await pinned.disconnect();
     const html = probeTransport(200, "<html><body>not S3</body></html>");
-    const fake = new S3Provider({ ...CONNECTION, database: "studio-demo" }, {}, {}, { createTransport: html.create });
+    const fake = new S3Provider(
+      { ...CONNECTION, database: "studio-demo" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: html.create },
+    );
     await expect(fake.connect()).rejects.toThrow();
     expect(html.sent).toHaveLength(1);
   });
 
   test("25. the unpinned probe is one ListBuckets, and its root element is the one section 7 names", async () => {
     const good = probeTransport(200, LIST_ALL_MY_BUCKETS_RESULT);
-    const unpinned = new S3Provider(CONNECTION, {}, {}, { createTransport: good.create });
+    const unpinned = new S3Provider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, { createTransport: good.create });
     await unpinned.connect();
     expect(good.sent).toHaveLength(1);
     expect(good.sent[0].target.path).toBe("/");
     await unpinned.disconnect();
     const wrongRoot = probeTransport(200, LIST_BUCKET_RESULT);
-    const fake = new S3Provider(CONNECTION, {}, {}, { createTransport: wrongRoot.create });
+    const fake = new S3Provider(
+      CONNECTION,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: wrongRoot.create },
+    );
     await expect(fake.connect()).rejects.toThrow();
   });
 
@@ -2028,8 +2048,15 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
   const ids = SHIPPED_DATABASE_TYPES.length;
   /** Ids grounded through their own provider: every id but the two that supply a catalogCapture, postgres and sqlite. */
   const provided = ids - 2;
-  /** Ids with no statistics this run reads: every id but the three that supply statistics, postgres, sqlite and mssql. */
-  const noStatistics = ids - 3;
+  /**
+   * Ids with no statistics this run knows how to read: those whose server dialect answers its statistics reading
+   * `"unsupported"`, which is where `readSchemaStatistics` returns `DIALECT_HAS_NO_STATISTICS`.
+   * Read from the overlays rather than counted by hand, because a hand count of three (postgres, sqlite and mssql)
+   * stayed behind when libSQL's overlay gained a statistics reading.
+   */
+  const noStatistics = SHIPPED_DATABASE_TYPES.filter(
+    (type) => engineServerDialect(type).statistics === "unsupported",
+  ).length;
 
   test("61. AGENT.md", () => {
     const agent = read("docs/AGENT.md");
@@ -2039,7 +2066,8 @@ describe("the agent docs count the type-ids and name S3 where they list engines"
     expect(prose).toContain("including every engine where an agent run cannot read anything at all");
     expect(prose).toContain(`on the other ${word(noStatistics)} \`readSchemaStatistics\` answers`);
     expect(prose).toContain(`On the other ${word(provided)} it is **one**`);
-    expect(prose).toContain(`the other ${word(noStatistics)} hold no statistics this run`);
+    // Matched from "other", since the sentence that says it opens with "The" now that it stands on its own line.
+    expect(prose).toContain(`other ${word(noStatistics)} hold no statistics this run`);
     expect(prose).toContain(`so all ${word(ids)} ids pass it`);
     expect(prose).toContain(`Collapsing the other ${word(provided)} onto the composed one`);
     // The engines composed SQL serves are named by the resolver that answers them, never counted (#1821).

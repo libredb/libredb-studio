@@ -233,7 +233,9 @@ function isAgentModule(file: string): boolean {
 /**
  * The false positives that conversation settled, by exact path rather than by
  * category, so a second one is looked at rather than waved through. Each is
- * provider code under `src/lib/db`, which imports nothing from `src/lib/agent`:
+ * provider code under `src/lib/db`, or a statement language's reader in its
+ * core family module under `src/lib/languages/`, which the provider runs; none
+ * imports anything from `src/lib/agent`:
  * only its own name is excused, and every module it reaches is still walked and
  * still checked. The Kubernetes provider's curated readings answer the agent's
  * `cluster.usage.read` and ship in the package with the provider. The MongoDB
@@ -263,11 +265,9 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/keyvalue/etcd/agent-statement.ts",
   "src/lib/db/providers/keyvalue/etcd/agent-read-only-proof.ts",
   "src/lib/db/providers/keyvalue/etcd/agent-metadata-read.ts",
-  "src/lib/db/providers/keyvalue/oxia/agent-statement.ts",
   "src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts",
   "src/lib/db/providers/stream/rabbitmq/agent-statement.ts",
   "src/lib/db/providers/stream/rabbitmq/agent-metadata-read.ts",
-  "src/lib/db/providers/stream/kafka/agent-statement.ts",
   "src/lib/db/providers/stream/kafka/agent-metadata-read.ts",
   "src/lib/db/providers/stream/kafka/agent-surface.ts",
   "src/lib/db/providers/objectstore/s3/agent-statement.ts",
@@ -310,6 +310,9 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/industrial/sparkplug/agent-statement.ts",
   "src/lib/db/providers/industrial/sparkplug/agent-read.ts",
   "src/lib/db/providers/industrial/sparkplug/agent-surface.ts",
+  "src/lib/languages/influxql/agent-statement.ts",
+  "src/lib/languages/oxiacli/agent-statement.ts",
+  "src/lib/languages/kafkaread/agent-statement.ts",
 ]);
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,465 @@
+{
+  "$schema": "urn:libredb:provider-manifest:0.1",
+  "contract": "0.1",
+  "runtime": {
+    "entry": "dist/provider.mjs",
+    "env": [
+      {
+        "name": "KAFKA_CLIENT_ID",
+        "purpose": "The client id the provider names itself by to every broker."
+      }
+    ]
+  },
+  "calls": {
+    "console": {
+      "execute": {
+        "honours": []
+      },
+      "cancel": "not-offered",
+      "endScope": "not-offered",
+      "transaction": "not-offered"
+    },
+    "objects": {
+      "tree": "not-offered"
+    }
+  },
+  "engines": [
+    {
+      "id": "kafka",
+      "displayName": "Apache Kafka",
+      "location": "external",
+      "connection": {
+        "fields": ["host", "port", "user", "password", "saslMechanism", "connectionString"],
+        "defaults": {
+          "port": 9092
+        },
+        "seedOnly": null,
+        "refused": [],
+        "connectionString": {
+          "accepted": true,
+          "dialogOffersUri": true,
+          "scheme": null,
+          "urlTls": null,
+          "paste": null,
+          "seedCheck": null
+        },
+        "tls": "offered",
+        "readsTrustMaterial": false,
+        "sshTunnel": {
+          "offered": false,
+          "refusal": "Kafka does not run through an SSH tunnel: a client reaches every broker the cluster names. Turn the tunnel off."
+        },
+        "hostPathFields": [],
+        "opensLocalFile": false,
+        "serverLevelWithoutDatabase": false,
+        "agentCredential": {
+          "form": "pair",
+          "supersededBy": []
+        },
+        "dialog": {
+          "order": null,
+          "labels": [{ "field": "user", "text": "SASL user" }],
+          "hints": [{ "field": "host", "text": "A bootstrap broker: the client learns every other broker from it." }],
+          "placeholders": [],
+          "placement": [],
+          "options": [
+            {
+              "field": "saslMechanism",
+              "choices": [
+                { "value": "PLAIN", "label": "PLAIN" },
+                { "value": "SCRAM-SHA-256", "label": "SCRAM-SHA-256" },
+                { "value": "SCRAM-SHA-512", "label": "SCRAM-SHA-512" }
+              ]
+            }
+          ],
+          "shownWhen": [],
+          "absentValues": []
+        },
+        "hostUriSchemes": [],
+        "credentialWarnings": [],
+        "fieldRules": [],
+        "hostHint": null,
+        "hostIdentity": null,
+        "import": null,
+        "connectBudgetMs": null
+      },
+      "facets": {
+        "monitoring": {
+          "overview": "offered",
+          "performance": "not-offered",
+          "slowQueries": "not-offered",
+          "activeSessions": "not-offered",
+          "tables": "offered",
+          "indexes": "not-offered",
+          "storage": "offered"
+        },
+        "maintenance": [],
+        "maintenanceSpecs": [],
+        "agentReadings": ["table-stats", "storage"]
+      },
+      "agent": {
+        "statementLanguage": "kafkaread",
+        "overlay": {
+          "dialect": null,
+          "grounding": null
+        }
+      },
+      "editor": {
+        "commitKeyword": "COMMIT",
+        "consentDeadline": null,
+        "fenceAliases": ["kafkaread"],
+        "explainFormat": null,
+        "dialect": {
+          "name": "kafka",
+          "offersColumnProfiling": false,
+          "offersCodeGeneration": false,
+          "offersCountQuery": false,
+          "offersSqlExport": true,
+          "historyMask": null
+        },
+        "language": {
+          "queryLanguage": "json",
+          "monacoId": "json",
+          "accent": "border-hue-cyan/40",
+          "console": false
+        }
+      },
+      "sqlText": {
+        "readsSqlText": false,
+        "grammar": {
+          "hash": "comment-unless-operator",
+          "bracket": "quoted-identifier",
+          "blockComment": "flat",
+          "alternateQuoting": false,
+          "doubleSlashComment": false,
+          "backslashAlwaysEscapes": false,
+          "tripleQuotedStrings": false,
+          "backtickBackslashEscapes": false,
+          "dollarTags": true,
+          "doubleQuoteBackslashEscapes": null,
+          "singleQuoteBackslashEscapes": null,
+          "rawStrings": false,
+          "hintsAreCode": false,
+          "lineCommentBackslashContinues": false,
+          "lineCommentEndsAtCarriageReturn": false,
+          "script": {
+            "blocks": "none",
+            "separatorLine": null,
+            "unit": "statement",
+            "terminatedStatements": []
+          },
+          "trailingLimitClauses": [
+            {
+              "source": "\\s+ALLOW\\s+FILTERING\\s*$",
+              "flags": "i"
+            }
+          ],
+          "nonNumericRowBounds": [],
+          "confirmForms": [],
+          "confirmCodeForms": [],
+          "confirmFormsWhen": [],
+          "confirmExemptForms": [],
+          "formatterLanguage": "postgresql",
+          "completionWords": {
+            "keywords": [],
+            "functions": []
+          },
+          "confirmConfigKeys": null,
+          "explainExecutesWithAnalyze": false
+        },
+        "redaction": {
+          "kind": "command",
+          "reader": "redactionReader"
+        },
+        "updateTarget": {
+          "dashCommentNeedsSeparator": false,
+          "extraQueryOpeners": [],
+          "extraSetOperators": []
+        },
+        "completion": {
+          "formatSegment": "formatSegment",
+          "readQuotedQualifier": "readQuotedQualifier"
+        }
+      },
+      "sqlWriting": {
+        "escapeLiteral": "escapeLiteral",
+        "unescapeLiteral": "unescapeLiteral",
+        "quoteIdentifier": "quoteIdentifier",
+        "placeholder": "placeholder",
+        "temporalLiteral": "temporalLiteral",
+        "inlineEdit": {
+          "instantTypeNames": [],
+          "exactDecimalTypeNames": [],
+          "float64TypeNames": "all",
+          "boundEdit": "boundEdit"
+        },
+        "export": {
+          "ddlTypes": {
+            "text": "TEXT",
+            "integer": "BIGINT",
+            "numeric": "DOUBLE PRECISION",
+            "boolean": "BOOLEAN",
+            "timestamp": "TIMESTAMP",
+            "binary": "BLOB"
+          },
+          "standsAlone": ["varchar"],
+          "bareSpelling": [
+            {
+              "name": "timestamp",
+              "spelling": "timestamp(6)"
+            }
+          ],
+          "typeVocabulary": {
+            "bareTypeFamily": {
+              "text": [
+                "character varying",
+                "varchar",
+                "varchar2",
+                "nvarchar",
+                "nvarchar2",
+                "character",
+                "char",
+                "nchar",
+                "text",
+                "ntext",
+                "tinytext",
+                "mediumtext",
+                "longtext",
+                "clob",
+                "nclob",
+                "enum",
+                "set",
+                "uniqueidentifier",
+                "rowid"
+              ],
+              "integer": ["year"],
+              "numeric": ["numeric", "decimal", "number", "binary_double", "binary_float", "money"],
+              "boolean": [],
+              "timestamp": [
+                "timestamp",
+                "timestamp without time zone",
+                "timestamp with time zone",
+                "datetime",
+                "datetime2",
+                "smalldatetime",
+                "datetimeoffset"
+              ],
+              "binary": ["binary", "varbinary", "raw", "blob", "tinyblob", "mediumblob", "longblob", "bytea", "image"]
+            },
+            "floatType": {
+              "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+              "flags": "i"
+            },
+            "exactNumericType": {
+              "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+              "flags": "i"
+            },
+            "numericWrapper": {
+              "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+              "flags": ""
+            }
+          },
+          "binaryLiteral": "binaryLiteral",
+          "nonFinite": {
+            "NaN": "'NaN'",
+            "Infinity": "'Infinity'",
+            "-Infinity": "'-Infinity'"
+          },
+          "insertForm": "select",
+          "rewriteDeclared": null,
+          "declareFromSample": null,
+          "typedLiteral": "typedLiteral",
+          "columnWriters": null,
+          "createTableKey": {
+            "note": "-- A result set carries no key of its own.\n-- Confirm the first column is unique per row.\n",
+            "clause": "createTableKeyClause"
+          }
+        },
+        "insertDocuments": null
+      },
+      "migrationDdl": {
+        "tableDdl": "refused",
+        "refusal": "-- Apache Kafka: Cannot generate table DDL. A topic holds messages, not rows with declared columns, so there is no column definition to change.",
+        "transactionWrapper": null,
+        "reasons": ["A topic holds messages, not rows with declared columns, so there is no column definition to change."]
+      },
+      "sqlGenerators": null,
+      "policy": {
+        "writeReach": "none",
+        "readsFileAccessPosture": false,
+        "deniedFileAccessRefusal": null,
+        "singleWriterFile": false,
+        "readRootsRequired": false,
+        "agentCredentialForm": "pair",
+        "maskingExemptColumns": null
+      },
+      "mcp": {
+        "exposable": true,
+        "statementRead": true,
+        "metadataReadChangesState": false,
+        "agentCredentialRequired": false
+      },
+      "safeguards": {
+        "writePaths": {
+          "editor": {
+            "reach": "absent",
+            "proof": {
+              "module": "src/platformatic-client.ts",
+              "symbol": "KAFKA_READ_APIS"
+            }
+          },
+          "objectEdit": {
+            "reach": "absent",
+            "proof": null
+          },
+          "maintenance": {
+            "reach": "absent",
+            "proof": null
+          },
+          "transaction": {
+            "reach": "absent",
+            "proof": null
+          }
+        },
+        "metadataOnly": [
+          {
+            "operation": "topics",
+            "columns": [
+              {
+                "column": "topic",
+                "kind": "name"
+              },
+              {
+                "column": "partitions",
+                "kind": "count"
+              },
+              {
+                "column": "replication_factor",
+                "kind": "count"
+              },
+              {
+                "column": "offline_partitions",
+                "kind": "count"
+              },
+              {
+                "column": "under_replicated_partitions",
+                "kind": "count"
+              }
+            ]
+          },
+          {
+            "operation": "brokers",
+            "columns": [
+              {
+                "column": "node_id",
+                "kind": "count"
+              },
+              {
+                "column": "rack",
+                "kind": "name"
+              },
+              {
+                "column": "cluster_id",
+                "kind": "name"
+              }
+            ]
+          },
+          {
+            "operation": "partitions",
+            "columns": [
+              {
+                "column": "partition",
+                "kind": "count"
+              },
+              {
+                "column": "leader",
+                "kind": "count"
+              },
+              {
+                "column": "replicas",
+                "kind": "name"
+              },
+              {
+                "column": "in_sync_replicas",
+                "kind": "name"
+              },
+              {
+                "column": "offline_replicas",
+                "kind": "name"
+              },
+              {
+                "column": "offline",
+                "kind": "flag"
+              }
+            ]
+          },
+          {
+            "operation": "offsets",
+            "columns": [
+              {
+                "column": "partition",
+                "kind": "count"
+              },
+              {
+                "column": "earliest_offset",
+                "kind": "count"
+              },
+              {
+                "column": "end_offset",
+                "kind": "count"
+              },
+              {
+                "column": "offset_span",
+                "kind": "count"
+              }
+            ]
+          }
+        ],
+        "inlineEditRefusedColumns": null
+      }
+    }
+  ],
+  "compatibility": [
+    {
+      "engine": "kafka",
+      "product": "Apache Kafka",
+      "versions": {
+        "kind": "range",
+        "from": "3.7.0",
+        "to": "4.1.0"
+      },
+      "tested": [
+        {
+          "version": "3.7.0",
+          "image": {
+            "repository": "docker.io/apache/kafka",
+            "digest": "sha256:0d3b6e3f2c1a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+          }
+        },
+        {
+          "version": "4.1.0",
+          "image": {
+            "repository": "docker.io/apache/kafka",
+            "digest": "sha256:9a8b7c6d5e4f30211f0e9d8c7b6a5948372615a4b3c2d1e0f9e8d7c6b5a49382"
+          }
+        }
+      ]
+    },
+    {
+      "engine": "kafka",
+      "product": "Redpanda",
+      "versions": {
+        "kind": "service",
+        "measured": "2026-11-20"
+      },
+      "tested": [
+        {
+          "version": "cloud"
+        }
+      ]
+    }
+  ],
+  "vendor": {
+    "notes": "Any shape the package wants."
+  }
+}

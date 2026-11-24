@@ -25,10 +25,13 @@ import {
 } from "@/lib/db/providers/document/mongodb/agent-read";
 import type { RevivedMongoReadEnvelope } from "@/lib/db/providers/document/mongodb/extended-json";
 import { serializeMongoDocument } from "@/lib/db/providers/document/mongodb/values";
-import { MAX_STATEMENT_TIMEOUT_MS } from "@/lib/db/providers/sql/read-only-budget";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, measureRowBytes } from "@/lib/db/read-only-budget";
+import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
+import { errorKind } from "@/lib/db/error-record";
 
 type Doc = Record<string, unknown>;
 
@@ -480,8 +483,9 @@ describe("the streamed read", () => {
     expect((error as Error).message).toBe(
       'Read-only execution exceeded the row budget: 11 rows > 10 allowed; the read stops one row past the budget, so at least 11 documents match and the total is not known (count it with "operation": "count", or narrow the read)',
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
     // The sentence round-trips through the reader the run uses for its row-budget advice.
-    expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
+    expect(rowBudgetIn(errorKind(error), (error as Error).message)).toEqual({ projected: 11, allowed: 10 });
     expect(opened[0].pulled).toBe(11);
     expect(opened[0].closes).toBe(1);
     expect(BSON_DESERIALIZE).toHaveBeenCalledTimes(10);
@@ -504,6 +508,7 @@ describe("the streamed read", () => {
     expect((error as Error).message).toBe(
       `Read-only execution exceeded the byte budget: ${size * 5} bytes > ${size * 4 + 1} allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     // MCP's run_read_query reads this very refusal as too large, not as an engine error.
     expect(classifyReadQueryFailure(error, 0, 1)).toMatchObject({
       kind: "too-large",
@@ -518,6 +523,41 @@ describe("the streamed read", () => {
     const { client } = fakeClient({ documents: [{ _id: 1, blob: new Binary(Buffer.alloc(220_000)) }] });
     const result = await read(client, FIND, "execute", { ...BUDGET, maxResultBytes: 262_144 });
     expect(result.rows).toEqual([{ _id: 1, blob: "<Binary: 220000 bytes>" }]);
+  });
+
+  test("a read whose BSON fits the byte budget but whose served rows do not is admitted here and refused by core", async () => {
+    // Every double quote is one BSON byte and two JSON bytes, so the served rows outgrow the BSON the provider counts.
+    const documents = Array.from({ length: 5 }, (_, i) => ({ i, quotes: '"'.repeat(1000) }));
+    const bson = documents.reduce((sum, document) => sum + BSON.calculateObjectSize(document), 0);
+    const budget = { ...BUDGET, maxResultBytes: bson + 100 };
+    const own = await read(fakeClient({ documents }).client, FIND, "execute", budget);
+    const served = own.rows.reduce((sum, row) => sum + measureRowBytes(row), 0);
+    expect(own.rows).toHaveLength(5);
+    expect(served).toBeGreaterThan(budget.maxResultBytes);
+
+    const provider = {
+      queryReadOnly: (sql: string, handed: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode) =>
+        readMongoForAgent(fakeClient({ documents }).client, "app", FIND, handed, mode ?? "execute", sql, FAST),
+    } as unknown as DatabaseProvider;
+    const error = await rejection(
+      runReadOnlyStatement(provider, {
+        type: "mongodb",
+        scrub: { type: "mongodb", forms: [] },
+        statement: statement(FIND as Doc),
+        budget,
+        wait: "statement-timeout",
+      }),
+    );
+    // The sentence names the sum at the row that crossed the budget.
+    let crossing = 0;
+    for (const row of own.rows) {
+      crossing += measureRowBytes(row);
+      if (crossing > budget.maxResultBytes) break;
+    }
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(byteBudgetSentence(crossing, budget.maxResultBytes));
+    // Core's refusal, not the provider's: it is Studio's own budget class.
+    expect(errorKind(error)).toBe("studio-byte-budget-refusal");
   });
 
   test("a decoded row is the editor's row: the driver's default decode, then the same serializer", async () => {
@@ -568,6 +608,7 @@ describe("the streamed read", () => {
     const many = Array.from({ length: 30 }, (_, i) => `c${i}`);
     const tooMany = await rejection(read(fakeClient({ values: many }).client, DISTINCT));
     expect((tooMany as Error).message).toBe("Read-only execution exceeded the row budget: 30 rows > 10 allowed");
+    expect(errorKind(tooMany)).toBe("row-budget-refusal");
     const wide = ["x".repeat(600), "y".repeat(600)];
     const rowBytes = BSON.calculateObjectSize({ customer: wide[0] });
     const tooWide = await rejection(
@@ -576,6 +617,7 @@ describe("the streamed read", () => {
     expect((tooWide as Error).message).toBe(
       `Read-only execution exceeded the byte budget: ${rowBytes * 2} bytes > ${rowBytes + 10} allowed`,
     );
+    expect(errorKind(tooWide)).toBe("byte-budget-refusal");
   });
 
   test("a distinct reply with no list of values is the server's fault, said as such", async () => {
@@ -624,6 +666,7 @@ describe("sampleWithinBudget", () => {
     const { cursor, record } = sampleCursor([{ pad: "x".repeat(300) }]);
     const error = await rejection(sampleWithinBudget(cursor, { ...BUDGET, maxResultBytes: 100 }, "s"));
     expect((error as Error).message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 100 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     expect(record().closes).toBe(1);
     expect(BSON_DESERIALIZE).not.toHaveBeenCalled();
   });
@@ -683,6 +726,7 @@ describe("the owned deadline", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the statement deadline of 20ms and the server did not end it, so the client stopped waiting",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     const kills = sent.filter(({ command }) => command.killSessions !== undefined);
     expect(kills).toEqual([
       { database: "admin", command: { killSessions: [sessions[0].id], comment: AGENT_COMMAND_COMMENT } },
@@ -698,6 +742,7 @@ describe("the owned deadline", () => {
       expect((error as Error).message).toBe(
         "Read-only execution exceeded the statement deadline of 20ms and was killed server-side",
       );
+      expect(errorKind(error)).toBe("time-budget-refusal");
     }
   });
 
@@ -713,6 +758,7 @@ describe("the owned deadline", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the statement deadline of 20ms and was killed server-side",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(hung.sent.filter(({ command }) => command.killSessions !== undefined)).toHaveLength(1);
     expect(hung.opened[0].closes).toBe(1);
   });
@@ -723,6 +769,7 @@ describe("the owned deadline", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the statement deadline of 5000ms and was killed server-side",
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(sent).toEqual([]);
   });
 

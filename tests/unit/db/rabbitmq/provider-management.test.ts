@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -48,6 +49,10 @@ import {
   type StubBroker,
   segment,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("rabbitmq");
 
 /** The test connection's password, built at run time by the helper; no sentence may carry it. */
 const TEST_PASSWORD = rabbitmqConnection().password as string;
@@ -84,10 +89,15 @@ function provider(
 ) {
   const stub = createManagementStub();
   const deadlines = manualDeadlines();
-  const instance = new RabbitMQProvider(connection, { queryTimeout }, execution, {
-    managementTransport: stub.factory,
-    deadlineSignal: deadlines.factory,
-  });
+  const instance = new RabbitMQProvider(
+    connection,
+    { queryTimeout },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    {
+      managementTransport: stub.factory,
+      deadlineSignal: deadlines.factory,
+    },
+  );
   return { stub, deadlines, provider: instance };
 }
 
@@ -245,12 +255,9 @@ describe("the GETs of every automatic path", () => {
     const { since: s3, provider: p3 } = await connected();
     const data = await p3.getMonitoringData();
     expect(s3().sort()).toEqual([ALARMS, OVERVIEW].sort());
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
-    expect(data.activeSessions).toEqual([]);
-    expect(data.tables).toEqual([]);
-    expect(data.indexes).toEqual([]);
-    expect(data.storage).toEqual([]);
+    expect(data.overview).toBeDefined();
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "tables", "indexes", "storage"]);
+    expect(Object.keys(data).sort()).toEqual(["notOffered", "overview", "timestamp"]);
   });
 
   test("the tree's first paint: the virtual hosts, then the three pages of /", async () => {
@@ -384,7 +391,7 @@ describe("machine surfaces", () => {
     const { provider: p } = await connected({ vhosts: { "/": { streams: [name] } } }, connection);
     const capture = await captureContextSnapshot(agentContext(p, connection));
     if (capture.kind !== "captured") throw new Error("expected a capture");
-    const text = packContextForTask(capture.snapshot, "list the streams");
+    const text = packContextForTask(capture.snapshot, "list the streams", RELAYED_BY);
     const begin = text.indexOf(UNTRUSTED_CONTENT_BEGIN);
     const end = text.lastIndexOf(UNTRUSTED_CONTENT_END);
     expect(begin).toBeGreaterThanOrEqual(0);
@@ -409,7 +416,7 @@ describe("machine surfaces", () => {
     for (const stream of streams) {
       expect(stream.columns?.map((column) => column.name)).toEqual(["offset", "body_bytes"]);
     }
-    const text = packContextForTask(capture.snapshot, "how many messages does st-orders hold");
+    const text = packContextForTask(capture.snapshot, "how many messages does st-orders hold", RELAYED_BY);
     for (const cell of ["payload", "routing_key", "headers", "properties", "payload_encoding"]) {
       expect(text).not.toContain(cell);
     }

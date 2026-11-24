@@ -15,6 +15,7 @@
 | **Connection string**  | Not stored: a pasted Snowflake URL is decomposed into fields                                        |
 | **EXPLAIN**            | `snowflake-json`: `EXPLAIN USING JSON`, which compiles the statement; never sent for a `SYSTEM$` call |
 | **Write reach** | open: the editor sends every statement as written, and the role is the boundary; the confirmation gate asks before Snowflake's destructive forms |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Transactions**       | None across statements; a transaction runs inside one `EXECUTE IMMEDIATE $$ ... $$` block           |
 | **Maintenance**        | None                                                                                                |
 | **Query parameters**   | Not supported: v1 sends no bindings                                                                 |
@@ -81,6 +82,10 @@ An empty or malformed field is refused in the dialog and again by `connect()`, b
 - `Paste the private key for key-pair sign-in. Nothing was sent.`
 - `Enter the programmatic access token. Nothing was sent.`
 - `Choose Key pair or Programmatic access token for Sign-in. Nothing was sent.`, by `connect()` and the seed load only, since the dialog's select offers only the two methods
+
+A private key or access token that holds only whitespace is empty, in the dialog as at connect.
+Studio refuses a connection whose Sign-in needs a private key or an access token it does not hold before it builds the provider, with the same sentence, on every path that builds a provider to connect it; an absent Sign-in reads as Key pair there too.
+Reading what a connection declares, without connecting it, does not refuse it.
 
 ### 2.2 The Account field
 
@@ -257,6 +262,13 @@ The checks are, in order: `host`, the account, by `checkSnowflakeAccount`; `user
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snowflake` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/snowflake/execution-ui.ts).
+
+### Connect budget
+
+Studio waits for a `snowflake` connection to open, and for its Test connection, at most 80 seconds, longer than the host's default of 70 seconds.
+The connect sends two Studio statements, the warehouse or database `SHOW` and the role check of section 2.5, and each is cut at Snowflake's 30 s surface timeout plus its 5 s grace, so the connect can take 70 s on its own.
+The budget is those two bounds plus 10 s, so a connect that fails answers in Snowflake's words before Studio stops waiting.
+Its row in `CONNECT_BUDGET` is declared in [`src/lib/db/connect-budget.ts`](../../src/lib/db/connect-budget.ts), and the engine declaration states it as `connection.connectBudgetMs`.
 
 ## 3. The recommended Snowflake setup
 
@@ -584,6 +596,28 @@ Auto-refresh is off until the user starts it, as on every engine, and since `res
 - Index stats: `Snowflake has indexes only on hybrid tables; this schema has none.`
 - Storage is not offered: `Snowflake storage needs ACCOUNTADMIN; Studio does not read it.`
 
+#### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `snowflake` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/snowflake/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ### 8.3 Plan mode and agent operations
 
 Plan mode grounds through `SHOW` only, under its 10 s timer, and drafts SQL without running it; the draft reaches the editor, where the gate applies.
@@ -650,7 +684,7 @@ A binary cell is written by `binaryStandardHex`, which Snowflake reads as a BINA
 
 ## 9. The confirmation gate
 
-The gate is a browser confirmation, not a boundary: it asks before a statement runs from the editor, and the role decides what can happen.
+The gate is a confirmation, not a boundary: it asks before a statement runs from the editor, and the run routes read every submitted statement with the same readers ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)), but the role decides what can happen.
 On top of the shared destructive keywords, `MERGE` among them, it asks for these Snowflake forms, at the top level and inside a block.
 Forms that replace, overwrite, unload or delete: `CREATE OR REPLACE`, `CREATE OR ALTER` (which drops the columns its new definition leaves out), `INSERT OVERWRITE`, `COPY`, `REMOVE` and `RM`.
 Forms that run text or work the gate cannot read: `EXECUTE IMMEDIATE`, `EXECUTE TASK`, `EXECUTE ALERT`, `EXECUTE NOTEBOOK`, `EXECUTE JOB SERVICE`, `EXECUTE DBT PROJECT` and `CALL`.
@@ -731,6 +765,7 @@ Studio holds 4 statements per connection, 8 across all Snowflake connections of 
 A host that embeds Studio renders the exported `ConnectionModal`, whose `onTestConnection` adapter may return `fixStatement` (the registration statement the dialog shows with a copy button); a `warnings` array it adds (the Test connection cautions of [section 2.5](#25-test-connection)) is shown too, though the exported prop type does not declare it.
 `WorkspaceProps.onTestConnection` takes a fixed set of fields that has none of Snowflake's, so a host tests a Snowflake connection through `ConnectionModal`.
 The embedded package mounts no route, so a host that runs statements from its own backend must call `cancelQuery` itself when its user stops or leaves; until it does, an abandoned statement runs until its `timeout`.
+`createDatabaseProvider` refuses a Snowflake connection without the private key or access token its Sign-in needs with a `DatabaseConfigError` carrying the sentence of [section 2.1](#21-fields), before it builds the provider; a `SnowflakeProvider` constructed directly refuses it at `connect()`.
 
 ## 13. Evidence
 

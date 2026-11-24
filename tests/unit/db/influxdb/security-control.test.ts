@@ -9,10 +9,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { PROGRAMME_CONTROL_IDS } from "../../../../scripts/security-check.mjs";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const SECURITY = readFileSync(path.join(ROOT, "docs/SECURITY.md"), "utf8");
 const DIRECTORY = "src/lib/db/providers/timeseries/influxdb";
+const FAMILY = statementLanguageFamilyDirectory("influxql");
 const TESTS = "tests/unit/db/influxdb";
 
 function controlRow(id: string): { status: string; control: string; enforcedIn: string; verifiedBy: string } {
@@ -42,7 +44,7 @@ const ROWS: Readonly<
   },
   "3.8": {
     enforcedIn: [
-      `${DIRECTORY}/influxql-policy.ts`,
+      `${FAMILY}/policy.ts`,
       `${DIRECTORY}/sql-policy.ts`,
       `${DIRECTORY}/influxql-provider.ts`,
       `${DIRECTORY}/sql-provider.ts`,
@@ -51,8 +53,8 @@ const ROWS: Readonly<
   },
   "3.12": {
     enforcedIn: [
-      `${DIRECTORY}/influxql-lexer.ts`,
-      `${DIRECTORY}/influxql-policy.ts`,
+      `${FAMILY}/lexer.ts`,
+      `${FAMILY}/policy.ts`,
       `${DIRECTORY}/influxql-quote.ts`,
       `${DIRECTORY}/influxql-provider.ts`,
       `${DIRECTORY}/run-database.ts`,

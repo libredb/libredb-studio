@@ -14,6 +14,7 @@ import { AgentRunStore } from "@/lib/agent/run-store";
 import type { AgentArtifactReference, AgentRunEvent, AgentRunWorkflowType } from "@/lib/agent/types";
 import { fenceUntrustedContent } from "@/lib/agent/untrusted-content";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
@@ -106,7 +107,7 @@ async function drive(
   const run = await service.start({
     mode: "agent",
     workflowType,
-    ...persistedRunFacts("agent", workflowType, availability),
+    ...persistedRunFacts("agent", workflowType, connection.type, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "Which customers ordered most?",
@@ -215,11 +216,20 @@ const profiled = (operationId: string): AgentRunEvent => ({
   },
 });
 
-/** The narration of `profiled` as the run loop speaks it today, whatever the run's language: fenced as SQL's. */
-const PROFILE_NARRATION = `A table was already profiled at basic depth (4 row(s)), artifact profile_1. That profile is recorded; deepen it only if it left a question.\n${fenceUntrustedContent(
-  "table: orders\ncustomer: high_null",
-  { label: "profile already taken", operationId: "sql.table.profile", reference: "profile_1" },
-)}`;
+/**
+ * The narration of `profiled` as the run loop speaks it today, whatever the run's language: fenced as SQL's, naming
+ * the provider of the run's connection as the one that relayed the names.
+ */
+const profileNarration = (connection: DatabaseConnection): string =>
+  `A table was already profiled at basic depth (4 row(s)), artifact profile_1. That profile is recorded; deepen it only if it left a question.\n${fenceUntrustedContent(
+    "table: orders\ncustomer: high_null",
+    {
+      label: "profile already taken",
+      operationId: "sql.table.profile",
+      reference: "profile_1",
+      relayedBy: providerAuthor(connection.type),
+    },
+  )}`;
 
 describe("a resumed run that already profiled a table", () => {
   test("on SQL is told the profile, fenced under the SQL profile's operation id", async () => {
@@ -228,7 +238,7 @@ describe("a resumed run that already profiled a table", () => {
       prior: [profiled("sql.table.profile")],
     });
 
-    expect(openingMessageWith(run, "A table was already profiled")).toContain(PROFILE_NARRATION);
+    expect(openingMessageWith(run, "A table was already profiled")).toContain(profileNarration(postgres));
   });
 
   test("on mongo is told the profile fenced under the SQL profile's operation id too (B127, current behaviour)", async () => {
@@ -237,7 +247,7 @@ describe("a resumed run that already profiled a table", () => {
       prior: [profiled("mongo.collection.profile")],
     });
 
-    expect(openingMessageWith(run, "A table was already profiled")).toContain(PROFILE_NARRATION);
+    expect(openingMessageWith(run, "A table was already profiled")).toContain(profileNarration(mongoConnection));
   });
 });
 

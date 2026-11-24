@@ -4,7 +4,7 @@
  * the secret forms. Every refusal is a DatabaseConfigError raised before any client exists, and none repeats the
  * value it refuses.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import {
@@ -15,23 +15,16 @@ import {
 } from "@/lib/db/providers/vector/weaviate/connection-options";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
-const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000 };
+const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS };
 const EXITS = [
   "Choose an SSL mode under SSL / TLS",
   "connect through an SSH tunnel",
   "if authentication is off on this server, clear the API key or token",
 ];
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
-
-afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
-});
-
 function connection(overrides: Record<string, unknown> = {}): DatabaseConnection {
   return {
     id: "c1",
@@ -110,10 +103,10 @@ describe("W1: the endpoint is exactly what it claims", () => {
     expect(refusal({ port }).message).toBe("Invalid port: expected an integer from 1 to 65535");
   });
 
-  test("with the egress guard on, a private literal host is refused before anything else is read", () => {
-    process.env[FLAG] = "true";
-    expect(refusal({ host: "10.0.0.5", user: "someone" }).message).toBe(BLOCKED_HOST);
-    expect(build({ host: "weaviate.example.com" }).origin.host).toBe("weaviate.example.com");
+  test("with a blocking egress decision, a private literal host is refused before anything else is read", () => {
+    const blocking = { ...CONTEXT, egress: BLOCKS_PRIVATE_HOSTS };
+    expect(refusal({ host: "10.0.0.5", user: "someone" }, blocking).message).toBe(BLOCKED_HOST);
+    expect(build({ host: "weaviate.example.com" }, blocking).origin.host).toBe("weaviate.example.com");
   });
 });
 
@@ -142,22 +135,13 @@ describe("the SSH tunnel: the local forward is dialled, the far end is what sent
     }
   });
 
-  test("a tunnel that is on but arrived with no far end is refused, so Weaviate is never dialled past it", () => {
-    expect(refusal({ sshTunnel: { enabled: true } }).message).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Weaviate was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
-    expect(build({ sshTunnel: { enabled: false } }).origin.host).toBe("weaviate.test");
-    expect(build({ sshTunnel: { enabled: null } }).origin.host).toBe("weaviate.test");
-    expect(build({ sshTunnel: null }).origin.host).toBe("weaviate.test");
-  });
-
-  test("a tunnel field of the wrong type is refused naming the field", () => {
-    for (const sshTunnel of ["on", [], 1]) {
-      expect(refusal({ sshTunnel }).message).toBe("The connection's sshTunnel must be an object; nothing was sent.");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", [], 1]) {
+      expect(build({ sshTunnel }).origin.host).toBe("weaviate.test");
+      expect(build({ sshTunnel }).endpoint.host).toBe("weaviate.test");
     }
-    expect(refusal({ sshTunnel: { enabled: "yes" } }).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    );
   });
 });
 
@@ -196,15 +180,6 @@ describe("the bearer token is validated and never echoed", () => {
         "The connection's password must be a string; nothing was sent.",
       );
     }
-  });
-
-  test("a user is refused naming the field, because Weaviate takes none", () => {
-    const error = refusal({ ...LOCAL, user: "admin", password: TEST_PASSWORD });
-    expect(error.message).toBe(
-      "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
-    );
-    expect(error.message).not.toContain("admin");
-    expect(refusal({ ...LOCAL, user: 7 }).message).toBe("The connection's user must be a string; nothing was sent.");
   });
 
   test("the secret forms are the token's, and each segment of a JWT-shaped OIDC token", () => {

@@ -55,13 +55,9 @@ describe("the panel labels", () => {
     expect(MILVUS_LABELS.tableStatsCaption).toBe(MILVUS_TABLE_STATS_CAPTION);
   });
 
-  test("slow queries and sessions say Milvus keeps them on its management port, which Studio does not dial", () => {
-    expect(MILVUS_LABELS.slowQueriesEmptyState).toBe(
-      "Milvus keeps query statistics on its management port 9091, which Studio does not dial",
-    );
-    expect(MILVUS_LABELS.sessionsEmptyState).toBe(
-      "Milvus reports client sessions on its management port 9091, which Studio does not dial",
-    );
+  test("no sentence for an empty Queries or Sessions panel, because Milvus offers neither", () => {
+    expect(MILVUS_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(MILVUS_LABELS.sessionsEmptyState).toBeUndefined();
   });
 
   test("the object words are Milvus's", () => {

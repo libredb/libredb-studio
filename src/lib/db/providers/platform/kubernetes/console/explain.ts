@@ -13,7 +13,8 @@
 import { QueryError } from "@/lib/db/errors";
 import type { IndexedResource } from "../discovery";
 import { KubernetesResponseTooLargeError } from "../errors";
-import { KUBERNETES_EXPLAIN_DOCUMENT_BYTES, KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_TYPE } from "../limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_EXPLAIN_DOCUMENT_BYTES, KUBERNETES_TYPE } from "../limits";
 import { resolveResource } from "../resolve";
 import {
   byCodeUnit,
@@ -24,7 +25,7 @@ import {
   stringOf,
   textGrid,
 } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type ExplainStatement = Extract<KubectlStatement, { readonly command: "explain" }>;
 

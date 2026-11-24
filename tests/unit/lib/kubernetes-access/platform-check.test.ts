@@ -112,6 +112,24 @@ describe("a check that gets no verdict", () => {
   });
 });
 
+describe("a check answered with a 101 that announces an upgrade", () => {
+  test.each(["upgrade", "upgrade-close"] as const)(
+    "(%s) denies that review as network at once, closes the switched socket, and the next review asks again",
+    async (answer) => {
+      api.platformAnswer = answer;
+      api.grants = [GRANT];
+      const started = Date.now();
+      expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "failed", reason: "network" });
+      expect(Date.now() - started).toBeLessThan(2000);
+      expect(api.seen).toHaveLength(0);
+      await Promise.all(api.upgradedSockets);
+      api.platformAnswer = { status: 404, body: "{}" };
+      expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "allowed" });
+      expect(api.platformChecks).toHaveLength(2);
+    },
+  );
+});
+
 describe("one check at a time", () => {
   test("eight concurrent reviews on a cold process wait for one platform check, and each is reviewed", async () => {
     api.grants = [GRANT];

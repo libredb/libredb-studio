@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { GOOGLE_CREDENTIAL_SENTENCES } from "@/lib/db/auth/google/credentials";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { FIRESTORE_TYPE } from "@/lib/db/providers/document/firestore/constants";
 import {
@@ -8,8 +9,8 @@ import {
   parseEmulatorHost,
   resolveFirestoreAuth,
 } from "@/lib/db/providers/document/firestore/credential-policy";
-import { GOOGLE_CREDENTIAL_SENTENCES } from "@/lib/db/providers/document/firestore/google-credentials";
 import { projectIdRefusal } from "@/lib/db/providers/document/firestore/names";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { fakeSeams } from "../../../helpers/firestore-seams";
 
 const TOKEN = "ya29.a0AfB_byC-test-token_value.123";
@@ -39,6 +40,9 @@ describe("firestore credential sentences", () => {
     expect(S.seedWithoutOptIn).toBe(
       "Set FIRESTORE_SERVER_CREDENTIALS=true on the server to let this seeded connection use the server's own Google identity",
     );
+    expect(S.literalSeedFile).toBe(
+      "Paste a service-account key JSON, an authorized-user JSON or an access token: the server's own Google identity is not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)",
+    );
     expect(S.emulatorCredential("127.0.0.1:8080")).toBe(
       "This server sends every Firestore connection to the emulator at 127.0.0.1:8080 (FIRESTORE_EMULATOR_HOST): clear the credential field, or ask the operator to unset the variable",
     );
@@ -50,6 +54,26 @@ describe("firestore credential sentences", () => {
   test("the rules carry the provider and the project id rule", () => {
     expect(FIRESTORE_CREDENTIAL_RULES.provider).toBe(FIRESTORE_TYPE);
     expect(FIRESTORE_CREDENTIAL_RULES.quotaProjectRefusal).toBe(projectIdRefusal);
+  });
+
+  test("the rules accept exactly the three kinds, and gate the server's identity on Firestore's opt-in and sentences", () => {
+    expect(FIRESTORE_CREDENTIAL_RULES.accepts).toEqual(["service_account", "authorized_user", "access_token"]);
+    expect(FIRESTORE_CREDENTIAL_RULES.serverIdentity).toEqual({
+      optIn: "FIRESTORE_SERVER_CREDENTIALS",
+      unmanaged: S.browserEmpty,
+      withoutOptIn: S.seedWithoutOptIn,
+      literalSeedFile: S.literalSeedFile,
+    });
+  });
+
+  test("an external_account and an impersonated_service_account JSON are refused with today's sentence", () => {
+    const accepted = "paste a service-account key JSON, an authorized-user JSON or an access token";
+    for (const type of ["external_account", "impersonated_service_account"]) {
+      const password = JSON.stringify({ type, token_url: "https://evil.example/sts" });
+      const error = refusal(() => resolveFirestoreAuth({ password, managed: true }, fakeSeams()));
+      expect(error.message).toBe(`Credentials of type "${type}" are not supported: ${accepted}`);
+      expect(error.provider).toBe(FIRESTORE_TYPE);
+    }
   });
 });
 
@@ -201,6 +225,19 @@ describe("firestore resolveFirestoreAuth against Google", () => {
         expect(seams.fileReads).toEqual([]);
       }
     }
+  });
+
+  test("an empty field on a seed-file row read in literal mode is refused with its own sentence, the opt-in notwithstanding", () => {
+    const seams = fakeSeams({
+      env: { FIRESTORE_SERVER_CREDENTIALS: "true", GOOGLE_APPLICATION_CREDENTIALS: "/srv/key.json" },
+      files: { "/srv/key.json": userFile },
+    });
+    const error = refusal(() =>
+      resolveFirestoreAuth({ password: "", managed: true, [LITERAL_SEED_FILE]: true }, seams),
+    );
+    expect(error.message).toBe(S.literalSeedFile);
+    expect(error.provider).toBe(FIRESTORE_TYPE);
+    expect(seams.fileReads).toEqual([]);
   });
 
   test("an empty field on a seeded connection without the exact opt-in is refused", () => {

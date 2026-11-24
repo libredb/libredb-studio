@@ -26,13 +26,17 @@ import {
 } from "@/lib/db/providers/industrial/sparkplug/agent-read";
 import { dialAndRead, SparkplugProvider, type SparkplugReader } from "@/lib/db/providers/industrial/sparkplug/index";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { CONNACK, metric, payload, publish, scripted, subscribedFilters } from "../../unit/db/sparkplug/fake-plant";
+
+/** The notice an answer carrying database content opens with on this file's sparkplug connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("sparkplug"));
 
 pinMcpTestEnvironment();
 
@@ -224,7 +228,7 @@ describe("a read", () => {
   test("the window answers totals behind the notice, with its window and the completeness sentence as notes", async () => {
     const result = await sparkplug('{"read": "window"}');
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent?.rows).toEqual([
       expect.objectContaining({

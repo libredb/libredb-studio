@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The SNMP entry in a real browser (#1721).
@@ -32,8 +33,7 @@ test.describe("SNMP in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.first().click();
+    await openConnectionDialog(page);
   });
 
   test("is offered as its own driver", async ({ page }) => {
@@ -109,11 +109,9 @@ test.describe("SNMP in the connection dialog", () => {
     await dialog.getByRole("button", { name: "SNMP", exact: true }).click();
 
     /*
-     * ABSENCE tied to `showSshTunnel: false`, and NOT the same reason as the panel above. Something
-     * would read this one: the factory opens a tunnel for any connection that carries one, with no
-     * test on the engine, and then rewrites host and port to the tunnel's LOCAL TCP endpoint. This
-     * provider would send datagrams to a port where a TCP listener sits, so the box would break the
-     * connection it offers to carry.
+     * ABSENCE tied to SNMP's row of `SSH_TUNNEL_REFUSAL`, and NOT the same reason as the panel above:
+     * a tunnel forwards TCP and this provider sends datagrams, so core refuses an SNMP connection whose
+     * tunnel is on, and the dialog, which reads the same row, offers no panel for one.
      */
     await expect(dialog.getByText("SSH Tunnel", { exact: true })).toHaveCount(0);
     // The control, by the same reading as above: the address boxes are drawn.

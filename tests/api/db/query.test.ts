@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../helpers/stand-in-vocabulary";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -7,7 +7,7 @@ import { createMockProvider } from "../../helpers/mock-provider";
 import { discoverRoutes } from "../../security/helpers/discover-routes";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { agentReadSqlInput } from "@/lib/db/operations/statement-guard";
-import { OXIA_MAX_TEXT_BYTES } from "@/lib/db/providers/keyvalue/oxia/constants";
+import { OXIA_MAX_TEXT_BYTES } from "@/lib/languages/oxiacli/constants";
 import {
   SNOWFLAKE_ERROR_SENTENCES,
   SnowflakeError,
@@ -22,23 +22,50 @@ import {
   AuthenticationError,
   PoolExhaustedError,
   QueryCancelledError,
+  connectPhase,
   isDatabaseError,
   isConnectionError,
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
 import type { QueryEventRow } from "@/lib/query-events/types";
 import type { QueryEventBatchWrite, QueryEventWriteFailure } from "@/lib/query-events/postgres-sink";
+import * as admission from "@/lib/query-events/admission";
+import {
+  CONFIRMATION_FIELD_MESSAGE,
+  CONFIRMATION_REQUIRED_MESSAGE,
+  CONFIRMATION_TYPED_MESSAGE,
+} from "@/lib/api/run-confirmation";
+import {
+  forgetUsedRunConfirmations,
+  mintRunConfirmation,
+  runConfirmationIssuerForSession,
+} from "@/lib/api/run-confirmation-token";
+import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
-/** The unconnected provider a route reads a declaration from, `provider-meta`'s way (#457). */
-const mockCreateDatabaseProvider = mock(async (_connection: unknown) => mockProvider);
+/**
+ * The declarations a route reads without connecting, `provider-meta`'s way (#457, FND-2 slice 5): read off the mock
+ * provider, so a test that injects one `getCapabilities` answer shapes this read.
+ */
+const mockReadProviderDeclarations = mock(async (_connection: unknown) => ({
+  capabilities: mockProvider.getCapabilities(),
+  labels: mockProvider.getLabels(),
+  supportsQueryCancel: false,
+}));
+const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -100,7 +127,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
-  createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
@@ -117,7 +144,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -276,7 +302,7 @@ describe("POST /api/db/query", () => {
       "SELECT * FROM users LIMIT 50",
       undefined,
       "query-42",
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -326,7 +352,7 @@ describe("POST /api/db/query", () => {
       `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
       ["\\' WHERE 1=1 -- ", 7],
       undefined,
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -354,7 +380,7 @@ describe("POST /api/db/query", () => {
       `UPDATE users SET "name" = $1 WHERE "id" = $2 LIMIT 50`,
       ["Alice", 7],
       "query-42",
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -504,8 +530,33 @@ describe("POST /api/db/query", () => {
   // route answers that refusal as the configuration error it is. The replaced factory runs the real
   // check on the connection the route resolved, so a route that dropped or rewrote the field on the way
   // would fail here too.
+  // A provider is built with the connection's own statement timeout, so one that is not a whole number of milliseconds
+  // made the host's deadline NaN and every query on the connection answered 500.
+  test("an inline connection whose statement timeout is not a whole number of milliseconds answers 400 by name and builds nothing", async () => {
+    // The provider the factory builds reads its statement timeout from the connection, as the real one does.
+    mockGetOrCreateProvider.mockImplementation(async (...args: unknown[]) =>
+      Object.assign(createMockProvider(), { config: args[0] as DatabaseConnection }),
+    );
+    try {
+      const req = createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: { ...validConnection, queryTimeout: "abc" }, sql: "SELECT * FROM users" },
+      });
+      const res = await POST(req as never);
+      const data = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(data.error).toBe(
+        "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+      );
+      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    } finally {
+      mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    }
+  });
+
   test("an inline read-only connection on an engine that does not enforce the mode answers 400 and runs nothing", async () => {
-    mockCreateDatabaseProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
     mockGetOrCreateProvider.mockImplementationOnce(async (...args: unknown[]) => {
       assertReadOnlyHonoured(args[0] as DatabaseConnection);
       return mockProvider;
@@ -524,7 +575,7 @@ describe("POST /api/db/query", () => {
       "readOnly: true is refused for postgres: its provider does not enforce a read-only mode, so the connection would open able to write. Remove readOnly from the connection, or connect with a database role that cannot write.",
     );
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
-    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
     expect(mockProvider.query).not.toHaveBeenCalled();
   });
 
@@ -677,6 +728,121 @@ describe("POST /api/db/query", () => {
 
     expect(res.status).toBe(500);
     expect(data.error).toBe("Something unexpected happened");
+  });
+
+  test("a connect that failed answers kind connection and outcome not-sent", async () => {
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres")),
+    ).catch((error: unknown) => error);
+    mockGetOrCreateProvider.mockImplementationOnce(() => Promise.reject(failed));
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(503);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: "connect ECONNREFUSED 127.0.0.1:5432",
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "not-sent",
+    });
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("a connection lost during the statement answers kind connection and outcome unknown", async () => {
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError("Connection terminated unexpectedly", "postgres"),
+    );
+
+    const req = createMockRequest("/api/db/query", {
+      method: "POST",
+      body: { connection: validConnection, sql: "SELECT 1" },
+    });
+    const res = await POST(req as never);
+
+    expect(res.status).toBe(503);
+    expect(await parseResponseJSON(res)).toEqual({
+      error: "Connection terminated unexpectedly",
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
+  });
+
+  test("a provider error that holds the connection's credential is withheld, keeping its status, code, kind and outcome", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    const connection = { ...validConnection, password };
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError(`syntax error near ${password}`, "postgres"),
+    );
+    const queryRes = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(queryRes.status).toBe(400);
+    expect(await parseResponseJSON(queryRes)).toEqual({
+      error: withheldErrorMessage("QueryError"),
+      code: "QUERY_ERROR",
+      statusCode: 400,
+      kind: "query",
+      outcome: "unknown",
+    });
+
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new ConnectionError(`could not connect to postgres://u:${encodeURIComponent(password)}@h/db`, "postgres"),
+    );
+    const connectRes = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(connectRes.status).toBe(503);
+    const connectBody = await parseResponseJSON(connectRes);
+    expect(connectBody).toEqual({
+      error: withheldErrorMessage("ConnectionError"),
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
+    expect(JSON.stringify(connectBody)).not.toContain(encodeURIComponent(password));
+  });
+
+  test("a provider error without the credential answers its own sentence", async () => {
+    const connection = { ...validConnection, password: crypto.randomUUID() };
+    (mockProvider.query as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError('syntax error at or near "FORM"', "postgres"),
+    );
+    const res = await POST(
+      createMockRequest("/api/db/query", { method: "POST", body: { connection, sql: "SELECT 1" } }) as never,
+    );
+    expect(res.status).toBe(400);
+    expect((await parseResponseJSON<{ error: string }>(res)).error).toBe('syntax error at or near "FORM"');
+  });
+
+  test("a warning that holds the connection's credential is withheld in the body", async () => {
+    const password = crypto.randomUUID();
+    const clean = { message: "a notice of its own", code: "01000", severity: "WARNING" };
+    (mockProvider.query as ReturnType<typeof mock>).mockResolvedValueOnce({
+      rows: [],
+      fields: [],
+      rowCount: 0,
+      executionTime: 1,
+      warnings: [{ message: `a notice about ${password}`, code: "01000", severity: "WARNING" }, clean],
+    });
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: { ...validConnection, password }, sql: "SELECT 1" },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ warnings?: unknown[] }>(res);
+    expect(data.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD, code: "01000", severity: "WARNING" }, clean]);
   });
 
   // The probe adds one to the limit, so a limit that is not a number would be concatenated, not added.
@@ -1033,7 +1199,7 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
 
     expect(res.status).toBe(200);
     // Reached the driver verbatim: not refused, not rewritten, not downgraded.
-    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, expect.any(String));
+    expect(writeProvider.query).toHaveBeenCalledWith(writeStatement, undefined, undefined, undefined);
     // The shared, fully-privileged provider cache - never an execution profile.
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
   });
@@ -1067,9 +1233,23 @@ describe("POST /api/db/query — the editor path stays outside the agent policy 
     expect(dbRouteFiles.every((file) => existsSync(file))).toBe(true);
   });
 
+  /**
+   * The one module of the directory a route may import is the core scrub of a provider's text
+   * (`@/lib/db/operations/provider-text`): it is no policy, gate or audit of the agent, and the editor routes apply it
+   * to what a provider answers, as the agent path does.
+   */
+  const CORE_SCRUB = "@/lib/db/operations/provider-text";
+
   test("no /api/db route imports the agent operations layer", () => {
-    const gated = dbRouteFiles.filter((file) => readFileSync(file, "utf8").includes("@/lib/db/operations"));
+    const gated = dbRouteFiles.filter((file) =>
+      [...readFileSync(file, "utf8").matchAll(/@\/lib\/db\/operations[^"']*/g)].some(([found]) => found !== CORE_SCRUB),
+    );
     expect(gated).toEqual([]);
+  });
+
+  test("a control: the guard sees a route that imports the core scrub, and lets it through", () => {
+    const scrubbing = dbRouteFiles.filter((file) => readFileSync(file, "utf8").includes(CORE_SCRUB));
+    expect(scrubbing.some((file) => file.endsWith(join("db", "query", "route.ts")))).toBe(true);
   });
 });
 
@@ -1120,7 +1300,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -1141,7 +1321,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM users LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
   });
 
@@ -1327,7 +1507,7 @@ describe("POST /api/db/query with an explain request", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM users WHERE id = $1 LIMIT 50",
       [7],
       undefined,
-      expect.any(String),
+      undefined,
     );
     expect(data.explainFormat).toBe("postgres-json");
   });
@@ -1361,12 +1541,7 @@ describe("POST /api/db/query with an explain request", () => {
     const data = await parseResponseJSON<Record<string, unknown>>(res);
 
     expect(res.status).toBe(200);
-    expect(mockProvider.query).toHaveBeenCalledWith(
-      "SELECT * FROM users LIMIT 50",
-      undefined,
-      undefined,
-      expect.any(String),
-    );
+    expect(mockProvider.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, undefined, undefined);
     expect("explainFormat" in data).toBe(false);
   });
 });
@@ -1555,6 +1730,8 @@ describe("POST /api/db/query and the transaction its own statement left open", (
 
     expect(res.status).toBe(200);
     expect("openTransaction" in data).toBe(false);
+    // A session that offers no console.endScope is sent no scope (docs/providers/CONTRACT.md, clause C-60).
+    expect((provider.query as ReturnType<typeof mock>).mock.calls[0]?.[3]).toBeUndefined();
   });
 });
 
@@ -1570,7 +1747,7 @@ describe("POST /api/db/query — the database a run reads", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
-    mockCreateDatabaseProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
     (mockProvider.getCapabilities as ReturnType<typeof mock>).mockClear();
@@ -1603,7 +1780,7 @@ describe("POST /api/db/query — the database a run reads", () => {
     // with this run's database applied is opened. Before this field a caller had no way to produce
     // that connection at all, so the read fell back to the session's database while the key tab
     // claimed it had read another.
-    expect(mockCreateDatabaseProvider.mock.calls[0]?.[0]).toMatchObject({ host: "seed-host", database: "0" });
+    expect(mockReadProviderDeclarations.mock.calls[0]?.[0]).toMatchObject({ host: "seed-host", database: "0" });
     const opened = openedConnections();
     expect(opened).toHaveLength(1);
     expect(opened[0]).toMatchObject({ host: "seed-host", database: "3" });
@@ -1624,7 +1801,7 @@ describe("POST /api/db/query — the database a run reads", () => {
     expect(data.error).toContain("declares no key-space walk");
     // Refused from the declaration alone: an unreachable Postgres answered 503 here while the gate
     // ran after the connect, which reported a network fault for a request that was never valid.
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
     expect(openedConnections()).toHaveLength(0);
   });
 
@@ -1667,7 +1844,7 @@ describe("POST /api/db/query — the database a run reads", () => {
     }
     // Decided from the unconnected declaration, so no provider, SSH forward or channel was opened or
     // cached for a value the engine refuses.
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(2);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(2);
     expect(openedConnections()).toHaveLength(0);
   });
 
@@ -1688,6 +1865,30 @@ describe("POST /api/db/query — the database a run reads", () => {
     expect(openedConnections()).toHaveLength(0);
   });
 
+  test("reads a tunnelled record's declaration without opening its tunnel (FND-2 slice 5)", async () => {
+    mockReadProviderDeclarations.mockImplementationOnce(realReadProviderDeclarations as never);
+    const tunnelledRedis = {
+      id: "redis-tunnelled",
+      name: "redis",
+      type: "redis",
+      host: "redis.internal",
+      port: 6379,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    };
+
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: tunnelledRedis, sql: "GET k", database: 2 },
+      }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    expect(openedConnections()).toHaveLength(1);
+    expect(openedConnections()[0]).toMatchObject({ host: "redis.internal", database: "2" });
+  });
+
   test("names no database at all when a run carries none, and opens the connection once", async () => {
     const res = await POST(
       createMockRequest("/api/db/query", {
@@ -1699,7 +1900,7 @@ describe("POST /api/db/query — the database a run reads", () => {
     expect(res.status).toBe(200);
     // Absent is not zero: one lookup, with the connection exactly as configured, and no
     // declaration to read.
-    expect(mockCreateDatabaseProvider).not.toHaveBeenCalled();
+    expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
     expect(openedConnections()).toHaveLength(1);
     expect(openedConnections()[0]).toMatchObject({ database: "testdb" });
   });
@@ -1837,9 +2038,12 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
     const capabilities = mockProvider.getCapabilities as ReturnType<typeof mock>;
     const defaults = mockProvider.getCapabilities();
     capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
-    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown };
+    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown; config: DatabaseConnection };
     const forCatalog = mock(async (_catalog: string) => session);
     server.forCatalog = forCatalog;
+    // The provider stands for the server-level connection, which `catalogChoice` reads (M-57).
+    const config = server.config;
+    server.config = serverConnection as DatabaseConnection;
     try {
       const res = await POST(
         createMockRequest("/api/db/query", {
@@ -1850,6 +2054,33 @@ describe("POST /api/db/query on a server-level connection (#1530)", () => {
       expect(res.status).toBe(200);
       expect(forCatalog.mock.calls).toEqual([["shop"]]);
       expect(session.query).toHaveBeenCalledTimes(1);
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockImplementation(() => defaults);
+      delete server.forCatalog;
+      server.config = config;
+    }
+  });
+
+  test("a provider that declares catalog sessions on a connection naming its database runs nothing in another: the catalog is refused by name", async () => {
+    const capabilities = mockProvider.getCapabilities as ReturnType<typeof mock>;
+    const defaults = mockProvider.getCapabilities();
+    capabilities.mockImplementation(() => ({ ...defaults, catalogSessions: true }));
+    const server = mockProvider as typeof mockProvider & { forCatalog?: unknown };
+    const forCatalog = mock(async () => createMockProvider());
+    server.forCatalog = forCatalog;
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1", catalog: "shop" },
+        }) as never,
+      );
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        'This postgres connection runs every request in its own database and cannot run one in "shop": it names its own database, so Studio honours no session per database its provider declares',
+      );
+      expect(forCatalog).not.toHaveBeenCalled();
       expect(mockProvider.query).not.toHaveBeenCalled();
     } finally {
       capabilities.mockImplementation(() => defaults);
@@ -1938,6 +2169,62 @@ describe("POST /api/db/query: the request's abort", () => {
     expect(provider.query).not.toHaveBeenCalled();
   });
 
+  test("the provider opens under the request's own open wait", async () => {
+    const provider = createMockProvider();
+    const waits: { signal: AbortSignal }[] = [];
+    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+      waits.push(args[3] as { signal: AbortSignal });
+      return provider;
+    }) as never);
+    const controller = new AbortController();
+    const request = abortableRequest(
+      { connection: validConnection, sql: "SELECT 1", queryId: "q-9-wait" },
+      controller.signal,
+    );
+
+    const res = await POST(request as never);
+    const reason = new Error(`left ${crypto.randomUUID()}`);
+    controller.abort(reason);
+
+    expect(res.status).toBe(200);
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.signal.aborted).toBe(true);
+    expect(waits[0]?.signal.reason).toBe(request.signal.reason);
+  });
+
+  test("a request that leaves while its connection opens answers 499 not-sent and runs nothing", async () => {
+    const provider = createMockProvider();
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+      const wait = args[3] as { signal: AbortSignal };
+      reached();
+      // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
+      return new Promise((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    }) as never);
+    const controller = new AbortController();
+    const answer = POST(
+      abortableRequest(
+        { connection: validConnection, sql: "SELECT 1", queryId: "q-9-opening" },
+        controller.signal,
+      ) as never,
+    );
+    await opening;
+    controller.abort();
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+    expect(provider.query).not.toHaveBeenCalled();
+  });
+
   test("a provider without cancelQuery sees no cancel", async () => {
     const provider = createMockProvider();
     mockGetOrCreateProvider.mockImplementation(async () => provider as never);
@@ -1951,6 +2238,62 @@ describe("POST /api/db/query: the request's abort", () => {
     controller.abort();
     await answer;
     expect("cancelQuery" in provider).toBe(false);
+  });
+});
+
+describe("POST /api/db/query: the page's byte budget", () => {
+  const MIB = 1_048_576;
+  const mebibyte = "x".repeat(MIB);
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  function answering(rows: Record<string, unknown>[]) {
+    const provider = createMockProvider();
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows,
+      fields: ["n"],
+      rowCount: rows.length,
+      executionTime: 1,
+    }));
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+  }
+
+  test("a page over the byte budget answers the rows that fit, with Load More after them", async () => {
+    answering(Array.from({ length: 40 }, () => ({ n: mebibyte })));
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT n FROM t", options: { limit: 50 } },
+      }) as never,
+    );
+    const body = await parseResponseJSON<{ rows: unknown[]; rowCount: number; pagination: Record<string, unknown> }>(
+      res,
+    );
+    const holds = Math.floor(33_554_432 / (MIB + 4));
+
+    expect(res.status).toBe(200);
+    expect(body.rows).toHaveLength(holds);
+    expect(body.rowCount).toBe(holds);
+    expect(body.pagination).toEqual({ limit: 50, offset: 0, hasMore: true, totalReturned: holds, wasLimited: true });
+  });
+
+  test("a row over the byte budget answers 400 with the byte budget's kind", async () => {
+    answering([{ n: "x".repeat(33 * MIB) }]);
+    const res = await POST(
+      createMockRequest("/api/db/query", {
+        method: "POST",
+        body: { connection: validConnection, sql: "SELECT n FROM t" },
+      }) as never,
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.kind).toBe("studio-byte-budget-refusal");
+    expect(body.outcome).toBe("unknown");
   });
 });
 
@@ -2097,6 +2440,29 @@ describe("POST /api/db/query: query events under governance", () => {
     expect(events[0]).toMatchObject({ source: "editor", status: "error", error_code: "42P01", row_count: null });
   });
 
+  test("governance: a rollback that fails after the statement answered is answered in the statement's place and recorded as the run's error, as the finally always did", async () => {
+    const failing = new DatabaseError(
+      "Could not roll back the transaction this request left open on 1 of 1 pooled clients",
+      "postgres",
+    );
+    const provider = Object.assign(createMockProvider(), {
+      endOpenQueryTransaction: mock(async () => {
+        throw failing;
+      }),
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => provider);
+
+    const res = await run({ connectionId: "seed:orders", sql: "BEGIN" });
+    const data = await parseResponseJSON<{ code: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.code).toBe("DATABASE_ERROR");
+    expect(provider.endOpenQueryTransaction).toHaveBeenCalledTimes(1);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ source: "editor", status: "error", row_count: null });
+  });
+
   test("governance: a cancelled statement records status cancelled", async () => {
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
       throw new QueryCancelledError("The query was cancelled.");
@@ -2120,7 +2486,7 @@ describe("POST /api/db/query: query events under governance", () => {
       "EXPLAIN (FORMAT JSON) SELECT * FROM orders LIMIT 50",
       undefined,
       undefined,
-      expect.any(String),
+      undefined,
     );
     const events = await recordedEvents();
     expect(events).toHaveLength(1);
@@ -2159,6 +2525,27 @@ describe("POST /api/db/query: query events under governance", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+
+  test("governance: a failed unit's query event under full capture records the withheld sentence", async () => {
+    settings({ key: "queryLog.statementCapture", value: "full" });
+    const password = crypto.randomUUID();
+    resolveConnectionOverride = async () => ({ ...governedConnection, password });
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`syntax error near ${password}`, "postgres");
+    });
+
+    const res = await run({ connectionId: "seed:orders", sql: "SELECT 1" });
+
+    expect(res.status).toBe(400);
+    const events = await recordedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(events)).not.toContain(password);
   });
 
   test("governance: a non-granted id records a refused event with null engine and access level", async () => {
@@ -2208,6 +2595,18 @@ describe("POST /api/db/query: query events under governance", () => {
     expect(await recordedEvents()).toEqual([]);
   });
 
+  test("governance: a write on a production connection with no confirmation field is asked in advisory and records nothing", async () => {
+    resolveConnectionOverride = async () => ({ ...governedConnection, environment: "production" });
+    // A signed session carries its issue time, which the 428's token binds.
+    mockGetSession.mockImplementation(async () => ({ ...governedSession, iat: 1_700_000_000 }));
+
+    const res = await run({ connectionId: "seed:orders", sql: "DELETE FROM orders" });
+
+    expect(res.status).toBe(428);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(await recordedEvents()).toEqual([]);
+  });
+
   test("with governance off the route records nothing", async () => {
     process.env.GOVERNANCE_SOURCE = "";
 
@@ -2241,5 +2640,375 @@ describe("POST /api/db/query: a body that is not a JSON object", () => {
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
     expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+});
+
+// ─── The server's confirmation of a run (FND-5) ─────────────────────────────
+describe("POST /api/db/query: the server's confirmation of a run", () => {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  const session = { role: "user" as const, username: "alice", iat: 1_700_000_000 };
+  let warn: ReturnType<typeof spyOn>;
+  let admit: ReturnType<typeof spyOn>;
+
+  function run(body: Record<string, unknown>) {
+    return POST(createMockRequest("/api/db/query", { method: "POST", body }) as never);
+  }
+
+  /** The token of a 428 answer. */
+  async function askedToken(body: Record<string, unknown>): Promise<string> {
+    const res = await run({ ...body, confirmation: "ask" });
+    expect(res.status).toBe(428);
+    return (await parseResponseJSON<{ confirmation: { token: string } }>(res)).confirmation.token;
+  }
+
+  function nothingRan(): void {
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockReadProviderDeclarations).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
+    expect(admit).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    clearRateLimitState();
+    forgetUsedRunConfirmations();
+    mockGetOrCreateProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    mockGetSession.mockImplementation(async () => session);
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+    admit = spyOn(admission, "admitQueryExecution");
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    admit.mockRestore();
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  describe("server confirmation, advisory", () => {
+    test("a write sent without the field runs, its answer says unconfirmed, and one warning names no statement", async () => {
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+      const lines = warn.mock.calls.filter(
+        (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/query",
+      );
+      expect(lines).toEqual([
+        [
+          "A statement that needs a confirmation ran without one",
+          { route: "api/db/query", type: "postgres", user: "alice" },
+        ],
+      ]);
+      expect(JSON.stringify(lines)).not.toContain("DELETE");
+    });
+
+    test("a read runs with no field in its answer and no warning", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT 1" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(
+        warn.mock.calls.filter(
+          (call: unknown[]) => (call[1] as { route?: string } | undefined)?.route === "api/db/query",
+        ),
+      ).toEqual([]);
+    });
+  });
+
+  describe("server confirmation, ask", () => {
+    test.each(["advisory", "required"])(
+      "a write that asks is answered 428 in %s mode, and nothing is built or run",
+      async (mode) => {
+        process.env.LIBREDB_RUN_CONFIRMATION = mode;
+        const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: "ask" });
+        expect(res.status).toBe(428);
+        const body = await parseResponseJSON<Record<string, unknown>>(res);
+        expect(body).toEqual({
+          error: CONFIRMATION_REQUIRED_MESSAGE,
+          code: "CONFIRMATION_REQUIRED",
+          confirmation: {
+            token: expect.any(String),
+            expiresAt: expect.any(String),
+            unreadable: false,
+            typedConfirmation: null,
+            classificationFailed: false,
+          },
+        });
+        nothingRan();
+      },
+    );
+
+    test("the token of the 428 runs the request it was issued for", async () => {
+      const token = await askedToken({ connection: validConnection, sql: "DELETE FROM t" });
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: { token } });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("a read that asks runs", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT 1", confirmation: "ask" });
+      expect(res.status).toBe(200);
+    });
+
+    test("a malformed field is refused before anything is built", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT 1", confirmation: "yes" });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({ error: CONFIRMATION_FIELD_MESSAGE });
+      nothingRan();
+    });
+
+    test("an explain request is not classified: the route's own explain rules answer it", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t", explain: { mode: "estimate" } });
+      // Past the gate: the provider was built, and its explain strategy, not a confirmation, answers the DELETE.
+      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("server confirmation, required", () => {
+    beforeEach(() => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    });
+
+    test("a write sent without the field is answered 428 and nothing runs", async () => {
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t" });
+      expect(res.status).toBe(428);
+      nothingRan();
+    });
+
+    test("the 428's token runs the request once, and a second use is refused", async () => {
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t" });
+      const { token } = (await parseResponseJSON<{ confirmation: { token: string } }>(res)).confirmation;
+      const confirmed = { connection: validConnection, sql: "DELETE FROM t", confirmation: { token } };
+      expect((await run(confirmed)).status).toBe(200);
+      const again = await run(confirmed);
+      expect(again.status).toBe(400);
+      expect(await parseResponseJSON(again)).toEqual({
+        error: "this confirmation has already been used",
+        code: "CONFIRMATION_INVALID",
+      });
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("a token issued for another statement is refused", async () => {
+      const token = await askedToken({ connection: validConnection, sql: "DELETE FROM t WHERE id = 1" });
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t", confirmation: { token } });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({
+        error: "this confirmation was issued for another statement",
+        code: "CONFIRMATION_INVALID",
+      });
+      expect(mockProvider.query).not.toHaveBeenCalled();
+    });
+
+    test("a token issued on another route is refused", async () => {
+      const issued = await mintRunConfirmation({
+        issuer: runConfirmationIssuerForSession(session),
+        connection: validConnection as DatabaseConnection,
+        catalog: undefined,
+        route: "transaction",
+        statement: "DELETE FROM t",
+        params: undefined,
+        verdict: { decision: "confirm", unreadable: false, typedConfirmation: null, classificationFailed: false },
+      });
+      const res = await run({
+        connection: validConnection,
+        sql: "DELETE FROM t",
+        confirmation: { token: issued.token },
+      });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({
+        error: "this confirmation was issued for another route",
+        code: "CONFIRMATION_INVALID",
+      });
+    });
+
+    test("a token issued for other bound values is refused", async () => {
+      const sql = "DELETE FROM t WHERE id = $1";
+      const token = await askedToken({ connection: validConnection, sql, params: [1] });
+      const res = await run({ connection: validConnection, sql, params: [2], confirmation: { token } });
+      expect(res.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(
+        "this confirmation was issued for another statement",
+      );
+    });
+
+    test("an unreadable mode is refused by name and nothing runs", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+      const res = await run({ connection: validConnection, sql: "DELETE FROM t" });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toMatchObject({
+        error: INVALID_RUN_CONFIRMATION_SETTING,
+        code: "CONFIG_ERROR",
+      });
+      nothingRan();
+    });
+  });
+
+  describe("server confirmation, a statement the client let through", () => {
+    const mysql = { ...validConnection, type: "mysql", port: 3306 };
+
+    test("required answers 428 for a MySQL REPLACE sent without the field, and runs nothing", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run({ connection: mysql, sql: "REPLACE INTO t VALUES (1)" });
+      expect(res.status).toBe(428);
+      nothingRan();
+    });
+
+    test("advisory runs it and marks the answer unconfirmed", async () => {
+      const res = await run({ connection: mysql, sql: "REPLACE INTO t VALUES (1)" });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+    });
+
+    test("an unreadable statement asks, and its 428 says so", async () => {
+      const res = await run({ connection: validConnection, sql: "SELECT E'\\'; DELETE FROM t", confirmation: "ask" });
+      expect(res.status).toBe(428);
+      expect(await parseResponseJSON(res)).toMatchObject({ confirmation: { unreadable: true } });
+    });
+  });
+
+  describe("server confirmation, order", () => {
+    test.each([
+      ["a missing statement", { connection: validConnection, confirmation: "ask" }, 400],
+      ["a statement that is not text", { connection: validConnection, sql: 1, confirmation: "ask" }, 400],
+      ["a missing connection", { sql: "DELETE FROM t", confirmation: "ask" }, 400],
+      [
+        "bad page bounds",
+        { connection: validConnection, sql: "DELETE FROM t", options: { limit: -1 }, confirmation: "ask" },
+        400,
+      ],
+      ["bad bound values", { connection: validConnection, sql: "DELETE FROM t", params: {}, confirmation: "ask" }, 400],
+      [
+        "a bad explain field",
+        { connection: validConnection, sql: "DELETE FROM t", explain: 1, confirmation: "ask" },
+        400,
+      ],
+    ] as const)("%s is refused for its fields whatever the confirmation holds", async (_label, body, status) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      const res = await run(body as Record<string, unknown>);
+      expect(res.status).toBe(status);
+      expect(await parseResponseJSON<{ code?: string }>(res)).not.toHaveProperty("code", "CONFIRMATION_REQUIRED");
+    });
+
+    test("the token binds the database the run reaches, after the database override", async () => {
+      process.env.LIBREDB_RUN_CONFIRMATION = "required";
+      // The declaration each request reads before the override applies: a walk with a database level, as Redis's.
+      const declaresDatabases = () =>
+        (mockProvider.getCapabilities as ReturnType<typeof mock>).mockReturnValueOnce({
+          keyScan: { defaultCount: 500, maxCount: 1000 },
+          containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+        });
+      declaresDatabases();
+      const token = await askedToken({ connectionId: "seed:test-redis", sql: "FLUSHDB", database: 3 });
+      declaresDatabases();
+      const other = await run({
+        connectionId: "seed:test-redis",
+        sql: "FLUSHDB",
+        database: 4,
+        confirmation: { token },
+      });
+      expect(other.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(other)).error).toBe(
+        "this confirmation was issued for another connection",
+      );
+      declaresDatabases();
+      const same = await run({ connectionId: "seed:test-redis", sql: "FLUSHDB", database: 3, confirmation: { token } });
+      expect(same.status).toBe(200);
+    });
+  });
+
+  describe("server confirmation, production", () => {
+    let name: string;
+    let production: Record<string, unknown>;
+    const WRITE = "DELETE FROM t";
+
+    beforeEach(() => {
+      name = crypto.randomUUID();
+      production = { ...validConnection, name, environment: "production" };
+    });
+
+    async function typedAsk(res: Response): Promise<{ token: string; typedConfirmation: unknown }> {
+      expect(res.status).toBe(428);
+      const body = await parseResponseJSON<{
+        error: string;
+        confirmation: { token: string; typedConfirmation: unknown };
+      }>(res);
+      expect(body.error).toBe(CONFIRMATION_TYPED_MESSAGE);
+      return body.confirmation;
+    }
+
+    test.each([
+      ["advisory", undefined],
+      ["advisory", "ask"],
+      ["required", undefined],
+      ["required", "ask"],
+    ] as const)(
+      "a write without the typed name is answered 428 in %s mode (%p), and nothing runs",
+      async (mode, field) => {
+        process.env.LIBREDB_RUN_CONFIRMATION = mode;
+        const asked = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: field }));
+        expect(asked.typedConfirmation).toEqual({ type: "connection-name", expected: name, targets: [] });
+        nothingRan();
+      },
+    );
+
+    test("the token alone is answered 428 again, and nothing runs", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      await typedAsk(await run({ connection: production, sql: WRITE, confirmation: { token } }));
+      nothingRan();
+    });
+
+    test("a wrong name is refused, and nothing runs", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      const res = await run({
+        connection: production,
+        sql: WRITE,
+        confirmation: { token, typed: crypto.randomUUID() },
+      });
+      expect(res.status).toBe(400);
+      expect(await parseResponseJSON(res)).toEqual({
+        error: "the typed confirmation does not match what this statement asks to be typed",
+        code: "CONFIRMATION_INVALID",
+      });
+      nothingRan();
+    });
+
+    test("the right name with its token runs once", async () => {
+      const { token } = await typedAsk(await run({ connection: production, sql: WRITE, confirmation: "ask" }));
+      const res = await run({ connection: production, sql: WRITE, confirmation: { token, typed: name } });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test.each(["advisory", "required"])("a read runs with no field in %s mode", async (mode) => {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      const res = await run({ connection: production, sql: "SELECT 1" });
+      expect(res.status).toBe(200);
+      expect(await parseResponseJSON<Record<string, unknown>>(res)).not.toHaveProperty("confirmation");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("advisory still runs a write with no field on a staging connection, marked unconfirmed", async () => {
+      const res = await run({ connection: { ...production, environment: "staging" }, sql: WRITE });
+      expect(res.status).toBe(200);
+      expect((await parseResponseJSON<{ confirmation?: string }>(res)).confirmation).toBe("unconfirmed");
+      expect(mockProvider.query).toHaveBeenCalledTimes(1);
+    });
+
+    test("a write on a development connection is confirmed by the token alone, as before", async () => {
+      const development = { ...production, environment: "development" };
+      const token = await askedToken({ connection: development, sql: WRITE });
+      const res = await run({ connection: development, sql: WRITE, confirmation: { token } });
+      expect(res.status).toBe(200);
+    });
   });
 });

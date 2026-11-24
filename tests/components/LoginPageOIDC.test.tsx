@@ -76,6 +76,18 @@ describe("LoginPage (OIDC mode)", () => {
     expect(queryByText("Authentication failed. Please try again.")).toBeNull();
   });
 
+  // OIDC_ALLOWED_EMAIL_DOMAINS refused the account after the provider authenticated it: no role assignment would
+  // change that, so the message names the administrator rather than advising another attempt.
+  test("error=oidc_domain_not_allowed shows the domain message", () => {
+    setMockSearchParams(new URLSearchParams("error=oidc_domain_not_allowed"));
+    const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);
+    const message = getByText(
+      "Your account's email domain is not allowed to sign in to this server. Ask your administrator.",
+    );
+    expect(message.textContent).not.toMatch(/try again/i);
+    expect(queryByText("Authentication failed. Please try again.")).toBeNull();
+  });
+
   test("error=oidc_role_overflow shows the role-overflow message", () => {
     setMockSearchParams(new URLSearchParams("error=oidc_role_overflow"));
     const { getByText, queryByText } = render(<LoginForm authProvider="oidc" passkey={null} />);

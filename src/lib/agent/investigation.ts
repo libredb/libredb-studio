@@ -55,7 +55,15 @@ import {
 } from "./agent-manifest";
 import { logger } from "@/lib/logger";
 import { isRetryableError, isToolCallParseError, LLMConfigError } from "@/lib/llm/types";
-import { type AssistantModelMessage, type ModelMessage, Output, type ToolSet, streamText, tool } from "ai";
+import {
+  type AssistantModelMessage,
+  type FinishReason,
+  type ModelMessage,
+  Output,
+  type ToolSet,
+  streamText,
+  tool,
+} from "ai";
 import { z } from "zod";
 import {
   type AgentContextCapture,
@@ -66,6 +74,7 @@ import {
   packContextForTask,
   packOperationsInventory,
   reusableSnapshot,
+  scrubSnapshotSentences,
 } from "./context-snapshot";
 import { agentModelTurnTimeoutMs } from "./config";
 import { tuningProvenance } from "./model-tuning";
@@ -103,6 +112,7 @@ import { validatePlanStatement } from "./plan-statement";
 import { packSchemaStatistics, readSchemaStatistics } from "./schema-stats";
 import {
   AGENT_MODEL_TURN_TIMEOUT_MS,
+  AGENT_MODEL_OUTPUT_LIMIT_ASKS,
   AGENT_REPORT_RESERVE_MS,
   AGENT_TRANSPORT_TURN_RETRIES,
   AGENT_UNREADABLE_TOOL_CALL_ANSWERS,
@@ -132,6 +142,7 @@ import {
   type AgentToolName,
   type AgentTableProfileOutcome,
   type AgentToolOutcome,
+  agentReadingsOf,
   agentToolDefinition,
   comparePlansTool,
   composeReportTool,
@@ -170,20 +181,24 @@ import {
 import {
   UNTRUSTED_CONTENT_BEGIN,
   UNTRUSTED_CONTENT_END,
+  fenceProviderText,
   fenceUntrustedContent,
   neutraliseToolInput,
   neutraliseUntrustedMarkers,
+  oneLineForPrompt,
+  quoteIdentifierForPrompt,
 } from "./untrusted-content";
 import { isStatementReadOperation } from "@/lib/db/operations/descriptors";
+import { providerAuthor, providerTextScrub, scrubProviderText } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { editorLanguageForTabType, resolveTabType } from "@/lib/editor/tab-language";
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** Everything a tool call needs EXCEPT what the run's own record decides. */
 export type AgentToolResources = Omit<
   AgentToolContext,
-  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "actor" | "readAllowance"
+  "runId" | "modelId" | "mode" | "workflowType" | "statementLanguage" | "engine" | "actor" | "readAllowance"
 >;
 
 export interface AgentInvestigationOptions {
@@ -706,7 +721,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
     };
   },
   "no-table-profile": (table) => {
-    const named = table === undefined ? "a table this run's inventory lists" : `"${table}"`;
+    const named = table === undefined ? "a table this run's inventory lists" : quoteIdentifierForPrompt(table);
     return {
       said: [
         "This workflow answers with the counts profile_table takes and no table has been profiled, so the report would be scored as having established nothing about the data.",
@@ -719,7 +734,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
       narrow: true,
     };
   },
-  "no-reading": (_table, { readingsHeld }) => {
+  "no-reading": (_table, { readingsHeld, readings }) => {
     // Only for a run that read NOTHING. A run holding artifacts and citing the inventory
     // instead earns the same verdict, but the useful sentence there is
     // `citeWhatYouReadNotice`, which can name the ids it actually has. Saying "this run has
@@ -745,7 +760,7 @@ const CORE_SHORTFALL_NOTICES: Readonly<Partial<Record<AgentGoalShortfall, Shortf
     return {
       said: [
         "This workflow is scored on what the ENGINE reports about itself, and this run has taken no reading: the schema inventory in this conversation was captured for you before your first turn and citing it establishes nothing about what the engine is doing.",
-        "Your compose_report call was not run. Call inspect_operations first — sessions, slow-queries, table-stats, index-stats, storage or health — then cite the artifact id it returns in a claim, and then call compose_report.",
+        `Your compose_report call was not run. Call inspect_operations first (${readings.join(", ")}), then cite the artifact id it returns in a claim, and then call compose_report.`,
       ].join(" "),
       narrow: false,
     };
@@ -1743,10 +1758,11 @@ const INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE = 'Call inspect_schema with kind=
 function packSnapshotMessage(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   noun: AgentInventoryNoun,
   grounding: { readonly omissionAdvice: string; readonly sampledFields?: boolean },
 ): string {
-  return packContextForTask(snapshot, objective, {
+  return packContextForTask(snapshot, objective, relayedBy, {
     preface: snapshotHandoverText(snapshot.fingerprint),
     omissionAdvice: grounding.omissionAdvice,
     noun,
@@ -1830,11 +1846,12 @@ const planningSnapshotPreface = (
 function packPlanningSnapshotMessage(
   snapshot: AgentContextSnapshot,
   objective: string,
+  relayedBy: string,
   readBy: PlanningGrounding["readBy"],
   noun: AgentInventoryNoun,
   sampledFields: boolean,
 ): string {
-  return packContextForTask(snapshot, objective, {
+  return packContextForTask(snapshot, objective, relayedBy, {
     preface: planningSnapshotPreface(snapshot, readBy, noun),
     noun,
     ...(sampledFields ? { sampledFields: true } : {}),
@@ -1868,6 +1885,8 @@ function packPlanningSnapshotMessage(
  * declare a foreign key at all must not be described as one that happens to declare
  * none. The provider is the only thing that knows, and `CLAUDE.md` forbids asking the
  * connection's type here instead.
+ *
+ * `relayedBy` names the provider that relayed the inventory the relations are read from (`providerAuthor`).
  */
 function packRelations(
   snapshot: AgentContextSnapshot,
@@ -1875,6 +1894,7 @@ function packRelations(
   mode: AgentRunMode,
   capabilities: ProviderCapabilities,
   noun: AgentInventoryNoun,
+  relayedBy: string,
 ): string {
   const omissionAdvice = mode === "agent" ? INSPECT_SCHEMA_RELATIONS_OMISSION_ADVICE : undefined;
   return fenceUntrustedContent(
@@ -1891,6 +1911,7 @@ function packRelations(
       label: "schema relations",
       operationId: "agent/context-snapshot",
       reference: snapshot.fingerprint,
+      relayedBy,
     },
   );
 }
@@ -1904,8 +1925,12 @@ function toolsByStep(events: readonly AgentRunEvent[]): ReadonlyMap<string, stri
   return tools;
 }
 
-/** How an outcome the ledger already holds is stated back to the model. */
-function describeSettled(event: AgentSettledStepEvent, toolName: string): string {
+/**
+ * How an outcome the ledger already holds is stated back to the model. `connection` is the drive's own: a recorded
+ * message passes core's scrub of its credential again, because a ledger written before that scrub existed holds the
+ * raw text, and a provider's refusal names the provider that wrote it.
+ */
+function describeSettled(event: AgentSettledStepEvent, toolName: string, connection: DatabaseConnection): string {
   if (event.kind === "tool-completed") {
     const { correlationId, operationId, summary } = event.artifact;
     // The citation form, not merely the id (#350): a resumed run is told about work
@@ -1922,7 +1947,9 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
     return `Step ${event.stepId} (${toolName}) needs a human approval that this run does not have: operation ${refusal.operationId}.`;
   }
   if (refusal.class === "not-sent") {
-    const reason = /[.!?]$/.test(refusal.detail) ? refusal.detail : `${refusal.detail}.`;
+    // One inert line: a ledger an earlier Studio wrote holds this detail with an inventory name as it was.
+    const detail = oneLineForPrompt(refusal.detail);
+    const reason = /[.!?]$/.test(detail) ? detail : `${detail}.`;
     return `Step ${event.stepId} (${toolName}) was refused before the database was reached, so nothing ran: ${reason} That exact call will not be sent again — change the arguments if you still need what it would have produced.`;
   }
   if (refusal.class === "reading-refused") {
@@ -1932,18 +1959,39 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
     // run-loop outcome instead of a refusal.
     return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
-  if (refusal.sent === false) {
+  const message = scrubProviderText(providerTextScrub(connection, "profiled"), refusal.message);
+  if (refusal.sent === false && refusal.refusedBy === "studio") {
     // This server's own sentence, so said in its voice rather than fenced as the database's.
-    const reason = /[.!?]$/.test(refusal.message) ? refusal.message : `${refusal.message}.`;
+    const reason = /[.!?]$/.test(message) ? message : `${message}.`;
     return `Step ${event.stepId} (${toolName}) was refused before it was sent, so the database never saw it: ${reason} Draft a statement that does not do what the refusal names.`;
+  }
+  if (refusal.sent === false) {
+    // The provider's own sentence, or one recorded before the ledger said who refused, which is read the conservative
+    // way: fenced as the provider's text, naming it, with this server's advice after the fence.
+    const author = providerAuthor(connection.type);
+    const fenced = fenceProviderText(message, {
+      label: "refusal before sending",
+      operationId: toolName,
+      reference: refusal.statementFingerprint,
+      author,
+    });
+    return `Step ${event.stepId} (${toolName}) was refused before it was sent, by the ${author}, so the database never saw it:\n${fenced}\nDraft a statement that does not do what the refusal names.`;
+  }
+  if (refusal.refusedBy === "studio") {
+    // Sent, and this server refused its answer by its own row, byte or time budget: this server's sentence, said in its
+    // voice as one inert line rather than fenced as the database's.
+    const detail = oneLineForPrompt(message);
+    const reason = /[.!?]$/.test(detail) ? detail : `${detail}.`;
+    return `Step ${event.stepId} (${toolName}) was sent, and this server refused its answer by its own budget: ${reason} Narrow the statement, or answer from what you have already read.`;
   }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.
-  const fenced = fenceUntrustedContent(refusal.message, {
+  const fenced = fenceUntrustedContent(message, {
     label: "database error",
     operationId: toolName,
     reference: refusal.statementFingerprint,
+    relayedBy: providerAuthor(connection.type),
   });
   return `Step ${event.stepId} (${toolName}) failed at the database.\n${fenced}`;
 }
@@ -1971,7 +2019,7 @@ function describePriorRecommendation(event: Extract<AgentRunEvent, { kind: "reco
  * for a run nobody has driven yet — a fresh run is told nothing about a past it
  * does not have.
  */
-function describePriorProgress(record: AgentRunRecord): string | null {
+function describePriorProgress(record: AgentRunRecord, connection: DatabaseConnection): string | null {
   const tools = toolsByStep(record.events);
   const lines: string[] = [];
 
@@ -1983,7 +2031,7 @@ function describePriorProgress(record: AgentRunRecord): string | null {
     } else if (event.kind === "statement-drafted") {
       lines.push(`Step ${event.stepId}: you drafted ${event.sql} (${event.rationale}).`);
     } else if (event.kind === "tool-completed" || event.kind === "tool-refused") {
-      lines.push(describeSettled(event, tools.get(event.stepId) ?? "a tool"));
+      lines.push(describeSettled(event, tools.get(event.stepId) ?? "a tool", connection));
     } else if (event.kind === "report-composed") {
       lines.push(`A report of ${event.claims.length} claim(s) was composed.`);
     } else if (event.kind === "plan-comparison") {
@@ -2023,6 +2071,7 @@ function describePriorProgress(record: AgentRunRecord): string | null {
             label: "profile already taken",
             operationId: "sql.table.profile",
             reference: event.artifact.correlationId,
+            relayedBy: providerAuthor(connection.type),
           },
         )}`,
       );
@@ -2080,6 +2129,8 @@ function describeThreadContext(record: AgentRunRecord): string | null {
     label: "earlier steps",
     operationId: "agent/thread",
     reference: record.thread.threadId,
+    // Prose a user and a model wrote across runs: no provider relayed it to this server.
+    relayedBy: null,
   });
   return [
     "This run continues a conversation. Its earlier steps are listed below, oldest first, with the most recent step's report.",
@@ -2270,6 +2321,27 @@ interface ModelTurn {
   readonly toolCalls: readonly { readonly toolCallId: string; readonly toolName: string; readonly input: unknown }[];
   /** The run's own deadline cut the call short. */
   readonly aborted: boolean;
+  /*
+    Why the model stopped talking, as the SDK mapped it off the provider's own field.
+
+    Read from the stream rather than off `stream.finishReason` after the fact, for the same
+    reason the whole turn is read part by part: the promise a failed request leaves behind
+    rejects with the SDK's wrapper, which hides the error this repository classifies.
+
+    `length` is the value this field exists for: it is the one where the PROVIDER stopped a model
+    that was still writing. It arrives as `length` on every adapter this repository speaks, from
+    `finish_reason: "length"` on the OpenAI-compatible wire and from Gemini's `MAX_TOKENS`.
+
+    The other values are deliberately not acted on here, and they are not all the same thing, so
+    they must not be dismissed together: `content-filter` is a provider refusal and `error` is a
+    transport ending, and neither is handled by the branch that handles `length`. Both are
+    follow-ups rather than silent decisions, and this comment is where the next reader finds that
+    out. `stop` and `tool-calls` are the model's own ending and need nothing.
+
+    `null` on the abort path only: an abort part means no finish part ever arrived, so there is
+    no value to read and none is invented.
+  */
+  readonly finishReason: FinishReason | null;
   readonly assistantMessages: readonly ModelMessage[];
 }
 
@@ -2543,6 +2615,13 @@ async function takeTurn(
   let text = "";
   let aborted = false;
   let failure: unknown;
+  /*
+    Written by both finish parts, last one winning, and `finish` is the last part of a stream:
+    `finish-step` closes a step and `finish` closes the call. A turn that offers no tools has
+    exactly one step, so reading only the second would be right today, and reading both costs
+    nothing and cannot be wrong if that stops being true.
+  */
+  let finishReason: FinishReason | null = null;
   const toolCalls: { toolCallId: string; toolName: string; input: unknown }[] = [];
 
   try {
@@ -2558,6 +2637,10 @@ async function takeTurn(
       } else if (part.type === "text-delta") text += part.text;
       else if (part.type === "tool-call") {
         toolCalls.push({ toolCallId: part.toolCallId, toolName: part.toolName, input: part.input });
+      } else if (part.type === "finish-step" || part.type === "finish") {
+        // Required by the type, guarded anyway: an adapter that left the field out would otherwise
+        // overwrite a reason an earlier part had already stated with nothing.
+        if (part.finishReason !== undefined) finishReason = part.finishReason;
       } else if (part.type === "error") failure ??= part.error;
       else if (part.type === "abort") aborted = true;
     }
@@ -2566,7 +2649,7 @@ async function takeTurn(
   }
 
   if (failure !== undefined) throw mapAgentModelError(failure, agentModel.provider);
-  if (aborted) return { text, toolCalls: [], aborted: true, assistantMessages: [] };
+  if (aborted) return { text, toolCalls: [], aborted: true, finishReason: null, assistantMessages: [] };
 
   // Only awaited on the path where the request succeeded; the SDK's own assistant
   // message is used rather than a hand-built one, so the transcript this loop
@@ -2584,6 +2667,7 @@ async function takeTurn(
     text,
     toolCalls,
     aborted: false,
+    finishReason,
     assistantMessages: neutraliseAssistantMessages(
       response.messages.filter((message): message is AssistantModelMessage => message.role === "assistant"),
     ),
@@ -2695,6 +2779,7 @@ export function guidanceDelivered(events: readonly AgentRunEvent[]): Readonly<Re
     "report-reminder": 0,
     "plan-statement": 0,
     "turn-cut-off": 0,
+    "model-output-limit": 0,
     "report-reserve": 0,
     "plan-bar": 0,
     "usage-bar": 0,
@@ -2795,6 +2880,7 @@ export async function runInvestigation(
       mode: record.mode,
       workflowType: record.workflowType,
       ...(record.statementLanguage === undefined ? {} : { statementLanguage: record.statementLanguage }),
+      ...(record.engine === undefined ? {} : { engine: record.engine }),
       actor: record.actor,
       // Created here, with the drive's own context, and never taken from the caller: the allowance is
       // what tells this run's reads from another run's on the same cached provider, so two drives may
@@ -2953,9 +3039,20 @@ export async function runInvestigation(
      * rather than by the model.
      */
     let unreadableToolCallAnswers = delivered["tool-call-unreadable"];
+    /**
+     * How many times this RUN has been told a turn was stopped at the endpoint's output limit; see
+     * `AGENT_MODEL_OUTPUT_LIMIT_ASKS`.
+     *
+     * Read off the ledger like the two bounds above, because it is a property of the run and a
+     * second drive has already spent what it spent. Unlike `turnCutOffRetried` below, which is a
+     * flag in this drive and deliberately granted again on a resume: that bound is on one CALL,
+     * and a resume is a second decision to spend on the call. This one is on the sentence, and the
+     * model has already heard it.
+     */
+    let modelOutputLimitAsked = delivered["model-output-limit"];
     /** The call written into the text channel; see `stoppedWithAToolCall`. */
     let toolCallAsTextAnswers = delivered["tool-call-as-text"];
-    const priorProgress = describePriorProgress(record);
+    const priorProgress = describePriorProgress(record, context.connection);
     if (priorProgress !== null) messages.push({ role: "user", content: priorProgress });
 
     // Step ids the ledger already knows, so a draft is recorded once per step and a
@@ -3129,6 +3226,8 @@ export async function runInvestigation(
       // own history. Re-holding a reading that came from the hold is not a no-op either
       // — it moves the connection back to the newest end of the eviction order.
       holdSnapshotForConnection(snapshot, connectionIdentity(context.connection));
+      // What the prompt is shown: a recorded or held snapshot may predate the walk's scrub of its provider sentences.
+      const packed = scrubSnapshotSentences(snapshot, providerTextScrub(context.connection, "profiled"));
       if (operations) {
         // Names and indexes, and NO relations block: the graph is the most expensive
         // part of the packing and the least useful part of it here (#411). The note
@@ -3136,8 +3235,8 @@ export async function runInvestigation(
         messages.push({ role: "user", content: planningOperationsContextNote(engine.noun) });
         messages.push({
           role: "user",
-          content: packOperationsInventory(snapshot, {
-            preface: planningSnapshotPreface(snapshot, readBy, engine.noun),
+          content: packOperationsInventory(packed, providerAuthor(context.connection.type), {
+            preface: planningSnapshotPreface(packed, readBy, engine.noun),
             noun: engine.noun,
           }),
         });
@@ -3145,8 +3244,9 @@ export async function runInvestigation(
         messages.push({
           role: "user",
           content: packPlanningSnapshotMessage(
-            snapshot,
+            packed,
             record.objective,
+            providerAuthor(context.connection.type),
             readBy,
             engine.noun,
             runServer.grounding.sampledFields === true,
@@ -3154,7 +3254,14 @@ export async function runInvestigation(
         });
         messages.push({
           role: "user",
-          content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(
+            packed,
+            record.workflowType,
+            record.mode,
+            context.capabilities,
+            engine.noun,
+            providerAuthor(context.connection.type),
+          ),
         });
       }
 
@@ -3169,7 +3276,7 @@ export async function runInvestigation(
       // #411.
       messages.push({
         role: "user",
-        content: packSchemaStatistics(snapshot, statistics, operations ? { detail: "rows" } : {}),
+        content: packSchemaStatistics(packed, statistics, operations ? { detail: "rows" } : {}),
       });
       grounding = {
         schemaKnown: true,
@@ -3241,12 +3348,14 @@ export async function runInvestigation(
        * capture — the note says what the fenced block under it is for, so the two belong
        * in one place and cannot come apart.
        */
-      const show = (snapshot: AgentContextSnapshot): void => {
+      const show = (held: AgentContextSnapshot): void => {
+        // A recorded snapshot may predate the walk's scrub of its provider sentences, so every packing passes it again.
+        const snapshot = scrubSnapshotSentences(held, providerTextScrub(context.connection, "profiled"));
         if (operations) {
           messages.push({ role: "user", content: operationsContextNote(engine.noun) });
           messages.push({
             role: "user",
-            content: packOperationsInventory(snapshot, {
+            content: packOperationsInventory(snapshot, providerAuthor(context.connection.type), {
               preface: snapshotHandoverText(snapshot.fingerprint),
               noun: engine.noun,
             }),
@@ -3255,12 +3364,25 @@ export async function runInvestigation(
         }
         messages.push({
           role: "user",
-          content: packSnapshotMessage(snapshot, record.objective, engine.noun, languageGrounding),
+          content: packSnapshotMessage(
+            snapshot,
+            record.objective,
+            providerAuthor(context.connection.type),
+            engine.noun,
+            languageGrounding,
+          ),
         });
         if (!languageGrounding.relations) return;
         messages.push({
           role: "user",
-          content: packRelations(snapshot, record.workflowType, record.mode, context.capabilities, engine.noun),
+          content: packRelations(
+            snapshot,
+            record.workflowType,
+            record.mode,
+            context.capabilities,
+            engine.noun,
+            providerAuthor(context.connection.type),
+          ),
         });
       };
 
@@ -3794,6 +3916,68 @@ export async function runInvestigation(
         return conclude("failed", cutByTurnCeiling ? "model-timeout" : "deadline-exceeded");
       }
       /*
+        The other cut, and the one this loop could not see at all: the ENDPOINT stopped the answer
+        because it had grown past what a single response may be.
+
+        `takeTurn` discarded every finish reason, so this turn arrived here shaped exactly like a
+        model that had chosen to stop talking: its text went through the prompted readers, its calls
+        were dispatched, and an agent run with no report ended `model-stopped`, which is the stop
+        reason that means the model had nothing more to say. Measured directly against Ollama
+        0.40.15 with a `num_predict` cap of 64, the final frame of such a turn is
+        `finish_reason: "length"` and nothing in the body says the turn was cut.
+
+        THREE THINGS ARE DELIBERATELY NOT KEPT, and each of them is a defect this branch closes
+        rather than a tidiness:
+
+          - the TEXT is not pushed into the transcript and the run's own `text` is cleared, so no
+            truncated sentence becomes the run's closing statement. The notice says nothing from
+            the turn was kept, and a ledger that filed it would contradict the sentence it said.
+          - the CALLS are not dispatched, whatever the turn carried. A cut lands wherever it lands,
+            and the one place it must never land is inside a statement: a tool call is dropped
+            whether its arguments parsed or not, because "the call was complete" and "the call was
+            the last thing written before the cut" cannot be told apart from here. This is also why
+            the branch sits BEFORE the prompted readers: `readPromptedAction` and
+            `readPromptedPayload` recover a call out of the prose, and recovering one out of prose
+            that was cut mid-sentence is the same hazard through the other door.
+          - no assistant message is pushed, so the transcript never carries a `tool_call` with no
+            result for it, which is a shape a real endpoint answers with a 400 and which would
+            wedge every later turn of the run.
+
+        Agent mode only, and for the reason `turn-cut-off` is: the notice names `compose_report`,
+        which a planning run does not hold. A cut PLANNING turn needs nothing from this branch
+        either. Its prose is its deliverable, the plan verifier looks for a statement in there, and
+        a plan cut mid-block is judged as having drafted none rather than read as complete.
+
+        NOT every cut arrives as `length`, and the measured counterexample is worth keeping here
+        because it is the scope this branch does not claim. On `qwen2.5:1.5b` the same cap, set to
+        56, 64 and 72 tokens, cut a TOOL CALL inside its arguments and the frame reported
+        `finish_reason: "tool_calls"` with `"arguments":"{\\"` in it. Nothing here sees that shape:
+        unreadable arguments reach `takeTurn` as a parse failure and are answered by
+        `AGENT_UNREADABLE_TOOL_CALL_ANSWERS`, which is the path that sentence was written for. A
+        provider that reports a cut tool call honestly says `length`, and that case is the one this
+        branch is: the calls are dropped before anything runs them.
+      */
+      if (turn.finishReason === "length" && record.mode === "agent") {
+        text = "";
+        if (
+          modelOutputLimitAsked < AGENT_MODEL_OUTPUT_LIMIT_ASKS &&
+          turns < maxTurns &&
+          resources.deadline.remainingMs() > AGENT_REPORT_RESERVE_MS
+        ) {
+          modelOutputLimitAsked += 1;
+          messages.push({ role: "user", content: notice(BASELINE_NOTICES.modelOutputLimit) });
+          await issueGuidance("model-output-limit");
+          return null;
+        }
+        /*
+          The run has already been told, or has no turn left to act on the telling. Ended with its
+          own stop reason rather than left to fall through to `model-stopped`: the run is not
+          quiet, it produced an answer the server would not carry, and the user reading the ending
+          is owed that difference.
+        */
+        return conclude("failed", "model-output-limit");
+      }
+      /*
         On the prompted path the call arrives as a JSON object inside ordinary text, so it is
         read out here and from here on the turn is indistinguishable from a native one.
 
@@ -3965,10 +4149,12 @@ export async function runInvestigation(
           // equivalence is the thing a future set would break silently, so it is asserted
           // rather than relied on.
           // `operations` is the one agent set built on a different four, because the
-          // read-class tools need `queryReadOnly`, which only the engines
-          // `AGENT_EXECUTION_ENGINES` (`src/lib/agent/engine-support.ts`) names implement -
+          // read-class tools send statements, which only the engines
+          // `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) names may do -
           // named rather than counted here, because the count is what went stale: the rule
-          // that decides is the factory's probe of that method, not a number. Told to
+          // that decides is the review record that the factory and the core read path read
+          // (`assertStatementsReviewed`), with the provider's `queryReadOnly` a second
+          // precondition, not a number. Told to
           // call a tool it has not got, a run calls it, is answered "there is no such tool",
           // and spends the very turn this retry bought: the #350/#356 defect, paid for once.
           holdsTool("inspect_schema") &&
@@ -4115,6 +4301,7 @@ export async function runInvestigation(
               // completed step under a plan-estimate operation, not an event kind of its own.
               plans: inspectedPlans(sofar.events),
               readingsHeld: sofar.events.filter((event) => event.kind === "tool-completed").length,
+              readings: agentReadingsOf(record.engine),
               // Asked of the same function `present_answer` asks, so "presentable" cannot
               // drift between the notice and the tool it points at.
               holdsPresentable: presentableArtifact(sofar.events) !== undefined,
@@ -4415,7 +4602,7 @@ async function handleCall(input: {
   if (result.kind === "replayed") {
     return {
       kind: "answered",
-      text: `This exact call was already made in this run. ${describeSettled(result.event, name)}`,
+      text: `This exact call was already made in this run. ${describeSettled(result.event, name, context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, name) };
@@ -4489,7 +4676,7 @@ export async function profileTable(
     // a statement to learn what the run already knows.
     return {
       kind: "answered",
-      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table")}`,
+      text: `That exact profile was already taken in this run. ${describeSettled(result.event, "profile_table", context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, "profile_table") };
@@ -4547,7 +4734,7 @@ async function readEvidence(
   if (result.kind === "replayed") {
     return {
       kind: "answered",
-      text: `This exact call was already made in this run. ${describeSettled(result.event, tool)}`,
+      text: `This exact call was already made in this run. ${describeSettled(result.event, tool, context.connection)}`,
     };
   }
   return { kind: "answered", text: indeterminateText(result.stepId, tool) };

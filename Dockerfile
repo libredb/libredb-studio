@@ -9,7 +9,14 @@
 FROM oven/bun:1.4.4 AS deps
 WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y python3 make g++ --no-install-recommends && rm -rf /var/lib/apt/lists/*
-COPY package.json bun.lock ./
+# patches/ holds the driver patches package.json's patchedDependencies names; bun install applies
+# them and refuses to run without them (docs/TOOLCHAIN.md, "Patched dependencies").
+# bunfig.toml carries the hoisted linker, and each workspace package's package.json gets its own
+# COPY line before the install; without either the install still exits 0, in another layout or
+# without the package (packages/README.md, "Docker").
+COPY package.json bun.lock bunfig.toml ./
+COPY patches ./patches
+COPY packages/provider-sdk/package.json ./packages/provider-sdk/
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64.
@@ -28,7 +35,7 @@ RUN bun install --frozen-lockfile
 # between whichever ones are present. Every stage here is glibc, so the glibc
 # package is the one installed and the one loaded; keeping the stages on the
 # same base is what makes that hold.
-FROM node:26.13.0-trixie-slim AS builder
+FROM node:26.13.1-trixie-slim AS builder
 WORKDIR /usr/src/app
 COPY --from=deps /usr/src/app/node_modules ./node_modules
 COPY . .
@@ -62,8 +69,8 @@ RUN node scripts/copy-monaco.mjs && npx next build
 # to run against anything that is not an assembled payload, and the asserts below
 # are what turn an over-eager future entry into a failed build rather than a
 # provider failing at runtime. `seed-assets/` is not on the list and is COPYed
-# explicitly below in any case; nothing else under /app is read at runtime
-# (src/lib/seed/sqlite-sample.ts is the only `process.cwd()` reader).
+# explicitly below in any case, where SEED_ASSETS_DIR names it for the server;
+# nothing else under /app is read at runtime.
 #
 # HERE rather than in the runner: an `rm` after a COPY deletes the files in a
 # later layer while leaving every byte of them in the layer the COPY created.
@@ -131,13 +138,14 @@ RUN set -eux; \
     test -f .next/standalone/server.js; \
     test -d .next/standalone/node_modules; \
     test ! -e .next/standalone/src; \
+    test ! -e .next/standalone/packages; \
     test ! -e .next/standalone/Dockerfile; \
     echo "--- native payload surviving the prune ---"; \
     find node_modules .next/standalone/node_modules \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) | sort | xargs -r ls -lh | awk '{print $5, $9}'
 
 # Production image - use Node.js slim for lower memory footprint
 # trixie-slim: glibc must match the stage where native modules were built (see builder).
-FROM node:26.13.0-trixie-slim AS runner
+FROM node:26.13.1-trixie-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -158,6 +166,12 @@ ENV NODE_OPTIONS="--max-old-space-size=384"
 # volume on — without that volume the run history still dies with the container,
 # which is the documented trade, not a silent one.
 ENV WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow
+
+# Studio's shutdown handler owns the exit on SIGTERM and SIGINT: it closes the
+# HTTP server, waits for the requests in flight, inserts the queued query events
+# and closes the providers before it exits (docs/DISTRIBUTION.md, "Stopping the
+# server"). Set it to the empty string to leave the exit to Next.js's handler.
+ENV NEXT_MANUAL_SIG_HANDLE=true
 
 COPY --from=builder /usr/src/app/public ./public
 
@@ -224,11 +238,12 @@ COPY --from=builder /usr/src/app/node_modules/oracledb ./node_modules/oracledb
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
-# Vendored sample database templates (the SQLite employees sample). Read at
-# runtime via fs relative to process.cwd() (/app), so output file tracing
-# never sees them — copy explicitly (keep scripts/build-standalone-payload.sh
-# in sync).
+# The built-in samples' committed assets (src/lib/seed/samples.ts). Output file
+# tracing never sees them, so they are copied explicitly (keep
+# scripts/build-standalone-payload.sh in sync), and SEED_ASSETS_DIR names them
+# for the server, so finding them does not depend on the working directory.
 COPY --from=builder /usr/src/app/seed-assets ./seed-assets
+ENV SEED_ASSETS_DIR=/app/seed-assets
 
 # Create non-root user for security
 #

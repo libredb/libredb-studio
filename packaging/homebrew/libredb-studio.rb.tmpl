@@ -80,6 +80,18 @@ class LibredbStudio < Formula
       if [ -z "${STORAGE_SQLITE_PATH:-}" ]; then
         export STORAGE_SQLITE_PATH="#{var}/libredb-studio/libredb-storage.db"
       fi
+      # The built-in samples' assets ship in the payload (libexec/seed-assets);
+      # the server reads them from SEED_ASSETS_DIR.
+      if [ -z "${SEED_ASSETS_DIR:-}" ]; then
+        export SEED_ASSETS_DIR="#{libexec}/seed-assets"
+      fi
+      # Studio's shutdown handler ends the server on SIGTERM and SIGINT
+      # (docs/DISTRIBUTION.md, "Stopping the server"), since the runtime
+      # below is Node.js. Presence, not emptiness: an operator's empty value
+      # leaves the exit to Next.js's handler.
+      if [ -z "${NEXT_MANUAL_SIG_HANDLE+set}" ]; then
+        export NEXT_MANUAL_SIG_HANDLE=true
+      fi
       exec "#{Formula["node@24"].opt_bin}/node" "#{libexec}/server.js" "$@"
     SCRIPT
     (bin/"libredb-studio").chmod 0755
@@ -98,6 +110,9 @@ class LibredbStudio < Formula
     run [opt_bin/"libredb-studio"]
     keep_alive false
     working_dir var
+    # Studio's shutdown takes up to 25 s (docs/DISTRIBUTION.md, "Stopping the
+    # server"); launchd's own ExitTimeOut is 20 s. Needs Homebrew 6.0.13 or later.
+    stop_timeout 30
     # HOSTNAME keeps the service loopback-only (local-first); run the binary
     # manually with LIBREDB_BIND=0.0.0.0 or use a reverse proxy to expose it.
     environment_variables STORAGE_PROVIDER: "sqlite",

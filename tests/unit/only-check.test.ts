@@ -267,6 +267,17 @@ describe("isScannedFile", () => {
     expect(isScannedFile("vscode-extension/esbuild.mjs")).toBe(false);
   });
 
+  test("scans a workspace package's tests", () => {
+    expect(isScannedFile("packages/planted/tests/a.test.ts")).toBe(true);
+    expect(isScannedFile("packages/planted/tests/unit/b.test.tsx")).toBe(true);
+  });
+
+  test("does not scan a package's src", () => {
+    expect(isScannedFile("packages/planted/src/a.test.ts")).toBe(false);
+    expect(isScannedFile("packages/planted/src/index.ts")).toBe(false);
+    expect(isScannedFile("packages/README.md")).toBe(false);
+  });
+
   test("reads its own test, which needs no carve-out to be scanned", () => {
     // This file holds the fixtures the gate is tested with and is read like every other
     // one: the focus is assembled from pieces, so no line here matches the pattern the
@@ -284,6 +295,33 @@ describe("runOnlyCheck", () => {
     expect(code).toBe(1);
     expect(lines.join("\n")).toContain("tests/unit/only.test.ts");
     expect(lines.join("\n")).toContain("FAIL");
+  });
+
+  test("a focused test in a workspace package fails the check and is named", () => {
+    const root = repo({
+      "tests/unit/clean.test.ts": CLEAN_SOURCE,
+      "packages/planted/package.json": "{}\n",
+      "packages/planted/tests/only.test.ts": FOCUSED_SOURCE,
+    });
+
+    const { code, lines } = runOnlyCheck(root);
+
+    expect(code).toBe(1);
+    expect(lines.join("\n")).toContain("packages/planted/tests/only.test.ts:4:");
+  });
+
+  test("a clean workspace package passes, and the verdict names package tests among what it read", () => {
+    const root = repo({
+      "packages/planted/package.json": "{}\n",
+      "packages/planted/tests/clean.test.ts": CLEAN_SOURCE,
+    });
+
+    const { code, lines } = runOnlyCheck(root);
+
+    expect(code).toBe(0);
+    expect(lines.join("\n")).toContain(
+      "1 tracked file(s) under tests/, e2e/, vscode-extension/test/, packages/*/tests/",
+    );
   });
 
   test("the control fixture passes, so a red run is about the `.only` and nothing else", () => {

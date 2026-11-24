@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { type FirestoreStub, startFirestoreStub } from "./helpers/firestore-stub";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The Firestore provider in a browser, against a stub that replays the emulator captures of tests/fixtures/firestore/
@@ -73,8 +74,7 @@ test("connects to the stub with no credential, then browses the tree, the Keys p
   await page.waitForURL(/\/admin/);
   await page.goto("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10_000 });
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   await dialog.getByRole("button", { name: "Firestore", exact: true }).click();

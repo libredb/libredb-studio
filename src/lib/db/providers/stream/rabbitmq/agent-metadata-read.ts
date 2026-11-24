@@ -15,8 +15,8 @@
  * stream's own end (no message within the idle window) refuses the answer instead of answering the messages read so
  * far, the 541 conversion close included.
  */
-import { QueryError, TimeoutError } from "@/lib/db/errors";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal, TimeoutError } from "@/lib/db/errors";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -75,26 +75,34 @@ export const RABBITMQ_AGENT_STOP_SENTENCES = {
     `The broker closed the read with 541 INTERNAL_ERROR at a message it cannot convert to AMQP 0-9-1, after ${delivered} ${delivered === 1 ? "message" : "messages"}, ${REFUSED_NOT_CUT}; read a range that ends before that message, starting from an offset you have read.`,
 } as const;
 
-/** The refusal of a stop other than the request's limit and the stream's own end; undefined for those two. */
-function stopRefusal(stop: StopReason, delivered: number, deadlineMs: number): string | undefined {
+/**
+ * The refusal of a stop other than the request's limit and the stream's own end; undefined for those two. The
+ * deadline is the time budget's refusal; every other stop is Studio's own bound or the broker's end of the read.
+ */
+function stopRefusal(
+  stop: StopReason,
+  delivered: number,
+  deadlineMs: number,
+  statement: string,
+): QueryError | undefined {
   switch (stop.kind) {
     case "limit":
     case "idle":
       return undefined;
     case "deadline":
-      return RABBITMQ_AGENT_STOP_SENTENCES.deadline(deadlineMs);
+      return new TimeBudgetRefusal(RABBITMQ_AGENT_STOP_SENTENCES.deadline(deadlineMs), RABBITMQ_TYPE, statement);
     case "budget":
-      return RABBITMQ_AGENT_STOP_SENTENCES.budget;
+      return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.budget, RABBITMQ_TYPE, statement);
     case "wire":
     case "wire-oversize":
-      return RABBITMQ_AGENT_STOP_SENTENCES.wire;
+      return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.wire, RABBITMQ_TYPE, statement);
     case "cancel":
-      return RABBITMQ_AGENT_STOP_SENTENCES.cancel;
+      return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.cancel, RABBITMQ_TYPE, statement);
     case "server-cancel":
     case "closed":
-      return RABBITMQ_AGENT_STOP_SENTENCES.ended;
+      return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.ended, RABBITMQ_TYPE, statement);
     case "conversion":
-      return RABBITMQ_AGENT_STOP_SENTENCES.conversion(delivered);
+      return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.conversion(delivered), RABBITMQ_TYPE, statement);
   }
 }
 
@@ -110,12 +118,12 @@ export function rabbitmqAgentResult(
   statement: string,
 ): QueryResult {
   const { messages, stop } = read.outcome;
-  const refusal = stopRefusal(stop, messages.length, read.deadlineMs);
-  if (refusal !== undefined) throw new QueryError(refusal, RABBITMQ_TYPE, statement);
+  const refusal = stopRefusal(stop, messages.length, read.deadlineMs, statement);
+  if (refusal !== undefined) throw refusal;
   const projected = projectMetadata(STREAM_MESSAGES, messages);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), RABBITMQ_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), RABBITMQ_TYPE, statement);
   }
   const fromNext = request.from.kind === "keyword" && request.from.value === "next";
   const idle =
@@ -156,7 +164,7 @@ export function rabbitmqAgentFailure(
     return new QueryError(rabbitmqAgentUnreadable(request.vhost, request.stream), RABBITMQ_TYPE, statement);
   }
   if (error instanceof TimeoutError) {
-    return new QueryError(RABBITMQ_AGENT_STOP_SENTENCES.timeout(deadlineMs), RABBITMQ_TYPE, statement);
+    return new TimeBudgetRefusal(RABBITMQ_AGENT_STOP_SENTENCES.timeout(deadlineMs), RABBITMQ_TYPE, statement);
   }
   return undefined;
 }

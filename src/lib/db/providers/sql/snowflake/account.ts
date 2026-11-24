@@ -6,9 +6,11 @@
  * (SF-025): an account URL with a port other than 443, a path, a query, a fragment or userinfo, an IPv4 literal as the
  * identifier, and a label or host a DNS name cannot hold. Every refusal is the Account format sentence, raised before
  * any socket, and never repeats the text, since a pasted URL can carry a token. `httpOrigin` then holds the host to
- * the shared host rules, which the reading already met.
+ * the shared host rules, which the reading already met, and checks it with the egress decision the provider was built
+ * with, which refuses no host the reading admits, since the reading admits no address literal.
  */
 import { type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
+import type { EgressDecision } from "@/lib/db/types";
 import { checkSnowflakeAccount, SNOWFLAKE_FIELD_SENTENCES } from "./account-host";
 import { SnowflakeError } from "./errors";
 
@@ -20,10 +22,10 @@ export interface SnowflakeEndpoint {
 }
 
 /** The origin, host and account claim of the Account field, or a `config` refusal before any socket. */
-export function snowflakeEndpoint(account: unknown): SnowflakeEndpoint {
+export function snowflakeEndpoint(account: unknown, egress: EgressDecision): SnowflakeEndpoint {
   if (typeof account !== "string") throw new SnowflakeError("config", SNOWFLAKE_FIELD_SENTENCES.accountEmpty);
   const reading = checkSnowflakeAccount(account);
   if (!reading.ok) throw new SnowflakeError("config", reading.refusal);
   const { host, accountClaim } = reading;
-  return { origin: httpOrigin("https", host, 443), host, accountClaim };
+  return { origin: httpOrigin("https", host, 443, egress), host, accountClaim };
 }

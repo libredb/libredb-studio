@@ -46,7 +46,6 @@ import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/cl
 import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
 import { openLibrarySession } from "@/lib/db/providers/industrial/opcua/library";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -195,10 +194,7 @@ function connection(port: number, who: Who, roots: readonly string[] | undefined
  */
 async function agentHandle(port: number, who: Who, roots: readonly string[], requests: string[]) {
   const root = pkiRoot();
-  const open = () =>
-    new OpcuaProvider(connection(port, who, roots), {}, AGENT, recordingOpener(requests), {
-      [OPCUA_PKI_ROOT_ENV]: root,
-    });
+  const open = () => new OpcuaProvider(connection(port, who, roots), {}, AGENT, recordingOpener(requests), root);
   try {
     const provider = open();
     await provider.connect();
@@ -415,7 +411,7 @@ try {
         opened += 1;
         throw new Error("a rootless statement profile reached the opener");
       },
-      { [OPCUA_PKI_ROOT_ENV]: pkiRoot() },
+      pkiRoot(),
     );
     const refused = await rootless.connect().then(
       () => "opened",

@@ -8,6 +8,8 @@ import { DatabaseType } from "@/lib/types";
 import type { DetailedObject } from "@/lib/db/detailed-object";
 import { quoteLiteral, temporalLiteral } from "@/lib/sql/values";
 import { sqlWritingFor } from "@/lib/db/sql-writing";
+import { connectionTypeRefusal } from "@/lib/db/type-id";
+import { unavailableConnectionNotice } from "@/lib/connection-availability";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { objectPathLabel, pathKey } from "@/lib/db/object-path";
 import { quoteIdentifier, quoteObjectPath, requestAddress } from "@/lib/query-generators";
@@ -22,11 +24,18 @@ interface TestDataGeneratorProps {
    */
   tablePath: readonly string[];
   tableSchema: DetailedObject | null;
+  /**
+   * The type id of the connection the rows are written for, as a plain string because this dialog is published.
+   * A value that is not exactly a type id, the empty string and `null` included, is refused by name (FND-1): the
+   * dialog draws the Connection unavailable notice in place of the statement and offers neither Copy nor Execute.
+   * Omitted beside `capabilities`, it is refused the same way, with a sentence that says the call needs the
+   * connection's type; omitted with no `capabilities` either, the statement is written as with no connection open.
+   */
   databaseType?: string;
   /**
-   * The connected provider's declaration. It replaced a bare `queryLanguage` string because
-   * the statement now needs the dialect's QUOTING as well as its language, and both come
-   * from the same declaration rather than from two props that can disagree.
+   * The connected provider's declaration, handed with its `databaseType`. It replaced a bare `queryLanguage` string
+   * because the statement now needs the dialect's QUOTING as well as its language: the language and a declared
+   * `identifierQuoting` come from this declaration, and an SQL engine's own quoting from `databaseType`.
    */
   capabilities?: ProviderCapabilities;
   onExecuteQuery: (query: string) => void;
@@ -387,17 +396,18 @@ export function TestDataGenerator({
   // The comparable spelling of the address, for the memo's dependency list: an array prop is
   // a new identity on every render and would defeat the memo.
   const tablePathKey = pathKey(tablePath);
-  /*
-    What the statement names. With a declaration it is the address quoted per segment, the
-    same rule and the same function the query generators use, so a name containing a dot
-    cannot become a qualifier. Without one - `provider-meta` has not answered yet - it is the
-    dotted spelling, which is what `useTabManager` writes in the same position for the same
-    reason: a qualified address is valid wherever the bare label is, and a bare label here
-    would write rows into another container's table.
-  */
-  const target = capabilities === undefined ? objectPathLabel(tablePath) : quoteObjectPath(tablePath, capabilities);
+  // The declaration's content, for the same list: the statement holds random values, so a host that builds an
+  // equal declaration in a new object on each render would otherwise regenerate every row. Keyed on its JSON, as
+  // `CreateTableModal` keys its draft on the spec's JSON: a declaration arrives as JSON.
+  const capabilitiesKey = capabilities === undefined ? undefined : JSON.stringify(capabilities);
   const [rowCount, setRowCount] = useState(10);
   const [refreshKey, setRefreshKey] = useState(0);
+  // Why `databaseType` is refused, or null for a type id and for no connection at all (FND-1): capabilities without a
+  // type are refused too. The statement checks it before any writing rule is read, so a refused value never reaches a
+  // per-engine table, and a declaration never reaches a generator without its type.
+  const typeRefusal = connectionTypeRefusal(databaseType, capabilities);
+  // This dialog takes no connection name, so the notice names "This connection".
+  const refusalNotice = typeRefusal === null ? null : unavailableConnectionNotice({}, typeRefusal.sentence);
 
   const columnConfigs = useMemo(() => {
     if (!tableSchema?.columns) return [];
@@ -421,7 +431,7 @@ export function TestDataGenerator({
   const foreignKeyNames = columnConfigs.filter((c) => c.faker.generator === "foreignKey").map((c) => c.name);
 
   const generatedQuery = useMemo(() => {
-    if (!tableSchema?.columns || columnConfigs.length === 0) return "";
+    if (typeRefusal !== null || !tableSchema?.columns || columnConfigs.length === 0) return "";
 
     // Filter out the columns the engine or the user fills in
     const cols = columnConfigs.filter((c) => !LEFT_OUT_GENERATORS.has(c.faker.generator));
@@ -444,9 +454,7 @@ export function TestDataGenerator({
       // The request is the engine's own, written by its sql-writing row.
       const insertDocuments = sqlWritingFor(databaseType).insertDocuments;
       if (insertDocuments === undefined) {
-        throw new Error(
-          `Cannot generate test data: the ${databaseType ?? "unconnected"} writing row declares no document insert.`,
-        );
+        throw new Error(`Cannot generate test data: the ${databaseType} writing row declares no document insert.`);
       }
       // The inferred schema contains parent paths alongside their dotted children.
       // Generate values for leaves and rebuild those paths as nested objects.
@@ -471,12 +479,26 @@ export function TestDataGenerator({
     }
 
     // SQL INSERT
+    // A type id here, or no type and no declaration: a refused value returned first, so no generator reads it.
+    const connectionType = databaseType as DatabaseType | undefined;
+    /*
+      What the statement names. With a declaration it is the address quoted per segment, the
+      same rule and the same function the query generators use, so a name containing a dot
+      cannot become a qualifier. Without one - `provider-meta` has not answered yet - it is the
+      dotted spelling, which is what `useTabManager` writes in the same position for the same
+      reason: a qualified address is valid wherever the bare label is, and a bare label here
+      would write rows into another container's table.
+    */
+    const target =
+      capabilities === undefined
+        ? objectPathLabel(tablePath)
+        : quoteObjectPath(tablePath, connectionType, capabilities);
     // Quoted by the CONNECTED engine's rule, like the target above: a hardcoded `"`
     // made the two halves of one statement speak different dialects, and MySQL reads
     // `"email"` as a string literal rather than a column, so the INSERT did not parse.
     // The fallback is the old spelling, for a caller that has no declaration to read.
     const colNames = cols
-      .map((c) => (capabilities === undefined ? `"${c.name}"` : quoteIdentifier(c.name, capabilities)))
+      .map((c) => (capabilities === undefined ? `"${c.name}"` : quoteIdentifier(c.name, connectionType, capabilities)))
       .join(", ");
     const rows = Array.from({ length: rowCount }, (_, i) => {
       const values = cols.map((col) => {
@@ -524,7 +546,17 @@ export function TestDataGenerator({
     }
     return `INSERT INTO ${target} (${colNames})\nVALUES\n  ${rows.join(",\n  ")};`;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tableSchema, columnConfigs, rowCount, queryLanguage, target, tablePathKey, databaseType, refreshKey]);
+  }, [
+    tableSchema,
+    columnConfigs,
+    rowCount,
+    queryLanguage,
+    capabilitiesKey,
+    tablePathKey,
+    databaseType,
+    refreshKey,
+    typeRefusal,
+  ]);
 
   if (!isOpen) return null;
 
@@ -606,9 +638,18 @@ export function TestDataGenerator({
 
         {/* Preview */}
         <div className="flex-1 overflow-auto relative">
-          <pre className="p-5 text-xs font-mono text-hue-blue-alt whitespace-pre-wrap leading-relaxed">
-            {generatedQuery}
-          </pre>
+          {refusalNotice === null ? (
+            <pre className="p-5 text-xs font-mono text-hue-blue-alt whitespace-pre-wrap leading-relaxed">
+              {generatedQuery}
+            </pre>
+          ) : (
+            <div className="p-5">
+              <span className="text-xs font-medium text-warning">{refusalNotice.title}</span>
+              <p data-testid="test-data-refusal" className="text-xs text-fg-tertiary mt-0.5 break-words">
+                {refusalNotice.description}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Actions */}
@@ -621,22 +662,26 @@ export function TestDataGenerator({
               `CopyButton` rather than a local `copied` flag (B43): the flag flipped in the
               same statement that started the write, which reads "Copied!" over an empty
               clipboard wherever `navigator.clipboard` is absent — plain HTTP off loopback,
-              which several distribution channels are.
+              which several distribution channels are. A refused type offers neither: there is no statement.
             */}
-            <CopyButton
-              text={generatedQuery}
-              testId="test-data-copy"
-              className="gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-xs font-medium hover:bg-fill-strong"
-            />
-            <button
-              onClick={() => {
-                onExecuteQuery(generatedQuery);
-                onClose();
-              }}
-              className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-warning-solid hover:bg-warning-solid-hover text-white text-xs font-medium transition-colors"
-            >
-              <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Execute
-            </button>
+            {refusalNotice === null && (
+              <>
+                <CopyButton
+                  text={generatedQuery}
+                  testId="test-data-copy"
+                  className="gap-1.5 px-3 py-1.5 rounded-lg bg-fill text-xs font-medium hover:bg-fill-strong"
+                />
+                <button
+                  onClick={() => {
+                    onExecuteQuery(generatedQuery);
+                    onClose();
+                  }}
+                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-warning-solid hover:bg-warning-solid-hover text-white text-xs font-medium transition-colors"
+                >
+                  <Play strokeWidth={1.5} className="w-3 h-3 fill-current" /> Execute
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>

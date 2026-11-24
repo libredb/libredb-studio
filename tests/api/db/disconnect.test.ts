@@ -14,7 +14,6 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { providerCacheKey, providerOwner } from "@/lib/db/provider-cache-key";
@@ -41,7 +40,6 @@ mock.module("@/lib/db/factory", () => ({
   removeProvider: mockRemoveProvider,
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  registerShutdownHandlers: mock(() => {}),
 }));
 
 mock.module("@/lib/db", () => ({
@@ -50,7 +48,6 @@ mock.module("@/lib/db", () => ({
   removeProvider: mockRemoveProvider,
   clearProviderCache: mock(async () => {}),
   getProviderCacheStats: mock(() => ({ size: 0, connections: [] })),
-  registerShutdownHandlers: mock(() => {}),
   QueryError,
   TimeoutError,
   DatabaseError,
@@ -63,7 +60,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 

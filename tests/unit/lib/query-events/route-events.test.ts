@@ -17,7 +17,8 @@ mock.module("@/lib/query-events/sink", () => ({
 const { queryEventRequest, recordExecutedUnit, recordRefusedRequest, requestedConnectionId } = await import(
   "@/lib/query-events/route-events"
 );
-const { QueryCancelledError } = await import("@/lib/db/errors");
+const { QueryCancelledError, QueryError } = await import("@/lib/db/errors");
+const { withheldErrorMessage } = await import("@/lib/db/operations/provider-text");
 const { mapDatabaseError } = await import("@/lib/db/map-database-error");
 const { queryEventStart } = await import("@/lib/query-events/build");
 
@@ -108,6 +109,46 @@ describe("recordExecutedUnit", () => {
       ended: { error: new QueryCancelledError("The query was cancelled.") },
     });
     expect(recorded[0].status).toBe("cancelled");
+  });
+});
+
+describe("recordExecutedUnit with a failure that holds the connection's credential", () => {
+  const password = crypto.randomUUID();
+  const held = { ...connection, password };
+
+  test("a failure whose text holds the connection's credential records the withheld sentence and its API code, never its SQLSTATE", () => {
+    const started = queryEventStart();
+    const inMessage = new QueryError(`syntax error near ${password}`, "postgres");
+    inMessage.sqlstate = "42601";
+    recordExecutedUnit(request, { connection: held, statement: "SELECT 1", started, ended: { error: inMessage } });
+    expect(recorded[0]).toMatchObject({
+      status: "error",
+      errorCode: "QUERY_ERROR",
+      errorMessage: withheldErrorMessage("QueryError"),
+    });
+    recordExecutedUnit(request, {
+      connection: held,
+      statement: "SELECT 1",
+      started,
+      ended: { error: `failed for ${password}` },
+    });
+    expect(recorded[1]).toMatchObject({ status: "error", errorMessage: withheldErrorMessage("thrown string") });
+    expect(JSON.stringify(recorded)).not.toContain(password);
+  });
+
+  test("a cancel whose text holds the credential still records status cancelled", () => {
+    recordExecutedUnit(request, {
+      connection: held,
+      statement: "SELECT 1",
+      started: queryEventStart(),
+      ended: { error: new QueryCancelledError(`cancelled ${password}`, "postgres") },
+    });
+    expect(recorded[0]).toMatchObject({
+      status: "cancelled",
+      errorCode: "QUERY_CANCELLED",
+      errorMessage: withheldErrorMessage("QueryCancelledError"),
+    });
+    expect(JSON.stringify(recorded)).not.toContain(password);
   });
 });
 

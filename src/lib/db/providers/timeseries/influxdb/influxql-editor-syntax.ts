@@ -4,7 +4,7 @@ import {
   type InfluxqlLineState,
   type InfluxqlTokenKind,
   tokenizeInfluxqlLine,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+} from "@/lib/languages/influxql/lexer";
 
 /**
  * Monaco language for InfluxQL, the editor text of an InfluxDB (InfluxQL) connection (InfluxDB spec 6.7, I12).

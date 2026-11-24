@@ -16,13 +16,14 @@
 | **Status** | Implemented & shipped |
 | **Database type id** | `cassandra` |
 | **Family** | SQL (`src/lib/db/providers/sql/cassandra/`) |
-| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0 — Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
+| **Driver** | [`cassandra-driver`](https://www.npmjs.com/package/cassandra-driver) 4.10.0, Apache-2.0, pure JS (no `binding.gyp`, no `.node`, no postinstall) ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)); installed with one patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver), [§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)) |
 | **Query language** | `sql` — CQL is SQL-*shaped*: no JOIN, no subquery, no OFFSET, no EXPLAIN ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | **Default port** | `9042` — the native protocol. Thrift (9160) is gone from 4.0 onwards; 7000/7001 are internode and 7199 is JMX |
 | **Connection pooling** | The driver's own, one session per connection: core 1 connection per local host, 2048 requests in flight per connection |
 | **Connection string** | Not supported — no URI convention carries `localDataCenter`, which the driver requires ([§4.2](#42-there-is-no-connection-string-and-why-that-is-not-fixable-by-inventing-one)) |
 | **EXPLAIN** | **None.** `EXPLAIN` is not in the grammar at all ([§5.6](#56-there-is-no-explain-and-tracing-is-not-a-plan)) |
 | **Write reach** | open: the editor and Import send `INSERT`, `UPDATE`, `DELETE` (all upserts, all primary-key-restricted), `TRUNCATE` and `BATCH` |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `session.execute()`, the call that sends the statement, so no failure can be shown to come before the send |
 | **Transactions** | None. Lightweight transactions (`IF NOT EXISTS`, `IF <condition>`) are per-partition compare-and-set, not sessions |
 | **Maintenance** | **None** — every operation is a `nodetool`/JMX action on a node ([§8](#8-maintenance)) |
 | **Query cancellation** | **None** — the protocol has no cancel frame and `cancelQuery` is deliberately not implemented ([§3.7](#37-there-is-no-cancellation-so-none-is-offered)) |
@@ -119,7 +120,7 @@ can correct it.
 | `src/lib/db/providers/sql/cassandra/sql-grammar.ts` | `CASSANDRA_GRAMMAR`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |
 | `src/lib/db/providers/sql/cassandra/sql-writing.ts` | `literalStandard` literal escaping: doubling, backslash is data (measured) |
 | `src/lib/db/compatibility.ts` | `SHIPPED.cassandra` |
-| `src/lib/seed/types.ts` | The seed enum and `localDataCenter` |
+| `src/lib/seed/types.ts` | `localDataCenter` |
 | `next.config.ts`, `tsup.config.ts` | `cassandra-driver` external ([§3.1](#31-a-driver-that-costs-no-distribution-channel-anything)) |
 | `database-compose.yml` | `cassandra:5.0.9`, port 9042, `nodetool status` healthcheck |
 
@@ -166,7 +167,7 @@ absence and zero are different facts: a zero is a measurement, and the Storage t
 formatted a `0 B` total and divided a 0.0% breakdown out of it. With the field absent the tab's two
 size cards read `N/A`, carry no percentage, and the breakdown is replaced by *"No storage size
 information available."* A provider that publishes a real `0` (Trino, Druid) has measured one and is
-unaffected. The **table, index and storage panels report nothing** — and for the table panel that
+unaffected. The **table, index and storage reads report nothing**, and for the table panel that
 became true only when the same rule was applied there. Measured 2026-08-21 in Chrome against this
 node, the monitoring **Tables** tab still summarised the empty `getTableStats()` as *Tables* `0` over
 *0 rows*, *Size* `0 B` over *Total*, and *Vacuum* `0` over *OK*, in the very frame where the Overview
@@ -455,7 +456,70 @@ CQL has no statement that opens one.
 The provider holds a long-lived `Client` session ([`driver-transport.ts`](../../src/lib/db/providers/sql/cassandra/driver-transport.ts)), so it WOULD have a handle to name; there is simply no state on it to name.
 That is the same fact `supportsTransactions: false` reports to the editor toolbar.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
+
+### 3.10 A frame the driver cannot read fails the connection by name (patched driver)
+
+`cassandra-driver` reads each connection through three streams: one splits the bytes into frames, one parses each frame's body, one hands the result to the request that waits for it (`lib/connection.js`, `bindSocketListeners`).
+A stream that cannot read a frame reports it as an `error` event, and 4.10.0 attaches no listener for that event on any of the three.
+So a frame the driver cannot parse (an ERROR or AUTHENTICATE body shorter than it says, a header cut short, a response on a stream id the driver never allocated, an EVENT body shorter than it says) was thrown out of the stream's handler instead of reaching a caller, and the connection stayed open without reading anything more: the connect, or the request in flight and every later request on that connection, waited for the read timeout and then failed as a timeout.
+No public driver API reaches these streams, so Studio installs the driver with a patch, [`patches/cassandra-driver@4.10.0.patch`](../../patches/cassandra-driver@4.10.0.patch), listed in `patchedDependencies` in `package.json` and recorded in [`docs/TOOLCHAIN.md`](../TOOLCHAIN.md), "Patched dependencies".
+
+The patch gives the three streams one `error` listener, which destroys the connection's socket with a `DriverError` that names the host and the reading failure.
+That is the driver's own path for a socket error, so nothing new decides what happens next.
+One race needs a second change: when the failure arrives together with the node's refusal of the driver's first protocol version, the driver's version downgrade would reopen the same connection at the lower version after the connect had already failed this way, leaving a connection that no session owns and that a disconnect does not close.
+So the patch also marks a connect that has failed, and the downgrade does not reopen it: the connect fails by name and no connection is left open.
+
+| When the frame arrives | What the caller gets |
+|---|---|
+| Answering STARTUP, so during Test connection or connect | `ConnectionError`: `Failed to connect to Apache Cassandra: The connection to <host>:<port> failed while reading a response: <the parser's error>`, at once instead of after the read timeout |
+| Answering a request the driver sends itself later in the connect (such as OPTIONS or the `system.local` read), so during Test connection or connect | `ConnectionError`: `Failed to connect to Apache Cassandra: Socket was closed`, at once; the read failure is in the driver's `innerError`, which Studio does not show |
+| Answering a statement on an open connection | `QueryError`: `Socket was closed`, the driver's error for a request whose connection was lost, as for a reset; the connection is closed |
+| An EVENT pushed on an idle connection, with no request pending | Nothing reaches a caller; the connection is closed and replaced as below |
+
+After a connection is lost this way the driver replaces it as it does after any lost connection: the control connection reconnects at once and reads the topology again, and the host's pool dials again on the driver's default reconnection policy (`ExponentialReconnectionPolicy`, 1 s base, 10 min cap), which `cassandraClientOptions` does not change; when the lost connection was the cluster's only one, the control connection's new connection serves the host instead ([§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)).
+A statement sent in the moment before the replacement is up fails with a `ConnectionError`: `All host(s) tried for query failed.` when the driver has already marked the host down, or `No connection available` when the host is still up with no open connection; nothing is retried by Studio.
+
+The cases run against a fake node on 127.0.0.1 ([`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts)), through the real provider and the real patched driver, under Bun and under Node, in the integration suite ([§10](#10-testing)).
+The patch is removed when a driver release listens on these streams itself; the test stays, and holds the release to the same behaviour.
+
+### 3.11 A connection the driver opens again after a lost one is closed by `disconnect()` (patched driver)
+
+When the control connection loses its connection and no host that is up can lend it one, 4.10.0 reconnects through the contact points (`lib/control-connection.js`, `_initializeConnection`) and records the node it reaches as a new host (`_setLocalInfo`).
+On a one-node cluster that is every lost connection, since the session holds a single connection there.
+A host whose connections all carry `maxRequestsPerConnection` requests cannot lend one either, so with other pooling options the host replaced below could still have statements in flight, which would fail when it is shut down; Studio's pooling (one connection per host, 2048 requests in flight on it) does not get there.
+
+Four things on that path left a connection open after `disconnect()` had returned, and the same patch ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)) changes each of them.
+
+The host object the reconnection replaces was dropped from the session's host list without being shut down, and its pool still had the reconnection it scheduled when the connection was lost.
+About a second later, the first delay of the default reconnection policy, that pool opened a connection of its own, which no host in the list owned, so `Client.shutdown()`, and with it `disconnect()`, did not close it.
+The patch shuts down the replaced host's pool, which cancels the reconnection scheduled there.
+
+After reconnecting this way, the control connection read the topology, registered for events and set its health listeners a second time on its new connection.
+The next lost connection then started one reconnection per set of listeners, and every loss doubled the count; the reconnections shared one reference to the connection, so all but one of the connections they opened were left with no owner.
+Under Node the third lost connection could also leave the session handing out a closed connection, so that every statement waited out its read timeout.
+The patch keeps the one set that `_initializeConnection` registered, so each lost connection starts one reconnection.
+
+A reconnection that met a server error on its `OPTIONS`, its topology read or its event registration moved on to the next contact point and left its connection open with no owner, and a first connect that failed at the same step did the same.
+The patch closes that connection first, as the driver already does for a connection that fails to open; the control connection's scheduled retry then reconnects.
+
+`Client.shutdown()` shuts down the hosts it has when it starts, and a reconnection still under way then added its connection to a host it had not seen.
+That happened when `disconnect()` closely followed a lost connection, and when a connection was lost during `connect()`, whose failure closes the driver at once.
+The patch has the reconnection check for a shutdown once its connection is open and again before it hands the connection to a pool, and close the connection instead.
+That connection can still be dialled after `disconnect()` has returned, while the driver negotiates its protocol version, and it is closed as soon as it is open.
+
+Studio cannot reach any of this through a public driver API: a host's `shutdown()` and the control connection are internal.
+Nothing else changes: the new host is served by the control connection's new connection, nothing is retried that the driver did not retry already, and the reconnection policy stays the driver's default.
+
+The fake node's `lost-connection` cases run under Bun and under Node through the real provider, and each ends with `disconnect()` and a check that no connection is left open:
+
+- `lost-connection` resets the session's only connection while a statement is in flight, and waits past the reconnection delay before disconnecting.
+- `lost-connection-repeated` does that three times, and after each the next statement is answered with one connection open.
+- `lost-connection-disconnect` disconnects while a reconnection whose answers come late is still under way.
+- `lost-connection-in-connect` resets the connection that carries the provider's identity read, so `connect()` fails with `QueryError: Socket was closed`.
+- `lost-connection-reinit-error` answers the first reconnection's `system.peers` read with a server error.
+
+The patch's changes are removed with the rest of it when a driver release makes them itself; the cases stay.
 
 
 ---
@@ -494,6 +558,14 @@ Two more reads follow the identity read, and neither can fail the connection: th
 catalog the monitoring reads key their degradation on, and `SELECT key FROM system.versions`, which
 says whether the server is ScyllaDB and so which keyspaces the tree hides (see "A system keyspace is
 excluded by exact NAME, never by a prefix", #1428).
+
+### 4.4 No SSH tunnel
+
+Studio refuses an Apache Cassandra connection whose SSH tunnel is on, before it dials the bastion or builds the provider, and the dialog offers no SSH panel for it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+A tunnel forwards one address, and the driver keeps only the contact point it dialled: it adds every other node of the ring at the address that node advertises (`rpc_address`) on the protocol port, and opens its pools to those addresses directly, past the tunnel.
+A single-node install would work through the forward and a ring would not, and Studio cannot tell the two apart before it connects, so it refuses both rather than dial around a tunnel the connection asked for.
+The refusal reads "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off."
+A route per node is a later change.
 
 ### Connection string
 
@@ -546,7 +618,7 @@ keyword the user never typed, and dropping it silently returns page **one** whil
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
 `search/index.ts` refuses Elasticsearch's identical gap the same way.
 The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so a caller can tell it from any other failure of `prepareQuery`.
-MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page without one ([§14.7](#147-mcp-read)).
+MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page without one ([§14.7](#147-mcp-read)).
 
 **2. `ALLOW FILTERING` must stay last.**
 
@@ -1178,7 +1250,7 @@ connection list rather than a session list.
 
 ### 7.4 The panels that report nothing — and how they say so
 
-**ABSENT is not EMPTY.** `getMonitoringData` reads the seven panels independently, so a panel whose
+**ABSENT is not EMPTY.** `getMonitoringData` reads each panel the engine offers independently, so a panel whose
 read rejects is left out of the payload with the engine's own sentence recorded under
 `MonitoringData.errors`, and `PanelUnavailable` renders that sentence in its place. An empty array
 means the opposite: the engine looked and measured nothing. Until 2026-08-25 this provider answered
@@ -1203,18 +1275,43 @@ virtual table AND which of the three measured causes applies: this build has no
 connected role may not read the catalog. Three causes, three sentences, because they send the reader
 to three different places. See [§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace).
 
-**One panel stays EMPTY on purpose.** Slow queries: there is no aggregate of finished statements
+**One method stays EMPTY on purpose.** Slow queries: there is no aggregate of finished statements
 anywhere CQL can read (`system_views.system_logs` is a tail of the node's log file, 0 rows on this
-image), **no statement is sent**, and `ProviderLabels.slowQueriesEmptyState` already carries
-Cassandra's own sentence into the panel — *"Cassandra keeps no aggregate of finished statements: the
-slow-query threshold writes to the node's log file rather than to a table."* Converting it would move
-the same sentence from a label the tab renders to an error entry, and buy nothing.
+image), **no statement is sent**, and `getSlowQueries()` answers `[]`.
+The slow-query panel is not offered (below), so core never reads the method and nothing draws the panel.
+
+**Four panels are not offered.**
+The three refused on every build and the slow-query panel are declared not offered in Cassandra's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never reads them and lists them in `notOffered`, with no `errors` entry, and the dashboard draws no Queries, Tables or Storage tab for Cassandra.
+The three refusals in the table above are what each method answers when called directly; the slow-query sentence is the label for the `[]` that `getSlowQueries()` answers, and no surface draws it while the panel is not offered.
+The two panels refused only where `system_views` is absent stay offered: on such a build they fail with their sentence.
 
 `getHealth()` does **not** refuse: it degrades exactly as before, because
 `POST /api/db/test-connection` calls it and the connection dialog's save is gated on that request. A
 throwing health check would lock the whole ScyllaDB family out of the product
 ([§3.6](#36-a-monitoring-surface-degrades-on-a-denial-and-on-one-absent-keyspace)). A monitoring
 panel has the opposite obligation — it is the surface that must say what it could not read.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `cassandra` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/cassandra/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | No | `getTableStats` refuses with `CASSANDRA_TABLE_STATS_REFUSAL` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `CASSANDRA_INDEX_STATS_REFUSAL` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `health`.
 
 ---
 
@@ -1277,21 +1374,14 @@ because there are no table statistics to list at all.)
 }
 ```
 
-`identifierQuoting` and `statementTerminator` are both **absent**, and each absence is measured
-rather than assumed: 9042 is Cassandra's alone, so the generators' port heuristic is not being asked
-to answer for two dialects and its default `"…"` branch is already correct here; and `SELECT id FROM
-probe.customers WHERE id = 1;` returns the row, so the `;` the generators already emit is valid CQL.
+`identifierQuoting` and `statementTerminator` are both **absent**, and each absence is measured rather than assumed: Cassandra has no row of its own in the generators' `SQL_ENGINE_GENERATORS`, and their default `"…"` branch is already correct here; and `SELECT id FROM probe.customers WHERE id = 1;` returns the row, so the `;` the generators already emit is valid CQL.
 
 `entityName`, `rowName` and the action labels are CQL's own words and are left inherited.
 `statementLanguage` is declared — *"CQL (Cassandra Query Language) - no JOIN, no subquery, no
 OFFSET"* — because a model asked for "a statement" against a connection called Cassandra will write
 SQL, and each of those three is a syntax error here.
 
-`slowQueriesEmptyState` is declared — *"Cassandra keeps no aggregate of finished statements: the
-slow-query threshold writes to the node's log file rather than to a table."* — because
-`getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the monitoring Queries panel
-is **always** empty here, and its hardcoded sentence used to tell the reader to enable
-`pg_stat_statements` (#463).
+No `slowQueriesEmptyState` is declared: `getSlowQueries()` is empty by design ([§7](#7-monitoring--health)), so the slow-query panel is not offered, the dashboard draws no Queries tab here, and nothing would draw a sentence for it.
 
 ### SQL writing
 
@@ -1328,6 +1418,7 @@ A result set does not know which column is the real key, so the first one is cho
 | [`tests/unit/db/cassandra/agent-boundary.test.ts`](../../tests/unit/db/cassandra/agent-boundary.test.ts) | The agent profile's check of the role: every statement it sends, pinned by full text, and every refusal |
 | [`tests/live/cassandra-agent-boundary.ts`](../../tests/live/cassandra-agent-boundary.ts) | The agent profile's boundary against a live node ([§14.6](#146-boundary-record)); not in `bun run test` |
 | [`tests/unit/db/cassandra/seam-guard.test.ts`](../../tests/unit/db/cassandra/seam-guard.test.ts) | That the driver, its value classes and its per-statement knobs appear in code only in `driver-transport.ts` |
+| [`tests/helpers/cassandra-fake-peer.ts`](../../tests/helpers/cassandra-fake-peer.ts) | A fake node on 127.0.0.1 that answers one frame the driver cannot parse, or resets a connection; the integration suite drives the real provider and the real patched driver through it under Bun and Node ([§3.10](#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver), [§3.11](#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)) |
 
 The session stand-in **throws on an unknown statement** rather than answering empty: a provider whose
 CQL drifts has to fail there, not quietly report no rows.
@@ -1921,6 +2012,7 @@ It runs a `SELECT` of one table of the connection's keyspace or of `system_schem
 A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
 CQL has no `OFFSET`, so an `offset` is refused before anything is sent, no answer names a next offset, and a result cut at `max_rows` says to page it with LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read.
 The role checked is the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and the seed's own `user` otherwise: it must name the keyspace as `database`, a keyspace of the user's data and never one of Cassandra's own system keyspaces, and be a role that is no superuser and holds only `SELECT` on that keyspace or its tables, as [§14.2](#142-the-check-before-every-statement) proves; the image's default `cassandra` superuser is refused at open, in the tool's sentence.
+A refusal the provider writes, at the open or before a statement is sent, comes after a notice naming the provider that wrote it, "Apache Cassandra provider, bundled with Studio"; the 2026-11-02 run below predates that notice, and the script now reads each such refusal after it.
 `inspect_schema` takes the operations profile, which sends no statement, so it opens a Cassandra connection unchecked, as the editor does, and as plan mode grounds.
 A cancel or a `timeout_ms` ends the wait, not the statement: the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session at the time left of `timeout_ms` or when the answer arrives.
 

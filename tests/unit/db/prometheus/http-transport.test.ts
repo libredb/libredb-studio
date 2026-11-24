@@ -54,6 +54,7 @@ import {
   type TimeWindow,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 import { capture, captureBody, captureVm, captureVmBody } from "../../../helpers/prometheus-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // Harness
@@ -1351,7 +1352,7 @@ describe("the query arrives byte-identical at a real server (#1085 S4)", () => {
       const transport = createHttpTransport(
         {},
         {
-          send: createSendRequest(null),
+          send: createSendRequest(null, ALLOWS_PRIVATE_HOSTS),
           endpoint: endpointOn(`http://127.0.0.1:${server.port}`),
           requestTimeoutMs: REQUEST_TIMEOUT_MS,
           maxResponseBytes: RESPONSE_BYTE_CAP,

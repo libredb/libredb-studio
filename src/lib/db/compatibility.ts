@@ -20,7 +20,8 @@
  * MySQL) and the compatibility table in `docs/providers/README.md`. Neither may
  * hold its own copy of the data.
  */
-import type { DatabaseType } from "@/lib/types";
+import type { DatabaseType, HostPathField } from "@/lib/types";
+import type { ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
 /**
@@ -273,6 +274,10 @@ function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map:
  *
  * It is not an MCP criterion and no MCP code reads it: whether a machine client may read an engine is
  * `MCP_EXPOSABLE`'s answer, which holds on every engine whatever its reach.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.writeReach`, and every
+ * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.freeze({
   postgres: "open",
@@ -319,9 +324,9 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
   // As Qdrant (#1566 spec 3.5): every console request is a read, the provider has no maintenance operation, and it
   // refuses every route that is not a read, and every request that would wake a cold tenant, before any request.
   weaviate: "none",
-  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`influxql-policy.ts`) is the only
-  // boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW`
-  // or `EXPLAIN` before any request; the route table reaches no write endpoint.
+  // Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`src/lib/languages/influxql/policy.ts`)
+  // is the only boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one
+  // `SELECT`, `SHOW` or `EXPLAIN` before any request; the route table reaches no write endpoint.
   influxdb: "none",
   // Read-only whatever the flag says: the closed route table reaches no write, configure, token, cache or plugin
   // endpoint, the SQL policy refuses every statement that does not lead with a read keyword before any request, and
@@ -407,6 +412,10 @@ export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) 
  * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/reads-file-access-posture-capability.test.ts` holds every entry equal
  * to what that engine's provider declares. Frozen like the records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.readsFileAccessPosture`,
+ * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -457,34 +466,44 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
 });
 
 /**
- * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather
- * than confining it. SQLite's `connect()` refuses before any file I/O because its drivers cannot confine
- * statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle
- * with external access off. A true row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ * Which shipped engines are handed core's trust material, the CA certificates of the file `NODE_EXTRA_CA_CERTS` names
+ * (`TrustMaterial` in `./types`, read once per process by `./trust-material`): true for an engine whose provider's TLS
+ * library does not read Node.js's trust store, so the variable never reaches it on its own.
  *
- * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
- * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed
- * connection can succeed for its caller, and no provider declares the fact. Reading `connection.type`
- * there was the alternative and is forbidden by `CLAUDE.md`.
+ * `createDatabaseProvider` reads this row, through `typeIdRow`, to set `ProviderBuildContext.trust`: core's material
+ * where it is true, `undefined` everywhere else. Node.js adds the variable's certificates to every TLS connection it
+ * opens without a `ca` of its own, so a provider on `node:tls`, `node:https`, `fetch` or a driver built on them needs
+ * nothing, and is handed nothing.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
- * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what `connect()`
- * does under the context an MCP open gives a caller whose file access is denied. Frozen like the records
- * above it.
+ * Measured on 2026-11-22 for every type-id whose provider opens TLS, in Verify (system trust) against a server whose
+ * certificate only a private CA in `NODE_EXTRA_CA_CERTS` signs: every one reached it but Db2, whose driver, db2-node,
+ * verifies with rustls against the operating system's store and never reads the variable. The engines with a
+ * configurable host were built through the provider factory on Node.js 26.13.1 in the runner image, Node.js 24.22.1
+ * and Bun 1.4.4; RabbitMQ's AMQPS leg was dialled through its `dialAmqp`, not built by the factory, on Node.js 26.13.1
+ * in the runner image and Bun 1.4.4;
+ * Snowflake, BigQuery and Firestore, whose hosts are fixed on port 443, only on Node.js 26.13.1 in the runner image.
+ * Not measured:
+ * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its row to true
+ * only when its TLS library is not Node's, such as a native addon with a TLS stack of its own, and then hands
+ * `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a connection
+ * verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory").
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * `tests/security/provider-trust-material.test.ts` holds every entry against the material that engine's provider
+ * holds when the factory builds it. Frozen like the records above it.
  */
-export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
+export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
   bigquery: false,
   snowflake: false,
   spark: false,
   mysql: false,
-  // Its open refuses a denied handle before any file I/O.
-  sqlite: true,
+  sqlite: false,
   libsql: false,
-  // It reads the posture too, and confines a denied handle instead of refusing it.
   duckdb: false,
   oracle: false,
-  db2: false,
+  // db2-node verifies with rustls against the operating system's store, so NODE_EXTRA_CA_CERTS never reaches it.
+  db2: true,
   mssql: false,
   clickhouse: false,
   druid: false,
@@ -521,6 +540,80 @@ export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>>
 });
 
 /**
+ * Which shipped engines refuse to open a handle at all when its file-access posture is denied, rather than confining
+ * it, and the sentence each refuses with: null for every other engine. SQLite refuses because its drivers cannot
+ * confine statement-level file access, while DuckDB, the other engine that reads the posture, opens the handle with
+ * external access off. A refusing row is always a `READS_FILE_ACCESS_POSTURE` engine.
+ *
+ * The provider factory (`createDatabaseProvider` in `./factory`) refuses such a connection whose execution context sets
+ * `allowExternalFileAccess: false`, the provider's own condition, with this sentence as a `DatabaseConfigError` naming
+ * the connection's type, before the storage location, the file admission and the provider build: a connection the
+ * posture denies file access is refused before Studio reads the path it names. The provider raises the same sentence
+ * at `connect()` for a handle built with that context, before it opens anything.
+ *
+ * Static because MCP decides before any provider exists: `list_connections` and `inspect_schema` ask,
+ * through `mcpConnectionUnavailable` in `src/lib/mcp/availability.ts`, whether any open of a listed
+ * connection can succeed for its caller, and no provider declares the fact. Reading `connection.type`
+ * there was the alternative and is forbidden by `CLAUDE.md`.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what the factory and
+ * `connect()` do under the context an MCP open gives a caller whose file access is denied. Frozen like the records
+ * above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.deniedFileAccessRefusal`,
+ * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ */
+export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: null,
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  mysql: null,
+  // Its open refuses a denied handle before it opens anything, and the provider factory before it is built.
+  sqlite: "SQLite connections require an administrator because this driver cannot confine statement-level file access",
+  libsql: null,
+  // It reads the posture too, and confines a denied handle instead of refusing it.
+  duckdb: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
+});
+
+/**
  * Which shipped engines keep one handle per database file in this process: the static answer
  * `ProviderCapabilities.singleWriterFile` gives once a provider is built.
  *
@@ -534,6 +627,14 @@ export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, boolean>>
  * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/compatibility.test.ts` holds every entry equal to what that engine's
  * provider declares. Frozen like the records above it.
+ *
+ * The single-writer borrow reads it too (`getOrCreateProvider` registers a file only for an engine this table names),
+ * though it decides once a provider is built: the built provider's own `singleWriterFile` reaches no gate
+ * (docs/providers/CONTRACT.md, clause M-57).
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.singleWriterFile`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -582,6 +683,242 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
 });
 
 /**
+ * The result columns each shipped engine's provider exempts from the masking rules, with the reason the grid shows in
+ * place of the masked-column lock, or `null` where it exempts none, the restrictive value: every column the rules
+ * match stays masked.
+ *
+ * Studio's producers of client capabilities answer this row in place of the provider's own, through `clientCapabilities`
+ * (src/lib/db/client-capabilities.ts): `readProviderDeclarations`, which `POST /api/db/provider-meta` hands to the
+ * browser, and the VS Code backend's connection description, which the webview's grid reads. So a provider that
+ * declares a wider pattern than its row exempts nothing more.
+ *
+ * The embedded workspace and the published grid take the exemption from the embedder instead, as they take the
+ * masking configuration, and the embedded workspace masks nothing at all; this record does not reach them.
+ *
+ * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * `tests/unit/db/masking-exemption-guard.test.ts` holds every row equal to what that engine's provider declares and
+ * each exempting row to the protected names it was accepted for. Frozen like the records above it, each row too.
+ *
+ * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.maskingExemptColumns`
+ * (docs/providers/CONTRACT.md, clause M-57), and that an engine declaration requests at `policy.maskingExemptColumns`,
+ * which the generator writes from this row (clause M-59); it is never computed from providers.
+ */
+export const MASKING_EXEMPT_COLUMNS: Readonly<
+  Record<DatabaseType, NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null>
+> = Object.freeze({
+  postgres: null,
+  bigquery: null,
+  snowflake: null,
+  spark: null,
+  mysql: null,
+  sqlite: null,
+  libsql: null,
+  duckdb: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra: null,
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase: null,
+  redis: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: Object.freeze({
+    column: "^address$",
+    reason: "The PDU register number this row answered for, not a postal address, so it is shown as it was read.",
+  }),
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  libredb: null,
+});
+
+/**
+ * The engines on which **agent mode** executes statements itself: Studio's review record of the
+ * engines agent and MCP statements run on.
+ *
+ * Every agent and MCP statement gate reads this record at run time, and an engine it does not
+ * list is refused by name, whatever its provider implements: the start of a statement-sending
+ * agent run (`workflowAvailability`, `src/lib/agent/agent-manifest.ts`), the factory's
+ * `agent-read-only` and `agent-handover` acquisition and the core read path every agent,
+ * hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's statistics
+ * read under `agent-operations` does not), both through
+ * `assertStatementsReviewed` (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`),
+ * and MCP's served set (`src/lib/mcp/tools/served-engines.ts`). A provider's read-only
+ * statement path is a second precondition, required and never enough: an engine on the record
+ * whose provider has no `queryReadOnly` is still refused `PROFILE_UNSUPPORTED_BY_PROVIDER`,
+ * never served `query()`. `queryReadOnly` exists on the providers this list names, each under a
+ * boundary it declares (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`,
+ * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
+ * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
+ * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`,
+ * `providers/timeseries/influxdb/sql-provider.ts`, `providers/sql/search/index.ts`,
+ * `providers/sql/db2/index.ts`).
+ *
+ * They do not draw the boundary the same way, and the list deliberately says nothing about that.
+ * PostgreSQL, SQLite, DuckDB, SQL Server and MySQL bound a statement with the engine's own
+ * read-only mechanism. PostgreSQL refuses the write inside `BEGIN READ ONLY`, SQLite and DuckDB
+ * open the file read-only, and SQL Server, which has no read-only transaction of any kind,
+ * verifies at open that the session's principal cannot write, then admits one statement at a
+ * time by asking the optimizer to compile it without running it. MySQL and MariaDB are the
+ * two-layer shape: a least-privilege principal, because DDL ends a read-only transaction through
+ * its implicit commit, and `START TRANSACTION READ ONLY` for the writes the grants alone would
+ * not stop. Kubernetes has no read-only session at all: Studio's request allowlist on the final
+ * method and path of every request, plus the identity's RBAC, is the boundary. MongoDB has none
+ * either: the connection's user is the boundary, proven, when a connection that sends statements
+ * opens, by the server's own account of its privileges and by a write the server must refuse,
+ * with the provider's command reader in front of the engine and `maxTimeMS` plus Studio's kill of
+ * a read's session as its deadline. ClickHouse refuses writes for the request itself, under
+ * `readonly = 1`, and its user is proven at open to hold nothing that setting leaves usable.
+ * libSQL's boundary is the token: one the server refuses every write for, proven at open by
+ * writes that change nothing and that the server must refuse, and by the token's own read-only
+ * claim. InfluxDB 3's boundary is the engine's: the 3.12 Core planner refuses every write and DDL
+ * statement on the one route that carries statement text, whatever the token, and the open
+ * checks the server is that line. Elasticsearch's boundary is the engine's too: the grammar of
+ * its SQL endpoint, the one route that carries statement text, holds no write or DDL statement,
+ * and every one sent raw there is refused, and the open checks the server is the measured 9.1 line. OpenSearch's is
+ * the engine's as well, from the same module: its SQL plugin refuses every write and DDL statement sent raw, and since
+ * a cluster setting can turn its DELETE on, the open proves that DELETE off (the setting reads off, and a DELETE on a
+ * fresh name is refused) and checks the server is the measured 3.8 line. Oracle's is the user's: one set READ ONLY,
+ * which the server refuses every write for, proven before every statement to reach no code, sequence, package,
+ * directory, system privilege or database link that runs outside it, with every statement in a read-only transaction
+ * the driver rolls back. Db2's is the user's too: one holding CONNECT and SELECT, proven before every statement to hold
+ * nothing else that writes and to reach no code, view, sequence or control that runs with another's authority, with
+ * every statement a fullselect in a unit of work rolled back on a connection of its own. Cassandra's is the role's: one
+ * holding only SELECT on the connection's keyspace, which the server refuses every write, DDL and GRANT statement as
+ * Unauthorized, proven before every statement to be no superuser, to hold no other permission, and to reach no column
+ * masked with a user-defined function, on an Apache Cassandra 5.0 server whose own refusal of a DROP proves it
+ * enforces grants, each statement on a session of its own. Couchbase's is the user's: one whose only role is
+ * query_select on named scopes of the connection's bucket (a role on every scope also reaches its _system scope, so
+ * it is refused). The query service refuses such a user every write, DDL, GRANT, function call, CURL() and sequence
+ * statement, and the user is proven before every statement through GET /whoami, a group's roles included, on a
+ * server whose own refusal of a DELETE proves it enforces the role, with only one SELECT sent, since such a user may
+ * still run UPDATE STATISTICS and EXECUTE. Druid's is the engine's: under the native engine its SQL endpoint refuses
+ * every INSERT, REPLACE, UPDATE, DELETE, MERGE and DDL statement and every read of EXTERN, whoever asks, which the open
+ * and every statement prove with an INSERT the server must refuse, and the request context naming the engine is
+ * written by Studio, with only one SELECT sent, since a SET before a statement would select another engine. Trino's is
+ * the operator's access control: it must refuse every identity every catalog's table functions, since a pass-through
+ * function runs its text in the catalog's source under the catalog's own credential, outside Trino's read-only
+ * transaction, and catalog management must be refused, which the open and every statement prove with calls that run
+ * nothing and the server must refuse by permission (Trino's read-only access control passes, told apart by a table
+ * procedure it alone refuses), with every statement in a read-only transaction rolled back and only one SELECT sent.
+ * LibreDB's is the handle's: an embedded file with no principal, which each statement opens on a handle of its own
+ * through Studio's read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no
+ * call that can write the file, the engine's one write path refusing before any write; Studio's reader admits get,
+ * prefix and range only.
+ * InfluxDB's (InfluxQL, 1.x and 2.x) is the principal's: a 1.x user refused SHOW USERS as needing the admin privilege,
+ * or a 2.x token that lists no system bucket, refused a no-op DELETE on every database it lists, proven before every
+ * statement, so an admin, a server with authentication off and a principal that can write anywhere, where SELECT ...
+ * INTO would land, are refused; InfluxDB 3 is refused on this path. Studio's reader admits one SELECT, SHOW of the
+ * catalog or EXPLAIN of a SELECT, with no comment. Weaviate's is the provider's closed table of read requests, which
+ * can name no write, with a key the server proves a viewer before every request, so a connection with no key, an
+ * admin key, a role that writes and a server with RBAC off are refused; Studio's reader admits the meta, schema,
+ * shard, tenant, alias and node reads and a bare aggregate count, a COLD tenant is refused rather than woken, and every
+ * answer carries names, counts and flags only. Qdrant's is the provider's closed table of read routes, which can name no
+ * write, with a key proved read-only before every request by its JWT claims, when it has them, granting access r
+ * alone, and by the server refusing an empty alias update and an empty point delete on every collection the key lists,
+ * so a connection with no key, the API key, a JWT that writes any collection or alias and a server with no key
+ * configured are refused; Studio's reader admits the version, collection, alias, count and cluster reads, so no query
+ * reaches the inference address, and every answer carries names, counts and flags only. Neo4j's is the user's, on
+ * Enterprise Edition only: before every statement the server must name Enterprise at a version whose built-in routines
+ * are pinned, every granted privilege of every role must be a read, LOAD must be revoked or denied, and every
+ * procedure and function the user can execute must be a built-in, so an administrator, a user that writes or loads, a
+ * server with an extension the user can run and Community Edition, which has no roles, are refused. Studio's reader
+ * admits one statement of the editor's read policy with no comment, and the server's EXPLAIN classification and a READ
+ * session stand behind it. Milvus's is the provider's gRPC stub filtered to a closed table of RPCs, whose only writes,
+ * Load and Release, no agent request reaches, with a user the server proves read-only before every request: it must
+ * be refused the list of users, and every privilege its roles and public grant must be a read, so a connection naming
+ * no user, root, the admin role, a role that writes, loads or releases and a server with authorization off are
+ * refused; Studio's reader admits the database, collection, schema, statistics, load state, partition, index and alias
+ * reads in the connection's own database, so no search runs a function on the server, and every answer carries names,
+ * counts and flags only. Each provider's own `queryReadOnly` argues its own case.
+ * `tests/unit/lib/agent/engine-support.test.ts` holds the first-party providers to this record in
+ * both directions - it walks EVERY id in the `DatabaseType` union and reads `queryReadOnly` off the
+ * real provider class the factory would construct - so a reviewed engine always has its protected
+ * read path, and a provider that gains one fails there until its review row is written here.
+ *
+ * Two things it deliberately does NOT say, because user-facing copy that compresses them
+ * overclaims (docs/AGENT.md, the "Agent mode requires" paragraph that opens it):
+ * - **Plan mode opens on every engine and runs no statement of the model's anywhere.** Since #414
+ *   a plan run is grounded, and this list reaches only that grounding: see below.
+ * - **The `operations` workflow opens without this list, in both modes**, because it composes no
+ *   SQL: its `agent-operations` acquisition sets `requiresReadOnlyStatements: false`. In agent mode
+ *   it opens on every engine whose `ENGINE_FACETS` row offers agent mode a curated reading.
+ *
+ * Both are grounded before their first turn, and on an engine whose catalog read is a composed
+ * statement (its overlay's `catalogCapture`) that read is sent under `agent-read-only`, so it passes
+ * this list like any other statement. On such an engine off the list the acquisition is refused
+ * `PROFILE_ENGINE_NOT_REVIEWED` and plan mode and the operations workflow run ungrounded; it is not
+ * routed to `agent-operations` instead, because a composed statement is a statement.
+ *
+ * Held in this module, which imports nothing but types on purpose: it is read by the unauthenticated login hero,
+ * and a provider module here would drag `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so
+ * no code widens it at run time.
+ */
+export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
+  "postgres",
+  "sqlite",
+  "duckdb",
+  "mssql",
+  "mysql",
+  "kubernetes",
+  "mongodb",
+  "clickhouse",
+  "libsql",
+  "influxdb3",
+  "elasticsearch",
+  "opensearch",
+  "oracle",
+  "db2",
+  "cassandra",
+  "couchbase",
+  "druid",
+  "libredb",
+  "influxdb",
+  "weaviate",
+  "qdrant",
+  "neo4j",
+  "milvus",
+  "redis",
+  "etcd",
+  "oxia",
+  "rabbitmq",
+  "kafka",
+  "s3",
+  "firestore",
+  "snmp",
+  "netconf",
+  "modbus",
+  "prometheus",
+  "opcua",
+  "mtconnect",
+  "mqtt",
+  "sparkplug",
+  "trino",
+]);
+
+/**
  * Which shipped engines a seed connection may expose to MCP clients (#246): the seed schema refuses
  * `mcp: true` at load on an engine where this answers false, naming the engine, so an opt-in the
  * product does not honour fails the file instead of listing a connection. Static for the reason
@@ -592,6 +929,10 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * entry that answers false carries its reason beside it, so the record below is the list; every other engine answers
  * true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
  * without someone answering, and frozen like the records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.exposable`, and every gate
+ * reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -704,6 +1045,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.statementRead`, and every
+ * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -864,6 +1209,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held by
  * `tests/unit/mcp/annotations.test.ts`, which also holds its true rows to the engines docs/MCP.md and the provider
  * docs name for the hint.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.metadataReadChangesState`,
+ * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -923,6 +1272,10 @@ export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, bool
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true only where
  * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
  * agent credential, by `tests/unit/db/compatibility.test.ts`.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.agentCredentialRequired`,
+ * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -982,6 +1335,10 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
  *
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true exactly where
  * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.readRootsRequired`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
  */
 export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1117,8 +1474,9 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   snowflake: false,
   spark: false,
   mysql: true,
-  // The provider's supportsConnectionString flag is false, yet it opens this field as the database file path:
-  // sqlite.ts getDatabasePath, docs/providers/sqlite.md.
+  // The provider's supportsConnectionString flag is false, yet this field names the database file it opens: the
+  // provider factory reads it, a leading `file:` removed, as the file it admits (`admittedFileConnection` in
+  // provider-files.ts), docs/providers/sqlite.md.
   sqlite: true,
   libsql: true,
   duckdb: false,
@@ -1175,6 +1533,14 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
  * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
  * icon components; `tests/unit/db/compatibility.test.ts` holds every entry equal to that file's `isFileBased()`, the
  * connection form's own answer. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it.
+ *
+ * The provider factory reads it too: it admits the file such a connection names before the provider is built
+ * (`admittedFileConnection` in `./provider-files`), refusing Studio's own storage files there, and hands the provider
+ * the absolute path it admitted.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.opensLocalFile`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1225,6 +1591,156 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
   libredb: true,
 });
 
+/** The row of an engine whose connection names no file on Studio's own host that its provider reads. */
+const NO_HOST_PATH_FIELDS: readonly HostPathField[] = Object.freeze([]);
+
+/**
+ * The connection fields that name a file on Studio's own host which the provider reads, beside the file an
+ * `OPENS_LOCAL_FILE` engine opens. The provider factory admits each one before the provider is built
+ * (`admittedHostPathConnection` in `./provider-files`): resolved against the working directory then, refused by name
+ * when it names one of Studio's own storage files, and handed to the provider as an absolute path under
+ * `ADMITTED_HOST_PATHS` (`@/lib/types`).
+ *
+ * Kept apart from `OPENS_LOCAL_FILE` because that record also decides governance row admission: an engine that reads a
+ * certificate from the host is still a server a governance source may grant. An exhaustive Record for the reason
+ * `EXTERNAL` gives, frozen with every row, like the records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.hostPathFields`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ */
+export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> = Object.freeze({
+  postgres: NO_HOST_PATH_FIELDS,
+  bigquery: NO_HOST_PATH_FIELDS,
+  snowflake: NO_HOST_PATH_FIELDS,
+  spark: NO_HOST_PATH_FIELDS,
+  mysql: NO_HOST_PATH_FIELDS,
+  sqlite: NO_HOST_PATH_FIELDS,
+  libsql: NO_HOST_PATH_FIELDS,
+  duckdb: NO_HOST_PATH_FIELDS,
+  oracle: NO_HOST_PATH_FIELDS,
+  db2: NO_HOST_PATH_FIELDS,
+  mssql: NO_HOST_PATH_FIELDS,
+  clickhouse: NO_HOST_PATH_FIELDS,
+  druid: NO_HOST_PATH_FIELDS,
+  trino: NO_HOST_PATH_FIELDS,
+  cassandra: NO_HOST_PATH_FIELDS,
+  elasticsearch: NO_HOST_PATH_FIELDS,
+  opensearch: NO_HOST_PATH_FIELDS,
+  mongodb: NO_HOST_PATH_FIELDS,
+  couchbase: NO_HOST_PATH_FIELDS,
+  redis: NO_HOST_PATH_FIELDS,
+  prometheus: NO_HOST_PATH_FIELDS,
+  kafka: NO_HOST_PATH_FIELDS,
+  etcd: NO_HOST_PATH_FIELDS,
+  neo4j: NO_HOST_PATH_FIELDS,
+  milvus: NO_HOST_PATH_FIELDS,
+  qdrant: NO_HOST_PATH_FIELDS,
+  weaviate: NO_HOST_PATH_FIELDS,
+  influxdb: NO_HOST_PATH_FIELDS,
+  influxdb3: NO_HOST_PATH_FIELDS,
+  oxia: NO_HOST_PATH_FIELDS,
+  databend: NO_HOST_PATH_FIELDS,
+  s3: NO_HOST_PATH_FIELDS,
+  kubernetes: NO_HOST_PATH_FIELDS,
+  mqtt: NO_HOST_PATH_FIELDS,
+  firestore: NO_HOST_PATH_FIELDS,
+  rabbitmq: NO_HOST_PATH_FIELDS,
+  // The client certificate and private key a seed connection names, read by the OPC UA library from the host.
+  opcua: Object.freeze(["clientCertificatePath", "clientPrivateKeyPath"] as const),
+  mtconnect: NO_HOST_PATH_FIELDS,
+  modbus: NO_HOST_PATH_FIELDS,
+  netconf: NO_HOST_PATH_FIELDS,
+  snmp: NO_HOST_PATH_FIELDS,
+  sparkplug: NO_HOST_PATH_FIELDS,
+  libredb: NO_HOST_PATH_FIELDS,
+});
+
+/**
+ * Which shipped engines take no SSH tunnel, and why (FND-2 slice 5): `null` where a connection of the engine may reach
+ * its server through one, otherwise the whole sentence Studio refuses a connection whose tunnel is on with.
+ *
+ * The one source for that fact. Core reads it in `decideTunnel` (`./tunnel-decision`), on every entry point before any
+ * cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself; the connection dialog reads it
+ * through `offersSshTunnel` in `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`, exactly
+ * where this answers `null`, so the dialog and core cannot disagree. Kept here, UI-free, for the reason
+ * `OPENS_LOCAL_FILE` is.
+ *
+ * The refused groups:
+ *
+ * - An engine whose client reaches addresses the server advertises, which a tunnel forwarding one address does not
+ *   carry: Kafka (every broker), Apache Cassandra (every node of the ring) and Couchbase (the query service, on another
+ *   port, at the address the node map names). A route per node is a later contract minor, with no direct dial meanwhile.
+ * - An engine that needs two ports of one server: RabbitMQ (the management API and AMQP).
+ * - A vendor API reached over TLS at several hosts: BigQuery, Firestore and Snowflake.
+ * - A datagram protocol: SNMP, since a tunnel forwards TCP.
+ * - A file engine, which opens a file on Studio's own host and has no address to forward to: SQLite, DuckDB and
+ *   LibreDB. A stored record carrying a tunnel switched on, left by the dialog's state before the dialog stopped
+ *   writing one, is refused with the way to clear it: the dialog's save writes no tunnel for such an engine.
+ *
+ * No sentence quotes a value of the connection. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
+ * records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and every
+ * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ */
+export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
+  postgres: null,
+  bigquery:
+    "BigQuery does not run through an SSH tunnel: every request goes over HTTPS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+  snowflake:
+    "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off.",
+  spark: null,
+  mysql: null,
+  sqlite:
+    "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+  libsql: null,
+  duckdb:
+    "DuckDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+  oracle: null,
+  db2: null,
+  mssql: null,
+  clickhouse: null,
+  druid: null,
+  trino: null,
+  cassandra:
+    "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off.",
+  elasticsearch: null,
+  opensearch: null,
+  mongodb: null,
+  couchbase:
+    "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off.",
+  redis: null,
+  prometheus: null,
+  kafka:
+    "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  qdrant: null,
+  weaviate: null,
+  influxdb: null,
+  influxdb3: null,
+  oxia: null,
+  databend: null,
+  s3: null,
+  kubernetes: null,
+  mqtt: null,
+  firestore:
+    "Firestore does not run through an SSH tunnel: every request goes over TLS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+  rabbitmq:
+    "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.",
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: "SNMP does not run through an SSH tunnel: the tunnel forwards TCP, and SNMP reads travel as UDP datagrams. Turn the tunnel off.",
+  sparkplug: null,
+  libredb:
+    "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+});
+
 /**
  * Which shipped engines reach the whole server when a connection names no database (#1530): the provider then
  * declares `catalogSessions` and opens a session of its own to each database the caller picks, so one credential
@@ -1236,6 +1752,15 @@ export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.
  * with no database and no connection string, nothing connecting, and holds this record equal to the engines whose
  * provider then reports `catalogSessions`. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
  * records above it.
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at
+ * `connection.serverLevelWithoutDatabase`, and every gate reads it: the declaration states each shipped engine's
+ * request as this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
+ * M-52 and M-53).
+ *
+ * It is also the bound of the catalog sessions a provider declares: the places that honour a caller's choice of
+ * database read it through `catalogChoice` in `src/lib/db/catalog-scope.ts`, and honour that choice only where this
+ * table holds the engine and the connection names no database and no connection string (M-57).
  */
 export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts);

@@ -33,11 +33,7 @@ import {
   INFLUX_CONTAINER_LEVELS,
   INFLUXQL_OBJECT_KINDS,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
-import {
-  evaluateInfluxql,
-  INFLUXQL_MAX_TEXT_BYTES,
-  INFLUXQL_POLICY_SENTENCES,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql, INFLUXQL_MAX_TEXT_BYTES, INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
 import { INFLUXQL_LABELS } from "@/lib/db/providers/timeseries/influxdb/labels";
 import { toInfluxHealth } from "@/lib/db/providers/timeseries/influxdb/monitoring";
@@ -45,6 +41,7 @@ import { RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/r
 import type { DatabaseConnection, ProviderOptions } from "@/lib/db/types";
 import { DuplicateRunError } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import {
   type RecordedInfluxRequest,
@@ -138,7 +135,7 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, {}, factory),
+    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, { egress: ALLOWS_PRIVATE_HOSTS }, factory),
     requests: wire.requests,
     closed: () => closed,
   };
@@ -263,7 +260,7 @@ describe("declarations", () => {
       writeReach: {
         editor: {
           reach: "absent",
-          proof: { module: "src/lib/db/providers/timeseries/influxdb/influxql-policy.ts", symbol: "evaluateInfluxql" },
+          proof: { module: "src/lib/languages/influxql/policy.ts", symbol: "evaluateInfluxql" },
         },
         objectEdit: { reach: "absent" },
         maintenance: { reach: "absent" },

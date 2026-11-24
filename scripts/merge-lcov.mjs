@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isPackageSourcePath } from "./workspace-packages.mjs";
 
 function ensureParentDir(filePath) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -35,7 +36,7 @@ function parseLcov(content) {
         // `src/lib/db/factory.ts` on Linux and macOS and `src\lib\db\factory.ts`
         // on Windows. Normalising here is what lets a Windows contributor's
         // `bun run test:coverage` produce the same report as CI's: unnormalised,
-        // the two spellings merge as two files and the `src/` filter below drops
+        // the two spellings merge as two files and the source filter below drops
         // both, leaving an empty report.
         record.sf = line.slice(3).replaceAll("\\", "/");
         continue;
@@ -344,10 +345,12 @@ function main() {
   // that bun over-reports and SonarCloud would otherwise count as uncovered.
   stripNonExecutableLines(merged);
 
-  // Filter out non-source files that SonarCloud can't resolve:
-  // - tests/ and e2e/ directories (test infrastructure, not source)
-  // - src/components/ui/ (excluded in sonar.exclusions)
+  // Keep the source the 100% gate and SonarCloud measure: src/ and each workspace
+  // package's packages/<name>/src/ (packages/README.md, "Layout"). Everything else is
+  // test infrastructure (tests/, e2e/, a package's tests/), and src/components/ui/ is
+  // excluded in sonar.exclusions.
   const filtered = merged.filter((r) => {
+    if (isPackageSourcePath(r.sf)) return true;
     if (!r.sf.startsWith("src/")) return false;
     if (r.sf.startsWith("src/components/ui/")) return false;
     return true;
@@ -355,7 +358,7 @@ function main() {
 
   const skipped = merged.length - filtered.length;
   if (skipped > 0) {
-    console.log(`Filtered ${skipped} non-source record(s) (tests/, src/components/ui/)`);
+    console.log(`Filtered ${skipped} record(s) outside src/ and packages/<name>/src/, or under src/components/ui/`);
   }
 
   const serialized = serializeRecords(filtered);

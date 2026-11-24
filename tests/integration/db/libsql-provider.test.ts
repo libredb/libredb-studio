@@ -58,13 +58,20 @@ import { join } from "node:path";
 import { comparePaths } from "@/lib/db/object-path";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
+
+/** The notice an answer carrying database content opens with on this file's libsql connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("libsql"));
 
 // ============================================================================
 // Harness
@@ -272,7 +279,7 @@ function connection(overrides: Partial<DatabaseConnection> = {}): DatabaseConnec
 }
 
 async function connected(overrides: Partial<DatabaseConnection> = {}): Promise<LibSQLProvider> {
-  const provider = new LibSQLProvider(connection(overrides));
+  const provider = new LibSQLProvider(connection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -322,7 +329,9 @@ afterEach(() => {
 
 describe("LibSQLProvider configuration", () => {
   test("refuses a connection with neither a host nor a URL", () => {
-    expect(() => new LibSQLProvider(connection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(() => new LibSQLProvider(connection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS })).toThrow(
+      DatabaseConfigError,
+    );
   });
 
   test("resolves a libsql:// URL into host, port and token", async () => {
@@ -364,7 +373,9 @@ describe("LibSQLProvider configuration", () => {
         ),
       )) as unknown as typeof fetch;
 
-    await expect(new LibSQLProvider(connection()).connect()).rejects.toBeInstanceOf(AuthenticationError);
+    await expect(
+      new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).connect(),
+    ).rejects.toBeInstanceOf(AuthenticationError);
   });
 
   test("reports a malformed token as an authentication failure even though the status is 400", async () => {
@@ -373,15 +384,15 @@ describe("LibSQLProvider configuration", () => {
         new Response(JSON.stringify({ error: "JWT error: InvalidToken" }), { status: 400 }),
       )) as unknown as typeof fetch;
 
-    await expect(new LibSQLProvider(connection({ password: "notatoken" })).connect()).rejects.toBeInstanceOf(
-      AuthenticationError,
-    );
+    await expect(
+      new LibSQLProvider(connection({ password: "notatoken" }), {}, { egress: ALLOWS_PRIVATE_HOSTS }).connect(),
+    ).rejects.toBeInstanceOf(AuthenticationError);
   });
 
   test("reports an unreachable server as a connection failure naming host and port", async () => {
     globalThis.fetch = (() => Promise.reject(new Error("connect ECONNREFUSED"))) as unknown as typeof fetch;
 
-    const failed = new LibSQLProvider(connection()).connect();
+    const failed = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).connect();
 
     await expect(failed).rejects.toBeInstanceOf(ConnectionError);
     await expect(failed).rejects.toThrow(/connect ECONNREFUSED/);
@@ -478,7 +489,11 @@ describe("LibSQLProvider credentials", () => {
       )) as unknown as typeof fetch;
 
     await expect(
-      new LibSQLProvider(connection({ user: "libsql", password: "wrong" })).connect(),
+      new LibSQLProvider(
+        connection({ user: "libsql", password: "wrong" }),
+        {},
+        { egress: ALLOWS_PRIVATE_HOSTS },
+      ).connect(),
     ).rejects.toBeInstanceOf(AuthenticationError);
   });
 });
@@ -489,7 +504,7 @@ describe("LibSQLProvider credentials", () => {
 
 describe("LibSQLProvider capabilities", () => {
   test("offers only the two maintenance operations the server accepts", () => {
-    const capabilities = new LibSQLProvider(connection()).getCapabilities();
+    const capabilities = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.maintenanceOperations).toEqual(["reindex", "check"]);
     // Measured on BOTH deployments: each of these is refused by the server's own
@@ -499,7 +514,7 @@ describe("LibSQLProvider capabilities", () => {
   });
 
   test("reads EXPLAIN the way SQLite does, and takes a pasted URL", () => {
-    const capabilities = new LibSQLProvider(connection()).getCapabilities();
+    const capabilities = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.explainFormat).toBe("sqlite-queryplan");
     expect(capabilities.supportsConnectionString).toBe(true);
@@ -509,7 +524,7 @@ describe("LibSQLProvider capabilities", () => {
   test("pages with LIMIT n OFFSET m, the grammar it shares with SQLite", () => {
     // #816: declared true because `prepareQuery` really applies a positive offset.
     // Measured across every type-id in tests/unit/db/result-pagination-capability.test.ts.
-    const provider = new LibSQLProvider(connection());
+    const provider = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     expect(provider.getCapabilities().supportsResultPagination).toBe(true);
 
     const pageTwo = provider.prepareQuery("SELECT * FROM t", { limit: 50, offset: 50 });
@@ -519,17 +534,21 @@ describe("LibSQLProvider capabilities", () => {
 
   test("declares SQLite's create-table grammar, the same object, because it embeds SQLite", () => {
     // #1822: shared by import, never by a type-id branch; docs/providers/sqlite.md, "Create Table form".
-    expect(new LibSQLProvider(connection()).getCapabilities().createTable).toBe(SQLITE_CREATE_TABLE);
+    expect(new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().createTable).toBe(
+      SQLITE_CREATE_TABLE,
+    );
   });
 
   test("declares no transaction, because the stream closes with each statement", () => {
-    expect(new LibSQLProvider(connection()).getCapabilities().supportsTransactions).toBe(false);
+    expect(
+      new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().supportsTransactions,
+    ).toBe(false);
   });
 
-  test("tells the reader there is no statement history to enable", () => {
-    expect(new LibSQLProvider(connection()).getLabels().slowQueriesEmptyState).toBe(
-      "libSQL keeps no statistics about finished statements, so there is nothing to enable.",
-    );
+  test("declares no slow-query sentence, because libSQL offers no Queries panel to draw it", () => {
+    expect(
+      new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels().slowQueriesEmptyState,
+    ).toBeUndefined();
   });
 });
 
@@ -1648,7 +1667,7 @@ function objectServer(catalog: Catalog = FIXTURE): Server {
 /** A connected provider whose server answers the object catalog above. */
 async function connectedWithObjects(catalog: Catalog = FIXTURE): Promise<LibSQLProvider> {
   server = objectServer(catalog);
-  const provider = new LibSQLProvider(connection());
+  const provider = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   calls = [];
   return provider;
@@ -1707,7 +1726,9 @@ describe("LibSQLProvider object surface (#789)", () => {
     // An answer, not a declaration read: it is not answerable off a provider that
     // never connected, and it costs no round trip when it is.
     expect(calls).toEqual([]);
-    await expect(new LibSQLProvider(connection()).listContainers()).rejects.toThrow();
+    await expect(
+      new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).listContainers(),
+    ).rejects.toThrow();
   });
 
   // --------------------------------------------------------------------------
@@ -3048,7 +3069,7 @@ describe("countLibSQLObjects through the transport seam", () => {
       serverVersion: () => Promise.resolve(null),
       close: () => Promise.resolve(),
     },
-    capabilities: new LibSQLProvider(connection()).getCapabilities(),
+    capabilities: new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities(),
     mapError: (error: unknown) => (error instanceof Error ? error : new QueryError(String(error), "libsql")),
   });
 
@@ -3093,7 +3114,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new LibSQLProvider(connection());
+    const provider: DatabaseProvider = new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -3217,7 +3238,11 @@ describe("LibSQLProvider agent read-only profile", () => {
     overrides: Partial<DatabaseConnection> = {},
     execution: ProviderExecutionContext = AGENT,
   ): Promise<LibSQLProvider> {
-    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN, ...overrides }), {}, execution);
+    const provider = new LibSQLProvider(
+      connection({ password: READ_ONLY_TOKEN, ...overrides }),
+      {},
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     return provider;
   }
@@ -3232,7 +3257,9 @@ describe("LibSQLProvider agent read-only profile", () => {
   }
 
   test("declares the token form for the agent's own credential", () => {
-    expect(new LibSQLProvider(connection()).getCapabilities().agentCredential).toBe("token");
+    expect(
+      new LibSQLProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().agentCredential,
+    ).toBe("token");
   });
 
   test("opens under the profile when every probe is refused for the token, after the connect probe", async () => {
@@ -3249,7 +3276,11 @@ describe("LibSQLProvider agent read-only profile", () => {
 
   test("refuses a server that lets a read-only token write, and stays closed", async () => {
     // No 403 anywhere: the fixture runs the probe as it runs every statement, as a server that checks no token does.
-    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN }), {}, AGENT);
+    const provider = new LibSQLProvider(
+      connection({ password: READ_ONLY_TOKEN }),
+      {},
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await refusal(() => provider.connect());
 
@@ -3263,7 +3294,7 @@ describe("LibSQLProvider agent read-only profile", () => {
   test("refuses a user name and password, and a connection with no token, before sending anything", async () => {
     for (const overrides of [{ user: "admin", password: "not-a-real-password" }, { password: undefined }]) {
       calls = [];
-      const provider = new LibSQLProvider(connection(overrides), {}, AGENT);
+      const provider = new LibSQLProvider(connection(overrides), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS });
 
       expect(await refusal(() => provider.connect())).toBeInstanceOf(ExecutionProfileError);
       expect(calls).toEqual([]);
@@ -3288,7 +3319,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     readOnlyToken();
     for (const password of [fakeToken({ a: "rw" }), fakeToken({ iat: 1 }), "not-a-real-token"]) {
       calls = [];
-      const provider = new LibSQLProvider(connection({ password }), {}, AGENT);
+      const provider = new LibSQLProvider(connection({ password }), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS });
 
       const error = await refusal(() => provider.connect());
 
@@ -3305,7 +3336,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     readOnlyToken();
     for (const password of [fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }), fakeToken({ a: "ro", perm: [] })]) {
       calls = [];
-      const provider = new LibSQLProvider(connection({ password }), {}, AGENT);
+      const provider = new LibSQLProvider(connection({ password }), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS });
 
       const error = await refusal(() => provider.connect());
 
@@ -3355,7 +3386,7 @@ describe("LibSQLProvider agent read-only profile", () => {
       const provider = new LibSQLProvider(
         connection({ port: turso.port, password: fakeToken({ a: "ro", iat: 1, id: "x", kid: "x", rid: "x" }) }),
         {},
-        AGENT,
+        { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
       );
       await provider.connect();
 
@@ -3378,7 +3409,11 @@ describe("LibSQLProvider agent read-only profile", () => {
       "Operation was blocked: SQL write operations are forbidden (writes are blocked, do you need to upgrade your plan?)",
     );
     try {
-      const provider = new LibSQLProvider(connection({ port: turso.port, password: READ_ONLY_TOKEN }), {}, AGENT);
+      const provider = new LibSQLProvider(
+        connection({ port: turso.port, password: READ_ONLY_TOKEN }),
+        {},
+        { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+      );
 
       const error = await refusal(() => provider.connect());
 
@@ -3404,7 +3439,11 @@ describe("LibSQLProvider agent read-only profile", () => {
         ),
       );
     }) as unknown as typeof fetch;
-    const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN }), {}, AGENT);
+    const provider = new LibSQLProvider(
+      connection({ password: READ_ONLY_TOKEN }),
+      {},
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await refusal(() => provider.connect());
 
@@ -3482,12 +3521,16 @@ describe("LibSQLProvider agent read-only profile", () => {
     readOnlyToken();
     const provider = await opened();
 
-    await expect(
-      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultRows: 1 }),
-    ).rejects.toThrow("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
-    await expect(
-      provider.queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultBytes: 10 }),
-    ).rejects.toThrow("Read-only execution exceeded the byte budget");
+    const overRows = await provider
+      .queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultRows: 1 })
+      .catch((caught: unknown) => caught);
+    expect((overRows as Error).message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
+    const overBytes = await provider
+      .queryReadOnly("SELECT name FROM sqlite_master WHERE type = 'table'", { ...BUDGET, maxResultBytes: 10 })
+      .catch((caught: unknown) => caught);
+    expect((overBytes as Error).message).toStartWith("Read-only execution exceeded the byte budget");
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
     await provider.disconnect();
   });
 
@@ -3523,6 +3566,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     const error = await refusal(() => provider.queryReadOnly("SELECT big", { ...BUDGET, maxResultBytes: 1 }));
 
     expect(error).toBeInstanceOf(QueryError);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     const counted = /^Read-only execution exceeded the byte budget: (\d+) bytes > 1 allowed$/.exec(error.message);
     // Six bytes for the budget and the 1 MiB envelope, stopped at the 64 KiB chunk that crossed them.
     expect(Number(counted?.[1])).toBe(17 * 64 * 1024);
@@ -3539,9 +3583,11 @@ describe("LibSQLProvider agent read-only profile", () => {
         init?.signal?.addEventListener("abort", () => reject(init.signal?.reason));
       })) as unknown as typeof fetch;
 
-    await expect(provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 5 })).rejects.toThrow(
-      "Read-only execution exceeded the time budget: no answer within 5ms",
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 5 })
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the time budget: no answer within 5ms");
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     await provider.disconnect();
   });
 
@@ -3606,6 +3652,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [target],
       resolve: async () => target,
+      textScrub: fakeTextScrub,
       acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         return acquireExecutionProfileProvider(connection, profile);
@@ -3687,7 +3734,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("the proof runs at the open of the shared agent handle, not before each statement", async () => {
@@ -3775,20 +3822,38 @@ describe("MCP run_read_query on a libSQL connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(result).toEqual({
       content: [
-        { type: "text", text: MCP_UNTRUSTED_NOTICE },
+        { type: "text", text: DATABASE_CONTENT_NOTICE },
         { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}libSQL request failed: ${FORBIDDEN}` },
       ],
+      structuredContent: { error: { kind: "query", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
 
-  const refusedAtOpen = (sentence: string) => ({
+  // Studio's own refusal at the open, in its own words with no notice.
+  const studioRefusedAtOpen = (sentence: string) => ({
     content: [
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
       },
     ],
+    structuredContent: {
+      error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_WITH_CONNECTION_STRING", outcome: "unknown" },
+    },
+    isError: true as const,
+  });
+
+  // The provider's refusal at the open, behind a notice naming it, and its record: a refusal at the open is not sent.
+  const refusedAtOpen = (sentence: string, code: string) => ({
+    content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("libsql")) },
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
+      },
+    ],
+    structuredContent: { error: { kind: "execution-profile", code, outcome: "not-sent" } },
     isError: true as const,
   });
 
@@ -3796,21 +3861,24 @@ describe("MCP run_read_query on a libSQL connection", () => {
     'The libSQL token is not a read-only token (a JWT whose claims carry "a": "ro"), so it can write, and the agent read-only profile is refused: use a read-only token';
 
   test.each([
-    ["a writable token", { password: fakeToken({ a: "rw" }) }, CAN_WRITE],
+    ["a writable token", { password: fakeToken({ a: "rw" }) }, CAN_WRITE, "PROFILE_PRIVILEGES_TOO_BROAD"],
     [
       "a read-only token whose permission claim widens it",
       { password: fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }) },
       'The libSQL token carries claims beyond the read-only marker and the standard ones ("p"), which the server may read to grant writes, so it can write, and the agent read-only profile is refused: use a read-only token that carries no other claim',
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
     [
       "a user name and password (HTTP Basic)",
       { user: "admin", password: "not-a-real-password" },
       "A libSQL connection that signs in with a user name and password (HTTP Basic) has no read-only form, so the agent read-only profile is refused: use a read-only token instead",
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
     [
       "no token",
       { password: undefined },
       "A libSQL connection with no token reaches only a server that checks no credential, so the agent read-only profile is refused: use a read-only token",
+      "PROFILE_SERVER_UNENFORCED",
     ],
     [
       "a connection string carrying a writable token",
@@ -3821,16 +3889,17 @@ describe("MCP run_read_query on a libSQL connection", () => {
         connectionString: `libsql://db.example.invalid?authToken=${fakeToken({ a: "rw" })}`,
       },
       CAN_WRITE,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     ],
   ] as const)(
     "%s is refused at open, in the tool's sentence, before anything is sent",
-    async (_label, overrides, sentence) => {
+    async (_label, overrides, sentence, code) => {
       readOnlyServer();
 
       const result = await call({ sql: "SELECT id FROM probe_orders" }, seed(overrides as Partial<ManagedConnection>));
 
       expect(acquired).toEqual(["agent-read-only"]);
-      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(result).toEqual(refusedAtOpen(sentence, code));
       expect(calls).toEqual([]);
     },
   );
@@ -3841,7 +3910,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
 
     expect(acquired).toEqual(["agent-read-only"]);
     expect(sentStatements().some((sent) => sent.startsWith("SELECT id FROM probe_orders"))).toBe(false);
-    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    const text = (result.content as { text: string }[])[1]?.text ?? "";
     expect(result.isError).toBe(true);
     expect(text).toMatch(
       new RegExp(
@@ -3863,7 +3932,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
     const result = await call({ sql: "SELECT 1" }, target);
 
     expect(result).toEqual(
-      refusedAtOpen(
+      studioRefusedAtOpen(
         'Connection "seed:edge" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused',
       ),
     );
@@ -3882,6 +3951,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -3900,6 +3970,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

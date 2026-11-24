@@ -2,6 +2,13 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
+import {
+  isStudioRefusal,
+  providerAuthor,
+  type ProviderTextScrub,
+  providerTextScrub,
+  scrubProviderText,
+} from "@/lib/db/operations/provider-text";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
 import type { Container, DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -15,7 +22,12 @@ import {
 } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
 import { metadataReadAnnotations } from "./annotations";
-import { DATABASE_ARGUMENT_DESCRIPTION, McpDatabaseChoiceError, providerInDatabase } from "./database-choice";
+import {
+  DATABASE_ARGUMENT_DESCRIPTION,
+  databaseRequiredAnswer,
+  McpDatabaseChoiceError,
+  providerInDatabase,
+} from "./database-choice";
 import { MCP_TIMEOUT_BOUNDS_MS, raceDeadline } from "./read-query-limits";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
@@ -28,6 +40,7 @@ import {
 import {
   cutUtf8,
   engineError,
+  engineMessage,
   MCP_CANCELLED_TEXT,
   MCP_ENGINE_ERROR_PREFIX,
   MCP_NOT_VISIBLE_TEXT,
@@ -35,6 +48,8 @@ import {
   MCP_TABLE_COMMENT_CAP_BYTES,
   MCP_UNTRUSTED_NOTICE,
   ownWordsError,
+  ownWordsFailure,
+  providerTextError,
   recordOrRefuse,
   resultBytes,
   untrustedResult,
@@ -53,7 +68,8 @@ import {
  * resolves, before anything is acquired, and the refusal names the statement tool that reads it, which its arm
  * declares (`holdsNoTables`), rather than answering an empty page.
  *
- * It acquires under agent-operations, which sends no statement and so runs on every engine. The
+ * It acquires under agent-operations, which sends no statement and so is served on every engine; an engine's
+ * `agentReadings` row decides only which readings agent mode's `inspect_operations` offers, never this acquisition. The
  * decision event is written before acquisition and the outcome after, and a call whose record
  * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, a
  * table comment is cut to its own bound first, and the column and index caps count what they leave
@@ -243,6 +259,7 @@ async function inspectTable(
   object: DatabaseObject,
   args: InspectSchemaInput,
   step: Step,
+  scrub: ProviderTextScrub,
 ): Promise<InspectedTable> {
   const readsForeignKeys = args.include_foreign_keys && provider.getCapabilities().declaresForeignKeys !== false;
   const detail =
@@ -276,7 +293,8 @@ async function inspectTable(
     ...(args.include_indexes
       ? {
           indexes: indexesUnavailable
-            ? { unavailable: detail.indexes.unavailable }
+            ? // The provider's sentence for a refused index read, scrubbed, redacted and cut as an engine message is.
+              { unavailable: engineMessage(detail.indexes.unavailable, scrub) }
             : indexes
                 .slice(0, MAX_INDEXES)
                 .map((index) => ({ name: index.name, columns: [...index.columns], is_unique: index.unique })),
@@ -314,6 +332,7 @@ function schemaNamesOf(listed: readonly Container[]): Pick<PageResult, "schema_n
   return { schema_names: names, schema_names_omitted: listed.length - names.length };
 }
 
+/** One page of tables, behind the notice naming `author`, the provider that relayed them. */
 function pageResult(
   args: InspectSchemaInput,
   container: Container | null,
@@ -321,20 +340,24 @@ function pageResult(
   total: number,
   tables: readonly InspectedTable[],
   cutByCap: boolean,
+  author: string,
 ): ToolResult {
   const hasMore = cutByCap || args.offset + tables.length < total;
-  return untrustedResult({
-    connection_id: args.connection_id,
-    ...(args.database === undefined ? {} : { database: args.database }),
-    schema: container?.name ?? "default",
-    ...names,
-    total_tables: total,
-    offset: args.offset,
-    limit: args.limit,
-    has_more: hasMore,
-    next_offset: hasMore ? args.offset + tables.length : null,
-    tables: [...tables],
-  });
+  return untrustedResult(
+    {
+      connection_id: args.connection_id,
+      ...(args.database === undefined ? {} : { database: args.database }),
+      schema: container?.name ?? "default",
+      ...names,
+      total_tables: total,
+      offset: args.offset,
+      limit: args.limit,
+      has_more: hasMore,
+      next_offset: hasMore ? args.offset + tables.length : null,
+      tables: [...tables],
+    },
+    author,
+  );
 }
 
 /**
@@ -353,6 +376,8 @@ async function readPage(
   args: InspectSchemaInput,
   signal: AbortSignal,
   step: Step,
+  scrub: ProviderTextScrub,
+  author: string,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
   const choice = await chooseContainer(provider, args.schema, step);
   if (choice.kind === "not-found")
@@ -369,11 +394,13 @@ async function readPage(
   const tables: InspectedTable[] = [];
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
-    const table = await inspectTable(provider, object, args, step);
+    const table = await inspectTable(provider, object, args, step, scrub);
     if (
-      resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false)) > MCP_RESULT_CAP_BYTES
+      resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false, author)) >
+      MCP_RESULT_CAP_BYTES
     ) {
-      if (tables.length > 0) return { result: pageResult(args, container, names, filtered.length, tables, true) };
+      if (tables.length > 0)
+        return { result: pageResult(args, container, names, filtered.length, tables, true, author) };
       const bare =
         !args.include_columns && !args.include_indexes && !args.include_foreign_keys && !args.include_schema_names;
       return {
@@ -383,7 +410,7 @@ async function readPage(
     }
     tables.push(table);
   }
-  return { result: pageResult(args, container, names, filtered.length, tables, false) };
+  return { result: pageResult(args, container, names, filtered.length, tables, false, author) };
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
@@ -403,18 +430,19 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   if (connection === null) return refuse("mcp_connection_not_visible", MCP_NOT_VISIBLE_TEXT);
 
   const resolved: McpCallRecord = { ...record, connectionName: connection.seedId };
-  // Ahead of any acquisition, so no provider is built or dialled for an engine with no table to list.
+  // Ahead of any acquisition and of the tableless check: a connection no MCP open can serve for this caller, one whose
+  // type names no provider included, is refused with the sentence list_connections lists it with, so no provider is
+  // built for an open that would be refused and no per-engine fact is read for a type that names no engine.
+  const unavailable = mcpConnectionUnavailable(call.context.caller, connection);
+  if (unavailable !== null)
+    return recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ?? ownWordsError(unavailable);
+  // Ahead of any acquisition too, so no provider is built or dialled for an engine with no table to list.
   const tableless = mcpTablelessReadTool(connection.type);
   if (tableless !== null)
     return (
       recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ??
       ownWordsError(tablelessText(connection.type, tableless))
     );
-  // Ahead of any acquisition too: a connection no MCP open can serve for this caller is refused with the sentence
-  // list_connections lists it with, so no provider is built for an open that would be refused.
-  const unavailable = mcpConnectionUnavailable(call.context.caller, connection);
-  if (unavailable !== null)
-    return recordOrRefuse(() => recordMcpDecision(resolved, "mcp_execution_failed")) ?? ownWordsError(unavailable);
   const unrecorded = recordOrRefuse(() => recordMcpDecision(resolved));
   if (unrecorded !== null) return unrecorded;
 
@@ -422,12 +450,27 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
   const finish = (result: ToolResult, failure?: McpToolAuditReason): ToolResult =>
     recordOrRefuse(() => recordMcpOutcome(resolved, Date.now() - startedAt, failure)) ?? result;
 
+  // The listed connection's own values until the open has read Vault; then the open's scrub, over its secrets as
+  // resolved, which every provider text this call answers with passes.
+  let scrub = providerTextScrub(connection, "profiled");
+  const author = providerAuthor(connection.type);
   try {
+    scrub = await step(() => call.context.textScrub(connection));
     // In the database the call names, on a connection that reaches a whole server (#1530).
     const acquired = await step(() => call.context.acquire(connection, "agent-operations"));
-    const provider = await step(() => providerInDatabase(acquired, args.database));
+    const choice = await step(() => providerInDatabase(acquired, args.database));
+    if (choice.kind === "provider-refused") {
+      return finish(
+        providerTextError("The database could not be opened: ", choice.error, scrub, author),
+        "mcp_execution_failed",
+      );
+    }
+    // The databases the call could name are database content: behind the notice naming the provider, never spliced
+    // into Studio's sentence.
+    if (choice.kind === "database-required")
+      return finish(databaseRequiredAnswer(choice, author), "mcp_execution_failed");
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const { result, failure } = await readPage(provider, args, call.signal, step);
+    const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub, author);
     return finish(result, failure);
   } catch (error) {
     if (error instanceof InspectStopped) {
@@ -435,14 +478,24 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
       return finish(ownWordsError(text), error.reason);
     }
     // #1462: the agent-operations profile runs the same role check as agent-read-only
-    // (factory.ts), so a superuser seed refuses here too. That refusal is Studio's own
-    // decision, not the engine's, so it reads in Studio's words - no untrusted-data
-    // notice, no "The database refused or failed the call:" prefix - exactly as
-    // run_read_query already answers an ExecutionProfileError.
-    if (error instanceof ExecutionProfileError || error instanceof McpDatabaseChoiceError) {
-      return finish(ownWordsError(error.message), "mcp_execution_failed");
+    // (factory.ts), so a superuser seed refuses here too. A refusal Studio wrote reads in
+    // Studio's words, scrubbed - no notice, no "The database refused or failed the call:"
+    // prefix; one a provider wrote comes behind a notice naming that provider, exactly as
+    // run_read_query answers each.
+    if (error instanceof ExecutionProfileError && !isStudioRefusal(error)) {
+      return finish(
+        providerTextError("inspect_schema cannot run on this connection: ", error, scrub, author),
+        "mcp_execution_failed",
+      );
     }
-    return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error), "mcp_execution_failed");
+    if (error instanceof ExecutionProfileError) {
+      return finish(ownWordsFailure(scrubProviderText(scrub, error.message), error, scrub), "mcp_execution_failed");
+    }
+    // Studio's own database choice refusal, raised in this tool layer: its words, with no failure record.
+    if (error instanceof McpDatabaseChoiceError) {
+      return finish(ownWordsError(scrubProviderText(scrub, error.message)), "mcp_execution_failed");
+    }
+    return finish(engineError(MCP_ENGINE_ERROR_PREFIX, error, scrub, author), "mcp_execution_failed");
   }
 }
 

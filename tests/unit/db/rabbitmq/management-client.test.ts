@@ -43,6 +43,7 @@ import {
   SAMPLE_BODIES,
   SAMPLE_NODE,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /** The test connection's password, built at run time by the helper; no sentence may carry it. */
 const TEST_PASSWORD = rabbitmqConnection().password as string;
@@ -67,11 +68,12 @@ function harness(
   const deadlines = manualDeadlines();
   const lifetime = new AbortController();
   const client = createManagementClient({
-    endpoint: readConnectionOptions(options.connection ?? rabbitmqConnection()).management,
+    endpoint: readConnectionOptions(options.connection ?? rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS).management,
     transport: options.transport ?? stub.factory,
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: options.queryTimeoutMs ?? 60_000,
     lifetime: lifetime.signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   return { client, stub, deadlines, lifetime };
@@ -191,6 +193,8 @@ describe("the transport the client builds", () => {
     expect(options.refusesLinkLocal).toBe(true);
     expect(options.refusesUpgrade).toBe(true);
     expect(options.reportsUnreachable).toBe(true);
+    // The egress decision the client was handed, by identity.
+    expect(options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
   });
 
   test("close() closes the transport, and a GET after it is refused before any request", async () => {

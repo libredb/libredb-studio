@@ -10,7 +10,7 @@
  * the lookup the dial installed, because the address rule cannot be read off the lookup's identity.
  * No socket is opened even there.
  */
-import { afterEach, test } from "bun:test";
+import { test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 import { expectBe, expectEqual, expectMatch, expectNotBe, expectRejects, expectTruthy } from "./helpers";
@@ -28,6 +28,7 @@ import {
 import { fingerprintOf } from "@/lib/db/providers/network/netconf/hostkey";
 import { classifyLoginFailure } from "@/lib/db/providers/network/netconf/auth";
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const DEVICE_KEY = Buffer.from("the device's host key");
 const PIN = fingerprintOf(DEVICE_KEY);
@@ -36,6 +37,7 @@ const transport: Transport = {
   write: () => {},
   onData: () => {},
   onClose: () => {},
+  onError: () => {},
   close: () => {},
 };
 
@@ -52,6 +54,11 @@ function ports(
     hostKey?: Buffer;
     subsystemError?: unknown;
     connectError?: unknown;
+    /**
+     * ssh2 reading the connection's credential before it takes the socket, and throwing from
+     * `connect()` itself when it cannot: "Cannot parse privateKey" is thrown, not emitted.
+     */
+    connectThrows?: unknown;
     /** The socket itself refusing, which is what an address with nobody on it does. */
     socketError?: unknown;
     /** A SECOND library error after the dial has already settled, which a real server sends. */
@@ -81,6 +88,7 @@ function ports(
   const ssh: SshPort = {
     connect: (options) => {
       seen.connects.push(options);
+      if (over.connectThrows !== undefined) throw over.connectThrows;
       let ready: (() => void) | null = null;
       let failed: ((error: unknown) => void) | null = null;
       queueMicrotask(() => {
@@ -126,6 +134,8 @@ const config = (over: Partial<DialConfig> = {}): DialConfig => ({
   hostKeyFingerprint: PIN,
   privateKey: "a key",
   readyMs: 5000,
+  // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+  egress: ALLOWS_PRIVATE_HOSTS,
   ...over,
 });
 
@@ -249,7 +259,7 @@ test("a refused login carries one sentence and no detail", async () => {
 
 test("a key that cannot be opened is a configuration error, not an authentication failure", async () => {
   const { ssh, socket } = ports({
-    connectError: new Error("Cannot parse privateKey: OpenSSH key integrity check failed -- bad passphrase?"),
+    connectThrows: new Error("Cannot parse privateKey: OpenSSH key integrity check failed -- bad passphrase?"),
   });
   let caught: unknown;
   try {
@@ -258,6 +268,23 @@ test("a key that cannot be opened is a configuration error, not an authenticatio
     caught = error;
   }
   expectBe((caught as DialError).failure.kind, "configuration");
+});
+
+test("a key ssh2 cannot read is a configuration error with its own sentence, and the session is never reached", async () => {
+  const { ssh, socket, seen } = ports({ connectThrows: new Error("Cannot parse privateKey: Unsupported key format") });
+  let caught: unknown;
+  try {
+    await dialNetconf(config(), ssh, socket);
+  } catch (error) {
+    caught = error;
+  }
+  expectTruthy(caught instanceof DialError, "the dial did not fail by name");
+  expectBe((caught as DialError).failure.kind, "configuration");
+  expectBe(
+    (caught as DialError).failure.message,
+    "this private key cannot be read: check that the whole file was pasted",
+  );
+  expectEqual(seen.subsystems, []);
 });
 
 test("a device with no netconf subsystem is refused with a sentence that says so", async () => {
@@ -277,34 +304,27 @@ test("the credential reaches ssh2 only as the connection supplied it", async () 
  * The seam above says a lookup reached the socket. It cannot say which lookup: one is installed
  * whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says, so that assertion would pass even if this dial always
  * installed the strictest check it could find. The question the provider has to answer is the other
- * one: with the flag off, is a device named by name on a local network still reachable?
+ * one: with an allowing decision, the one the flag off gives, is a device named by name on a local
+ * network still reachable?
  *
- * It has to be. The flag is opt-in, and `blockPrivateHttpHosts` in `egress-policy.ts` says why: unset and false preserve
- * local-first connections. A NETCONF device sits on a management network nearly by definition, so a
- * provider that hardened past the flag would refuse the ordinary case. This dial asks `socketEgress`
- * for the rule and installs its answer, and the flag is read inside it (`guardedNodeOptions` in `egress-policy.ts`), so
- * the pair below drives the lookup the dial actually installed and shows the decision follows the
- * flag rather than this provider.
+ * It has to be. The flag is opt-in, and the module docblock of `src/lib/db/egress-decision.ts`
+ * says why: unset, empty or blank keeps private destinations reachable as the documented default.
+ * A NETCONF device sits on a management network nearly by definition, so a provider that hardened
+ * past the flag would refuse the ordinary case. This dial asks `socketEgress`
+ * for the rule and installs its answer, and the rule decides by the egress decision the dial is handed
+ * (`DialConfig.egress`, then `guardedNodeOptions` in `egress-policy.ts`), so the pair below drives the
+ * lookup the dial actually installed and shows it follows that decision rather than this provider.
  *
  * `localhost` is resolved for real, as the shared policy's own test does: its answers are loopback,
  * which the guard refuses and the link-local rule does not, which is what separates the two cases.
  * No socket is opened to it; only the name is resolved.
  */
-const EGRESS_FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const flagBefore = process.env[EGRESS_FLAG];
-
-afterEach(() => {
-  if (flagBefore === undefined) delete process.env[EGRESS_FLAG];
-  else process.env[EGRESS_FLAG] = flagBefore;
-});
-
-async function lookupInstalledFor(host: string, flag: "on" | "off"): Promise<LookupFunction> {
-  if (flag === "on") process.env[EGRESS_FLAG] = "true";
-  else delete process.env[EGRESS_FLAG];
+async function lookupInstalledFor(host: string, decision: "blocking" | "allowing"): Promise<LookupFunction> {
+  const egress = decision === "blocking" ? BLOCKS_PRIVATE_HOSTS : ALLOWS_PRIVATE_HOSTS;
   const { ssh, socket, seen } = ports();
-  await dialNetconf(config({ host }), ssh, socket);
+  await dialNetconf(config({ host, egress }), ssh, socket);
   const lookup = seen.dialled[0]?.lookup;
-  expectBe(typeof lookup, "function", `no lookup was installed for ${host} with the flag ${flag}`);
+  expectBe(typeof lookup, "function", `no lookup was installed for ${host} with a ${decision} decision`);
   return lookup as LookupFunction;
 }
 
@@ -319,20 +339,20 @@ function answerFor(lookup: LookupFunction, name: string): Promise<LookupAddress[
   });
 }
 
-test("with the flag off, the installed lookup accepts a name that resolves to a local address", async () => {
-  const lookup = await lookupInstalledFor("localhost", "off");
+test("with an allowing decision, the installed lookup accepts a name that resolves to a local address", async () => {
+  const lookup = await lookupInstalledFor("localhost", "allowing");
   const answer = await answerFor(lookup, "localhost");
-  expectTruthy(Array.isArray(answer), `localhost was refused with the flag off: ${String(answer)}`);
+  expectTruthy(Array.isArray(answer), `localhost was refused with an allowing decision: ${String(answer)}`);
   expectTruthy(answer.length > 0);
-  // Every answer is loopback, so nothing here is public: the dial allowed it because the flag is
-  // off, not because the addresses happened to pass a public-address check.
+  // Every answer is loopback, so nothing here is public: the dial allowed it because the decision
+  // allows it, not because the addresses happened to pass a public-address check.
   expectTruthy(answer.every(({ address }) => address === "127.0.0.1" || address === "::1"));
 });
 
-test("with the flag on, the same dial's lookup refuses that name, and the sentence is the guard's", async () => {
-  const lookup = await lookupInstalledFor("localhost", "on");
+test("with a blocking decision, the same dial's lookup refuses that name, and the sentence is the guard's", async () => {
+  const lookup = await lookupInstalledFor("localhost", "blocking");
   const answer = await answerFor(lookup, "localhost");
-  expectTruthy(answer instanceof Error, `localhost was accepted with the flag on: ${String(answer)}`);
+  expectTruthy(answer instanceof Error, `localhost was accepted with a blocking decision: ${String(answer)}`);
   expectBe(answer.message, BLOCKED_HOST);
 });
 

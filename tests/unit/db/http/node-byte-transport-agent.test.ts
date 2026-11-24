@@ -7,6 +7,7 @@
  * test file.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realHttp = { ...(await import("node:http")) };
 let constructed = 0;
@@ -35,9 +36,10 @@ function build(extra: Partial<ByteOptions>): Error | undefined {
   try {
     transports.push(
       createNodeByteTransport({
-        origin: httpOrigin("http", "127.0.0.1", 9000),
+        origin: httpOrigin("http", "127.0.0.1", 9000, ALLOWS_PRIVATE_HOSTS),
         tls: null,
         maxSockets: 1,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { "x-api": "k" },
         ...extra,
       }),

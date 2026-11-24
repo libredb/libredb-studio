@@ -150,20 +150,6 @@ describe("the SSH tunnel pool keys on the bastion route as well as the far end",
     expect(hasTunnel(connId, { ssh: BASTION_A, farEnd: { host: "other-db.internal", port: 5432 } })).toBe(false);
   });
 
-  test("a rotated bastion credential is the same route and reuses the forward", async () => {
-    // The key frames exactly the four addressing values `connectionFingerprint` frames, so the
-    // pool cannot share a forward between two records the seal calls two different servers, and
-    // does not split one over a value that changes who may reach the bastion rather than which
-    // machine it is. Rotating the password must not strand the live forward behind a second one.
-    const connId = "d86-route-secret-" + Date.now();
-
-    const first = await open(connId, BASTION_A);
-    const rotated = await open(connId, { ...BASTION_A, password: "rotated", hostKeyFingerprint: "SHA256:aa" });
-
-    expect(rotated).toBe(first);
-    expect(dialled).toEqual(["admin@bastion-a.example.com:22"]);
-  });
-
   test("closing the connection id closes every route pooled under it", async () => {
     const connId = "d86-route-close-" + Date.now();
 

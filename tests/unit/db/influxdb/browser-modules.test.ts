@@ -2,7 +2,9 @@
  * The InfluxQL modules shipped to the browser (SPEC 3.1, E18): the editor, the confirmation gate row and the
  * query generators import the lexer, the policy, the quoter and the generators, so each of the four imports only
  * another member of the set and types, never a Node built-in, `@/lib/db/http/*` or a server module of the
- * directory. Bytes are measured with `TextEncoder`, so none of the four names `Buffer` outside a comment: it is a
+ * directory. The lexer and the policy live in the influxql statement language's core family module, the quoter and
+ * the generators in the provider directory: a member import is `./<name>` of a member in the importer's own
+ * directory, or `@/lib/languages/influxql/<name>` of a family member. Bytes are measured with `TextEncoder`, so none of the four names `Buffer` outside a comment: it is a
  * Node global, which an import check cannot see. Proven both ways: the real sources pass, and a planted import or
  * `Buffer` fails by name.
  */
@@ -10,12 +12,40 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const INFLUXDB_DIR = "src/lib/db/providers/timeseries/influxdb";
+const FAMILY_DIR = statementLanguageFamilyDirectory("influxql");
+
+/** A browser-shipped module: its `/`-joined repository directory and its file name without `.ts`. */
+interface Member {
+  readonly dir: string;
+  readonly name: string;
+}
 
 /** The browser-safe set, exactly (SPEC 3.1). */
-const BROWSER_MODULES = ["influxql-lexer", "influxql-policy", "influxql-quote", "influxql-generators"];
+const BROWSER_MODULES: readonly Member[] = [
+  { dir: FAMILY_DIR, name: "lexer" },
+  { dir: FAMILY_DIR, name: "policy" },
+  { dir: INFLUXDB_DIR, name: "influxql-quote" },
+  { dir: INFLUXDB_DIR, name: "influxql-generators" },
+];
+
+const member = (name: string): Member => {
+  const found = BROWSER_MODULES.find((module) => module.name === name);
+  if (found === undefined) throw new Error(`${name} is not a member of the browser-safe set`);
+  return found;
+};
+
+/** The specifiers `importer` may load a member by: `./<name>` in its own directory, `@/...` for a family member. */
+const memberSpecifiers = (importer: Member): Set<string> =>
+  new Set(
+    BROWSER_MODULES.flatMap((module) => [
+      ...(module.dir === importer.dir ? [`./${module.name}`] : []),
+      ...(module.dir === FAMILY_DIR ? [`@/${FAMILY_DIR.slice("src/".length)}/${module.name}`] : []),
+    ]),
+  );
 
 /**
  * Every value import or re-export of `source`, plus every dynamic `import("...")` and `require("...")` (type-only
@@ -75,22 +105,23 @@ function bufferReferences(file: ts.SourceFile): number {
   return count;
 }
 
-function findings(module: string, source: string): string[] {
-  const file = ts.createSourceFile(`${module}.ts`, source, ts.ScriptTarget.Latest, true);
+function findings(module: Member, source: string): string[] {
+  const file = ts.createSourceFile(`${module.name}.ts`, source, ts.ScriptTarget.Latest, true);
+  const allowed = memberSpecifiers(module);
   const imports = valueImports(file)
-    .filter((specifier) => {
-      const sibling = /^\.\/([a-z0-9-]+)$/.exec(specifier);
-      return sibling === null || !BROWSER_MODULES.includes(sibling[1]);
-    })
-    .map((specifier) => `${module}.ts imports ${specifier}, which is not browser-safe`);
-  const buffers = bufferReferences(file) > 0 ? [`${module}.ts names Buffer, a Node global; use TextEncoder`] : [];
+    .filter((specifier) => !allowed.has(specifier))
+    .map((specifier) => `${module.name}.ts imports ${specifier}, which is not browser-safe`);
+  const buffers = bufferReferences(file) > 0 ? [`${module.name}.ts names Buffer, a Node global; use TextEncoder`] : [];
   return [...imports, ...buffers];
 }
 
 describe("the browser-shipped InfluxQL modules (SPEC 3.1, E18)", () => {
-  test.each(BROWSER_MODULES.map((module) => [module]))("%s.ts imports only the set and types", (module) => {
-    expect(findings(module, readFileSync(join(ROOT, INFLUXDB_DIR, `${module}.ts`), "utf8"))).toEqual([]);
-  });
+  test.each(BROWSER_MODULES.map((module) => [`${module.dir}/${module.name}`, module] as const))(
+    "%s.ts imports only the set and types",
+    (_label, module) => {
+      expect(findings(module, readFileSync(join(ROOT, module.dir, `${module.name}.ts`), "utf8"))).toEqual([]);
+    },
+  );
 
   test.each([
     ['import { createNodeTransport } from "@/lib/db/http/node-transport";\n', "@/lib/db/http/node-transport"],
@@ -101,40 +132,42 @@ describe("the browser-shipped InfluxQL modules (SPEC 3.1, E18)", () => {
     ['export { influxErrorOf } from "./errors";\n', "./errors"],
     ['import { quoteSqlString } from "@/lib/sql/values";\n', "@/lib/sql/values"],
   ])("a planted %s fails by name", (planted, specifier) => {
-    expect(findings("influxql-policy", planted)).toEqual([
-      `influxql-policy.ts imports ${specifier}, which is not browser-safe`,
-    ]);
+    expect(findings(member("policy"), planted)).toEqual([`policy.ts imports ${specifier}, which is not browser-safe`]);
   });
 
   test.each([
     ['const fs = await import("node:fs");\n', "node:fs"],
     ['const client = require("./client");\n', "./client"],
   ])("a planted dynamic import or require, %s, fails by name", (planted, specifier) => {
-    expect(findings("influxql-policy", planted)).toEqual([
-      `influxql-policy.ts imports ${specifier}, which is not browser-safe`,
-    ]);
+    expect(findings(member("policy"), planted)).toEqual([`policy.ts imports ${specifier}, which is not browser-safe`]);
   });
 
   test("a dynamic import of a sibling of the set is allowed", () => {
-    expect(findings("influxql-generators", 'const quote = await import("./influxql-quote");\n')).toEqual([]);
+    expect(findings(member("influxql-generators"), 'const quote = await import("./influxql-quote");\n')).toEqual([]);
+  });
+
+  test("a family member is allowed by its core path from the provider directory", () => {
+    expect(
+      findings(member("influxql-generators"), 'import { lexInfluxql } from "@/lib/languages/influxql/lexer";\n'),
+    ).toEqual([]);
   });
 
   test("a type-only import of a server module is allowed, and a sibling of the set is", () => {
     expect(
       findings(
-        "influxql-generators",
+        member("influxql-generators"),
         'import type { ColumnSchema } from "@/lib/types";\nimport { type InfluxClient } from "./client";\nimport { quoteInfluxqlIdentifier } from "./influxql-quote";\n',
       ),
     ).toEqual([]);
   });
 
   test("Buffer in code fails, and Buffer in a comment or a string does not", () => {
-    expect(findings("influxql-policy", "const n = Buffer.byteLength(text);\n")).toEqual([
-      "influxql-policy.ts names Buffer, a Node global; use TextEncoder",
+    expect(findings(member("policy"), "const n = Buffer.byteLength(text);\n")).toEqual([
+      "policy.ts names Buffer, a Node global; use TextEncoder",
     ]);
-    expect(findings("influxql-policy", 'const n = globalThis["Buffer"].byteLength(text);\n')).toEqual([
-      "influxql-policy.ts names Buffer, a Node global; use TextEncoder",
+    expect(findings(member("policy"), 'const n = globalThis["Buffer"].byteLength(text);\n')).toEqual([
+      "policy.ts names Buffer, a Node global; use TextEncoder",
     ]);
-    expect(findings("influxql-policy", '// never Buffer\n/* Buffer */\nconst s = "Buffer";\n')).toEqual([]);
+    expect(findings(member("policy"), '// never Buffer\n/* Buffer */\nconst s = "Buffer";\n')).toEqual([]);
   });
 });

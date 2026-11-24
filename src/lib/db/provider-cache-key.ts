@@ -1,6 +1,12 @@
 import { connectionFingerprint } from "./connection-fingerprint";
 import { READS_FILE_ACCESS_POSTURE, SINGLE_WRITER_FILE } from "./compatibility";
-import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
+import { typeIdRow } from "./type-id";
+import {
+  type DatabaseConnection,
+  LITERAL_SEED_FILE,
+  type WithLiteralSeedFile,
+  type WithTunnelFarEnd,
+} from "@/lib/types";
 
 /**
  * The key `providerCache` holds a live provider under, and why it is not `connection.id`
@@ -81,12 +87,21 @@ import type { DatabaseConnection, WithTunnelFarEnd } from "@/lib/types";
  *
  * WHAT IT DOES NOT CATCH, stated as a limit rather than left to be found: the same limit
  * `connectionFingerprint` states, a different server answering on the same host and port.
+ *
+ * A TYPE OUTSIDE THE UNION frames nothing: the engine's rows are read through `typeIdRow` (FND-1) before either
+ * digest, so such a type is refused by name with `UnknownProviderError`, never read as an engine that keeps its owner
+ * or one that reads a file-access posture.
+ *
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
  */
 export async function providerCacheKey(
-  connection: DatabaseConnection & WithTunnelFarEnd,
+  connection: DatabaseConnection & WithTunnelFarEnd & WithLiteralSeedFile,
   allowExternalFileAccess?: boolean,
   owner?: string,
 ): Promise<string> {
+  // Read before either digest, so a type outside the union is refused by name before anything is framed.
+  const readsPosture = typeIdRow(READS_FILE_ACCESS_POSTURE, connection.type);
+  const keyedOwner = providerOwner(connection, owner);
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
   const parts = [connection.id, server, credentials, mode];
@@ -96,11 +111,10 @@ export async function providerCacheKey(
   // on the same connection, so its key carries this extra segment (the non-admin DuckDB file-access
   // change), on the profiled key too, which always passes a definite posture. The
   // engine is read from `READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
-  if (READS_FILE_ACCESS_POSTURE[connection.type] && allowExternalFileAccess === false) {
+  if (readsPosture && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);
   }
   // Last, and only when there is one: without an owner the key is byte-identical to before owners existed.
-  const keyedOwner = providerOwner(connection, owner);
   if (keyedOwner !== undefined) parts.push(`owner:${keyedOwner}`);
   // Length-framed like the two digests it joins: an id ending in a digit must not be able to
   // answer the same key as a shorter id followed by a longer fingerprint.
@@ -117,10 +131,14 @@ export async function providerCacheKey(
  * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
  * (`OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
  * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
- * under always name the same owner.
+ * under always name the same owner. The row is read through `typeIdRow` (FND-1), so a type outside the
+ * `DatabaseType` union is refused by name rather than read as an engine that keeps the owner, or, for a prototype
+ * key, as one that drops it.
+ *
+ * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
  */
 export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
-  return SINGLE_WRITER_FILE[connection.type] ? undefined : owner;
+  return typeIdRow(SINGLE_WRITER_FILE, connection.type) ? undefined : owner;
 }
 
 /**
@@ -138,8 +156,9 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * or the fingerprint, and `tests/unit/lib/db/provider-cache-key.test.ts` walks those maps to hold it,
  * because this list is hand-kept and the API key pair was once missing from it. The public fields
  * below (the agent user, what TLS presents and trusts, the mechanism, the auth database, the consent,
- * the data servers, the warehouse, the region, the sign-in method, the role, the tunnel's auth method and host key) are outside that walk, so the same file
- * holds them in a table of their own, one row per field.
+ * the data servers, the warehouse, the region, the sign-in method, the role, the tunnel's auth method
+ * and host key, the operator's grant) are outside that walk, so the same file holds them in a table of
+ * their own, one row per field.
  *
  * - `password` is the connection's own secret. `connectionString` is NOT here because the
  *   fingerprint already frames it whole, credentials and all.
@@ -190,8 +209,19 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  * - The tunnel's SECRETS and `hostKeyFingerprint`. Its ROUTE is deliberately absent: `tunnelRoute`
  *   frames the four route values inside the fingerprint already, and this is the half that file
  *   explicitly leaves out as "a credential, not a route".
+ * - `managed` decides whom an empty credential signs in as: BigQuery and Firestore sign a keyless connection in with
+ *   the server's own identity only when `managed` is exactly true, the operator's grant. A seed the operator demotes to
+ *   `managed: false` keeps its id, server and empty credential, so without this a provider opened as the server went
+ *   on serving it (`tests/api/db/demoted-seed.test.ts`). Framed after the fixed parts, before the literal-mode part,
+ *   and only when exactly true, so every connection without the grant keeps the key it had.
+ * - `LITERAL_SEED_FILE` (`src/lib/types.ts`) marks a seed-file row read in literal mode, which never signs in with the
+ *   server's own identity, so it decides whom an empty credential signs in as just as `managed` does. The operator
+ *   loader reads the mode on every call (`src/lib/seed/operator-loader.ts`), so the same record can arrive with and
+ *   without it, and a provider opened without it must never be handed to the record carrying it
+ *   (`tests/api/db/literal-seed-server-identity.test.ts`). Framed after `managed` and only when set, so every other
+ *   connection keeps the key it had.
  */
-async function credentialDigest(connection: DatabaseConnection): Promise<string> {
+async function credentialDigest(connection: DatabaseConnection & WithLiteralSeedFile): Promise<string> {
   const ssl = connection.ssl;
   const tunnel = connection.sshTunnel;
   const framed = [
@@ -224,6 +254,10 @@ async function credentialDigest(connection: DatabaseConnection): Promise<string>
     tunnel?.hostKeyFingerprint ?? "",
     // Last and only when set, so every connection without roots keeps the key it had.
     ...(connection.agentReadRoots === undefined ? [] : [JSON.stringify(connection.agentReadRoots)]),
+    // After the fixed parts and only under the grant, so every connection without it keeps the key it had.
+    ...(connection.managed === true ? ["managed"] : []),
+    // Last and only when set, so every connection without the literal-mode marker keeps the key it had.
+    ...(connection[LITERAL_SEED_FILE] === true ? ["literalSeedFile"] : []),
   ]
     .map((value) => `${value.length}:${value}`)
     .join("");

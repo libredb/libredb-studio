@@ -12,7 +12,7 @@ import { type FakeFirestoreSeams, type FirestoreAnswer, jsonAnswer } from "./fir
 
 export const PROVIDER_TARGET: FirestoreTarget = Object.freeze({ projectId: "demo-studio", databaseId: "(default)" });
 export const PROVIDER_DOCS = "projects/demo-studio/databases/(default)/documents";
-/** Long enough for the access-token rule in google-credentials.ts (20 URL-safe characters or more). */
+/** Long enough for the access-token rule in src/lib/db/auth/google/credentials.ts (20 URL-safe characters or more). */
 export const PASTED_TOKEN = "ya29.pasted-token-value-123";
 export const DATABASE = Object.freeze({
   name: "projects/demo-studio/databases/(default)",

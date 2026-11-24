@@ -20,7 +20,8 @@ import { ACCEPT_TABLE } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError } from "../errors";
 import { builtInKind } from "../kinds";
-import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE, KUBERNETES_TYPE } from "../limits";
+import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_TYPE } from "../limits";
 import { maskTableForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { cellOf, type KubeTable, parseTable, scanTable, type TableColumn, type TableRow, tableGrid } from "../table";
@@ -35,7 +36,7 @@ import {
   requestTimeoutMs,
   resolveType,
 } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 export type GetStatement = Extract<KubectlStatement, { readonly command: "get" }>;
 

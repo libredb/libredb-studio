@@ -11,11 +11,7 @@
  * the model read the reason it was refused.
  */
 import { z } from "zod";
-import {
-  AGENT_PAGING_SENTENCE,
-  type KubectlRunRefusalCode,
-  readKubectlRun,
-} from "@/lib/db/providers/platform/kubernetes/console/paging";
+import { AGENT_PAGING_SENTENCE, type KubectlRunRefusalCode, readKubectlRun } from "@/lib/languages/kubectl/paging";
 
 export const KUBECTL_AGENT_MAX_STATEMENT_CHARS = 4096;
 

@@ -27,13 +27,15 @@ import { MILVUS_GENERATORS } from "@/lib/db/providers/vector/milvus/generators";
 import { QDRANT_GENERATORS } from "@/lib/db/providers/vector/qdrant/generators";
 import { WEAVIATE_GENERATORS } from "@/lib/db/providers/vector/weaviate/generators";
 import type { QueryDialect } from "@/lib/db/query-dialects";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import type { DialectGenerators, LanguageGenerators, SqlPortGenerators } from "./types";
+import type { DatabaseType } from "@/lib/types";
+import type { DialectGenerators, LanguageGenerators, SqlEngineGenerators } from "./types";
 
 /**
  * The query generators' registry: every text one engine writes for a tree click, Generate Query, Generate Count Query
  * or a row action is a row declared beside its provider, and `src/lib/query-generators.ts` reads it here, by what the
- * declaration says, and names no engine itself.
+ * declaration says or, for an SQL engine's own forms, by the connection's type id, and names no engine itself.
  *
  * Pure and browser-safe, like every row it collects: the tab manager, the row menus and the server routes all read it.
  */
@@ -81,23 +83,18 @@ export const LANGUAGE_GENERATORS: Readonly<Record<EngineQueryLanguage, LanguageG
 } satisfies Record<EngineQueryLanguage, LanguageGenerators>);
 
 /**
- * The SQL engines' own forms, keyed by the default port each declares, the signal the generators have always read
- * them by. A port two rows both claim fails at load.
+ * The SQL forms and identifier quoting each SQL engine writes apart from the shared ones, keyed by type id, each row
+ * declared beside its provider, so a connection's forms follow its type and never the port its declaration names.
+ * A `Partial` over `DatabaseType`: an engine with no row writes the shared forms. Read only through
+ * `sqlEngineGenerators`.
  */
-export const SQL_PORT_GENERATORS: ReadonlyMap<number, SqlPortGenerators> = (() => {
-  const rows = new Map<number, SqlPortGenerators>();
-  for (const row of [
-    COUCHBASE_SQL_GENERATORS,
-    DRUID_SQL_GENERATORS,
-    ORACLE_SQL_GENERATORS,
-    MSSQL_SQL_GENERATORS,
-    MYSQL_SQL_GENERATORS,
-  ]) {
-    if (rows.has(row.port)) throw new Error(`SQL_PORT_GENERATORS: port ${row.port} is registered twice`);
-    rows.set(row.port, row);
-  }
-  return rows;
-})();
+export const SQL_ENGINE_GENERATORS: Readonly<Partial<Record<DatabaseType, SqlEngineGenerators>>> = Object.freeze({
+  couchbase: COUCHBASE_SQL_GENERATORS,
+  druid: DRUID_SQL_GENERATORS,
+  mssql: MSSQL_SQL_GENERATORS,
+  mysql: MYSQL_SQL_GENERATORS,
+  oracle: ORACLE_SQL_GENERATORS,
+});
 
 /** The generators of the language a declaration names, looked up as an own key; undefined for SQL. */
 export function languageGenerators(capabilities: ProviderCapabilities): LanguageGenerators | undefined {
@@ -107,7 +104,12 @@ export function languageGenerators(capabilities: ProviderCapabilities): Language
     : undefined;
 }
 
-/** The SQL forms of the engine whose default port a declaration names, or undefined for every other port. */
-export function sqlPortGenerators(capabilities: ProviderCapabilities): SqlPortGenerators | undefined {
-  return capabilities.defaultPort === null ? undefined : SQL_PORT_GENERATORS.get(capabilities.defaultPort);
+/**
+ * The SQL forms of `type`'s engine: none for `undefined`, which is no connection, and for a type id with no row; its
+ * row otherwise, read through `typeIdRow`, so any other value is refused by name before the table is read.
+ *
+ * @throws {UnknownProviderError} When `type` is defined and not a type id.
+ */
+export function sqlEngineGenerators(type: DatabaseType | undefined): SqlEngineGenerators | undefined {
+  return type === undefined ? undefined : typeIdRow(SQL_ENGINE_GENERATORS, type);
 }

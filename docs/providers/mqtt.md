@@ -9,6 +9,7 @@ a rule is a choice rather than a measurement, it is marked CHOICE and its cost i
 | | |
 |---|---|
 | **Write reach** | none: the encoder has no PUBLISH function, and the valve, `guardOutboundPacket`, refuses any other packet on the bytes; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the editor sends no statement to a broker, since `query` refuses every text |
 
 ## Before you connect
 
@@ -229,9 +230,10 @@ visible in a replayed capture: a capture records what a correct CONNECT produced
 
 ### 4.4 Credentials in the clear
 
-A password sent with no SSL mode crosses the network in cleartext. Studio refuses that combination unless the
-host is this machine or an SSH tunnel carries the connection, and the Allow insecure authentication box is the
-override for a reader who has a reason. The remedy the hint names first is an SSL mode, not the override.
+A password sent with no SSL mode crosses the network in cleartext.
+Studio refuses that combination unless the host is this machine or an SSH tunnel carries the connection, and the Allow insecure authentication box is the override for a reader who has a reason.
+Whether a tunnel carries the connection is read from whether one was opened for it, as the other providers read it, and not from the tunnel switch alone (4.6).
+The remedy the hint names first is an SSL mode, not the override.
 
 ### 4.5 TLS
 
@@ -271,6 +273,17 @@ encrypts the credential the broker cannot.
 
 With TLS on as well, the certificate is checked against the tunnel's far end rather than against the local
 forward, which is the second bullet in 4.5.
+
+Studio decides the tunnel before it builds the provider ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+It reads the connection before the provider fills in the default port, so a connection with the tunnel on and Port empty has nothing for a tunnel to forward to, and Studio refuses it before any socket:
+
+> This connection's SSH tunnel is on, but the connection names no Host and Port for the tunnel to forward to, so no tunnel was opened and nothing was sent. Fill in Host and Port, or turn the tunnel off.
+
+The switch is true, false or absent, and Studio refuses one of another type, such as the text `"true"`, by name before any socket:
+
+> The connection's sshTunnel.enabled must be true or false; nothing was sent.
+
+The provider reads whether a tunnel was opened from the far end Studio hands on with an opened one, never from the switch.
 
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a tunnelled connection is refused, for the reason in 4.8.
 
@@ -348,7 +361,7 @@ requires a number and there is no count a broker publishes.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts`](../../src/lib/db/providers/keyvalue/mqtt/sql-grammar.ts), the `mqtt` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: there is no query console in this version ([§2.1](#21-where-it-sits)), the Keys panel is the surface, so no statement text of this engine is SQL.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/keyvalue/mqtt/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/mqttread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -395,6 +408,29 @@ decision that could be reversed by a setting: this provider has no code that can
 A broker keeps no catalog and publishes no statistics a subscriber can read, so Health reports what the last
 read saw and nothing else. There are no slow queries, no active sessions, no table or index statistics and no
 maintenance operations.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `mqtt` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/mqtt/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports what the last read of the broker saw |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: none.
+`health` is not offered to agent mode: the agent handle refuses it with `MQTT_AGENT_WITHHELD.health`.
 
 ## 8. Measured broker behaviour
 
@@ -545,7 +581,7 @@ decoder's import specifier is pinned, and the package root is loaded alongside i
 ### 11.2 Run it
 
 ```bash
-bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.test.ts
+bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.test.ts tests/security/provider-egress-decision.test.ts
 ```
 
 | File | What it holds |
@@ -555,13 +591,14 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/session.test.ts` | The client id, the CONNACK sentences, the three budgets, and the payload the tree does not hold |
 | `tests/unit/db/mqtt/inbound-limit.test.ts` | The 8 MiB skip, including a body spanning chunks and the heap it does not grow |
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
-| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, and the dial against a loopback server |
-| `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
+| `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, the SSH tunnel's refusal, and the dial against a loopback server |
+| `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, a blocking and an allowing egress decision, and a tunnel |
 | `tests/unit/db/mqtt/session-stats.test.ts` | What a read counts besides the tree, the handshake-only session, and each failure's kind |
 | `tests/unit/db/mqtt/agent-statement.test.ts` | Agent mode's closed table of two reads, and every request refused before the network |
 | `tests/unit/db/mqtt/agent-provider.test.ts` | The agent path through the provider: full packets, answers, budgets, failures and every surface |
 | `tests/unit/db/mqtt/agent-seam.test.ts` | That the agent path can send no PUBLISH and no Will |
-| `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed |
+| `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed, and a tunnel that was not opened writing nothing |
+| `tests/security/provider-egress-decision.test.ts` | That the factory hands the provider the egress decision it takes from `DB_HTTP_BLOCK_PRIVATE_HOSTS` |
 | `tests/unit/key-browser-line-contrast.test.ts` | The panel's text colours, as contrast ratios |
 | `e2e/mqtt-provider.spec.ts` | The connection dialog in a browser |
 
@@ -683,9 +720,11 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `mqttread` family pack itself.
 The `mqttread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `mqttread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one read request, and holds an operations variant; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on MQTT: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read a topic the question names directly, to read the window only for the broker's totals, never to guess a topic, and to report a topic not seen as not seen in that window, never as absent.
 A plan of the investigation is prose: an MQTT connection has no query console, so there is no statement for the editor to run, and plan mode is ungrounded on it, as agent mode is.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/mqttread/client.ts)) beside core's pill, *Executes nothing it drafts*: "no topic is listed for it; opening the connection is a handshake that subscribes to nothing", because MQTT has no command that lists topics and topic names are withheld, so the shared strip's "one schema read grounds it" would not be true here.
 The editor language id stays `mqtt`, and the fence alias `mqttread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP clients run an MQTT read with `run_mqtt_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/mqttread/mcp.ts`](../../src/lib/agent/languages/mqttread/mcp.ts)), opened by `MCP_EXPOSABLE.mqtt` and `MCP_STATEMENT_READ.mqtt` (section 15); `READ_ONLY_ENFORCED.mqtt` is unchanged.

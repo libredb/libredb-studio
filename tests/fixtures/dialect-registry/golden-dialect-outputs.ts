@@ -59,9 +59,9 @@ export async function goldenDialectOutputs(): Promise<string> {
         offersColumnProfiling: offersColumnProfiling(caps),
         offersCodeGeneration: offersCodeGeneration(caps),
         offersCountQuery: offersCountQuery(caps),
-        tableQuery: attempt(() => generateTableQuery(PATH, caps, COLUMNS, { readOnly: false })),
-        selectQuery: attempt(() => generateSelectQuery(PATH, COLUMNS, caps, { readOnly: false })),
-        countQuery: attempt(() => generateCountQuery(PATH, caps)),
+        tableQuery: attempt(() => generateTableQuery(PATH, type, caps, COLUMNS, { readOnly: false })),
+        selectQuery: attempt(() => generateSelectQuery(PATH, COLUMNS, type, caps, { readOnly: false })),
+        countQuery: attempt(() => generateCountQuery(PATH, type, caps)),
       };
     }
   } finally {

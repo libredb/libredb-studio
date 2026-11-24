@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_DRIVE_HEADER, verifyAgentDriveToken } from "@/lib/agent/drive-token";
 import { AgentRunServiceError } from "@/lib/agent/run-service";
-import { driveAgentRun } from "@/lib/agent/runtime";
+import { AgentRunUnavailableError } from "@/lib/agent/run-store";
+import { driveAgentRunOutcome } from "@/lib/agent/runtime";
+import { agentRunUnavailableResponse } from "@/lib/api/agent-run-access";
 import { clientAddress } from "@/lib/api/client-address";
 import { createErrorResponse } from "@/lib/api/errors";
 import { RateLimitError, consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
+import { type ProviderTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
 
 /**
@@ -35,6 +38,9 @@ import { logger } from "@/lib/logger";
  * The response is deliberately the drive's outcome rather than an immediate
  * acknowledgement: the local backend's queue treats a non-2xx as a delivery to
  * retry, and a drive that failed halfway is exactly a delivery worth retrying.
+ * A failure is answered as the agent runs route answers one (`driveFailure`): its
+ * own status, code, kind and outcome, with a text that held a credential of the
+ * run's connection replaced by Studio's sentence.
  */
 
 const ROUTE = "POST /api/agent/drive";
@@ -87,25 +93,44 @@ export async function POST(req: Request) {
   }
 
   try {
-    return NextResponse.json(await driveAgentRun(runId));
+    const outcome = await driveAgentRunOutcome(runId);
+    if (outcome.kind === "finished") return NextResponse.json(outcome.result);
+    return driveFailure(outcome.error, outcome.scrub);
   } catch (error) {
-    if (error instanceof AgentRunServiceError) {
-      if (error.reasonCode === "RUN_NOT_FOUND") {
-        return NextResponse.json({ error: "No such agent run" }, { status: 404 });
-      }
-      if (error.reasonCode === "RUN_ALREADY_DRIVEN") {
-        // 409, not 5xx, and deliberately NOT in `TERMINAL_REASONS`: the run is
-        // healthy and another drive is already carrying it, so this is "already
-        // being handled" rather than "ended for good". The queue should not keep
-        // redelivering while that other drive works.
-        return NextResponse.json({ error: error.message }, { status: 409 });
-      }
-      if (TERMINAL_REASONS.has(error.reasonCode)) {
-        // 409, not 5xx: the run ended, so redelivering this message will never
-        // succeed and the queue should stop trying.
-        return NextResponse.json({ error: error.message }, { status: 409 });
-      }
-    }
-    return createErrorResponse(error, { route: "api/agent/drive" });
+    // Thrown before the run's connection resolved, so there is no connection to scrub with.
+    return driveFailure(error, undefined);
   }
+}
+
+/**
+ * The answer to a drive's failure. `scrub` is the run's connection's, given for a failure after that connection
+ * resolved. The refusals below are decided on the value a log line would carry, the failure withheld with the scrub,
+ * so their message is never a provider's text; every other failure answers `createErrorResponse` with the scrub, its
+ * own status, code, kind and outcome.
+ */
+function driveFailure(failure: unknown, scrub: ProviderTextScrub | undefined): NextResponse {
+  const decided = scrub === undefined ? failure : withholdProviderError(scrub, failure);
+  if (decided instanceof AgentRunServiceError) {
+    if (decided.reasonCode === "RUN_NOT_FOUND") {
+      return NextResponse.json({ error: "No such agent run" }, { status: 404 });
+    }
+    if (decided.reasonCode === "RUN_ALREADY_DRIVEN") {
+      // 409, not 5xx, and deliberately NOT in `TERMINAL_REASONS`: the run is
+      // healthy and another drive is already carrying it, so this is "already
+      // being handled" rather than "ended for good". The queue should not keep
+      // redelivering while that other drive works.
+      return NextResponse.json({ error: decided.message }, { status: 409 });
+    }
+    if (TERMINAL_REASONS.has(decided.reasonCode)) {
+      // 409, not 5xx: the run ended, so redelivering this message will never
+      // succeed and the queue should stop trying.
+      return NextResponse.json({ error: decided.message }, { status: 409 });
+    }
+  }
+  if (decided instanceof AgentRunUnavailableError) {
+    // 409, not 5xx: the run's ledger names an id this build does not have, so no
+    // redelivery to this build can drive it, and nothing was resolved or built.
+    return agentRunUnavailableResponse(decided, ROUTE);
+  }
+  return createErrorResponse(failure, { route: "api/agent/drive", scrub });
 }

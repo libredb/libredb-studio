@@ -20,6 +20,7 @@
 import { addressKeys as keysOfSegments, resolveObjectAddress } from "@/lib/db/object-address";
 import type { ObjectAddressResolution } from "@/lib/db/object-address";
 import type { AgentInventoryObject } from "./types";
+import { nameForPrompt } from "./untrusted-content";
 
 /**
  * The segments of an entry's address.
@@ -135,6 +136,19 @@ export type ProfileTargetResolution =
  * inventoried and the browser could address could not be profiled. It breaks a tie between
  * equally ranked entries and never promotes a worse-ranked one, which is documented on the
  * rule itself; where the capture read no default it is absent and the refusal stands.
+ *
+ * A spelling is also read as Studio's own sentences write a name, because the refusals offer
+ * the inventory's names through `nameForPrompt` and a model copies an offer back as it reads
+ * it: `"order items"`, quotes and all, is the entry `order items`. Only a name those sentences
+ * quote is matched that way, so a plain name's quoted spelling names nothing, and a spelling
+ * that is one entry as written and another as quoted is refused as ambiguous with both.
+ * That refusal offers the quoted-named entry by its own quoted form, which resolves, and the
+ * other by the spelling just refused, which does not: only its raw name, which no refusal
+ * shows, selects it. That needs an inventory name holding quote characters, and it fails as
+ * a refusal, never as the wrong object, so it is accepted rather than given a third form.
+ * The MongoDB catalog read (`catalogTarget`) and the document-index card
+ * (`documentIndexTarget`) resolve their spelling here too, so a copied offer reaches the
+ * same entry there.
  */
 export function resolveProfileTarget(
   objects: readonly AgentInventoryObject[],
@@ -142,14 +156,17 @@ export function resolveProfileTarget(
   table: string,
   preferredContainer: readonly string[] | undefined,
 ): ProfileTargetResolution {
-  const resolution = resolveInventoryAddress(
-    objects,
-    schema === undefined ? table : `${schema}.${table}`,
-    preferredContainer,
+  const spelling = schema === undefined ? table : `${schema}.${table}`;
+  const resolution = resolveInventoryAddress(objects, spelling, preferredContainer);
+  const asWritten =
+    resolution.kind === "resolved" ? [resolution.object] : resolution.kind === "ambiguous" ? resolution.candidates : [];
+  const asQuoted = objects.filter(
+    (entry) => nameForPrompt(entry.name) !== entry.name && nameForPrompt(entry.name) === spelling,
   );
-  if (resolution.kind === "absent") return { kind: "absent" };
-  if (resolution.kind === "ambiguous") return { kind: "ambiguous", candidates: resolution.candidates };
-  const entry = resolution.object;
+  const matched = [...new Set([...asWritten, ...asQuoted])];
+  if (matched.length === 0) return { kind: "absent" };
+  if (matched.length > 1) return { kind: "ambiguous", candidates: matched };
+  const entry = matched[0];
   // The entry's OWN address, never the spelling that reached it: an unqualified `orders`
   // that resolved to `sales.orders` composed `FROM "orders"` and let the search path decide
   // which relation was read while the ledger said `sales.orders`. Found by review on #345.

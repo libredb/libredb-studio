@@ -13,18 +13,13 @@
  * together, past which the statement answers a sentence to narrow it and shows no partial grid.
  */
 import { stringify } from "yaml";
-import { QueryError } from "@/lib/db/errors";
-import { byteBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { ByteBudgetRefusal, QueryError } from "@/lib/db/errors";
+import { byteBudgetSentence } from "@/lib/db/read-only-budget";
 import { ACCEPT_JSON } from "../client";
 import type { IndexedResource } from "../discovery";
 import { KubernetesRequestError, KubernetesResponseTooLargeError } from "../errors";
-import {
-  KUBERNETES_MAX_DOCUMENT_BYTES,
-  KUBERNETES_MAX_DOCUMENT_OBJECTS,
-  KUBERNETES_MAX_DOCUMENTS_BYTES,
-  KUBERNETES_PAGE_SIZE,
-  KUBERNETES_TYPE,
-} from "../limits";
+import { KUBERNETES_MAX_DOCUMENT_OBJECTS, KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
+import { KUBERNETES_MAX_DOCUMENT_BYTES, KUBERNETES_MAX_DOCUMENTS_BYTES, KUBERNETES_TYPE } from "../limits";
 import { maskObjectForMachine } from "../machine-redaction";
 import { redactResponse } from "../redaction";
 import { type KubeTable, parseTable, scanTable } from "../table";
@@ -127,7 +122,7 @@ class DocumentRows {
     const text = documentText(shown, this.resource, this.format);
     const length = utf8Length(text);
     if (this.machine !== undefined && length > this.machine.maxBytes)
-      throw new QueryError(byteBudgetSentence(length, this.machine.maxBytes), KUBERNETES_TYPE);
+      throw new ByteBudgetRefusal(byteBudgetSentence(length, this.machine.maxBytes), KUBERNETES_TYPE);
     if (length > KUBERNETES_MAX_DOCUMENT_BYTES) this.oversized(metadata.namespace ?? null, metadata.name ?? null);
     else this.push({ NAMESPACE: metadata.namespace ?? null, NAME: metadata.name ?? null, DOCUMENT: text }, length);
   }
@@ -169,7 +164,7 @@ async function namedRows(
       if (error instanceof KubernetesResponseTooLargeError) {
         // The figure is the cap the answer passed, so the document's true size is at least that.
         if (context.machine !== undefined)
-          throw new QueryError(
+          throw new ByteBudgetRefusal(
             byteBudgetSentence(2 * KUBERNETES_MAX_DOCUMENT_BYTES, context.machine.maxBytes),
             KUBERNETES_TYPE,
           );

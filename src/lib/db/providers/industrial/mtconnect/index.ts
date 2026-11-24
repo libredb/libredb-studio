@@ -22,9 +22,10 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { engineLimiter } from "@/lib/db/utils/bounded-limiter";
 import type {
   ActiveSessionDetails,
@@ -41,7 +42,7 @@ import type {
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ReadOnlyStatementBudget,
   ReadOnlyStatementMode,
@@ -184,7 +185,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly createTransport: MtcTransportFactory = createNodeTransport,
   ) {
     super(config, options);
@@ -264,11 +265,13 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async connect(): Promise<void> {
-    const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config);
+    const egress = requireEgressDecision(this.execution.egress);
+    const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config, egress);
     const transport = this.createTransport({
       origin,
       tls,
       maxSockets: 1,
+      egress,
       headers: {},
       // RabbitMQ's three settings, for the reasons MEASURED there and here: a link-local address is
       // refused before any socket, a 101 is refused at once, and an unreachable host is reported.

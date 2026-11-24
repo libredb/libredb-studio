@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import { HELD_BACK } from "../../../src/host/channel";
 import {
+  ENVIRONMENTS,
   type ProfileEntry,
   readProfiles,
   SSL_MODES,
@@ -67,20 +71,51 @@ describe("readProfiles", () => {
     for (const name of ["  ", 3, undefined]) assert.deepEqual(invalid({ ...PG, name }), item, String(name));
   });
 
-  it("refuses a type that is not an external database, and keeps one the channel does not enable (rule 5)", () => {
+  it("refuses a type that names no provider with the sentence Studio refuses it with (rule 5)", () => {
+    const types: readonly unknown[] = [
+      "postgresql",
+      "acmefoo",
+      "Postgres",
+      " postgres",
+      "constructor",
+      "__proto__",
+      "toString",
+      "a\nb",
+      "",
+      null,
+      undefined,
+      5,
+      ["postgres"],
+      { toString: () => "redis" },
+    ];
+    for (const type of types) {
+      const refusal = typeIdRefusal(type);
+      assert.notEqual(refusal, null, String(type));
+      const item = invalid({ ...PG, type });
+      assert.deepEqual(item, refusedShop(refusal?.sentence ?? ""), JSON.stringify(type));
+      // One log line per entry: a control character in the type is escaped, never written raw.
+      assert.equal(item.kind === "invalid" && item.reason.includes("\n"), false, JSON.stringify(type));
+    }
     assert.deepEqual(
-      invalid({ ...PG, type: "postgresql" }),
-      refusedShop("The connection shop has the type postgresql, which is not a database LibreDB Studio connects to."),
+      invalid({ ...PG, type: "acmefoo" }),
+      refusedShop('No provider for the connection type "acmefoo" is installed in this LibreDB Studio.'),
     );
+  });
+
+  it("refuses libredb, a type id that is no external database, with its own sentence (rule 5)", () => {
     assert.deepEqual(
       invalid({ ...PG, type: "libredb" }),
       refusedShop("The connection shop has the type libredb, which is not a database LibreDB Studio connects to."),
     );
-    assert.deepEqual(
-      invalid({ ...PG, type: undefined }),
-      refusedShop("The connection shop has the type undefined, which is not a database LibreDB Studio connects to."),
-    );
-    assert.deepEqual(invalid({ ...PG, type: "sqlite" }), valid({ ...PG, type: "sqlite" }));
+  });
+
+  it("keeps every external type id, the ones the channel does not enable included (rule 5)", () => {
+    const heldBack = Object.keys(HELD_BACK);
+    assert.ok(heldBack.length > 0);
+    for (const type of heldBack) assert.ok((EXTERNAL_DATABASE_TYPES as readonly string[]).includes(type), type);
+    for (const type of EXTERNAL_DATABASE_TYPES) {
+      assert.deepEqual(invalid({ ...PG, type }), valid({ ...PG, type }), type);
+    }
   });
 
   it("refuses a createdAt that is not a date string (rule 6)", () => {
@@ -108,6 +143,26 @@ describe("readProfiles", () => {
       assert.deepEqual(invalid({ ...PG, ssl }), item, JSON.stringify(ssl));
     }
     for (const mode of SSL_MODES) assert.equal(invalid({ ...PG, ssl: { mode } }).kind, "valid", mode);
+  });
+
+  it("accepts the five environments and carries them to the wire", () => {
+    assert.deepEqual(ENVIRONMENTS, ["production", "staging", "development", "local", "other"]);
+    for (const environment of ENVIRONMENTS) {
+      const item = invalid({ ...PG, environment });
+      assert.equal(item.kind, "valid", environment);
+      if (item.kind !== "valid") continue;
+      assert.equal(toWireConnection(item.entry, {}).environment, environment);
+    }
+    assert.equal(invalid(PG).kind, "valid", "an entry without one is valid as before");
+  });
+
+  it("refuses any other environment, naming the five", () => {
+    const item = refusedShop(
+      "The connection shop has an environment that is not production, staging, development, local or other.",
+    );
+    for (const environment of ["prod", "Production", 1, null, ""]) {
+      assert.deepEqual(invalid({ ...PG, environment }), item, JSON.stringify(environment));
+    }
   });
 
   it("refuses a secret field in the setting by its path, never by its value (rule 9)", () => {

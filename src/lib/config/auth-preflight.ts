@@ -28,6 +28,7 @@
  */
 
 import {
+  allowedEmailDomains,
   JWT_SECRET_MIN_LENGTH,
   SESSION_TTL_MAX_SECONDS,
   SESSION_TTL_MIN_SECONDS,
@@ -217,6 +218,33 @@ function verifyBearerAudienceAtBoot(): boolean {
 }
 
 /**
+ * Validate `OIDC_ALLOWED_EMAIL_DOMAINS`: unset keeps the setting off, and a set value that names no domain or an entry
+ * that is not a bare hostname would refuse every sign-in, so boot stops here.
+ */
+function verifyAllowedEmailDomainsAtBoot(): boolean {
+  try {
+    allowedEmailDomains();
+    return true;
+  } catch (error) {
+    console.error(
+      [
+        "",
+        "============================================================",
+        " LibreDB Studio cannot start: OIDC_ALLOWED_EMAIL_DOMAINS is invalid",
+        ` ${(error as Error).message}.`,
+        " Fix it either way:",
+        "   1. List bare hostnames, for example OIDC_ALLOWED_EMAIL_DOMAINS=example.com,example.org",
+        "   2. Unset OIDC_ALLOWED_EMAIL_DOMAINS to admit every account the provider authenticates",
+        "============================================================",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+    return false;
+  }
+}
+
+/**
  * Validate the auth environment before the server starts serving.
  *
  * Returns `true` when boot may continue. On a fatal misconfiguration it prints
@@ -226,7 +254,7 @@ function verifyBearerAudienceAtBoot(): boolean {
  */
 export function verifyAuthEnvAtBoot(): boolean {
   if (!verifyAuthProviderAtBoot() || !verifyOpenShiftAuthAtBoot()) return false;
-  if (!verifySessionTtlAtBoot() || !verifyBearerAudienceAtBoot()) return false;
+  if (!verifySessionTtlAtBoot() || !verifyAllowedEmailDomainsAtBoot() || !verifyBearerAudienceAtBoot()) return false;
 
   const secret = process.env.JWT_SECRET;
 

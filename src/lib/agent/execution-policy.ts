@@ -29,8 +29,11 @@
  *   read on this path is going to be rendered into a prompt, so the cap that
  *   matters is the one that keeps a result affordable in tokens; the editor's
  *   own paging limits are irrelevant here. The caps refuse rather than truncate
- *   (the providers throw on an over-budget result), which is what lets a caller
- *   trust that a delivered result is complete.
+ *   (the providers throw on an over-budget result, and on the read-only statement
+ *   path, the model's statements, the composed catalog, plan and profile reads and
+ *   the hand-over, `runReadOnlyStatement` refuses one again in core, as
+ *   `runReadOnlyReading` does for the MongoDB catalog read and the two cluster
+ *   readings), which is what lets a caller trust that a delivered result is complete.
  */
 
 import type { ExecutionProfile } from "@/lib/db/factory";
@@ -203,7 +206,13 @@ function workflowBudget(input: {
   readonly maxTotalRunMs: number;
 }): AgentWorkflowBudget {
   const budgets: ExecutionBudget = Object.freeze({
-    /** The run loop is sequential: one statement in flight, so a run cannot fan out. */
+    /**
+     * The run loop is sequential: one read at a time. Each read counts until its
+     * provider call settles, also one Studio stopped waiting for at its timeout
+     * (`runReadOnlyStatement`, `runReadOnlyReading`) or at the time its call was granted
+     * (`withinGrantedTime` in `tools.ts`), through `executeAuditedOperation`'s hold, and
+     * the run's next call waits for it (`runAuditedAgentCall`).
+     */
     maxConcurrentExecutions: 1,
     /** A whole drive — catalog reads, drafts, repairs, plan inspections, curated readings. */
     maxStatementsPerRun: input.maxStatementsPerRun,
@@ -290,10 +299,11 @@ function workflowBudget(input: {
  *
  *   What grounding actually costs, counted rather than rounded, because this record is
  *   what a `STATEMENT_BUDGET_EXCEEDED` is traced back to. A catalog capture is three
- *   statements on PostgreSQL and two on SQLite; `readSchemaStatistics` adds one on
- *   PostgreSQL and two on SQLite (it probes `sqlite_stat1` before reading it) and runs
- *   in PLAN mode only. So the worst case before the first turn is FOUR on either engine
- *   in plan mode, and three in agent mode — which is the mode where the reading ceiling
+ *   statements on PostgreSQL and two on SQLite, one on every other engine;
+ *   `readSchemaStatistics` adds one on PostgreSQL and SQL Server and two on SQLite and
+ *   libSQL (each probes `sqlite_stat1` before reading it) and runs in PLAN mode only.
+ *   So the worst case before the first turn is FOUR on PostgreSQL and SQLite in plan
+ *   mode (three on libSQL, two on SQL Server), and three in agent mode, which is the mode where the reading ceiling
  *   is what binds, so 18 − 3 leaves more than the twelve readings the row was sized for.
  *   Six rather than four is deliberate slack in a row nothing has yet been measured
  *   against: this is the workflow whose statements come from a closed set, so an
@@ -481,6 +491,27 @@ export const AGENT_TRANSPORT_TURN_RETRIES = 2;
  * pass. A model that cannot comply after two still fails fast.
  */
 export const AGENT_UNREADABLE_TOOL_CALL_ANSWERS = 2;
+
+/**
+ * How many times a run may be told that a turn was stopped at the endpoint's output limit.
+ *
+ * One, and the number is deliberately not the two above. Those two bound a fault in the
+ * TRANSPORT: a broken frame and arguments the endpoint could not parse are accidents of a
+ * connection, and a run that meets either twice met it over different bytes. This one bounds a
+ * property of the answer itself. The sentence says what to do differently and it is a thing the
+ * model can comply with on the next turn, without luck: write less, and act instead of narrating.
+ * A model that hears it and produces another answer of the same length has been told, and the run
+ * should end rather than spend its remaining turns repeating the same cut.
+ *
+ * Read off the ledger (`guidanceDelivered`) rather than held as a flag in the drive, for the reason
+ * `AGENT_UNREADABLE_TOOL_CALL_ANSWERS` records: the bound describes the RUN. A drive that resumes
+ * a run already told is not a second decision to spend on the same sentence, unlike the per-call
+ * ceiling in `turn-cut-off`, which bounds a call and is granted again with each drive.
+ *
+ * The alternative to the re-ask is ending the run, so the ask is free on the argument every
+ * recovery here rests on: the run had already lost the turn, and the notice cannot cost it a pass.
+ */
+export const AGENT_MODEL_OUTPUT_LIMIT_ASKS = 1;
 
 /**
  * How many statements that FAILED AT THE DATABASE a run may try to repair.

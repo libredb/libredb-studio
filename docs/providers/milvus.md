@@ -8,6 +8,7 @@ Tracking issues: [#424](https://github.com/libredb/libredb-studio/issues/424) an
 | | |
 |---|---|
 | **Write reach** | guarded: while read-only mode holds, Load and Release are refused by `refuseReadOnly` in `write-policy.ts` before any request; every console route in `MILVUS_ROUTES` is a read, and there is no object edit or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -441,13 +442,32 @@ The Tables tab and Admin > Operations list the first 200 collections of the sele
 The first 200 collections of the database. Row counts are server estimates of flushed segments and do not subtract deletes; POST entities/query with outputFields ["count(*)"] is exact on a loaded collection.
 
 Index statistics carry each index's native type, `AUTOINDEX` as Milvus reports it, and cover only collections whose IndexDetail the user holds.
-Slow queries and sessions are not offered, and the two panels say why:
-
-> Milvus keeps query statistics on its management port 9091, which Studio does not dial
-
-> Milvus reports client sessions on its management port 9091, which Studio does not dial
+Slow queries and sessions are not offered, so `getMonitoringData` never reads them and the dashboard draws no Queries or Sessions tab.
+Milvus keeps query statistics and reports client sessions on its management port 9091, which Studio does not dial, so `getSlowQueries()` and `getActiveSessions()` answer `[]`, and the labels declare no empty-state sentence for either panel.
 
 For performance, storage and query-node metrics, point a Prometheus server at Milvus's `:9091/metrics` and read it through the Prometheus provider.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `milvus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/milvus/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: `load`, `release`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `health`.
 
 ## 8. Maintenance
 
@@ -546,7 +566,7 @@ Milvus's RBAC hides neither the topology nor other databases' row counts from an
 - REST `entities/get` and `entities/delete` by a VarChar id holding a quote differ from Studio's template on 3.0.2.
 - A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.
 - Zilliz users should prefer a cluster-scoped user or key to a project-wide key; Zilliz Cloud is not tested (section 4.9).
-- A hostile or impersonated endpoint holds the password it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the password it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it lists.
 - The management port 9091 answers without authentication on 3.0.2, so the operator keeps it off the network.
 - A load the server continues after Load's 10-second poll is not covered by the one-load lock.
 - Clusters, Milvus Lite and 2.6 and older are not claimed.

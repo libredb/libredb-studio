@@ -8,8 +8,9 @@
  *
  * 1. `connection_id` has the published format, and no other row has the same id. Every row of a repeated id is
  *    skipped, because Studio cannot tell which one the control plane meant.
- * 2. The engine is a Studio type id that opens no file on Studio's host (`OPENS_LOCAL_FILE`), and
- *    `GOVERNANCE_ALLOWED_ENGINES` names it.
+ * 2. The engine names a provider this Studio has (`isDatabaseType`, the one check of a type id), opens no file on
+ *    Studio's host (`OPENS_LOCAL_FILE`), and `GOVERNANCE_ALLOWED_ENGINES` names it, skipped in that order as
+ *    PROVIDER_UNKNOWN, ENGINE_UNSUPPORTED and ENGINE_NOT_ALLOWED.
  * 3. An engine whose provider reaches the whole server without a database (`OPENS_SERVER_LEVEL_WITHOUT_DATABASE`) has
  *    one, because a server-level connection opens a session to every database its credential reaches.
  * 4. The definition holds only keys of the contract's allowlist, each with a value in its domain: `DEFINITION_ALLOWLIST`,
@@ -36,8 +37,8 @@ import {
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ROOTS_REQUIRED,
-  SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
+import { isDatabaseType } from "@/lib/db/type-id";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { type ManagedConnection, SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseType } from "@/lib/types";
@@ -110,10 +111,6 @@ export interface AdmissionResult {
 
 /** The format of `connection_id`, the rule the contract publishes for the column (docs/GOVERNANCE.md#row-semantics). */
 const CONNECTION_ID = /^[a-z0-9-]{1,64}$/;
-
-const KNOWN_ENGINES: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
-
-const isDatabaseType = (engine: string): engine is DatabaseType => KNOWN_ENGINES.has(engine);
 
 /**
  * A definition path by its segments, as a lookup key. A key that holds a dot is one segment, so a top-level key named
@@ -322,9 +319,8 @@ function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: A
     return skipOf(rowName(id), { path: "connection_id", code: "DEFINITION_INVALID" });
   }
   const engine = row.engine;
-  if (typeof engine !== "string" || !isDatabaseType(engine) || OPENS_LOCAL_FILE[engine]) {
-    return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
-  }
+  if (!isDatabaseType(engine)) return skipOf(id, { code: "PROVIDER_UNKNOWN" });
+  if (OPENS_LOCAL_FILE[engine]) return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
   if (!options.allowedEngines.includes(engine)) return skipOf(id, { code: "ENGINE_NOT_ALLOWED" });
   const definition = row.definition;
   if (!isPlainObject(definition)) return skipOf(id, { path: "definition", code: "DEFINITION_INVALID" });

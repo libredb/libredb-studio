@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { MCP_STATEMENT_READ, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import type { CredentialWarning } from "@/lib/db/credential-warnings";
 import { rabbitmqAgentUnreadable } from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
 import {
@@ -25,7 +25,6 @@ import {
   streamsSampledFrom,
   tlsCertificateUntrusted,
   tlsClientCertificateRefused,
-  TUNNEL_REFUSED,
   versionTooOld,
   vhostOrProxyNotFound,
   vhostUnavailableSentence,
@@ -107,7 +106,8 @@ describe("the tree's sampled-count sentences are the builders'", () => {
 
 describe("the error table prints the sentences errors.ts writes", () => {
   test("the fixed sentences", () => {
-    for (const sentence of [PLAINTEXT_REFUSAL, TUNNEL_REFUSED, AMQP_PORT_REQUIRED, READ_SLOTS_FULL]) {
+    // The SSH tunnel's sentence is core's row for RabbitMQ (SSH_TUNNEL_REFUSAL), which core refuses with (FND-2 slice 5).
+    for (const sentence of [PLAINTEXT_REFUSAL, SSH_TUNNEL_REFUSAL.rabbitmq, AMQP_PORT_REQUIRED, READ_SLOTS_FULL]) {
       expect(DOC).toContain(`| ${sentence} |`);
     }
   });

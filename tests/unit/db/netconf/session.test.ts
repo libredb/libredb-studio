@@ -3,7 +3,7 @@
  * The rules they hold are the ones a server may break, listed in `session.ts`.
  */
 import { test } from "bun:test";
-import { expectBe, expectMatch, expectRejects, expectThrows, expectTruthy } from "./helpers";
+import { expectBe, expectEqual, expectMatch, expectRejects, expectThrows, expectTruthy } from "./helpers";
 import { EOM, frame } from "@/lib/db/providers/network/netconf/framing";
 import {
   NetconfSession,
@@ -27,7 +27,10 @@ class FakeTransport implements Transport {
   written: string[] = [];
   private data: ((chunk: string) => void) | null = null;
   private closed: (() => void) | null = null;
+  private failed: ((error: Error) => void) | null = null;
   closedByUs = false;
+  /** How many times the session closed its connection to the device. */
+  closes = 0;
 
   write(text: string): void {
     this.written.push(text);
@@ -38,8 +41,12 @@ class FakeTransport implements Transport {
   onClose(handler: () => void): void {
     this.closed = handler;
   }
+  onError(handler: (error: Error) => void): void {
+    this.failed = handler;
+  }
   close(): void {
     this.closedByUs = true;
+    this.closes += 1;
   }
   /** Pushes bytes as if the device had sent them. */
   send(chunk: string): void {
@@ -47,6 +54,10 @@ class FakeTransport implements Transport {
   }
   drop(): void {
     this.closed?.();
+  }
+  /** The channel under the session fails, as ssh2 reports it with an `error` event. */
+  fail(error: Error): void {
+    this.failed?.(error);
   }
 }
 
@@ -285,4 +296,185 @@ test("a deadline, an incompatibility, our own defect and a device fault end with
   const broken = await reply.catch((e: unknown) => e);
   expectTruthy(broken instanceof NetconfSessionError);
   expectBe(broken.end.reason, "protocol");
+});
+
+/**
+ * A session that ends closes its connection to the device, whichever way it ended.
+ *
+ * The session owns its transport: nothing above it holds the channel or the SSH client, and
+ * `disconnect()` reaches only a session that opened. So the rule is the session's own: a session
+ * that ends, or fails to open, closes its connection to the device, once.
+ */
+const failedOpens: { name: string; open: (transport: FakeTransport) => Promise<unknown>; sentence: RegExp }[] = [
+  {
+    name: "a hello with no session-id",
+    open: (transport) => {
+      const opening = NetconfSession.open(transport, limits);
+      transport.send(`<hello xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"><capabilities/></hello>${EOM}`);
+      return opening;
+    },
+    sentence: /carried no session-id/,
+  },
+  {
+    name: "a hello offering no base version this client speaks",
+    open: (transport) => {
+      const opening = NetconfSession.open(transport, limits);
+      transport.send(helloWith(["urn:ietf:params:netconf:base:9.9"]));
+      return opening;
+    },
+    sentence: /offered no NETCONF base version/,
+  },
+  {
+    name: "no hello within the deadline",
+    open: (transport) => NetconfSession.open(transport, { ...limits, helloMs: 20 }),
+    sentence: /no hello within the deadline/,
+  },
+  {
+    // By its own ending and at once, not by the hello deadline: the deadline here is the default
+    // 500 ms, and the sentence names what happened rather than what was waited for.
+    name: "the channel closed before any hello",
+    open: (transport) => {
+      const opening = NetconfSession.open(transport, limits);
+      transport.drop();
+      return opening;
+    },
+    sentence: /the device closed this session/,
+  },
+  {
+    name: "a hello and then the channel closed in the same burst",
+    open: (transport) => {
+      const opening = NetconfSession.open(transport, limits);
+      transport.send(helloWith([BASE10, BASE11]));
+      transport.drop();
+      return opening;
+    },
+    sentence: /the device closed this session/,
+  },
+];
+for (const { name, open, sentence } of failedOpens) {
+  test(`${name}: the open fails by name and closes its connection to the device, once`, async () => {
+    const transport = new FakeTransport();
+    const failure = await open(transport).catch((e: unknown) => e);
+    expectTruthy(failure instanceof NetconfSessionError, "the open did not fail by name");
+    expectMatch(failure.message, sentence);
+    expectBe(transport.closes, 1, "the connection to the device was not closed once");
+  });
+}
+
+/**
+ * An ending the transport reports while the session subscribes still fails the open by name.
+ *
+ * The hello wait is set up after the session has subscribed, so a session that has already ended
+ * by then has no ending left to reject the wait with: the wait has to see that it ended.
+ */
+const subscribedEndings: { name: string; transport: () => FakeTransport; sentence: RegExp }[] = [
+  {
+    name: "a close reported at subscription",
+    transport: () =>
+      Object.assign(new FakeTransport(), {
+        onClose: (handler: () => void) => handler(),
+      }),
+    sentence: /the device closed this session/,
+  },
+  {
+    name: "an error reported at subscription",
+    transport: () =>
+      Object.assign(new FakeTransport(), {
+        onError: (handler: (error: Error) => void) => handler(new Error("stream.push() after EOF")),
+      }),
+    sentence: /the channel to the device failed \(stream\.push\(\) after EOF\)/,
+  },
+];
+for (const { name, transport: make, sentence } of subscribedEndings) {
+  test(`${name}: the open fails by name rather than waiting on a session that already ended`, async () => {
+    const transport = make();
+    const failure = await NetconfSession.open(transport, { ...limits, helloMs: 50 }).catch((e: unknown) => e);
+    expectTruthy(failure instanceof NetconfSessionError, "the open did not fail by name");
+    expectMatch(failure.message, sentence);
+    expectBe(transport.closes, 1, "the connection to the device was not closed once");
+  });
+}
+
+/**
+ * A failure inside the open that is not a session ending still ends the session, as our own
+ * defect, and reaches the caller as the same error it was.
+ */
+test("a write that throws during the open fails it with that error and closes the connection once", async () => {
+  const failing = new Error("the channel refused the write");
+  const transport = Object.assign(new FakeTransport(), {
+    write: () => {
+      throw failing;
+    },
+  });
+  const opening = NetconfSession.open(transport, limits);
+  transport.send(helloWith([BASE10]));
+  const failure = await opening.catch((e: unknown) => e);
+  expectBe(failure, failing);
+  expectBe(transport.closes, 1, "the connection to the device was not closed once");
+});
+
+test("a session the device closed right after its hello writes no client hello into the closed channel", async () => {
+  const transport = new FakeTransport();
+  const opening = NetconfSession.open(transport, limits);
+  transport.send(helloWith([BASE10]));
+  transport.drop();
+  await expectRejects(opening, /the device closed this session/);
+  expectEqual(transport.written, []);
+});
+
+const endings: { name: string; end: (transport: FakeTransport) => void; sentence: RegExp }[] = [
+  { name: "the device closed the channel", end: (t) => t.drop(), sentence: /the device closed this session/ },
+  {
+    name: "a framing fault",
+    end: (t) => t.send("\n#zz\n"),
+    sentence: /broke the NETCONF framing rules/,
+  },
+  {
+    name: "a reply with no message-id",
+    end: (t) => t.send(frame("<rpc-reply><data/></rpc-reply>", "chunked")),
+    sentence: /no message-id/,
+  },
+  {
+    name: "a reply to another request",
+    end: (t) => t.send(frame('<rpc-reply message-id="999"><data/></rpc-reply>', "chunked")),
+    sentence: /answered message-id 999 to request 1/,
+  },
+  {
+    name: "the channel failed",
+    end: (t) => t.fail(new Error("stream.push() after EOF")),
+    sentence: /the channel to the device failed \(stream\.push\(\) after EOF\)/,
+  },
+];
+for (const { name, end, sentence } of endings) {
+  test(`${name}: the open session ends by name and closes its connection to the device, once`, async () => {
+    const transport = new FakeTransport();
+    const opening = NetconfSession.open(transport, limits);
+    transport.send(helloWith([BASE10, BASE11]));
+    const { session } = await opening;
+    const reply = session.request({ operation: "get" }).catch((e: unknown) => e);
+    end(transport);
+    const failure = await reply;
+    expectTruthy(failure instanceof NetconfSessionError, "the request did not fail by name");
+    expectMatch(failure.message, sentence);
+    expectBe(transport.closes, 1, "the connection to the device was not closed once");
+    // The cleanup that follows sends nothing into the ended session and closes nothing twice.
+    const written = transport.written.length;
+    await session.close();
+    expectBe(transport.written.length, written);
+    expectBe(transport.closes, 1, "close() after the end closed the connection again");
+    await expectRejects(session.request({ operation: "get" }), sentence);
+  });
+}
+
+test("close sends close-session and then closes the connection to the device exactly once", async () => {
+  const transport = new FakeTransport();
+  const opening = NetconfSession.open(transport, limits);
+  transport.send(helloWith([BASE10]));
+  const { session } = await opening;
+  const closing = session.close();
+  transport.send(`<rpc-reply message-id="1"><ok/></rpc-reply>${EOM}`);
+  await closing;
+  expectBe(transport.closes, 1);
+  await session.close();
+  expectBe(transport.closes, 1);
 });

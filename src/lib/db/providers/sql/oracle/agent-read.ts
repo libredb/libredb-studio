@@ -73,9 +73,20 @@
  * PUBLIC are the vendor's boundary and are not refused: four of its sequences can still be advanced, which moves a
  * counter and changes no data (capture 07).
  */
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import {
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "@/lib/db/read-only-budget";
 
 type Rows = readonly Record<string, unknown>[];
 
@@ -623,11 +634,11 @@ export function assertAgentColumnTypes(
  */
 export function readAgentAnswer(result: QueryResult, budget: ReadOnlyStatementBudget, sql: string): QueryResult {
   if (result.rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "oracle", sql);
+    throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "oracle", sql);
   }
   const bytes = measureResultBytes(result.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "oracle", sql);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "oracle", sql);
   }
   return result;
 }
@@ -635,5 +646,5 @@ export function readAgentAnswer(result: QueryResult, budget: ReadOnlyStatementBu
 /** The driver's call timeout (NJS-123, the Thick client's DPI-1067) as the shared time refusal, or null. */
 export function agentDeadlineRefusal(error: unknown, budget: ReadOnlyStatementBudget, sql: string): QueryError | null {
   if (!(error instanceof Error) || !/\b(?:NJS-123|DPI-1067)\b/.test(error.message)) return null;
-  return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "oracle", sql);
+  return new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "oracle", sql);
 }

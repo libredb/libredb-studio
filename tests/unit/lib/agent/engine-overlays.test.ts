@@ -95,7 +95,9 @@ import * as ORACLE from "@/lib/agent/languages/sql/engines/oracle";
 import * as POSTGRES from "@/lib/agent/languages/sql/engines/postgres";
 import * as SQLITE from "@/lib/agent/languages/sql/engines/sqlite";
 import { SQL_PACK } from "@/lib/agent/languages/sql/index";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import { getExplainStrategy } from "@/lib/explain";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
@@ -404,7 +406,25 @@ describe("the engine packs", () => {
 });
 
 describe("engineServerDialect", () => {
-  test.each([...ALL_TYPES, "toString" as DatabaseType])("%s answers a frozen dialect with every member", (type) => {
+  // A connection whose type names no provider (FND-1) has no overlay to answer with, not an empty one: an unknown name,
+  // an inherited key such as `toString`, a missing type and one that is not text are each refused by name.
+  test("engineServerOverlay and engineServerDialect refuse a name that is no type id, inherited names included", () => {
+    for (const type of ["acmefoo", "toString", "constructor", undefined, 5] as unknown[]) {
+      const refusal = typeIdRefusal(type);
+      for (const read of [engineServerOverlay, engineServerDialect]) {
+        let thrown: unknown;
+        try {
+          read(type as DatabaseType);
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(UnknownProviderError);
+        expect((thrown as UnknownProviderError).message).toBe(refusal?.sentence as string);
+      }
+    }
+  });
+
+  test.each(ALL_TYPES)("%s answers a frozen dialect with every member", (type) => {
     const dialect = engineServerDialect(type);
     expect(Object.isFrozen(dialect)).toBe(true);
     // The overlay holding it is frozen too, so no caller can swap an engine's dialect for the whole process.
@@ -418,7 +438,6 @@ describe("engineServerDialect", () => {
   test("a type with no overlay holds an empty one, so its server facet is its family's own", () => {
     for (const type of [
       "spark",
-      "toString",
       "mongodb",
       "kubernetes",
       "libredb",
@@ -578,7 +597,7 @@ describe("engineServerDialect", () => {
   });
 
   test("an engine that reads statistics also reads its catalog, since the statistics read is a catalog kind", () => {
-    for (const type of [...ALL_TYPES, "toString" as DatabaseType]) {
+    for (const type of ALL_TYPES) {
       const dialect = engineServerDialect(type);
       if (dialect.statistics !== "unsupported") expect(dialect.catalogRead).not.toBe("unsupported");
     }
@@ -625,7 +644,7 @@ describe("engineServerDialect", () => {
   });
 
   test("an engine that captures its catalog also composes every kind it captures", () => {
-    for (const type of [...ALL_TYPES, "toString" as DatabaseType]) {
+    for (const type of ALL_TYPES) {
       const dialect = engineServerDialect(type);
       if (dialect.catalogCapture === "unsupported") continue;
       if (dialect.catalogRead === "unsupported") throw new Error(`${type} captures a catalog it cannot read`);
@@ -726,10 +745,11 @@ describe("the estimating EXPLAIN agrees with the editor's strategy", () => {
   test.each(["postgres", "sqlite", "duckdb", "mysql", "clickhouse", "libsql"] as const)(
     "%s composes what the strategy of its declared format builds",
     async (type) => {
+      // A granted posture, since the factory refuses SQLite under a denied one; a declaration does not depend on it.
       const provider = await createDatabaseProvider(
         CENSUS_CONNECTION[type],
         {},
-        executionContextFor("agent-read-only"),
+        executionContextFor("agent-read-only", { allowExternalFileAccess: true }),
       );
       const strategy = getExplainStrategy(provider.getCapabilities().explainFormat);
       expect(strategy).not.toBeNull();

@@ -14,18 +14,29 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { ByteBudgetRefusal } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { listedMcpToolNames } from "../../helpers/mcp-tool-names";
-import { mongoDriver, mongoDriverModule, resetMongoDriver } from "../../helpers/mongodb-driver";
+import {
+  bsonDocumentBytes,
+  bsonUndefinedFor,
+  mongoDriver,
+  mongoDriverModule,
+  resetMongoDriver,
+} from "../../helpers/mongodb-driver";
 import readWriteStatus from "../../unit/db/mongodb/fixtures/connection-status-read-plus-insert-one-collection-9.0.4.json";
+
+/** The notice an answer carrying database content opens with on this file's mongodb connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mongodb"));
 
 // Before the provider is loaded, so the MongoDB provider the factory opens in this file opens the stand-in's client.
 mock.module("mongodb", () => mongoDriverModule());
@@ -114,6 +125,7 @@ function fakeContext(provider: object, type: DatabaseType = "mongodb"): McpConne
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async () => provider as DatabaseProvider,
   } as unknown as McpConnectionContext;
 }
@@ -156,7 +168,7 @@ describe("a read", () => {
       command: { collection: "notes", operation: "find", filter: {} },
     });
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:mongo",
@@ -198,6 +210,19 @@ describe("a read", () => {
       pagination: { offset: 0, limit: 100, hasMore: true, nextOffset: null, wasLimited: false },
       hint: `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(JSON.stringify(find), "100")} To read past the 100 rows returned, skip them with a find's "skip" or a $skip stage.`,
     });
+  });
+
+  // BSON's deprecated undefined (type 6) decodes to `undefined`, which the value codec does not take, and that
+  // refusal took the whole answer: "The value codec cannot encode undefined, at "/0/list/1"."
+  test("a document holding BSON undefined inside an array answers its row, the entry as null", async () => {
+    mongoDriver.documentsByNs["app.notes"] = [bsonDocumentBytes(bsonUndefinedFor({ _id: 1, list: [1, null, 3] }))];
+    const result = await command({
+      connection_id: "seed:mongo",
+      command: { collection: "notes", operation: "find", filter: {} },
+    });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
+    expect(result.structuredContent?.rows).toEqual([{ _id: 1, list: [1, null, 3] }]);
   });
 });
 
@@ -246,8 +271,9 @@ describe("a refusal", () => {
     mongoDriver.connectionStatus = readWriteStatus.reply;
     const result = await command({ connection_id: "seed:mongo", command: { collection: "orders", operation: "find" } });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toStartWith("run_mongo_command cannot run on this connection: ");
-    expect(result.content[0].text).toEndWith(" It runs on MongoDB.");
+    expect(result.content[0].text).toBe(providerTextNotice("MongoDB provider, bundled with Studio"));
+    expect(result.content[1].text).toStartWith("run_mongo_command cannot run on this connection: ");
+    expect(result.content[1].text).toEndWith(" It runs on MongoDB.");
     expect(mongoDriver.cursors).toEqual([]);
     expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_execution_failed" });
   });
@@ -256,6 +282,7 @@ describe("a refusal", () => {
     const find = { collection: "many", operation: "find" };
     const result = await command({ connection_id: "seed:mongo", command: find });
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {
@@ -304,8 +331,9 @@ describe("the result cap", () => {
     const provider = { getCapabilities: () => ({}), queryReadOnly };
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({ isError: true, content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.rowOverCap }] });
-    // Sent as written: an arm that does not page never asks the provider to prepare it.
-    expect(queryReadOnly).toHaveBeenCalledWith(find, expect.objectContaining({ maxResultRows: 1_000 }));
+    // Sent as written: an arm that does not page never asks the provider to prepare it. The third argument is the
+    // mode, which the one core call of the read-only path always passes and MCP leaves unset.
+    expect(queryReadOnly).toHaveBeenCalledWith(find, expect.objectContaining({ maxResultRows: 1_000 }), undefined);
   });
 
   test("a result cut at 32 KiB names the rows that fitted and pages with skip, not with the limit it has", async () => {
@@ -330,11 +358,12 @@ describe("the result cap", () => {
 
   test("a read past the provider's byte budget is refused in this arm's words", async () => {
     const queryReadOnly = mock(async () => {
-      throw new Error("Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed");
+      throw new ByteBudgetRefusal("Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed");
     });
     const provider = { getCapabilities: () => ({}), queryReadOnly };
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string }],
     });

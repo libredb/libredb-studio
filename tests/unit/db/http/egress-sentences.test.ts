@@ -4,23 +4,27 @@
  * destination that goes through these checks, not only an HTTP one.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   assertNoLinkLocalDnsAnswer,
   assertNotLinkLocalLiteral,
   assertPublicLiteralHost,
   BLOCKED_HOST,
+  EGRESS_DECISION_MISSING,
   EGRESS_REFUSAL_SENTENCES,
   LINK_LOCAL_HOST,
+  requireEgressDecision,
   UNUSABLE_ANSWER,
 } from "@/lib/db/http/egress-policy";
+import { BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[FLAG];
 
 afterEach(() => {
-  if (original === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = original;
+  setEgressFlag(original);
 });
 
 function refusal(run: () => unknown): Error {
@@ -50,12 +54,10 @@ describe("the egress refusal sentences", () => {
   });
 
   test("each check raises a DatabaseConfigError whose message is one of the three", () => {
-    process.env[FLAG] = "true";
-    const blocked = refusal(() => assertPublicLiteralHost("10.0.0.5"));
+    const blocked = refusal(() => assertPublicLiteralHost("10.0.0.5", BLOCKS_PRIVATE_HOSTS));
     expect(blocked).toBeInstanceOf(DatabaseConfigError);
     expect(blocked.message).toBe(BLOCKED_HOST);
 
-    delete process.env[FLAG];
     const linkLocal = refusal(() => assertNotLinkLocalLiteral("169.254.169.254"));
     expect(linkLocal).toBeInstanceOf(DatabaseConfigError);
     expect(linkLocal.message).toBe(LINK_LOCAL_HOST);
@@ -68,9 +70,16 @@ describe("the egress refusal sentences", () => {
   });
 
   test("the invalid-flag sentence is not an egress refusal", () => {
-    process.env[FLAG] = "maybe";
-    const invalid = refusal(() => assertPublicLiteralHost("10.0.0.5"));
+    setEgressFlag("maybe");
+    const invalid = refusal(() => egressDecision());
     expect(invalid).toBeInstanceOf(DatabaseConfigError);
     expect(EGRESS_REFUSAL_SENTENCES.has(invalid.message)).toBe(false);
+  });
+
+  test("the missing-decision sentence is not an egress refusal", () => {
+    const missing = refusal(() => requireEgressDecision(undefined));
+    expect(missing).toBeInstanceOf(DatabaseConfigError);
+    expect(missing.message).toBe(EGRESS_DECISION_MISSING);
+    expect(EGRESS_REFUSAL_SENTENCES.has(missing.message)).toBe(false);
   });
 });

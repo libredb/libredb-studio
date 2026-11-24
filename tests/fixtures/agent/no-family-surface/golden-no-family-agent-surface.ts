@@ -130,7 +130,7 @@ async function surfaceOf(
       runId: `run_golden_${mode}_${workflowType.replaceAll("-", "_")}_${engine}`,
       mode,
       workflowType,
-      ...persistedRunFacts(mode, workflowType, availability),
+      ...persistedRunFacts(mode, workflowType, engine, availability),
       actor: { sessionId: "sess_1", role: "user" },
       connectionId: connection.id,
       objective: OBJECTIVE,

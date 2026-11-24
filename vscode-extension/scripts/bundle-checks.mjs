@@ -113,6 +113,13 @@ export const WEBVIEW_SINGLE_COPY = ["react", "react-dom", "get-nonce"];
 
 const SQL_GRAMMAR_INDEX = "src/lib/db/sql-grammar/index.ts";
 const PROVIDERS_DIR = "src/lib/db/providers/";
+/** The root's workspace packages (packages/README.md): provider code staged out of src/lib/db, held to the same rules. */
+const PACKAGES_DIR = "packages/";
+
+/** A provider file, under src/lib/db/providers/ or in a workspace package. */
+function isProviderCode(path) {
+  return path.startsWith(PROVIDERS_DIR) || path.startsWith(PACKAGES_DIR);
+}
 
 /**
  * The webview's input rules (part 4 criterion 3). Drivers reach a bundle only through a provider module, which the
@@ -127,7 +134,7 @@ export function webviewViolations(metafile, workingDir) {
     const pkg = inputPackage(input);
     if (directories.has(pkg)) directories.get(pkg).add(packageDirectory(input, pkg));
     if (WEBVIEW_FORBIDDEN_PACKAGES.includes(pkg)) violations.push(`${path}: the webview never bundles ${pkg}`);
-    else if (path.startsWith(PROVIDERS_DIR) && !reached.has(path)) {
+    else if (isProviderCode(path) && !reached.has(path)) {
       violations.push(`${path}: the webview bundles a provider file that no sql-grammar row reaches`);
     } else if (path.startsWith("vscode-extension/src/host/") || path.startsWith("vscode-extension/src/backend/")) {
       violations.push(`${path}: the webview never bundles host or backend code`);
@@ -154,7 +161,7 @@ export function webviewOutputViolations(metafile, code) {
   return violations;
 }
 
-/** The provider files the sql-grammar index reaches, following imports among inputs under the providers directory only. */
+/** The provider files the sql-grammar index reaches, following imports among provider and workspace package inputs only. */
 function providersReachedFromSqlGrammar(metafile, workingDir) {
   const reached = new Set();
   const index = Object.keys(metafile.inputs).find((input) => repoPath(input, workingDir) === SQL_GRAMMAR_INDEX);
@@ -162,7 +169,7 @@ function providersReachedFromSqlGrammar(metafile, workingDir) {
   while (queue.length > 0) {
     for (const imported of metafile.inputs[queue.shift()]?.imports ?? []) {
       const path = repoPath(imported.path, workingDir);
-      if (!path.startsWith(PROVIDERS_DIR) || reached.has(path)) continue;
+      if (!isProviderCode(path) || reached.has(path)) continue;
       reached.add(path);
       queue.push(imported.path);
     }
@@ -188,6 +195,7 @@ const MONACO_PACKAGES = new Set(["monaco-editor", "@monaco-editor/react", "@mona
 /** [test on (repo path, package), rule]; an input reports the first rule it breaks. */
 const HOST_INPUT_RULES = [
   [(path) => path.startsWith("src/lib/db/providers/"), "the host never bundles a provider"],
+  [(path) => path.startsWith(PACKAGES_DIR), "the host never bundles workspace package code"],
   [(path) => path === "src/lib/db/factory.ts", "the host never bundles the provider factory"],
   [(_path, pkg) => pkg !== null && !HOST_PACKAGES.has(pkg), "the host's only package is vscode-jsonrpc"],
   [(path) => path.startsWith("src/components/"), "the host never bundles a component"],

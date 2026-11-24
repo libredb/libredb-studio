@@ -29,6 +29,7 @@
 | **Probed against** | `ghcr.io/tursodatabase/libsql-server` reporting `sqld 0.24.33 (f8fb14f3 2026-08-11)`, and a Turso Cloud database in `aws-eu-west-1`, both on 2026-08-27 |
 | **Reproducible with** | `ghcr.io/tursodatabase/libsql-server:v0.24.33`, the tag `database-compose.yml` pins. It is a DIFFERENT build of the same version - `sqld 0.24.33 (40a151bd 2025-12-19)`, because `:latest` is a rolling rebuild - and it was re-probed surface by surface on 2026-08-27: the same 17 of 19, the same four refusals with byte-identical wording, and the same `"notnull"` behaviour. **One thing the two builds do NOT share is the embedded SQLite version**: `:latest` and Turso Cloud answer `3.47.0` and the pinned tag answers `3.45.1`, re-measured 2026-09-11 while building the object surface. Every measurement below holds on the pinned tag, and where a version floor matters the doc says which build it was taken from. |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`reindex`, `check`) all send writes |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ---
 
@@ -295,7 +296,7 @@ console.log("token", `${body}.${sign(null, Buffer.from(body), privateKey).toStri
 Each call sends one statement as the single statement step of one request that closes its own stream, so nothing a statement opens outlives the call: a `BEGIN IMMEDIATE` answers the read-only token, and a write with another token right after it runs.
 sqld refuses a second statement in the same text (`SQL_MANY_STATEMENTS`).
 A write the server refuses reaches the caller as a statement refusal in the server's own words, not as a failed credential.
-Hrana has no server-side row or byte bound, so the transport reads the answer in chunks and stops at six times the byte budget plus a 1 MiB envelope (`agentBodyCap`), since a value on the wire takes at most a little over five times the bytes it takes in the caller's row; the parsed rows are then held to the row and byte budgets, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts).
+Hrana has no server-side row or byte bound, so the transport reads the answer in chunks and stops at six times the byte budget plus a 1 MiB envelope (`agentBodyCap`), since a value on the wire takes at most a little over five times the bytes it takes in the caller's row; the parsed rows are then held to the row and byte budgets, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts).
 The deadline is the transport's own, and a statement past it is refused as over the time budget.
 Hrana has no cancel request; closing the request at the deadline is what stops the statement: a recursive count held a core at 100% until the abort, and the server was idle within two seconds of it.
 An estimating plan is the `EXPLAIN QUERY PLAN` prefix the agent composes, sent in the ordinary execute mode; the estimate-plan session mode is refused.
@@ -460,7 +461,7 @@ flight would be the provider describing itself. `maxConnections` is `0`, this co
 or catalog publishes one.
 
 `getSlowQueries()` answers `[]` for a reason of the engine's: libSQL keeps no statistics about
-finished statements. The empty state says exactly that instead of naming a PostgreSQL extension.
+finished statements, so the panel is not offered: it is never read and the dashboard draws no Queries tab for libSQL.
 
 ### 3.12 The dialect facts were re-measured, not inherited
 
@@ -487,7 +488,7 @@ This transport appends `{ "type": "close" }` to the statements of every pipeline
 That is the same decision as `supportsTransactions: false` ([§3.5](#35-the-server-refuses-four-statements-so-four-controls-are-withheld) lists what else it costs) and as the interactive controls this provider withholds: the `baton` is the feature an interactive transaction would consume, and nothing here consumes it.
 So a `BEGIN` has no stream to outlive, and the next request opens a new one.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 
 ---
@@ -635,6 +636,8 @@ Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row
 It is the same grammar object as `sqlite`'s, and every one of its facts was re-measured over Hrana on sqld 0.24.33 rather than inherited: `SELECT 1 # x` is refused ("bad variable name"), `SELECT [id] FROM probe_customers` parses, `/* outer /* inner */ SELECT 1` runs, and `q'[x]'` is a syntax error.
 The trigger-body fact was measured on the same sqld: a trigger cut at its inner `;` is "SQL string could not be parsed: unexpected end of input", and sent whole it is created.
 Sharing the object is deliberate: a divergence would have to be written down as its own grammar, which is the change a reader should see.
+The confirmation gate therefore asks before `REPLACE INTO` and `INSERT OR REPLACE` here as on `sqlite`, the `confirmForms` of `SQLITE_GRAMMAR`: both delete the row a new one collides with on a primary or unique key, and the other `INSERT OR` forms do not ask.
+That fact was measured over Hrana on the same sqld 0.24.33, whose embedded SQLite is 3.45.1, against a table holding `(1, 'a', 'keep-me')`: `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` of key 1 answer "SQLite error: UNIQUE constraint failed: t.id" and keep the row, `OR IGNORE` keeps it with no error, and `OR REPLACE` and `REPLACE INTO` leave `(1, 'new', NULL)`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -1066,12 +1069,34 @@ Measured through the provider against both deployments (fixture: 2 tables, 3 and
 | Active connections | absent — Hrana is stateless |
 | Cache hit ratio | `N/A` — SQLite's counters are behind the C API, and no statement reaches them |
 | Health rows | `Integrity: OK`, `Journal Mode: wal` |
-| Slow queries | Empty, permanently: libSQL keeps no statement statistics |
-| Active sessions | Empty: no session exists to report |
-| Deadlocks | `0`, and it is a fact rather than a gap — SQLite serializes writers behind one write lock and refuses a second with `SQLITE_BUSY` |
+| Slow queries | Not offered: libSQL keeps no statement statistics, so the panel is never read and not drawn |
+| Active sessions | Not offered: no session exists to report |
+| Deadlocks | `0`, and it is a fact rather than a gap: SQLite serializes writers behind one write lock and refuses a second with `SQLITE_BUSY`. It is the performance panel's only figure and a constant, so that panel is not offered |
 | Table stats | `probe_customers` 3 rows, 4096 B table + 4096 B index; `probe_orders` 2000 rows, 53248 B |
 | Index stats | `idx_customers_country`, columns `[country]`, 4096 B, `scans: 0` (no per-index counter exists) |
 | Storage | One entry, `main`, 65536 B. No WAL size: no statement reports it |
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `libsql` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/libsql/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers the constant `{ deadlocks: 0 }` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `reindex`, `check`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `storage`, `health`.
 
 ---
 
@@ -1131,10 +1156,11 @@ A row that reads like the old shared list is the engine agreeing with it.
 
 | Label Key | Value | Purpose |
 |---|---|---|
-| `slowQueriesEmptyState` | *"libSQL keeps no statistics about finished statements, so there is nothing to enable."* | Queries panel empty state; libSQL tracks no slow query statistics |
 | `reindexGlobalLabel` | *"Run Reindex"* | Global maintenance action button |
 | `reindexGlobalTitle` | *"Rebuild Indexes"* | Operations tab card heading |
 | `reindexGlobalDesc` | *"Runs bare REINDEX, rebuilding every index in the database."* | Operations tab card description |
+
+No slow-query sentence is declared: the Queries panel is not offered, so nothing would draw one.
 
 ### SQL writing
 

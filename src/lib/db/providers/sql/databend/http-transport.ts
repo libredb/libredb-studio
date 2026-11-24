@@ -865,6 +865,7 @@ export function createDatabendHttpTransport(
     origin: options.origin,
     tls: options.tls,
     maxSockets: options.maxSockets,
+    egress: options.egress,
     headers: options.headers,
     requestHeaderNames: options.requestHeaderNames,
   });

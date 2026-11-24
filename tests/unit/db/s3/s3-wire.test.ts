@@ -34,6 +34,7 @@ import {
   renderCapturesReadme,
   type S3Manifest,
 } from "../../../helpers/s3-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 let sockets = 0;
 const originalConnect = net.Socket.prototype.connect;
@@ -70,9 +71,10 @@ function fakeSigner(calls: SigningInput[], extra: Readonly<Record<string, string
 
 function options(signer?: RequestSigner): NodeByteTransportOptions {
   return {
-    origin: httpOrigin("http", "127.0.0.1", 9010),
+    origin: httpOrigin("http", "127.0.0.1", 9010, ALLOWS_PRIVATE_HOSTS),
     tls: null,
     maxSockets: 1,
+    egress: ALLOWS_PRIVATE_HOSTS,
     headers: {},
     requestHeaderNames: ["range"],
     responseHeaders: { names: ["etag", "date"], prefixes: ["x-amz-meta-"] },
@@ -342,6 +344,7 @@ describe("recordingSigner, the body forms and the authorization reader", () => {
       path: "/",
       query: "",
       headers: { host: "127.0.0.1:9010" },
+      body: "",
     };
     const headers = wrapped.sign(input);
     expect(wrapped.headerNames).toEqual(inner.headerNames);
@@ -412,7 +415,10 @@ describe("the byte transport's own checks, replayed with no socket", () => {
     ]);
 
   test("both factories run the byte transport's build checks, so a link-local origin is refused where the byte transport refuses it", () => {
-    const linkLocal = { ...options(fakeSigner([])), origin: httpOrigin("http", "169.254.169.254", 80) };
+    const linkLocal = {
+      ...options(fakeSigner([])),
+      origin: httpOrigin("http", "169.254.169.254", 80, ALLOWS_PRIVATE_HOSTS),
+    };
     for (const wire of [recordedS3Transport(capture([exchange("/")])), scriptedOk()])
       expect(() => wire.createTransport(linkLocal)).toThrow("this connection never reaches a link-local address");
   });
@@ -436,8 +442,8 @@ describe("the byte transport's own checks, replayed with no socket", () => {
     }
   });
 
-  test("both transports refuse a signed value past 1024 bytes or outside visible ASCII, naming the header and never the value", async () => {
-    for (const value of ["t".repeat(1025), "line\nbreak"]) {
+  test("both transports refuse a signed value past 8192 bytes or outside visible ASCII, naming the header and never the value", async () => {
+    for (const value of ["t".repeat(8193), "line\nbreak"]) {
       const signer = fakeSigner([], { "x-amz-security-token": value });
       for (const wire of [recordedS3Transport(capture([exchange("/")])), scriptedOk()]) {
         const failure = wire
@@ -445,7 +451,7 @@ describe("the byte transport's own checks, replayed with no socket", () => {
           .request({ method: "GET", target: { path: "/", query: "" }, signal, maxResponseBytes: 1 });
         // oxlint-disable-next-line no-await-in-loop -- one case at a time, so a failure names its value and transport.
         await expect(failure).rejects.toThrow(
-          "Invalid signature headers: the value of x-amz-security-token must be visible ASCII or space, at most 1024 bytes",
+          "Invalid signature headers: the value of x-amz-security-token must be visible ASCII or space, at most 8192 bytes",
         );
         // oxlint-disable-next-line no-await-in-loop -- the same rejection, read twice in turn.
         await expect(failure).rejects.not.toThrow(value);

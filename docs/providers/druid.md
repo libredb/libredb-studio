@@ -21,6 +21,7 @@
 | **Connection string** | **Not supported** — Druid has no URI convention for its SQL API ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | `druid-native` — the native query plan as a tree. Druid's `EXPLAIN` never executes the statement, so there is no separate analyze mode |
 | **Write reach** | open: Studio sends the statement the editor holds, and Druid SQL itself has no `UPDATE`, `DELETE` or `CREATE TABLE` and needs the MSQ task engine for `INSERT` and `REPLACE`, which is the engine's grammar and not a Studio gate ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not exposed (Druid has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable Druid analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`; the server-side statement deadline is what stops a runaway query ([§13](#13-known-limitations--future-work)) |
@@ -128,7 +129,7 @@ the case [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse
 | `buildLimitClause()` | `LIMIT n` / `LIMIT n OFFSET m`, both accepted by Druid |
 | `shouldEnableSSL()` | Inherited but **never called**, deliberately. It infers TLS from substrings in the host name, which would silently switch a self-hosted cluster whose hostname merely contains one. TLS here comes from the connection's own `ssl` config only ([§4.3](#43-tls)) |
 | `prepareQuery()` (base) | The shared query limiter; `DruidProvider` calls it first and only overrides the `OFFSET`-with-no-`LIMIT` case |
-| `getLabels()` (base) | Everything but the two entity labels and the slow-query empty state ([§9](#9-capabilities--labels)) |
+| `getLabels()` (base) | Everything but the two entity labels ([§9](#9-capabilities--labels)) |
 
 Not in the list: a placeholder helper. `SQLBaseProvider` no longer has one (#304 removed it).
 Positional `?` still binds via `query(sql, params)`
@@ -145,7 +146,7 @@ case "druid": {
   // analysable: a bare directory resolves only at runtime, which the bundler
   // cannot trace into a chunk.
   const { DruidProvider } = await import("./providers/sql/druid/index");
-  return new DruidProvider(connection, options);
+  return new DruidProvider(connection, options, context);
 }
 ```
 
@@ -728,7 +729,7 @@ Two facts, and neither is an inference from the engine's name.
 Druid SQL through this endpoint cannot write at all - the server refuses INSERT, UPDATE and DELETE itself ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)) - so there is no uncommitted work for a transaction to hold, which is the same reason `supportsTransactions` is `false` ([§9](#9-capabilities--labels)).
 And the transport is one `POST /druid/v2/sql` per statement with no session identifier of any kind ([`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)), so there is no handle between two statements for state to survive on even if the engine had some.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 
 ---
@@ -842,7 +843,7 @@ Druid is reached over plain HTTP through the form, so inventing `druid://` would
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `druid` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/providers/sql/druid/execution-ui.ts).
-What a tree click and Generate Query write is `DRUID_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port (its identifier quoting), declared in [`generators.ts`](../../src/lib/db/providers/sql/druid/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is `DRUID_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), declared in [`generators.ts`](../../src/lib/db/providers/sql/druid/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---
 
@@ -1495,10 +1496,9 @@ statement, so the row cap can only ever be a positive integer in the generated S
 
 The honest empties, each with its reason:
 
-- **`getPerformanceMetrics()` is zeroed** because Druid's metrics do not reach SQL. `cacheHitRatio` is
-  required by the type so it carries a neutral `0`; every other metric in that type is *optional*, so
-  absence is expressible and they are left out entirely — a zero would read as a measurement of zero,
-  which is a different and false claim.
+- **`getPerformanceMetrics()` is `{}`** because Druid's metrics do not reach SQL. Every metric in that
+  type is *optional*, `cacheHitRatio` included, so absence is expressible and they are left out
+  entirely: a zero would read as a measurement of zero, which is a different and false claim.
 - **`getHealth().cacheHitRatio` is the string `"N/A"`.** That field is a `string`, so it can say
   "not measured" — which is the truth. A fabricated low number would trip the cache-ratio threshold
   alert into reporting a fault that does not exist. `sqlite.ts` and `oracle/index.ts` already spell an
@@ -1510,13 +1510,13 @@ The honest empties, each with its reason:
   ([§6](#6-schema-introspection)).
 
 Those two empty arrays were re-checked on **2026-08-25** against the ABSENT-is-not-EMPTY rule
-`MonitoringData` states (the rule that converted five Cassandra panels and one Trino one). Both stay
-EMPTY, and the distinction is which fact the panel is reporting: **an absent panel means the engine
-could not answer; an empty one means zero is a real measurement.** Druid has no query log and no index
-object, so the count of listable rows really is zero and an empty panel states it correctly — the
-`slowQueriesEmptyState` label carries the reason into the tab besides. The Cassandra panels were
-different: its tables and secondary indexes *exist* and the schema tree lists them in the same frame,
-so `[]` there denied objects the product was showing.
+`MonitoringData` states (the rule that converted five Cassandra panels and one Trino one). Both
+methods still answer EMPTY, and the distinction is which fact the answer reports: **an absent panel
+means the engine could not answer; an empty one means zero is a real measurement.** Druid has no
+query log and no index object, so the count of listable rows really is zero. The Cassandra panels
+were different: its tables and secondary indexes *exist* and the schema tree lists them in the same
+frame, so `[]` there denied objects the product was showing.
+`getPerformanceMetrics` answers `{}` and these two answer `[]` without asking the engine, so the performance, slow-query and index panels are not offered (see Engine facets below): `getMonitoringData` never reads them and the dashboard draws no Performance or Queries tab for Druid.
 - **`maxConnections` is `0`** because Druid publishes no connection limit anywhere in SQL — it has no
   pool. A number here would be invented.
 - **`uptime` says `"unknown"`, not `"0ms"`**, when either clock reading is missing: an uptime of zero
@@ -1570,6 +1570,28 @@ restricted user *can* see. The schema tree goes further and touches **no `sys` t
 cluster that merely declines to describe its servers still renders a full sidebar; the per-datasource
 counts live in `getTableStats()`, where a denial costs one panel instead of the whole tree.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `druid` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/druid/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `table-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
@@ -1616,9 +1638,9 @@ only where `kill` is declared, so it does not render for Druid either.
 `runMaintenance(type)` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts)) exists because
 the `DatabaseProvider` interface obliges every provider to implement it, and **not** because any
 request reaches it: `/api/db/maintenance`
-([route.ts](../../src/app/api/db/maintenance/route.ts)) checks `supportsMaintenance` and returns
-`{ "error": "Maintenance operations not supported for this database" }` with status 400 before it
-would ever call the provider. So the message below is what a *programmatic* caller of the
+([route.ts](../../src/app/api/db/maintenance/route.ts)) reads Druid's engine facets row, which offers
+no maintenance operation ([Engine facets](#engine-facets)), and refuses every operation by name with
+`400 FACET_NOT_OFFERED` before it builds a provider or opens a connection. So the message below is what a *programmatic* caller of the
 `@libredb/studio` package sees, not what the HTTP API returns — `docs/API_DOCS.md` documents the
 route's own wording. It throws a `QueryError` naming the reason:
 
@@ -1668,14 +1690,12 @@ Both halves of that are real constraints, not scope cuts made lightly:
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/sql/druid/index.ts))
 
-Three overrides:
+Two overrides:
 
 - `entityName` → **"Datasource"**, `entityNamePlural` → **"Datasources"**. Datasource is the Druid
   word for a table, and the sidebar is where a user meets it.
-- `slowQueriesEmptyState` → **"Druid keeps no query log: no system table and no endpoint holds
-  finished queries."** `getSlowQueries()` is empty by design, so the monitoring Queries panel is
-  **always** empty here, and its hardcoded sentence used to tell the reader to enable
-  `pg_stat_statements` (#463).
+
+No slow-query sentence is declared: `getSlowQueries()` is empty by design, so the slow-query panel is not offered and the dashboard draws no Queries tab here, and nothing would draw one.
 
 Everything else is inherited on purpose. **A Druid row is a row**, so renaming it would only make the
 grid speak a dialect the cluster does not. The maintenance labels are irrelevant here
@@ -1962,8 +1982,8 @@ generated alias is the habit worth keeping.
 ### 12.2 Over the API
 
 `POST /api/db/query` with the SQL statement in the `sql` field — the same contract every SQL provider
-uses. `POST /api/db/maintenance` has nothing to accept for Druid and any call throws with the reason
-([§8](#8-maintenance)). The transaction and cancel routes do not apply: `/api/db/cancel` reports
+uses. `POST /api/db/maintenance` has nothing to accept for Druid and refuses every operation by name
+with `400 FACET_NOT_OFFERED` before it builds a provider ([§8](#8-maintenance)). The transaction and cancel routes do not apply: `/api/db/cancel` reports
 cancellation as unsupported because the provider exposes no `cancelQuery`
 ([§13](#13-known-limitations--future-work)).
 

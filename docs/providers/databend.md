@@ -18,6 +18,7 @@ This document is the single reference point for the provider: design, architectu
 | **Connection string** | Not offered: a pasted `https://` address goes into Host, which splits it, and a `databend://` DSN into Paste URL of a new connection, which fills the fields ([4.1](#41-configuration-fields)) |
 | **EXPLAIN** | `databend-text`: plain `EXPLAIN` in both modes, never `EXPLAIN ANALYZE`, and no plan for the shapes that run while binding ([5.6](#56-explain-is-the-planning-form-only)) |
 | **Write reach** | open: every statement Databend accepts runs as written, and maintenance (`kill`) sends a kill; no inline row edit, no object edit ([6.3](#63-object-edit-789-not-in-this-version)) |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Transactions** | Not exposed: a transaction a statement leaves open is rolled back when the statement ends ([3.5](#35-what-a-statement-leaves-open-is-closed)) |
 | **Maintenance** | `kill` only: `KILL QUERY` on a session id from the Sessions panel ([8](#8-maintenance)) |
 | **Query cancellation** | Yes: Stop sends the statement's kill link and reports a cancel only when the kill answered ([5.8](#58-cancellation-and-deadlines)) |
@@ -183,6 +184,7 @@ Each Studio process holds a latch of its own, so several replicas each send a re
 A gateway's sign-in refusal latches over any HTTP status, 200 included, and only an answer proves a sign-in, never a refusal.
 Two connections with the same key share the latch, a disconnect does not clear it, and a restart does.
 The key is an HMAC-SHA-256, keyed by random bytes each process draws once, over the scheme, the far end, the SSH bastion route, the user and the password; no secret is kept, and a key seen outside the process cannot be used to test a guessed password.
+The bastion route is the one Studio hands the provider under `TUNNEL_ROUTE` when it opened a tunnel, and a connection that carries a tunnel's far end without it is refused before anything is sent.
 The far end's host is framed in one spelling: an IPv6 address however it is written, and a host name with or without its final dot, are one key, while an error still names the host as configured.
 Until a key has had an answer, one statement holds it and the others wait until it has sent its last request, its closes included, so a refused password is sent once.
 The latch holds 256 keys: a new one takes the place of an expired key first, then of the oldest proven one, and of the oldest latched one only when every key is latched and live; a proof never takes a latched key's place, so its key stays unproven.
@@ -327,9 +329,7 @@ A field of the wrong type from a seed file or the API is refused naming the fiel
 
 > The connection's [field] must be [type]; nothing was sent.
 
-A connection with its SSH tunnel on that arrives without the tunnel is never dialled directly:
-
-> This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Databend was not dialled directly: the tunnel opens only when both Host and Port are set.
+A connection with its SSH tunnel on is refused by Studio before the provider is built when the tunnel was not opened, so Databend is never dialled past it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 
 ### 4.2 Sign-in
 
@@ -521,6 +521,7 @@ The statement splitter, the row limiter, the confirmation gate, the guard and th
 | `backslashAlwaysEscapes` | `true` | a backslash escapes the next character inside `'...'` and `"..."`, the first shipped row to declare it |
 | `script` | `{"blocks":"none","separatorLine":null,"unit":"statement"}` | the default: no procedural block and no separator line, so every code `;` ends a statement |
 | `trailingLimitClauses` | `["\\s+FORMAT\\s+\\w+\\s*$"]` | a trailing `FORMAT <name>` must follow the row bound, so the limiter appends `LIMIT` before it (measured, L3: `SELECT 1 FORMAT JSON LIMIT 5` is a parse error) |
+| `confirmFormsWhen` | `[{"form":["REPLACE"],"when":"ON"}]` | the confirmation gate asks before a `REPLACE`, which always carries an `ON` conflict key and replaces the row a new one collides with on it, unless a `SETTINGS (...)` clause leads it (section 5.9) |
 
 A top-level `SELECT TOP n` is a bounded statement to the shared limiter, so no `LIMIT` is appended to it: Databend refuses `TOP` and `LIMIT` together (L3).
 
@@ -665,6 +666,9 @@ Block comments are flat: `lex_comment_block` scans for the first `*/` with no de
 `//` is an operator token.
 A backslash always escapes: the string token is `'([^'\\]|\\.|'')*'` and its `"` twin, and no setting turns the escape off.
 The row bound goes before a trailing `FORMAT` clause, measured on the pinned image over `POST /v1/query`: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
+The confirmation gate asks before `REPLACE` when `ON` follows it (`confirmFormsWhen`), as it asks before `UPDATE` and `DELETE`: measured on the pinned image against a table holding `(1, 'a', 'keep-me')`, `REPLACE INTO t ON (id) VALUES (1, 'new', NULL)`, its `SELECT` form and `REPLACE t ON (id) ...` without `INTO` each left `(1, 'new', NULL)`, and a `REPLACE` without `ON` is 1005 "expecting `ON`".
+So every `REPLACE` that runs asks, unless a `SETTINGS (...)` clause leads it (D246), and a `replace()` call inside a script led by `BEGIN` asks only when an `ON` follows it.
+Databend's other destructive forms still run with no confirmation (section 13, BACKLOG D246).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -760,6 +764,28 @@ On the measured Cloud tenant `system_history.query_history` answered 1003, so th
 > The base tables of the default catalog, largest first; other catalogs are not read.
 
 With Warehouse set, or on a Databend Cloud host, no pulse or fleet check runs (section 4.4); a panel opened by a person resumes the warehouse like any other request.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `databend` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/databend/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
 
 ## 8. Maintenance
 
@@ -986,7 +1012,7 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 ## 13. Known limitations
 
 - Databend has no read-only session Studio can open, and SELECT-shaped writers exist (`nextval` and six table functions), so there is no agent execution and no MCP `run_read_query` ([B103](../BACKLOG.md)).
-- The confirmation gate does not know Databend's destructive forms: `INSERT OVERWRITE`, `REPLACE INTO`, `OPTIMIZE TABLE ... PURGE`, the `VACUUM` forms, `FLASHBACK TABLE`, `COPY INTO ... PURGE = true`, `REMOVE @stage`, `EXECUTE IMMEDIATE`, `CALL`, a `SETTINGS (...)` clause and the SELECT-shaped writers run with no confirmation ([D246](../BACKLOG.md)).
+- The confirmation gate does not know most of Databend's destructive forms: `INSERT OVERWRITE`, `OPTIMIZE TABLE ... PURGE`, the `VACUUM` forms, `FLASHBACK TABLE`, `COPY INTO ... PURGE = true`, `REMOVE @stage`, `EXECUTE IMMEDIATE`, `CALL`, a `SETTINGS (...)` clause and the SELECT-shaped writers run with no confirmation ([D246](../BACKLOG.md)); `REPLACE` asks (section 5.9).
 - A dollar-quoted run tagged other than `$$` (`$name$`) is refused, because Databend reads `$name` as a variable; use `$$`.
 - A form feed is refused anywhere in the text, because it ends a `--` comment in Databend.
 - A stage name (`@...`) holding a backslash, `--`, `/*`, a dollar quote or a bracket is refused, because Databend's stage token takes each into the name while Studio reads a quote, a comment, a literal or an array there; a space ends the name, so a comment can follow it.
@@ -1011,7 +1037,7 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - Every user's running statements on the server or warehouse are in the Sessions panel, and a running `CREATE USER` or `ALTER USER` with `IDENTIFIED BY` shows its password unmasked there, because Databend masks only `PASSWORD = '...'`.
 - Studio's client-chosen session ids mean Databend writes no `login_history` row for a successful sign-in; failed sign-ins and every statement in `query_history` are still recorded.
 - A cluster that forwards a request to another node (a sticky node or a warehouse route) forwards it, `Authorization` included, over plain HTTP unless that node's HTTP handler has TLS.
-- A hostile or impersonated endpoint holds the password it receives and can return it transformed, in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the password it receives and can return it transformed, in an encoding Studio does not list, so Studio withholds only the forms it lists.
 - A `Timestamp` is shown in the server's global time zone without an offset (a session `SET timezone` does not carry over), and a `Timestamp_Tz` with its offset.
 - A DML statement's row count, an object's row count or size and a monitoring figure from 2^53 up are the nearest number, not the exact one; a result cell keeps such an integer exact, as text (section 5.4).
 - No path-prefixed reverse proxy: Databend's links are origin-relative, so the server must answer at the root of its host and port, with no path prefix.

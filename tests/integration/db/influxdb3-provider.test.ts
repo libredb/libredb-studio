@@ -24,7 +24,7 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
@@ -33,11 +33,12 @@ import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-po
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import { generateTableQuery } from "@/lib/query-generators";
 import type { ManagedConnection } from "@/lib/seed";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import {
   type InfluxCapture,
   loadInfluxCapture,
@@ -47,6 +48,12 @@ import {
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
+
+/** The notice an answer carrying database content opens with on this file's influxdb3 connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("influxdb3"));
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -122,7 +129,10 @@ function recordedServer(
     };
   };
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, held);
-  return { provider: new InfluxDB3Provider(CONNECTION, {}, execution, factory), wire };
+  return {
+    provider: new InfluxDB3Provider(CONNECTION, {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS }, factory),
+    wire,
+  };
 }
 
 const body = (request: RecordedInfluxRequest): { db: string; q: string; format: string } =>
@@ -175,7 +185,9 @@ describe("InfluxDB 3.12.0 Core, replayed", () => {
     const preview = capture("sql-preview-home");
     const { provider, wire } = recordedServer({ [(preview.request.body as { q: string }).q]: preview });
     await provider.connect();
-    const prepared = provider.prepareQuery(generateTableQuery(["home"], provider.getCapabilities()), { limit: 50 });
+    const prepared = provider.prepareQuery(generateTableQuery(["home"], "influxdb3", provider.getCapabilities()), {
+      limit: 50,
+    });
     expect(prepared.query).toBe((preview.request.body as { q: string }).q);
     const result = await provider.query(prepared.query);
     expect(body(wire.requests.at(-1) as RecordedInfluxRequest)).toEqual(
@@ -323,7 +335,11 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     async (_name, entry) => {
       // The client sends what the capture sent: the policy is the provider's, not the client's.
       const wire = recordingInfluxTransport([entry]);
-      const options = buildInfluxConnectionOptions(CONNECTION, { type: "influxdb3", queryTimeout: 30_000 });
+      const options = buildInfluxConnectionOptions(CONNECTION, {
+        type: "influxdb3",
+        queryTimeout: 30_000,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      });
       const client = createInfluxClient(options, SQL_ROUTES, wire.factory);
       const answer = await client.send(
         { route: "query", values: { db: "home", q: textOf(entry) } },
@@ -398,6 +414,7 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     const rows = preview.body.split("\n").filter((line) => line.trim() !== "").length;
     const cut = await rejection(provider.queryReadOnly(q, { ...BUDGET, maxResultRows: rows - 1 }));
     expect(cut.message).toBe(`Read-only execution exceeded the row budget: ${rows} rows > ${rows - 1} allowed`);
+    expect(errorKind(cut)).toBe("row-budget-refusal");
     await provider.disconnect();
 
     const wide = `{${Array.from({ length: 125_001 }, (_, column) => `"c${column}":1`).join(",")}}\n`;
@@ -405,6 +422,7 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     await cells.provider.connect();
     const overflow = await rejection(cells.provider.queryReadOnly(q, { ...BUDGET, maxResultBytes: 50_000_000 }));
     expect(overflow.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(overflow)).toBe("row-budget-refusal");
     await cells.provider.disconnect();
   });
 });
@@ -447,6 +465,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const { provider, wire } = recordedServer(answers, executionContextFor(profile), ping, hold);
@@ -522,7 +541,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("pages with DataFusion's own LIMIT n OFFSET m", async () => {
@@ -591,7 +610,14 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
   ])("%p passes the MCP fence and is refused by the provider's system fence before it is sent", async (sql) => {
     const result = await call({ sql });
 
-    expect(result).toEqual({ content: [{ type: "text", text: SYSTEM_REFUSAL }], isError: true });
+    expect(result).toEqual({
+      content: [
+        { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
+        { type: "text", text: SYSTEM_REFUSAL },
+      ],
+      structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
+      isError: true,
+    });
     expect(acquired).toEqual(["agent-read-only"]);
     expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
   });
@@ -611,7 +637,14 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     async (sql) => {
       const result = await call({ sql });
 
-      expect(result).toEqual({ content: [{ type: "text", text: STRING_QUALIFIER_REFUSAL }], isError: true });
+      expect(result).toEqual({
+        content: [
+          { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
+          { type: "text", text: STRING_QUALIFIER_REFUSAL },
+        ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
+        isError: true,
+      });
       expect(acquired).toEqual(["agent-read-only"]);
       expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
     },
@@ -632,11 +665,13 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(result).toEqual({
       content: [
+        { type: "text", text: providerTextNotice(providerAuthor("influxdb3")) },
         {
           type: "text",
           text: `The statement was refused before it reached the database: ${(evaluateInfluxSql("DELETE FROM home WHERE room = 'Kitchen'") as { message: string }).message}`,
         },
       ],
+      structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
       isError: true,
     });
     expect(statementsSent()).toEqual([]);
@@ -650,18 +685,20 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
 
     expect(result.isError).toBe(true);
     const text = (result.content as { text: string }[]).map((part) => part.text);
-    expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+    expect(text[0]).toBe(DATABASE_CONTENT_NOTICE);
     expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
     expect(text[1]).toContain("DML not supported: Insert Into");
   });
 
   const refusedAtOpen = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("influxdb3")) },
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: { error: { kind: "execution-profile", code: "PROFILE_UNSUPPORTED_TARGET", outcome: "unknown" } },
     isError: true as const,
   });
 
@@ -722,6 +759,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -738,6 +776,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

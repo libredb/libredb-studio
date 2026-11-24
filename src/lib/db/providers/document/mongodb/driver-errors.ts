@@ -1,4 +1,4 @@
-import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { AccessRefusal, DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /** MongoDB server codes of an access refusal, from its error codes: 13 `Unauthorized`, 18 `AuthenticationFailed`. */
 const MONGODB_ACCESS_REFUSALS: ReadonlyMap<number, AccessRefusal> = new Map([

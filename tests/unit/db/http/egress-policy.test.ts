@@ -3,20 +3,28 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpOrigin } from "@/lib/db/http/endpoint";
+import { createNodeTransport } from "@/lib/db/http/node-transport";
 import {
   assertPublicDnsAnswers,
+  assertPublicLiteralHost,
+  BLOCKED_HOST,
+  EGRESS_DECISION_MISSING,
   guardedNodeOptions,
   httpTransportFetch,
   LOOPBACK_NETWORKS,
+  linkLocalRefusingLookup,
   publicAddressLookup,
+  requireEgressDecision,
+  socketEgress,
 } from "@/lib/db/http/egress-policy";
 import { nodeRequestJson } from "@/lib/db/providers/document/couchbase/http-transport";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 const flag = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const original = process.env[flag];
 afterEach(() => {
-  if (original === undefined) delete process.env[flag];
-  else process.env[flag] = original;
+  setEgressFlag(original);
 });
 
 describe("opt-in HTTP database destination policy", () => {
@@ -37,34 +45,58 @@ describe("opt-in HTTP database destination policy", () => {
     ["NAT64 tunnel", "64:ff9b::a00:1"],
     ["internal SRv6 range", "5f00::1"],
     ["IPv6 benchmark range", "2001:2::1"],
-  ])("refuses %s before building a request", (_label, host) => {
-    process.env[flag] = "true";
-    expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
+  ])("refuses %s before building a request with a blocking decision", (_label, host) => {
+    expect(() => httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
     try {
-      httpOrigin("http", host, 8080);
+      httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS);
     } catch (error) {
       expect((error as Error).message).not.toContain(host);
     }
   });
 
-  test("keeps public literals and hostnames available in guarded mode", () => {
-    process.env[flag] = "1";
-    expect(httpOrigin("https", "8.8.8.8", 443).host).toBe("8.8.8.8");
-    expect(httpOrigin("https", "168.63.129.16", 443).host).toBe("168.63.129.16");
-    expect(httpOrigin("https", "2606:4700:4700::1111", 443).host).toBe("[2606:4700:4700::1111]");
-    expect(httpOrigin("https", "db.example.com", 443).host).toBe("db.example.com");
+  test("keeps public literals and hostnames available with a blocking decision", () => {
+    expect(httpOrigin("https", "8.8.8.8", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("8.8.8.8");
+    expect(httpOrigin("https", "168.63.129.16", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("168.63.129.16");
+    expect(httpOrigin("https", "2606:4700:4700::1111", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("[2606:4700:4700::1111]");
+    expect(httpOrigin("https", "db.example.com", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("db.example.com");
   });
 
-  test("leaves local connections enabled by default and with an explicit false", () => {
-    delete process.env[flag];
-    expect(httpOrigin("http", "127.0.0.1", 8080).host).toBe("127.0.0.1");
-    process.env[flag] = "false";
-    expect(httpOrigin("http", "[::1]", 8080).host).toBe("[::1]");
+  test("leaves local connections enabled with an allowing decision", () => {
+    expect(httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("127.0.0.1");
+    expect(httpOrigin("http", "[::1]", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("[::1]");
   });
 
-  test("an invalid setting cannot silently disable the guard", () => {
-    process.env[flag] = "tru";
-    expect(() => httpOrigin("http", "8.8.8.8", 8080)).toThrow(DatabaseConfigError);
+  test("createNodeTransport reads no setting: with DB_HTTP_BLOCK_PRIVATE_HOSTS unreadable, a transport handed an allowing decision is built", async () => {
+    // The factory and the boot preflight refuse this value (their own tests hold it); the transport never reads it.
+    setEgressFlag("tru");
+    let hits = 0;
+    const server = createServer((_request, response) => {
+      hits += 1;
+      response.end("reached");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const origin = httpOrigin("http", "127.0.0.1", port, ALLOWS_PRIVATE_HOSTS);
+    const transport = createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
+      headers: {},
+    });
+    try {
+      const answer = await transport.request({
+        method: "GET",
+        url: `http://127.0.0.1:${port}/`,
+        signal: AbortSignal.timeout(5000),
+        maxResponseBytes: 1024,
+      });
+      expect(answer.status).toBe(200);
+      expect(hits).toBe(1);
+    } finally {
+      transport.close();
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
   });
 
   test("refuses mixed DNS answers, mapped IPv4, and an empty result", () => {
@@ -81,24 +113,27 @@ describe("opt-in HTTP database destination policy", () => {
   });
 
   test("passes the validating lookup to a fresh socket", () => {
-    process.env[flag] = "on";
-    expect(guardedNodeOptions("db.example.com")).toEqual({ lookup: publicAddressLookup, agent: false });
-    expect(() => guardedNodeOptions("[::1]")).toThrow(DatabaseConfigError);
+    expect(guardedNodeOptions("db.example.com", BLOCKS_PRIVATE_HOSTS)).toEqual({
+      lookup: publicAddressLookup,
+      agent: false,
+    });
+    expect(() => guardedNodeOptions("[::1]", BLOCKS_PRIVATE_HOSTS)).toThrow(DatabaseConfigError);
   });
 
   test("guards the custom TLS request path too", () => {
-    process.env[flag] = "true";
     expect(() =>
       nodeRequestJson(
-        "https://169.254.169.254/query/service",
+        // A loopback literal the blocking decision refuses: were the guard to decide otherwise, the dial would fail at
+        // once on this machine instead of reaching the cloud metadata address.
+        "https://127.0.0.1:1/query/service",
         { method: "GET", headers: {} },
         { rejectUnauthorized: true },
+        BLOCKS_PRIVATE_HOSTS,
       ),
     ).toThrow(DatabaseConfigError);
   });
 
   test("does not send either literal or DNS-alias loopback requests", async () => {
-    process.env[flag] = "true";
     let hits = 0;
     const server = createServer((_request, response) => {
       hits += 1;
@@ -107,11 +142,15 @@ describe("opt-in HTTP database destination policy", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as AddressInfo).port;
     try {
-      expect(() => httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).toThrow(DatabaseConfigError);
-      await expect(httpTransportFetch(`http://localhost:${port}/api/v1/query`)).rejects.toThrow();
+      expect(() => httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`, {}, BLOCKS_PRIVATE_HOSTS)).toThrow(
+        DatabaseConfigError,
+      );
+      await expect(
+        httpTransportFetch(`http://localhost:${port}/api/v1/query`, {}, BLOCKS_PRIVATE_HOSTS),
+      ).rejects.toThrow();
       expect(hits).toBe(0);
-      process.env[flag] = "false";
-      expect(await (await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`)).text()).toBe("reached");
+      const reached = await httpTransportFetch(`http://127.0.0.1:${port}/api/v1/query`, {}, ALLOWS_PRIVATE_HOSTS);
+      expect(await reached.text()).toBe("reached");
       expect(hits).toBe(1);
     } finally {
       await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
@@ -135,9 +174,82 @@ describe("LOOPBACK_NETWORKS", () => {
   });
 
   test("the blocked list refuses an address inside every row", () => {
-    process.env[flag] = "true";
     for (const [network] of LOOPBACK_NETWORKS) {
-      for (const host of PROBES[network]) expect(() => httpOrigin("http", host, 8080)).toThrow(DatabaseConfigError);
+      for (const host of PROBES[network]) {
+        expect(() => httpOrigin("http", host, 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+      }
     }
+  });
+});
+
+describe("the guard decides by the decision it is handed (FND-2 slice 2b)", () => {
+  test("assertPublicLiteralHost, guardedNodeOptions and httpTransportFetch refuse 127.0.0.1 with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    expect(() => assertPublicLiteralHost("127.0.0.1", BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => guardedNodeOptions("[::1]", BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    // Thrown synchronously, before any socket: the literal check runs before the request is built.
+    expect(() => httpTransportFetch("http://127.0.0.1:9/", {}, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+  });
+
+  test("and let it through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", async () => {
+    setEgressFlag("true");
+    expect(() => assertPublicLiteralHost("127.0.0.1", ALLOWS_PRIVATE_HOSTS)).not.toThrow();
+    expect(guardedNodeOptions("127.0.0.1", ALLOWS_PRIVATE_HOSTS)).toEqual({});
+    let hits = 0;
+    const server = createServer((_request, response) => {
+      hits += 1;
+      response.end("reached");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    try {
+      const reached = await httpTransportFetch(`http://127.0.0.1:${port}/`, {}, ALLOWS_PRIVATE_HOSTS);
+      expect(await reached.text()).toBe("reached");
+      expect(hits).toBe(1);
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    }
+  });
+
+  test("httpOrigin refuses 127.0.0.1 and [::1] with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, and keeps a public literal and a name", () => {
+    setEgressFlag(undefined);
+    expect(() => httpOrigin("http", "127.0.0.1", 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => httpOrigin("http", "[::1]", 8080, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(httpOrigin("https", "8.8.8.8", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("8.8.8.8");
+    expect(httpOrigin("https", "2606:4700:4700::1111", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("[2606:4700:4700::1111]");
+    expect(httpOrigin("https", "db.example.com", 443, BLOCKS_PRIVATE_HOSTS).host).toBe("db.example.com");
+  });
+
+  test("httpOrigin lets 127.0.0.1 through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", () => {
+    setEgressFlag("true");
+    expect(httpOrigin("http", "127.0.0.1", 8080, ALLOWS_PRIVATE_HOSTS).host).toBe("127.0.0.1");
+  });
+
+  test("socketEgress refuses 127.0.0.1 with a blocking decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset", () => {
+    setEgressFlag(undefined);
+    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: false }, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+    expect(() => socketEgress("127.0.0.1", { refusesLinkLocal: true }, BLOCKS_PRIVATE_HOSTS)).toThrow(BLOCKED_HOST);
+  });
+
+  test("socketEgress lets 127.0.0.1 through with an allowing decision while DB_HTTP_BLOCK_PRIVATE_HOSTS is true", () => {
+    setEgressFlag("true");
+    expect(socketEgress("127.0.0.1", { refusesLinkLocal: false }, ALLOWS_PRIVATE_HOSTS)).toBeUndefined();
+    expect(socketEgress("127.0.0.1", { refusesLinkLocal: true }, ALLOWS_PRIVATE_HOSTS)).toBe(linkLocalRefusingLookup);
+  });
+
+  test("requireEgressDecision answers the decision it is given", () => {
+    expect(requireEgressDecision(BLOCKS_PRIVATE_HOSTS)).toBe(BLOCKS_PRIVATE_HOSTS);
+    expect(requireEgressDecision(ALLOWS_PRIVATE_HOSTS)).toBe(ALLOWS_PRIVATE_HOSTS);
+  });
+
+  test("requireEgressDecision refuses an absent decision by name", () => {
+    let failure: unknown;
+    try {
+      requireEgressDecision(undefined);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(EGRESS_DECISION_MISSING);
   });
 });

@@ -14,8 +14,9 @@
 | **Query language** | `json` with `queryDialect: "rabbitmq"`: a JSON read request of this product's own schema ([§5.1](#51-the-read-request)) |
 | **Default port** | `15672`, the Management port; the AMQP port, `5672`, is a field of its own and may stay empty to browse only |
 | **Connection string** | Not supported; an `https://` management address pasted into Host is taken ([§4.1](#41-fields)) |
-| **SSH tunnel** | Refused: one tunnel carries one port, and the management API and AMQP use two |
+| **SSH tunnel** | Refused by Studio before the bastion is dialled ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)): one tunnel carries one port, and the management API and AMQP use two |
 | **Write reach** | none: the AMQP codec's outbound check, `isAllowedOutbound`, admits no publish, get, reject or queue or exchange method, and the management client's routes are `GET` only ([§3.1](#31-read-only-by-construction)); there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Maintenance** | None |
 | **Query cancellation** | Supported: Stop ends a read, and a read stopped after it started returns the rows read so far with a warning ([§5.5](#55-stop-reasons-and-warnings)) |
 | **Supported versions** | RabbitMQ 4.2 and later; an older broker is refused naming its version |
@@ -99,7 +100,15 @@ Studio sends the broker GET requests and stream reads only, never a publish or a
 | SSL / TLS | SSL / TLS | One setting for both endpoints: `disable` is `http` and `amqp`, any other mode `https` and `amqps`; one CA set, so paste both CAs if AMQPS and HTTPS use different ones |
 | `allowInsecureAuth` | Send the password without TLS | Drawn only while SSL mode is `disable` |
 
-`database`, `namespaces` and `tlsServerName` are not offered, and a record from a seed or the API that sets one is refused naming the field: virtual hosts are discovered, and the TLS identity is always the host.
+`database`, `namespaces` and `tlsServerName` are not offered: virtual hosts are discovered, and the TLS identity is always the host.
+A record from a seed or the API that sets one, whatever its value but empty, is refused before the provider is built, naming the field, so the provider never receives it:
+
+> RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.
+
+> RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.
+
+> RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.
+
 
 ### 4.2 TLS and the password
 
@@ -227,7 +236,7 @@ From 4.3.7 such messages are delivered with those values removed ([§5.3](#53-re
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/rabbitmq/sql-grammar.ts`](../../src/lib/db/providers/stream/rabbitmq/sql-grammar.ts), the `rabbitmq` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request naming a vhost and a stream ([§5.1](#51-the-read-request)), which the provider parses itself, so no span of it is SQL.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/rabbitmq/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/rabbitread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -268,8 +277,30 @@ The tree handles about 1,200 virtual hosts; past that the `/api/vhosts` answer p
 ## 7. Monitoring and health
 
 `getHealth()` makes one GET, `/api/overview?columns=rabbitmq_version,product_name`; `getOverview()` two, the overview and `/api/health/checks/alarms`.
-The performance, slow-query, session, table, index and storage panels answer empty with no GET: RabbitMQ has no query log, and Studio does not list broker connections, because they name other users and client addresses.
+The performance, slow-query, session, table, index and storage reads answer empty with no GET, so none of those panels is offered (see Engine facets below): RabbitMQ has no query log, and Studio does not list broker connections, because they name other users and client addresses.
 No node name and no other principal's name is shown.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `rabbitmq` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/rabbitmq/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. AI agent and MCP
 
@@ -400,6 +431,7 @@ A name is written as a JSON string literal, with control, line-separator and bid
 | Anything else | `QueryError` | Studio could not read the broker's answer for {route}. |
 
 The shared egress refusals of `DB_HTTP_BLOCK_PRIVATE_HOSTS` apply to both endpoints and pass through unchanged.
+A provider built outside Studio's provider factory without the egress decision refuses to connect, before any request to either endpoint, with a sentence that names the missing decision, which passes through unchanged too.
 The web server replaces every `TimeoutError`'s sentence with its shared timeout sentence, so the timeout sentences above are not yet shown through the query route.
 
 ## 12. Standards and deviations

@@ -3,6 +3,7 @@
  * Custom error types for database operations
  */
 
+import type { ExecuteOutcome } from "@libredb/provider-sdk/errors";
 import type { DatabaseType } from "./types";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 
@@ -22,6 +23,23 @@ export class DatabaseError extends Error {
    * no response carries it.
    */
   declare sqlstate?: string;
+
+  /**
+   * `not-sent` when the statement this error answers never reached the database. Written in exactly seven places: the
+   * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; the constructor of
+   * `TransactionLostError`, when the provider raising it says it found the held session ended before sending;
+   * `connectPhase`, on what a provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
+   * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
+   * raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
+   * in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through `markNotSent`, on the
+   * class it builds for a console call the host refused before making it; and `checkoutPhase`, which a provider's execute
+   * runs around taking a connection or session from its pool or client before it sends, on what that checkout raised,
+   * mapped. Absent otherwise, which `errorOutcome` in ./error-record reads as `unknown`, because the statement
+   * may have run. An own field only when set, so every other error keeps the own keys it had. An instance a failed
+   * build or connect raised is never raised by a later statement: the factory keeps no provider whose build or connect
+   * failed.
+   */
+  declare outcome?: ExecuteOutcome;
 
   constructor(
     message: string,
@@ -55,13 +73,67 @@ export class DatabaseError extends Error {
 // ============================================================================
 
 /**
- * Configuration error - missing or invalid configuration
+ * Configuration error - missing or invalid configuration. `code` is `CONFIG_ERROR` unless a subclass names a more
+ * specific one, as `UnknownProviderError` does.
  */
 export class DatabaseConfigError extends DatabaseError {
-  constructor(message: string, provider?: DatabaseType) {
-    super(message, provider, ApiErrorCode.CONFIG_ERROR);
+  constructor(message: string, provider?: DatabaseType, code: ApiErrorCode = ApiErrorCode.CONFIG_ERROR) {
+    super(message, provider, code);
     this.name = "DatabaseConfigError";
     Object.setPrototypeOf(this, DatabaseConfigError.prototype);
+  }
+}
+
+/**
+ * Why a connection's `type` is not a type id, as `typeIdRefusal` in `./type-id` answers it: `absent` when the value is
+ * missing, `null` or empty, `malformed` when it is present and not a string, whose value is never repeated, `unknown`
+ * when it is a string that names no provider, which `typeId` then carries verbatim. `sentence` is the user-facing
+ * refusal, the same on every surface. Declared here as a type so this module gains no runtime import.
+ */
+export type TypeIdRefusal =
+  | { readonly reason: "absent"; readonly sentence: string }
+  | { readonly reason: "malformed"; readonly sentence: string }
+  | { readonly reason: "unknown"; readonly typeId: string; readonly sentence: string };
+
+/**
+ * A connection whose `type` is absent, not text, or names no provider this Studio has (FND-1). Raised before any provider is
+ * built, any SSH tunnel opened or any per-engine table read, and answered 400 `PROVIDER_UNKNOWN` with the refusal's
+ * sentence. A `DatabaseConfigError`, so every existing classification of a configuration error still holds; its
+ * `provider` is undefined because the value is not a `DatabaseType`.
+ */
+export class UnknownProviderError extends DatabaseConfigError {
+  readonly reason: TypeIdRefusal["reason"];
+  /** The refused value, verbatim; only for an `unknown` type. */
+  readonly typeId?: string;
+
+  constructor(refusal: TypeIdRefusal) {
+    super(refusal.sentence, undefined, ApiErrorCode.PROVIDER_UNKNOWN);
+    this.name = "UnknownProviderError";
+    this.reason = refusal.reason;
+    if (refusal.reason === "unknown") this.typeId = refusal.typeId;
+    Object.setPrototypeOf(this, UnknownProviderError.prototype);
+  }
+}
+
+/** A facet of an engine's `ENGINE_FACETS` row that a request can name a member of; only maintenance is refused today. */
+export type DeclaredFacet = "maintenance";
+
+/**
+ * A request names a member of a facet the connection's engine does not offer: before any provider is built, an
+ * operation its `ENGINE_FACETS` row does not list, or, after connect, one the connected server does not accept.
+ * Answered 400 `FACET_NOT_OFFERED` with its sentence, which names the member and the engine. A `DatabaseError` and not
+ * a `DatabaseConfigError`: no setting of the connection is wrong, so a configuration error's remedy does not apply.
+ */
+export class FacetNotOfferedError extends DatabaseError {
+  constructor(
+    message: string,
+    provider: DatabaseType,
+    readonly facet: DeclaredFacet,
+    readonly operation: string,
+  ) {
+    super(message, provider, ApiErrorCode.FACET_NOT_OFFERED);
+    this.name = "FacetNotOfferedError";
+    Object.setPrototypeOf(this, FacetNotOfferedError.prototype);
   }
 }
 
@@ -70,7 +142,8 @@ export class DatabaseConfigError extends DatabaseError {
 // ============================================================================
 
 /**
- * Connection error - failed to connect to database
+ * Connection error - failed to connect to database. `code` is `CONNECTION_ERROR` unless a subclass names a more
+ * specific one, as `TransactionLostError` does.
  */
 export class ConnectionError extends DatabaseError {
   constructor(
@@ -78,10 +151,36 @@ export class ConnectionError extends DatabaseError {
     provider?: DatabaseType,
     public readonly host?: string,
     public readonly port?: number,
+    code: ApiErrorCode = ApiErrorCode.CONNECTION_ERROR,
   ) {
-    super(message, provider, ApiErrorCode.CONNECTION_ERROR);
+    super(message, provider, code);
     this.name = "ConnectionError";
     Object.setPrototypeOf(this, ConnectionError.prototype);
+  }
+}
+
+/**
+ * A call on a held transaction whose database session has ended since the transaction began. The server ended the
+ * transaction with its session, so the provider holds none from then on and its next call answers
+ * `NO_ACTIVE_TRANSACTION`. A `ConnectionError`, because the connection and not the statement failed, with the code
+ * `TRANSACTION_LOST`, which the editor reads as the end of its transaction.
+ *
+ * `beforeSend: true` is the provider saying it found the session ended before it sent anything of the call, so the
+ * error answers `outcome` `not-sent` (docs/providers/CONTRACT.md, E-5). Without it the outcome stays `unknown`, since
+ * a provider may raise this class for a session that ended while the call ran.
+ */
+export class TransactionLostError extends ConnectionError {
+  constructor(
+    message: string,
+    provider?: DatabaseType,
+    host?: string,
+    port?: number,
+    options: { readonly beforeSend?: true } = {},
+  ) {
+    super(message, provider, host, port, ApiErrorCode.TRANSACTION_LOST);
+    this.name = "TransactionLostError";
+    if (options.beforeSend === true) this.outcome = "not-sent";
+    Object.setPrototypeOf(this, TransactionLostError.prototype);
   }
 }
 
@@ -156,8 +255,8 @@ export class QueryError extends DatabaseError {
 /**
  * What `prepareQuery()` raises for a positive offset on an engine whose SQL cannot page a result: Cassandra's CQL and
  * Elasticsearch SQL have no OFFSET clause. A `QueryError`, so the query route answers it as before; its own class, so
- * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence, and
- * every other failure of `prepareQuery()` as the engine's.
+ * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence behind a
+ * notice naming the provider, and every other failure of `prepareQuery()` as the engine's.
  */
 export class OffsetUnsupportedError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
@@ -171,13 +270,15 @@ export class OffsetUnsupportedError extends QueryError {
  * A statement this repository refused before sending it, so the database never saw it: a provider's own fence on what
  * the read-only profile may run, or a charge the run's read allowance cannot pay. A QueryError, so every caller that
  * settles a statement failure still settles this one, and a statement that avoids what the sentence names is the
- * repair; its own class, so the agent and MCP say the statement was refused before it was sent, in this server's
- * voice, rather than presenting the sentence as the database's error.
+ * repair; its own class, so the agent and MCP say the statement was refused before it was sent rather than presenting
+ * the sentence as the database's error: a provider's sentence as its own text, fenced or behind a notice naming the
+ * provider, and the read allowance's (`ReadAllowanceExceededError`, which only core constructs) in Studio's words.
  */
 export class RefusedBeforeSendError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
     super(message, provider, query);
     this.name = "RefusedBeforeSendError";
+    this.outcome = "not-sent";
     Object.setPrototypeOf(this, RefusedBeforeSendError.prototype);
   }
 }
@@ -191,6 +292,113 @@ export class ReadAllowanceExceededError extends RefusedBeforeSendError {
     super(message, provider);
     this.name = "ReadAllowanceExceededError";
     Object.setPrototypeOf(this, ReadAllowanceExceededError.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a read whose answer held more rows than the row field of the `ReadOnlyStatementBudget` it
+ * was handed, raised after the read began, in `rowBudgetSentence`'s words. Its own class, so its error record answers
+ * kind `row-budget-refusal` and a reader can tell it from any other statement failure without reading the sentence.
+ * A `QueryError`, so the route answers 400 `QUERY_ERROR` and every caller that settles a statement failure settles it;
+ * its `name` stays `QueryError`. Providers construct it; core raises its subclass `StudioRowBudgetRefusal`, and a
+ * refusal raised before anything was sent stays a `RefusedBeforeSendError`.
+ */
+export class RowBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, RowBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a read whose answer held more bytes than the byte field of its `ReadOnlyStatementBudget`,
+ * in `byteBudgetSentence`'s words or an engine's own words for the same budget (SQL Server's estimated plan). Kind
+ * `byte-budget-refusal`; otherwise as `RowBudgetRefusal`, core raising its subclass `StudioByteBudgetRefusal`.
+ */
+export class ByteBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, ByteBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a read that outlasted the time field of its `ReadOnlyStatementBudget`, in words that open
+ * with a time budget prefix or the statement deadline. Kind `time-budget-refusal`; otherwise as `RowBudgetRefusal`,
+ * core raising its subclass `StudioTimeBudgetRefusal`.
+ * A `QueryError` rather than a `TimeoutError`, so its answer's code and `retryable` stay what they were; a provider
+ * that raises its time refusal as a `TimeoutError` keeps that class and kind `timeout`.
+ */
+export class TimeBudgetRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, TimeBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a value the server cut at the byte ceiling, which the byte budget cannot measure whole
+ * (SQL Server's `MSSQL_CUT_VALUE_PREFIX`). Kind `cut-value-refusal`; otherwise as `RowBudgetRefusal`.
+ */
+export class CutValueRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, CutValueRefusal.prototype);
+  }
+}
+
+/**
+ * A provider's refusal of a serialised result, one value the row budget cannot bound (SQL Server's FOR JSON or FOR
+ * XML, `MSSQL_SERIALISED_PREFIX`). Kind `serialised-result-refusal`; otherwise as `RowBudgetRefusal`.
+ */
+export class SerialisedResultRefusal extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, SerialisedResultRefusal.prototype);
+  }
+}
+
+/**
+ * Core's refusal of a provider's answer that held more rows than the read's row budget (`runReadOnlyStatement` and
+ * `runReadOnlyReading`). A `RowBudgetRefusal`, so a reader of the row budget sees it whoever raised it; its own class,
+ * so its error record answers kind `studio-row-budget-refusal` and the agent says it in Studio's voice where it fences
+ * a provider's as database content. Its `name` stays `QueryError`, so a log line, an error body and a reader of the
+ * name see no difference. No provider constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioRowBudgetRefusal extends RowBudgetRefusal {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioRowBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * Core's refusal of a provider's answer that held more bytes than the read's byte budget. A `ByteBudgetRefusal` with
+ * kind `studio-byte-budget-refusal`; otherwise as `StudioRowBudgetRefusal`.
+ */
+export class StudioByteBudgetRefusal extends ByteBudgetRefusal {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioByteBudgetRefusal.prototype);
+  }
+}
+
+/**
+ * Core's refusal of a provider's call it stopped waiting for at the read's time budget. A `TimeBudgetRefusal` with
+ * kind `studio-time-budget-refusal`; otherwise as `StudioRowBudgetRefusal`.
+ */
+export class StudioTimeBudgetRefusal extends TimeBudgetRefusal {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "QueryError";
+    Object.setPrototypeOf(this, StudioTimeBudgetRefusal.prototype);
   }
 }
 
@@ -241,6 +449,22 @@ export class TimeoutError extends DatabaseError {
 }
 
 /**
+ * A time limit Studio set and the work outlasted: the agent's statistics read, the host's deadline on a provider's
+ * execute or cancel call (`refusalError` and `stopError` in src/lib/provider-host/access.ts), and an editor call's
+ * allowance for its provider's open (`openStopError`, the same module). It exists only to mark Studio's sentence apart from a provider's timeout, so
+ * the agent says this one in Studio's voice and an answer names its kind, `studio-timeout-refusal`. Its `name` stays
+ * `TimeoutError`, so a log line, an error body and a reader of the name see no difference. No provider constructs it;
+ * tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioTimeoutRefusal extends TimeoutError {
+  constructor(message: string, provider?: DatabaseType, timeout?: number) {
+    super(message, provider, timeout);
+    this.name = "TimeoutError";
+    Object.setPrototypeOf(this, StudioTimeoutRefusal.prototype);
+  }
+}
+
+/**
  * Query cancelled error - user-initiated cancellation
  */
 export class QueryCancelledError extends DatabaseError {
@@ -263,6 +487,15 @@ export class QueryCancelledError extends DatabaseError {
 export type ExecutionProfileDenyCode =
   | "UNSUPPORTED_PROFILE"
   | "PROFILE_UNSUPPORTED_BY_PROVIDER"
+  /**
+   * The engine is not on Studio's review record of the engines agent and MCP statements run on (`AGENT_EXECUTION_ENGINES`
+   * in src/lib/db/compatibility.ts), so no statement profile is granted and no statement or budgeted read is made on it,
+   * even when its provider implements `queryReadOnly`.
+   *
+   * Its own code, apart from `PROFILE_UNSUPPORTED_BY_PROVIDER`, which says the provider has no such path and would be
+   * false of one that has it. No operator grant widens the record in this version.
+   */
+  | "PROFILE_ENGINE_NOT_REVIEWED"
   | "PROFILE_UNSUPPORTED_TARGET"
   /** The role the profile would run as holds privileges no read-only boundary can contain. */
   | "PROFILE_PRIVILEGES_TOO_BROAD"
@@ -321,6 +554,9 @@ export type ExecutionProfileDenyCode =
  * (#329+) is where that decision belongs.
  */
 export class ExecutionProfileError extends Error {
+  /** As `DatabaseError.outcome`: `not-sent` when `connectPhase` or `buildPhase` saw a connect or a build raise it. */
+  declare outcome?: ExecuteOutcome;
+
   constructor(
     message: string,
     public readonly reasonCode: ExecutionProfileDenyCode,
@@ -328,6 +564,36 @@ export class ExecutionProfileError extends Error {
     super(message);
     this.name = "ExecutionProfileError";
     Object.setPrototypeOf(this, ExecutionProfileError.prototype);
+  }
+}
+
+/**
+ * An execution profile refusal Studio's own code wrote: the factory's acquisition checks, MCP's open, the statement
+ * review and the core read path. It exists only to mark Studio's sentence apart from a provider's, which raises the
+ * parent class, so the agent and MCP say this one in Studio's voice and fence a provider's as the provider's text.
+ * Its `name` stays `ExecutionProfileError`, so a log line and a reader of the name see no difference. No provider
+ * constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioProfileRefusal extends ExecutionProfileError {
+  constructor(message: string, reasonCode: ExecutionProfileDenyCode) {
+    super(message, reasonCode);
+    this.name = "ExecutionProfileError";
+    Object.setPrototypeOf(this, StudioProfileRefusal.prototype);
+  }
+}
+
+/**
+ * What core answers in place of a provider's error whose text held a credential of the calling connection, when the
+ * error leaves core for a renderer that does not hold the connection (an error response, a route's log line). Its
+ * message is the withheld sentence and it carries none of the original's text or stack; the original is never
+ * changed, because providers throw shared error instances. Constructed only by `withholdProviderError`
+ * (src/lib/db/operations/provider-text.ts).
+ */
+export class ProviderTextWithheldError extends DatabaseError {
+  constructor(message: string, provider: DatabaseType) {
+    super(message, provider);
+    this.name = "ProviderTextWithheldError";
+    Object.setPrototypeOf(this, ProviderTextWithheldError.prototype);
   }
 }
 
@@ -348,6 +614,24 @@ export function isQueryError(error: unknown): error is QueryError {
 }
 
 /**
+ * Whether `error` is a budget refusal raised after the read began, a provider's or Studio's: an instance of one of the
+ * five budget classes, Studio's three subclasses included. A provider's categorizer passes one through as it is, so it
+ * keeps its class and its error kind. A refusal before send and a timeout are not budget refusals here: each already
+ * keeps its own class.
+ */
+export function isBudgetRefusal(
+  error: unknown,
+): error is RowBudgetRefusal | ByteBudgetRefusal | TimeBudgetRefusal | CutValueRefusal | SerialisedResultRefusal {
+  return (
+    error instanceof RowBudgetRefusal ||
+    error instanceof ByteBudgetRefusal ||
+    error instanceof TimeBudgetRefusal ||
+    error instanceof CutValueRefusal ||
+    error instanceof SerialisedResultRefusal
+  );
+}
+
+/**
  * A wait in milliseconds as the words a sentence names it with: tenths below 10 s and never fewer than 0.1, so a
  * deadline of a few milliseconds does not read as no wait at all; whole seconds from 10 s up; "1 second" in the
  * singular.
@@ -362,20 +646,78 @@ export function waitedSeconds(ms: number): string {
  * was reached and did not answer the connect, and a driver cannot always tell which. So a TimeoutError from the
  * connect is a ConnectionError naming the wait it made, on every route that connects, never the query sentence and
  * never the query timeout answer. The deadline is kept as its cause; every other failure passes as raised.
+ *
+ * Nothing the connect raised reached the database as a statement, so the error it rejects with answers `outcome`
+ * `not-sent`: the ConnectionError a deadline becomes, and every database error or execution profile refusal, marked on
+ * the instance as raised. A value of any other class passes unmarked and answers `unknown`.
  */
 export async function connectPhase(connect: () => Promise<void>): Promise<void> {
   const started = Date.now();
   try {
     await connect();
   } catch (error) {
-    if (!(error instanceof TimeoutError)) throw error;
+    if (!(error instanceof TimeoutError)) {
+      markNotSent(error);
+      throw error;
+    }
     const failure = new ConnectionError(
       `The connection got no answer after ${waitedSeconds(Date.now() - started)}: check the address, the port, the network path and that the server is running.`,
       error.provider,
     );
     failure.cause = error;
+    failure.outcome = "not-sent";
     throw failure;
   }
+}
+
+/**
+ * Runs a provider's build: every check core makes on the connection and its context, then the provider's constructor.
+ * A build sends no statement, so whatever it rejects with answers `outcome` `not-sent`, for the reason `connectPhase`
+ * gives for a connect: a database error or an execution profile refusal is marked on the instance as raised, and a
+ * value of any other class passes unmarked and answers `unknown`. It resolves to what the build answers.
+ */
+export async function buildPhase<T>(build: () => Promise<T>): Promise<T> {
+  try {
+    return await build();
+  } catch (error) {
+    markNotSent(error);
+    throw error;
+  }
+}
+
+/**
+ * Runs the step of a provider's execute that takes a connection or session from its pool or client before anything
+ * of the statement is sent (docs/providers/CONTRACT.md, E-5). A failure of that step provably precedes the send, so
+ * the error it rejects with answers `outcome` `not-sent`: `map` (the provider's own `mapDatabaseError`) turns the
+ * raised value into the class it answers, and a database error it answers is marked on the instance as mapped. A
+ * deadline the checkout met is no statement timeout, for the reason `connectPhase` gives for a connect: a mapped
+ * TimeoutError becomes a ConnectionError naming the wait, the TimeoutError kept as its cause and left unmarked. A value
+ * `map` answers outside the database classes passes unmarked and answers `unknown`, and a throw from `map` itself
+ * propagates as thrown. It resolves to what the checkout answers, and every failure after it stays the provider's own.
+ */
+export async function checkoutPhase<T>(checkout: () => Promise<T>, map: (error: unknown) => unknown): Promise<T> {
+  const started = Date.now();
+  try {
+    return await checkout();
+  } catch (error) {
+    const mapped = map(error);
+    if (!(mapped instanceof TimeoutError)) {
+      markNotSent(mapped);
+      throw mapped;
+    }
+    const failure = new ConnectionError(
+      `No connection of the pool came free or opened within ${waitedSeconds(Date.now() - started)}, so the statement was not sent: every connection may be in use, or the server may not be answering.`,
+      mapped.provider,
+    );
+    failure.cause = mapped;
+    failure.outcome = "not-sent";
+    throw failure;
+  }
+}
+
+/** Marks a database error or an execution profile refusal `not-sent` on the instance; any other value is left as is. */
+export function markNotSent(error: unknown): void {
+  if (error instanceof DatabaseError || error instanceof ExecutionProfileError) error.outcome = "not-sent";
 }
 
 export function isTimeoutError(error: unknown): error is TimeoutError {
@@ -388,38 +730,4 @@ export function isAuthenticationError(error: unknown): error is AuthenticationEr
 
 export function isQueryCancelledError(error: unknown): error is QueryCancelledError {
   return error instanceof QueryCancelledError;
-}
-
-// ============================================================================
-// Error Mapping Utilities
-// ============================================================================
-
-/**
- * Check if an error is retryable
- */
-export function isRetryableError(error: unknown): boolean {
-  if (!isDatabaseError(error)) {
-    // Network errors are typically retryable
-    if (error instanceof TypeError && error.message.includes("fetch")) {
-      return true;
-    }
-    return false;
-  }
-
-  // Auth, privilege and config errors are not retryable
-  if (
-    error instanceof AuthenticationError ||
-    error instanceof PermissionDeniedError ||
-    error instanceof DatabaseConfigError
-  ) {
-    return false;
-  }
-
-  // Query syntax errors are not retryable
-  if (error instanceof QueryError && error.position !== undefined) {
-    return false;
-  }
-
-  // Connection and timeout errors may be retryable
-  return true;
 }

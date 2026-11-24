@@ -86,7 +86,7 @@ jobs:
       # workflow: windows-package is a hard release gate, so a launcher
       # regression discovered first at tag time would block the release.
       - name: Setup Go (Windows launcher toolchain)
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: packaging/windows/launcher/go.mod
           # Dependency-free module (no go.sum) - caching would only warn.
@@ -140,6 +140,9 @@ jobs:
       - name: Check package entry closures (lib:closure)
         run: bun run lib:closure
 
+      - name: Check that the packed library loads (lib:load)
+        run: bun run lib:load
+
   test:
     name: Unit & Integration Tests
     runs-on: ubuntu-latest
@@ -168,7 +171,7 @@ jobs:
         uses: ./.github/actions/bun-install
 
       - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v4.1.3
 
@@ -205,7 +208,10 @@ jobs:
       # link-local DNS answer with DB_HTTP_BLOCK_PRIVATE_HOSTS off rests on that runtime's Agent using the transport's
       # own lookup, so the transport's runtime cases run once more on exactly that release, and so do the RabbitMQ AMQP
       # dial's and the MQTT dial's, whose egress rests on the same runtime's lookup handling, the S3 client wire cases,
-      # and the Snowflake key cases, whose missing and wrong passphrase codes come from that release's OpenSSL.
+      # the Snowflake key cases, whose missing and wrong passphrase codes come from that release's OpenSSL, and the
+      # Redis driver cases, whose deepest readable reply depends on that release's stack and whose TLS errors come
+      # from that release's sockets, and the shutdown drain's cases, which watch that release's experimental
+      # http.server.request.start diagnostics channel.
       # The suite above runs every one of these files on Node 24, the engines floor, so they are not run on it again.
       # The release is read from the Dockerfiles when the job runs, not written here: Dependabot moves the image's Node
       # and never this file, and a literal here stayed at 26.10.0 through four image bumps from #1696 on.
@@ -236,12 +242,12 @@ jobs:
         with:
           node-version: ${{ steps.image-node.outputs.version }}
 
-      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases and the Snowflake key cases on the image's Node
+      - name: Run the transport runtime cases, the S3 client wire cases, the RabbitMQ and MQTT dial cases, the Snowflake key cases, the Redis driver cases and the shutdown drain's channel cases on the image's Node
         env:
           IMAGE_NODE: ${{ steps.image-node.outputs.version }}
         run: |
           test "$(node --version)" = "v$IMAGE_NODE"
-          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts
+          NODE_TRANSPORT_NODES="$(command -v node)" bun tests/run-tests.ts tests/unit/db/http/node-transport-runtimes.test.ts tests/unit/db/s3/client-wire.test.ts tests/unit/db/rabbitmq/dial-runtimes.test.ts tests/unit/db/mqtt/dial-runtimes.test.ts tests/unit/db/snowflake/key-runtimes.test.ts tests/integration/db/redis-driver.test.ts tests/unit/lib/shutdown-drain-runtimes.test.ts
 
       - name: Upload coverage artifact
         # always(): keep the lcov available for debugging when coverage:check
@@ -312,7 +318,7 @@ jobs:
         uses: ./.github/actions/bun-install
 
       - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v4.1.3
 
@@ -518,6 +524,31 @@ jobs:
         # integration suite proves the same rules against a mock, which cannot see a pg driver or server
         # change. The script starts and removes its own container, on a host port Docker picks.
         run: bun tests/live/postgres-read-only-live.ts
+
+      - name: PostgreSQL held-session live check
+        # A session the server ends while the provider holds its client (a terminated backend, an
+        # idle-in-transaction timeout) must reach the caller as a named error. Under Bun and then
+        # under Node, bundled with `bun build --target=node` so the `@/` alias is resolved, because
+        # the two runtimes report an error raised in a socket handler differently. Each run starts
+        # and removes its own container.
+        run: |
+          bun tests/live/postgres-held-session-live.ts
+          OUT="$(mktemp -d)"
+          bun build tests/live/postgres-held-session-live.ts --target=node --outfile "$OUT/live.mjs"
+          node "$OUT/live.mjs"
+          rm -rf "$OUT"
+
+      - name: Redis nested-reply live check
+        # A reply from a real Redis nested deeper than the runtime's stack must fail its command with a named error,
+        # and the connection must answer the next one (patches/ioredis@5.11.1.patch). Under Bun and then under Node,
+        # bundled with `bun build --target=node`, because the two runtimes' stacks differ and production runs Node.
+        # The script starts and removes its own container.
+        run: |
+          bun tests/live/redis-nested-reply-live.ts
+          OUT="$(mktemp -d)"
+          bun build tests/live/redis-nested-reply-live.ts --target=node --outfile "$OUT/live.mjs"
+          node "$OUT/live.mjs"
+          rm -rf "$OUT"
 
       - name: Install Playwright browsers
         # chromium only and no --with-deps: ubuntu-latest ships Google Chrome,
@@ -1122,6 +1153,104 @@ jobs:
       - name: Run engine smoke (${{ matrix.tier }})
         run: bash scripts/engine-smoke.sh dist-payload/libredb-studio-standalone-*.tar.gz ${{ matrix.tier }}
 
+  # SIGTERM and SIGINT sent to the built standalone server, with and without
+  # NEXT_MANUAL_SIG_HANDLE, and an unsupported value refused at boot: who ends
+  # the process and with which exit code (docs/DISTRIBUTION.md, "Stopping the
+  # server"; tests/live/shutdown-signal-live.ts). The drain cases hold a sign-in
+  # in flight across the signal, and the governance cases stop the server under
+  # the default image's environment with query events queued and a statement in
+  # flight; the script starts its own PostgreSQL container for those, with the
+  # Docker of ubuntu-latest. Linux only, because the cases read lines written at
+  # exit, which reach a pipe synchronously only there.
+  shutdown-signal-live:
+    name: Shutdown Signal Live Check (Node ${{ matrix.node-version }})
+    needs: [engine-payload]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["24", "26"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Download payload artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-smoke-payload
+          path: dist-payload
+
+      - name: Extract payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1
+
+      - name: Run shutdown signal live check
+        run: bun tests/live/shutdown-signal-live.ts
+        env:
+          LIBREDB_LIVE_STANDALONE_DIR: ${{ runner.temp }}/standalone
+
+  # The built standalone server's routes answer through the provider host core
+  # its boot installed, in their own error classes: a statement, a refusal the
+  # core answers as a record, and a provider error passed through it
+  # (docs/providers/CONTRACT.md, clause C-52; tests/live/host-core-live.ts). An
+  # inline SQLite connection in a temporary directory, so no database service.
+  host-core-live:
+    name: Host Core Live Check (Node ${{ matrix.node-version }})
+    needs: [engine-payload]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["24", "26"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: "1.4.4"
+
+      - name: Install dependencies
+        uses: ./.github/actions/bun-install
+
+      - name: Download payload artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: engine-smoke-payload
+          path: dist-payload
+
+      - name: Extract payload
+        run: |
+          mkdir -p "$RUNNER_TEMP/standalone"
+          tar -xzf dist-payload/libredb-studio-standalone-*.tar.gz -C "$RUNNER_TEMP/standalone" --strip-components=1
+
+      - name: Run host core live check
+        run: bun tests/live/host-core-live.ts
+        env:
+          LIBREDB_LIVE_STANDALONE_DIR: ${{ runner.temp }}/standalone
+
   # Browser E2E of the embedded samples against the PACKAGED artifact: the
   # tarball channel (extract + node server.js) and the npx channel
   # (bin/studio.js --archive). The regular e2e job covers the same spec
@@ -1178,7 +1307,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v6
 
       - name: Set up Helm
-        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
           version: v4.1.3
 
@@ -1332,7 +1461,7 @@ jobs:
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: SonarCloud Scan
-        uses: SonarSource/sonarqube-scan-action@e805d875275f728fac1885b413934be6d7c63f65 # v8.4.1
+        uses: SonarSource/sonarqube-scan-action@59202af334b4ba7b5db01b701b8e79f8b3bef0f4 # v8.5.0
         with:
           args: >
             -Dsonar.projectVersion=${{ steps.pkg.outputs.version }}

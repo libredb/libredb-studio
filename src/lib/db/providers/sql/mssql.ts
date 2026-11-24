@@ -56,22 +56,37 @@ import {
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
 import {
+  ByteBudgetRefusal,
+  CutValueRefusal,
   DatabaseConfigError,
   ConnectionError,
   ExecutionProfileError,
   QueryError,
   NO_ACTIVE_TRANSACTION,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
-import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX, MSSQL_TIME_BUDGET_PREFIX } from "./mssql-read-only-refusals";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/read-only-budget";
+import {
+  MSSQL_CUT_VALUE_PREFIX,
+  MSSQL_SERIALISED_PREFIX,
+  MSSQL_TIME_BUDGET_PREFIX,
+} from "@/lib/sql/mssql-read-only-refusals";
 import { formatBytes } from "../../utils/pool-manager";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { hasResultOrder } from "@/lib/sql/result-order";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
@@ -1900,13 +1915,13 @@ export class MSSQLProvider extends SQLBaseProvider {
   public validate(): void {
     super.validate();
 
-    if (!this.config.connectionString) {
-      if (!this.config.host) {
-        throw new DatabaseConfigError("Host is required for SQL Server", "mssql");
-      }
-      if (!this.config.database) {
-        throw new DatabaseConfigError("Database name is required for SQL Server", "mssql");
-      }
+    // Built from its own fields only: SQL Server takes no connection string (`CONNECTION_STRING_ACCEPTED` in
+    // ../../compatibility), so host and database are required whatever else the connection carries.
+    if (!this.config.host) {
+      throw new DatabaseConfigError("Host is required for SQL Server", "mssql");
+    }
+    if (!this.config.database) {
+      throw new DatabaseConfigError("Database name is required for SQL Server", "mssql");
     }
   }
 
@@ -2097,9 +2112,9 @@ export class MSSQLProvider extends SQLBaseProvider {
 
       // A text with several result sets carries all of them (#1312). The editor sends a
       // T-SQL batch as one request, so `SELECT * FROM a; SELECT * FROM b` reaches here whole,
-      // and the multi-statement route shows the last one with rows, as it does across a
-      // script's statements. `rows` stays the FIRST set, which is what `EXEC sp_help` and
-      // every caller before batches were shown.
+      // and the multi-statement route shows the last set, empty or not (#2286) - the same
+      // rule a script's statements follow (#2271). `rows` stays the FIRST set, which is what
+      // `EXEC sp_help` and every caller before batches were shown.
       const recordsets = (result.recordsets ?? []) as ArrayModeRecordset[];
       const resultSets =
         recordsets.length > 1
@@ -2442,17 +2457,18 @@ export class MSSQLProvider extends SQLBaseProvider {
       // statement's own complexity and then by the byte cap below, which is exactly how
       // PostgreSQL's one-row plan is bounded.
       if (mode !== "estimate-plan" && rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "mssql", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "mssql", sql);
       }
       const resultBytes = measureResultBytes(rows);
-      if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(
-          mode === "estimate-plan"
-            ? `Read-only execution could not hold this query plan: ${resultBytes} bytes > ${budget.maxResultBytes} allowed. The plan is this statement's own shape, so a narrower statement is what makes it readable.`
-            : byteBudgetSentence(resultBytes, budget.maxResultBytes),
+      if (resultBytes > budget.maxResultBytes && mode === "estimate-plan") {
+        throw new ByteBudgetRefusal(
+          `Read-only execution could not hold this query plan: ${resultBytes} bytes > ${budget.maxResultBytes} allowed. The plan is this statement's own shape, so a narrower statement is what makes it readable.`,
           "mssql",
           sql,
         );
+      }
+      if (resultBytes > budget.maxResultBytes) {
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "mssql", sql);
       }
 
       return {
@@ -2550,7 +2566,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       for (const [column, value] of Object.entries(row)) {
         const size = typeof value === "string" ? value.length : Buffer.isBuffer(value) ? value.length : -1;
         if (size !== ceiling && size !== unicodeCut) continue;
-        throw new QueryError(
+        throw new CutValueRefusal(
           `${MSSQL_CUT_VALUE_PREFIX}: ${column} came back at exactly the ${ceiling}-byte ceiling, so what it holds cannot be told from the whole value. Project fewer or smaller columns.`,
           "mssql",
           sql,
@@ -2621,7 +2637,7 @@ export class MSSQLProvider extends SQLBaseProvider {
       return await request.batch(sql);
     } catch (error) {
       if (!deadlineFired) throw error;
-      throw new QueryError(
+      throw new TimeBudgetRefusal(
         `${MSSQL_TIME_BUDGET_PREFIX}: the statement was cancelled after ${deadlineMs} ms`,
         "mssql",
         sql,
@@ -2695,7 +2711,7 @@ export class MSSQLProvider extends SQLBaseProvider {
     const classes = roots.map((row) => String(row.Type));
     const serialising = classes.filter((type) => MSSQLProvider.AGENT_SERIALISING_STATEMENT_TYPES.has(type));
     if (serialising.length > 0) {
-      throw new QueryError(
+      throw new SerialisedResultRefusal(
         `${MSSQL_SERIALISED_PREFIX}: SQL Server compiled this as ${serialising.join(", ")}, and the row budget would silently cut the rows underneath the FOR JSON or FOR XML clause. Ask for the rows themselves instead.`,
         "mssql",
         sql,
@@ -2885,7 +2901,11 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.ensureConnected();
     if (this.txActive) throw new QueryError("Transaction already active", "mssql");
     this.txTransaction = new mssql.Transaction(this.pool!);
-    await this.txTransaction.begin();
+    try {
+      await this.txTransaction.begin();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "BEGIN");
+    }
     this.txActive = true;
 
     // Auto-rollback after timeout to prevent leaked locks, on an owned provider only
@@ -2899,6 +2919,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.clearTxTimeout();
     try {
       await this.txTransaction.commit();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "COMMIT");
     } finally {
       this.txTransaction = null;
       this.txActive = false;
@@ -2910,6 +2932,8 @@ export class MSSQLProvider extends SQLBaseProvider {
     this.clearTxTimeout();
     try {
       await this.txTransaction.rollback();
+    } catch (error) {
+      throw mapDatabaseError(error, "mssql", "ROLLBACK");
     } finally {
       this.txTransaction = null;
       this.txActive = false;

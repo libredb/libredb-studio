@@ -1,17 +1,17 @@
 /**
  * The agent's admission of one Oxia command, next to the descriptor that reads it (`oxiacli.query.read`).
  *
- * It is the provider's own reader (`readOxiaAgentStatement` in `providers/keyvalue/oxia/agent-statement.ts`), so the
- * agent's tool path and the provider, which reads the same text with the same reader before it sends anything, refuse
- * the same commands with the same sentence: one metadata read of the closed table, on one line. Plus one refusal of the
- * agent's own, 4,096 characters, for the reason the kubectl and MongoDB contracts have one: a model has no reason to
- * send a longer read, and a shorter contract is one it can be told.
+ * It is the reader the provider runs (`readOxiaAgentStatement` in `src/lib/languages/oxiacli/agent-statement.ts`), so
+ * the agent's tool path and the provider, which reads the same text with the same reader before it sends anything,
+ * refuse the same commands with the same sentence: one metadata read of the closed table, on one line. Plus one refusal
+ * of the agent's own, 4,096 characters, for the reason the kubectl and MongoDB contracts have one: a model has no
+ * reason to send a longer read, and a shorter contract is one it can be told.
  *
  * Not the boundary. The boundary is the provider's closed table over a stub that holds only reads; this is what lets
  * the model read why it was refused, before anything is sent.
  */
 import { z } from "zod";
-import { type OxiaAgentRefusalCode, readOxiaAgentStatement } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { type OxiaAgentRefusalCode, readOxiaAgentStatement } from "@/lib/languages/oxiacli/agent-statement";
 
 export const OXIACLI_AGENT_MAX_STATEMENT_CHARS = 4096;
 

@@ -18,6 +18,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
 import type { QueryResult } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 import { fakeCluster } from "../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../helpers/kubernetes-connection";
 import { listAnswer, type RouteAnswer, tableAnswer } from "../helpers/kubernetes-console";
@@ -236,7 +237,7 @@ async function drive(
     // A sleep that never ends: the machine read races its statement time against it, and the test seams' immediate
     // sleep would expire every read before it was sent.
     { ...testSeams(recordingKubernetesTransport(answer)), sleep: () => new Promise<void>(() => {}) },
-    { readOnly: true },
+    { readOnly: true, egress: ALLOWS_PRIVATE_HOSTS },
   );
   await provider.connect();
 
@@ -249,7 +250,7 @@ async function drive(
   const run = await service.start({
     mode: "agent",
     workflowType,
-    ...persistedRunFacts("agent", workflowType, availability),
+    ...persistedRunFacts("agent", workflowType, "kubernetes", availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "How are the workloads in shop doing?",

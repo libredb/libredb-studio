@@ -23,6 +23,7 @@ import * as gate from "@/lib/kubernetes-access/gate";
 import * as seedIndex from "@/lib/seed";
 import { getManagedConnections, type ManagedConnection, resetCache, type SeedListing } from "@/lib/seed";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import {
   admittedConnection,
   grantedSnapshot,
@@ -290,6 +291,22 @@ describe("under governance", () => {
       { id: "seed:crm", ...READ_CREDENTIAL, queryTimeout: 60000, literal: true, grantLevel: "read" },
       { id: "seed:orders", ...WRITE_CREDENTIAL, queryTimeout: 60000, literal: true, grantLevel: "write" },
     ]);
+  });
+
+  test("a governed record carries literal and managed but never the literal-mode seed-file marker, even in literal mode", async () => {
+    recordGovernanceSnapshot(
+      grantedSnapshot([ORDERS], [{ subject: ALICE.idpSubject, connection: ORDERS, level: "write" }]),
+    );
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const governed = await visibleConnectionById(ALICE, "orders");
+      expect(governed?.literal).toBe(true);
+      expect(governed?.managed).toBe(true);
+      expect(governed?.[LITERAL_SEED_FILE]).toBeUndefined();
+      expect((await visibleConnections(ALICE)).map((connection) => connection[LITERAL_SEED_FILE])).toEqual([undefined]);
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
   });
 
   test("credential read always carries the read credential, whatever the grant", async () => {

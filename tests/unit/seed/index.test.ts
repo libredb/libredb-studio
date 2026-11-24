@@ -13,13 +13,16 @@ import {
 } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
 import { getDiscoveredConnections, resetDiscoveryCache } from "@/lib/seed/discovery-loader";
-import { SAMPLE_SEED_ID } from "@/lib/seed/libredb-sample";
 import { DEFAULT_SEED_CONFIG_PATH } from "@/lib/seed/sources/file";
-import { SQLITE_SAMPLE_SEED_ID, setSqliteSampleSeedState } from "@/lib/seed/sqlite-sample";
+import { resetSampleSeedStates, setSampleSeedState } from "@/lib/seed/samples";
 import { logger } from "@/lib/logger";
+import { LITERAL_SEED_FILE } from "@/lib/types";
 import { postgresService, writeDiscoveryExport, type DiscoveryExportFixture } from "../../helpers/discovery-fixture";
+import { seedSamples } from "../../helpers/sample-seeding";
 
 const FIXTURES = path.resolve(__dirname, "../../fixtures/seed-connections");
+const SQLITE_SAMPLE_SEED_ID = "sqlite-embedded-sample";
+const SAMPLE_SEED_ID = "libredb-embedded-sample";
 
 describe("seed/index orchestrator", () => {
   beforeEach(() => {
@@ -77,9 +80,37 @@ describe("seed/index orchestrator", () => {
     expect(conn!.seedId).toBe("admin-only");
   });
 
+  it("the unfiltered lookup finds an unavailable entry, so a role it excludes gets 403", async () => {
+    const scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-unavailable-"));
+    try {
+      const file = path.join(scratch, "seed-connections.json");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: "1",
+          connections: [{ id: "acme", name: "Acme", type: "acmefoo", roles: ["admin"] }],
+        }),
+      );
+      process.env.SEED_CONFIG_PATH = file;
+      resetCache();
+
+      expect((await getSeedConnectionByIdUnfiltered("acme"))?.type).toBe("acmefoo" as never);
+      expect(await getManagedConnections(["user"])).toEqual([]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  });
+
   it("getSeedConnectionByIdUnfiltered returns null for nonexistent ID", async () => {
     const conn = await getSeedConnectionByIdUnfiltered("nonexistent");
     expect(conn).toBeNull();
+  });
+
+  it("sets the literal-mode marker on no operator entry, on either lookup, while SEED_LITERAL_VALUES is off", async () => {
+    const admin = await getManagedConnections(["admin"]);
+    expect(admin.length).toBeGreaterThanOrEqual(3);
+    expect(admin.map((c) => c[LITERAL_SEED_FILE])).toEqual(admin.map(() => undefined));
+    expect((await getSeedConnectionByIdUnfiltered("user-only"))?.[LITERAL_SEED_FILE]).toBeUndefined();
   });
 
   it("returns empty array when config file missing", async () => {
@@ -94,15 +125,16 @@ describe("seed/index orchestrator", () => {
     process.env.SEED_LITERAL_VALUES = "true";
     try {
       const admin = await getManagedConnections(["admin"]);
-      expect(admin.map((c) => [c.seedId, c.password, c.literal])).toEqual([
-        ["admin-only", "${ADMIN_PG_PASS}", true],
-        ["everyone", "${SHARED_PG_PASS}", true],
-        ["admin-and-user", "${BOTH_PG_PASS}", true],
+      expect(admin.map((c) => [c.seedId, c.password, c.literal, c[LITERAL_SEED_FILE]])).toEqual([
+        ["admin-only", "${ADMIN_PG_PASS}", true, true],
+        ["everyone", "${SHARED_PG_PASS}", true, true],
+        ["admin-and-user", "${BOTH_PG_PASS}", true, true],
       ]);
 
       const unfiltered = await getSeedConnectionByIdUnfiltered("user-only");
       expect(unfiltered?.password).toBe("${USER_MYSQL_PASS}");
       expect(unfiltered?.literal).toBe(true);
+      expect(unfiltered?.[LITERAL_SEED_FILE]).toBe(true);
     } finally {
       delete process.env.SEED_LITERAL_VALUES;
     }
@@ -119,7 +151,7 @@ describe("seed/index with discovered connections", () => {
   let discovery: DiscoveryExportFixture;
   let scratch: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     resetCache();
     resetDiscoveryCache();
     resetPlaintextWarnings();
@@ -129,10 +161,12 @@ describe("seed/index with discovered connections", () => {
     process.env.SHARED_PG_PASS = "shared-secret";
     process.env.BOTH_PG_PASS = "both-secret";
     scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-"));
-    // getManagedConnections lists the SQLite sample when its file exists; its content is never read here.
+    // getManagedConnections lists the SQLite sample boot admitted when its file exists; its content is never read here.
     const sample = path.join(scratch, "sample-employees.db");
     writeFileSync(sample, "");
     process.env.SQLITE_EMBEDDED_SAMPLE_PATH = sample;
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    await seedSamples();
     discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
     process.env.SEED_DISCOVERY_PATH = discovery.path;
   });
@@ -144,9 +178,11 @@ describe("seed/index with discovered connections", () => {
     delete process.env.SHARED_PG_PASS;
     delete process.env.BOTH_PG_PASS;
     delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
+    delete process.env.LIBREDB_EMBEDDED_SAMPLE;
     delete process.env.SEED_DISCOVERY_PATH;
     resetCache();
     resetDiscoveryCache();
+    resetSampleSeedStates();
     discovery.remove();
     rmSync(scratch, { recursive: true, force: true });
   });
@@ -166,11 +202,71 @@ describe("seed/index with discovered connections", () => {
     expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual([]);
   });
 
+  it("never sets the literal-mode marker on a discovered connection or a sample, even in literal mode", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    try {
+      const conns = await getManagedConnections(["admin"]);
+      expect(conns.find((c) => c.seedId === "everyone")?.[LITERAL_SEED_FILE]).toBe(true);
+      const discovered = conns.find((c) => c.seedId === "caprover-pg");
+      expect(discovered?.literal).toBe(true);
+      expect(discovered?.[LITERAL_SEED_FILE]).toBeUndefined();
+      expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)?.[LITERAL_SEED_FILE]).toBeUndefined();
+    } finally {
+      delete process.env.SEED_LITERAL_VALUES;
+    }
+  });
+
   it("marks a discovered connection literal and leaves the file seeds and samples unmarked", async () => {
     const conns = await getManagedConnections(["admin"]);
     expect(conns.find((c) => c.seedId === "caprover-pg")?.literal).toBe(true);
     expect(conns.find((c) => c.seedId === "everyone")?.literal).toBeUndefined();
     expect(conns.find((c) => c.seedId === SQLITE_SAMPLE_SEED_ID)?.literal).toBeUndefined();
+  });
+
+  it("lists unavailable entries after the operator's other entries, for the roles they name", async () => {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [
+          { id: "acme", name: "Acme", type: "acmefoo", host: "acme.example", password: "CANARY", roles: ["*"] },
+          { id: "ops", name: "Ops", type: "zetadb", roles: ["admin"] },
+          { id: "file-pg", name: "File PG", type: "postgres", host: "file-pg.internal", roles: ["*"] },
+        ],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+
+    expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toEqual([
+      "file-pg",
+      "acme",
+      "ops",
+      "caprover-pg",
+      SQLITE_SAMPLE_SEED_ID,
+    ]);
+    expect((await getManagedConnections(["user"])).map((c) => c.seedId)).toEqual(["file-pg", "acme"]);
+    const acme = (await getManagedConnections(["user"])).find((c) => c.seedId === "acme");
+    expect(acme).not.toHaveProperty("host");
+    expect(JSON.stringify(acme)).not.toContain("CANARY");
+  });
+
+  it("drops a discovered connection whose id an unavailable entry declares", async () => {
+    const seedFile = path.join(scratch, "seed-connections.json");
+    writeFileSync(
+      seedFile,
+      JSON.stringify({
+        version: "1",
+        connections: [{ id: "caprover-pg", name: "Newer engine", type: "acmefoo", roles: ["admin"] }],
+      }),
+    );
+    process.env.SEED_CONFIG_PATH = seedFile;
+    resetCache();
+    resetDiscoveryCache();
+
+    const clashing = (await getManagedConnections(["admin"])).filter((c) => c.seedId === "caprover-pg");
+    expect(clashing.map((c) => [c.name, c.type])).toEqual([["Newer engine", "acmefoo"]]);
   });
 
   it("keeps the seed file's connection when a discovered one takes its id", async () => {
@@ -366,7 +462,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     scratch = mkdtempSync(path.join(tmpdir(), "libredb-seed-index-governance-"));
   });
 
@@ -378,7 +474,7 @@ describe("seed/index under governance", () => {
     }
     resetCache();
     resetDiscoveryCache();
-    setSqliteSampleSeedState("idle");
+    resetSampleSeedStates();
     rmSync(scratch, { recursive: true, force: true });
   });
 
@@ -418,10 +514,11 @@ describe("seed/index under governance", () => {
     process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = libredbSample;
     const discovery = writeDiscoveryExport([postgresService("pg", "discovered-secret")]);
     process.env.SEED_DISCOVERY_PATH = discovery.path;
-    setSqliteSampleSeedState("seeding");
+    await seedSamples();
+    setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     const open = spyOn(fsPromises, "open");
-    const existsSync = spyOn(fs, "existsSync");
+    const statSync = spyOn(fs, "statSync");
 
     try {
       // Control: without governance the export and both samples are read and listed, and the SQLite sample pends.
@@ -431,23 +528,26 @@ describe("seed/index under governance", () => {
         SAMPLE_SEED_ID,
       ]);
       expect(open.mock.calls.map((call) => call[0])).toEqual([discovery.path]);
-      expect(existsSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
+      expect(statSync.mock.calls.map((call) => call[0])).toEqual([sqliteSample, libredbSample]);
       expect(getPendingSeeds()).toEqual([SQLITE_SAMPLE_SEED_ID]);
       resetCache();
       resetDiscoveryCache();
       open.mockClear();
-      existsSync.mockClear();
+      statSync.mockClear();
 
       process.env.GOVERNANCE_SOURCE = "postgres";
+      // A governance boot enables no sample, so even a sample set seeding is not pending.
+      await seedSamples();
+      setSampleSeedState(SQLITE_SAMPLE_SEED_ID, { phase: "seeding" });
 
       expect(await getManagedConnections(["admin"])).toEqual([]);
       expect(await getSeedListing(["admin"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(await getSeedListing(["user"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(getPendingSeeds()).toEqual([]);
       expect(open).not.toHaveBeenCalled();
-      expect(existsSync).not.toHaveBeenCalled();
+      expect(statSync).not.toHaveBeenCalled();
     } finally {
-      existsSync.mockRestore();
+      statSync.mockRestore();
       open.mockRestore();
       warn.mockRestore();
       discovery.remove();

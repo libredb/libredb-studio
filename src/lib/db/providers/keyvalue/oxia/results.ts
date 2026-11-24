@@ -10,8 +10,9 @@
 import { quoteShellWord } from "@/lib/db/console/shell-words";
 import type { QueryResult, QueryWarning } from "@/lib/db/types";
 import type { OxiaKeysAnswer, OxiaRecordsAnswer, OxiaRecordView } from "./client";
-import type { OxiaCommand, OxiaCommandRange, ParsedOxiaCommand } from "./commands";
-import { OXIA_MAX_LIMIT, OXIA_RECEIVE_CAP_BYTES } from "./constants";
+import type { OxiaCommand, OxiaCommandRange, ParsedOxiaCommand } from "@/lib/languages/oxiacli/commands";
+import { OXIA_MAX_LIMIT } from "@/lib/languages/oxiacli/constants";
+import { OXIA_RECEIVE_CAP_BYTES } from "./constants";
 import { receiveCapNotice, runBudgetNotice } from "./errors";
 import type { OrderVerdict } from "./order";
 import { isoFromEpochMs, shownKey, viewOxiaValue, WITHHELD_VALUE_TEXT } from "./values";

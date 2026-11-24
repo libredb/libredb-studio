@@ -93,7 +93,7 @@ Scripts:
 ```
 
 As implemented, scope is not passed on the command line: `biome.json`'s `files.includes`
-(`src/**`, `tests/**`, `e2e/**`, `scripts/**`, `bin/**`, `*.ts`, `*.mts`, `*.mjs`) does the filtering, so the
+(`src/**`, `tests/**`, `packages/**`, `e2e/**`, `scripts/**`, `bin/**`, `*.ts`, `*.mts`, `*.mjs`) does the filtering, so the
 scripts can stay a plain `biome format .` / `biome format --write .`.
 
 Notes:
@@ -164,6 +164,7 @@ enabling `@typescript-eslint/no-floating-promises`, `no-misused-promises`, `awai
 immediately caught five genuine fire-and-forget bugs (async functions invoked in setInterval/setTimeout/process
 signal handlers without handling the promise, in `factory.ts`, `mysql.ts`, `postgres.ts`), fixed with the
 `void` operator. Scoping keeps lint fast; eslint-config-next still owns everything else.
+The block also covers a workspace package's source, `packages/*/src/**/*.ts` ("Workspace packages (`packages/`)" below).
 
 Rejected for Studio: the database-style reduction of ESLint to type-aware-only with React/Next rules moved
 to oxlint. For a shipping Next app the risk of losing `eslint-config-next`'s curated coverage outweighs the
@@ -213,8 +214,41 @@ import "@libredb/studio/styles.css"; // required once, before any studio compone
 
 `build:lib` is `tsup && node scripts/copy-theme.mjs`, and the order is load-bearing: tsup runs with
 `clean: true`, so anything staged into `dist/` before it is wiped. The copy has to come after.
+
+`dist/styles.css` is the line `@import "@xyflow/react/dist/style.css";`, the ER diagram's base styles, followed by `src/styles/theme.css` unchanged.
+The published JavaScript imports no stylesheet: `tsup.config.ts` puts `/\.css$/` in `noExternal` and loads it with esbuild's `empty` loader (`loader: { ".css": "empty" }`), because Node cannot load a `.css` import, and before this a host's `import("@libredb/studio")` or `require("@libredb/studio")` under Node failed on the SchemaDiagram chunk's import of that sheet.
+Both options are needed: tsup marks a dependency's stylesheet external by its package name before any user esbuild plugin runs, and tsup's own postcss step then loads every bundled `.css` with the configured loader.
+The earlier `handle-css-and-xyflow` plugin never ran for that reason and was removed.
+So the ER diagram's styles reach a host through the one documented import, as an `@import` the host's bundler resolves from the package's location (measured with esbuild and with Tailwind 4's PostCSS plugin), which redistributes none of xyflow's text.
+`scripts/copy-theme.mjs` exits 1 naming the sheet when it does not resolve from the repository's install.
+
+### The packed library loads (`lib:load`)
+
+attw resolves the declared types and `lib:closure` reads the built text, and both passed a dist that could not load: one whose JavaScript or declarations named an unpublished workspace package, and one that imported a stylesheet.
+`bun run lib:load` (`scripts/check-lib-load.mjs`), run after `build:lib`, is the check that installs the package the way a consumer gets it and loads it under Node:
+
+1. It packs the repository with `bun pm pack` (as `attw` does), extracts the tarball to `<os.tmpdir()>/lib-load-<random>/node_modules/@libredb/studio/`, and fails by name when `dist/index.mjs`, `dist/index.js`, `dist/providers.mjs` or `dist/providers.js` is not in it.
+2. It applies the two workspace rules below to the packed `package.json`.
+3. It reads every module specifier of every `.js`, `.mjs`, `.d.ts` and `.d.mts` file of the packed `dist/` with the TypeScript parser, so SQL or fixture text inside a string is never taken for an import, and fails naming the file and the specifier unless the specifier is relative, a `dependencies` or `peerDependencies` name of the packed manifest (subpath dropped), a Node builtin (`module.isBuiltin`, so `node:sqlite` passes and a stripped `sqlite` fails), or a Bun runtime module (`bun:`, today only `bun:sqlite`).
+   A computed `import()` or `require()` fails too, naming the file, because what it loads cannot be checked; there is none today.
+   A relative specifier of a JavaScript file is left to the load in step 4, but nothing loads a declaration file, so a relative specifier of a `.d.ts` or `.d.mts` file must be one of the two forms the build writes, `./<name>.js` naming `<name>.d.ts` from a `.d.ts` or `./<name>.mjs` naming `<name>.d.mts` from a `.d.mts`, with that file in the dist; any other fails naming the file and the specifier.
+4. It links only the declared names into the temporary `node_modules`, each to the repository's install, and a child `node` (`scripts/load-lib-closure.mjs`) loads every module of the `index` and `providers` closures once, ESM by `import()` and CJS by `require`, dynamic imports included, reporting each failing module with its error code and the first line of its message.
+
+The load is isolated so that only a declared package can resolve.
+The check refuses a temporary root that has an ancestor directory holding `node_modules`, and refuses when `<node prefix>/lib/node` exists.
+The child runs without `NODE_PATH` and `NODE_OPTIONS`, with `HOME` and `USERPROFILE` set to an empty directory, because Node's CommonJS loader also searches `$HOME/.node_modules` and `$HOME/.node_libraries`.
+The child has a 1 GB heap and a 120 s timeout, so a module whose top-level code hangs is named rather than waited on.
+The temporary root is always removed.
+
+The workspace rules: the packed manifest names no workspace package under `dependencies`, `peerDependencies` or `optionalDependencies`, since a consumer cannot install an unpublished package (`devDependencies` may name one); and every `dependencies` and `peerDependencies` name of a workspace package is a root `dependencies` or `peerDependencies` name, since tsup computes its externals from the root manifest alone and would otherwise inline the package's driver silently.
+A workspace dependency is recognised by name, because `bun pm pack` writes `workspace:*` as the package's own version.
+
+The packed manifest keeps `"workspaces": ["packages/*"]`.
+Measured with npm 11.19.1 and bun 1.4.4, neither `npm install` nor `bun add` reads `workspaces` from a dependency's manifest, even when the tarball ships the directory, so the field is inert for consumers; it sits beside other root-only fields the packed manifest already carries unchanged (`scripts`, `devDependencies`, `overrides`, `patchedDependencies`), and removing it would need a pack-time rewrite of the tracked `package.json`.
+
+Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s; the whole check takes about 4 s.
 - Git-ignore `.attw/` and `*.tgz` (packaging scratch).
-- CI: the `lint-and-build` job runs `build:lib` then `attw` (plus a Biome format check) so the package
+- CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure` and `lib:load`, in that order (plus a Biome format check), so the package
   surface is gated on every PR.
 
 ## Phase 5 - knip (keep, verify)
@@ -228,7 +262,7 @@ from `@arethetypeswrong/cli`, and `typescript-eslint` is seen via the `eslint.co
 
 As implemented in `.github/workflows/ci.yml`, the "Lint, Typecheck and Build" job runs, in order: Biome format
 check (`bun run format`), linters (`bun run lint`, i.e. oxlint then ESLint), typecheck, knip, `next build`,
-`build:lib`, then `attw`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
+`build:lib`, `attw`, `lib:closure`, then `lib:load`. oxlint is folded into `bun run lint` rather than a separate step. The pre-commit git
 hook (`.claude/settings.json`) runs `lint && typecheck && test && build` and now transitively enforces oxlint
 and the type-aware layer via `bun run lint`.
 In every workflow, the type check, `next build` and the Playwright runs whose first server builds run Node with `NODE_OPTIONS=--max-old-space-size=6144`, as the release payload build has since #1535, because `tsconfig.json` takes every TypeScript file, tests included, and that program peaks within tens of MB of Node's default heap of about 4 GB on a GitHub runner (`tests/unit/ci-node-heap.test.ts`).
@@ -242,6 +276,14 @@ before the run. It sits beside the other `scripts/*-check.mjs` guards rather tha
 reason its own docblock gives: a finding is printed as a file and a line for an editor to jump to, not as a
 rule id. Its scope is `tests/` and `e2e/`, enumerated with `git ls-files` rather than a glob, so an untracked
 draft cannot red a check that CI, which checks out tracked files only, cannot reproduce (#980).
+
+### Golden files
+
+`UPDATE_GOLDEN=1` makes a golden test write its files from the current tree, and the test then throws, so a rewrite is never a silent pass and a CI run with the variable set fails.
+No file under `.github/` and no root `package.json` script sets the variable.
+`tests/unit/golden-update-guard.test.ts` holds both: it parses every tracked code file that names `UPDATE_GOLDEN` and accepts a read only in the condition of an `if`, directly or through a `const` alias used only in `if` conditions, whose then-branch always ends in a `throw` and holds no `return`, `break` or `continue`.
+It names by file and line a read anywhere else, a branch that does not end in a throw or can leave before it, a destructured variable and one set for a child process.
+A dynamic name such as `process.env[name]` is out of a static guard's reach, and so is a throw a surrounding `try` catches and drops; the scan of `.github/` and the package scripts is the second line for both.
 
 ### `bun run test` and the process-wide `mock.module()`, and where isolation has to sit
 
@@ -278,11 +320,11 @@ the clearest statement of what it buys, so both measurements stay here.
 The first is a file that must load a module before anything else does:
 
 - `tests/isolated/factory.test.ts` mocks six native driver packages and `@/lib/ssh/tunnel`, then
-  imports `@/lib/db/factory` under a temporary `NODE_ENV=production` so the SIGTERM and SIGINT
-  handlers the module registers on load can be captured by diffing `process.listeners`. Both steps
-  happen once per process.
+  imports `@/lib/db/factory` under a temporary `NODE_ENV=production`, diffing `process.listeners`
+  around the import to show that it adds no SIGTERM or SIGINT listener even under production. Both
+  steps happen once per process.
 - So it passes only while it is the FIRST file in its process to evaluate `@/lib/db/factory`. Any
-  earlier evaluation leaves it with an already-built module: no handler to capture, and unmocked
+  earlier evaluation leaves it with an already-built module: an import that proves nothing, and unmocked
   drivers behind `getOrCreateProvider`, whose cached entry throws inside the `clearProviderCache()`
   in `beforeEach` and fails every remaining test in the file.
 - Measured 2026-09-13: the file alone is 99 pass 0 fail; adding a three-line probe under
@@ -353,6 +395,13 @@ Raising it hides no hang, because a file that genuinely stops is still killed an
 The same thing happened one order of magnitude up, which is why the flag says 60000 and not the 30000 it said first: the runner's own coverage test, which spawns a second runner that spawns bun with coverage and then merges the report, died at 30671ms on windows-latest against 16.3s for that whole file on linux-x64.
 Linux and macOS are left on bun's default on purpose: Linux is the leg the coverage gate and every contributor run on, and it is where a test that really did get slow has to stay visible.
 The flag is placed before the forwarded arguments, so `-- --timeout=...` still wins, bun taking the last of a repeated option; `tests/unit/test-runner-cli.test.ts` measures that precedence against the real bun binary rather than assuming it.
+
+One shape hangs a file on Windows that no per-test timeout catches.
+Measured on windows-latest with Bun 1.4.4 (#2331): a test that awaits a timer (`Bun.sleep`, or a promise around `setTimeout`) and then calls `expect(promise).rejects` or `.resolves` on a promise a later timer settles spins at 100% CPU, no timer fires again, bun's per-test timeout included, and only the runner's 300-second per-file budget ends it.
+The same case with the promise settled by a plain `await promise.catch(...)` passes, and Linux and macOS pass both.
+Bun runs a timer's continuation inside its Windows timer dispatch, where the matcher's nested wait cannot fire a timer (oven-sh/bun#40023; oven-sh/bun#44833 makes the matcher non-blocking, in no Bun release yet).
+So a test that needs events in an order waits on a signal its fixture gives rather than on a clock, as the read-only deadline cases in `tests/integration/db/mysql-provider.test.ts` wait for the statement to reach the fixture, or it settles the promise with a plain `await` before asserting.
+This holds until the Bun that `package.json` pins carries both fixes.
 
 The titles of the tests a file skipped come from the same report, and their describe path from its nested `<testsuite>` elements rather than from the `classname` attribute.
 classname lists those titles too, but bun joins them with " &gt; " and writes a literal ">" inside a title as "&gt;" as well, so no split rule can tell the separator from the character: measured on 1.4.2, splitting classname turned a describe titled "rows where count > 100" into "100 > rows where count".
@@ -430,6 +479,60 @@ install sites across 9 workflows; duplicated, it would drift immediately.
 `tests/unit/ci-install.test.ts` covers the policy against a stub `bun` (first-try success, retry then
 success, exhaustion, custom attempt count, no dead sleep after the final attempt).
 
+## Patched dependencies
+
+A driver flaw that Studio cannot fix through the driver's public API is fixed by patching the installed package (owner decision, 2026-11-21).
+Bun takes one patch file per package, so each patch is the smallest change that fixes the flaws listed for it, each flaw held by an end-to-end test.
+Each patch is listed in the table below and is removed when the upstream release Studio installs carries a fix for every flaw it lists.
+A release that already fixes the flaw is installed instead, unless moving to it is work of its own, such as a major the Dependabot configuration holds back; the row then says so.
+
+### How a patch is made
+
+1. `bun patch <name>` copies the installed package out of Bun's global cache, so it can be edited in `node_modules/<name>`.
+2. Edit the files there, and run the test that holds the fix.
+3. `bun patch --commit node_modules/<name>` writes `patches/<name>@<version>.patch`, adds the entry to `patchedDependencies` in `package.json` and records it in `bun.lock`.
+4. Add the row to the table below.
+
+Never edit a file under `node_modules` any other way.
+Bun links an installed package's files from its global cache (`~/.bun/install/cache`), so an in-place edit changes the cache entry itself, and every later install that links that entry, in any checkout on the machine, gets the edited file.
+Measured 2026-11-21: a `cp` over `node_modules/ioredis/built/Redis.js` changed the patched cache entry, and a reinstall served the changed file; deleting that cache entry and reinstalling restored the patched one.
+
+### What Bun 1.4.4 does when a patch and the install disagree
+
+Measured 2026-11-21 in a scratch project with the ioredis patch:
+
+| Situation | `bun install` (with or without `--frozen-lockfile`) |
+| --- | --- |
+| The installed version no longer matches the key, as after a version bump | warns `patches/<file> no longer applies (<name> is now <version>)`, installs the package unpatched, drops the entry from `bun.lock`, exits 0 |
+| The patch file is missing | `error: patch file not found`, exits 1 |
+| A hunk does not apply to a package of the key's version | `error: failed applying patch file: hunk #1 does not apply`, exits 1 |
+| The entry is removed from `package.json` but kept in `bun.lock` | installs unpatched, exits 0 |
+
+The first row is the one a Dependabot bump reaches, and Bun lets it through.
+So [`tests/unit/patched-dependencies.test.ts`](../tests/unit/patched-dependencies.test.ts) fails instead: every entry's package must be installed at the key's version with every hunk of its patch present, every file in `patches/` must belong to an entry, `bun.lock` must record the same entries, every entry must have a row here and every row an entry, and each Dockerfile must copy the patches in before its install.
+A bump of a patched package therefore lands together with the patch made again for the new version, or with the patch removed because the new version fixes the flaw.
+
+### Where the patches are applied
+
+Every install from a full checkout applies them: the CI composite action above, the devcontainer's `postCreateCommand`, and a contributor's `bun install`.
+The three Dockerfiles install from a partial file set, so their deps stage copies `patches/` beside `package.json` and `bun.lock`; without it the install fails with the missing-file error above.
+The images, the standalone payload and the desktop, Linux, Windows, Homebrew, AUR, Chocolatey, winget, Flatpak and Snap packages are all built from those installs, and none of them installs dependencies again.
+The VS Code extension bundles the providers from the root `node_modules` (`absWorkingDir` in `vscode-extension/esbuild.mjs`; ioredis is not on `CHILD_EXTERNALS`), so its backend carries the patched code: measured 2026-11-21, the child bundle's ioredis inputs are `../node_modules/ioredis/built/DataHandler.js`, `Redis.js` and `redis/event_handler.js`, and its output holds every patched line.
+
+The limit is the npm library.
+`build:lib` (tsup) keeps every database driver external, so an application that embeds `@libredb/studio` installs the drivers itself, unpatched, and `patches/` is not in the published package.
+Embedders read this in the README's "Embedding in your own app" section, which points here; they apply the same patch files, from the repository at the release's tag, with their own package manager.
+
+### The patches
+
+| Package and version | Patch file | What it fixes | Test that holds it | Upstream | Remove when |
+| --- | --- | --- | --- | --- | --- |
+| `cassandra-driver@4.10.0` | `patches/cassandra-driver@4.10.0.patch` | `lib/connection.js`: the connection's three read streams (`Protocol`, `Parser`, `ResultEmitter`) get an `error` listener that destroys the socket with a `DriverError` naming the host, so a frame the driver cannot parse fails the connect or the pending requests by name through the driver's own socket-error path and the pool replaces the connection, instead of being thrown out of the stream's handler; a connect that failed this way is not reopened by the driver's protocol-version downgrade ([cassandra.md §3.10](providers/cassandra.md#310-a-frame-the-driver-cannot-read-fails-the-connection-by-name-patched-driver)). `lib/control-connection.js`: when the control connection reconnects through the contact points after a lost connection, it shuts down the host it replaces, registers one set of listeners on its new connection instead of two, closes a connection whose reconnection failed on a server error, and closes its new connection when the client started shutting down meanwhile, so a connection the driver opens again after a lost one is closed by `disconnect()` ([cassandra.md §3.11](providers/cassandra.md#311-a-connection-the-driver-opens-again-after-a-lost-one-is-closed-by-disconnect-patched-driver)) | [`cassandra-provider.test.ts`](../tests/integration/db/cassandra-provider.test.ts), "a frame the driver cannot parse fails the connection by name", its `lost-connection` cases for the second file, with [`cassandra-fake-peer.ts`](../tests/helpers/cassandra-fake-peer.ts) | Not reported yet; the project tracks issues in the Apache JIRA project CASSNODEJS, and `trunk` is unfixed as of 2026-11-21 | A `cassandra-driver` release listens for `error` on the three streams, does not reopen a connect that has failed, and makes the four control-connection changes itself |
+| `ioredis@5.11.1` | `patches/ioredis@5.11.1.patch` | `built/DataHandler.js`: a reply redis-parser 3.0.0 throws on (an array header longer than a JS array can be, or arrays nested deeper than the stack) takes ioredis's fatal-error path, which rejects the commands in flight and reconnects, instead of leaving the socket's `data` listener as an exception with the command waiting forever ([redis.md §4.6](providers/redis.md#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) | [`redis-driver.test.ts`](../tests/integration/db/redis-driver.test.ts), [`redis-nested-reply-live.ts`](../tests/live/redis-nested-reply-live.ts) | Fixed in ioredis 6.0.0, whose `DataHandler` catches its decoder's throw the same way; not in any 5.x release | Studio moves to ioredis 6, a major `.github/dependabot.yml` holds back because it defaults to RESP3 |
+| `ioredis@5.11.1` | `patches/ioredis@5.11.1.patch` | `built/Redis.js`: an error the socket survives, a TLS record it cannot decrypt, after which Node keeps the socket open and no reply can be read from it, takes ioredis's fatal-error path, which fails the commands in flight with that error at once and reconnects; and the client listens on its socket's `error` for the socket's whole life (`on`, was `once`), so an error that follows while the socket closes reaches the client's `error` event like the first ([redis.md §4.6](providers/redis.md#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) | [`redis-driver.test.ts`](../tests/integration/db/redis-driver.test.ts) | Still `once` in 6.0.0 and 6.1.0-beta.1, whose socket `error` listener only emits the error; not reported yet | An ioredis release Studio installs fails the commands in flight on an error its socket survives, and keeps an `error` listener on its socket for the socket's whole life |
+| `ioredis@5.11.1` | `patches/ioredis@5.11.1.patch` | `built/redis/event_handler.js`: with `autoResendUnfulfilledCommands` off, which `redisOptions()` sets so a command the server may already have run is not sent again after a reconnect, a connection that was ready and closes fails the commands in flight at once with ioredis's own "Connection is closed." (`flushQueue` with `offlineQueue: false`, so a command sent while the client reconnects still goes out once on the next connection); unpatched, `closeHandler` kept them for the next connection and `readyHandler` dropped them there without settling, so the caller waited forever. A connection that closes before it is ready again is not covered (D470 in [`BACKLOG.md`](BACKLOG.md)). The `SELECT`s `readyHandler` sends itself, which no caller awaits, are left as ioredis ships them: Studio gives every connection that reconnects its database as the `db` option, so ioredis selects it in `connectHandler`, whose `SELECT` already has a handler, and Studio's connections do not reach them ([redis.md §4.6](providers/redis.md#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)) | [`redis-driver.test.ts`](../tests/integration/db/redis-driver.test.ts), "a reset while a command waits fails the command with a named error, once, and the next command answers" and "a reset while an object read waits fails the read with the editor's named error, once"; "a reset while the reconnect's own SELECT waits is logged, and the next command runs in the database" and "a header no JS array can hold answering the reconnect's own SELECT is logged, and the next command answers", which fail with an unhandled rejection when a connection that reconnects reaches those `readyHandler` `SELECT`s instead | Dropped unsettled in 6.0.0; 6.1.0-beta.1 rejects them with an `AbortError`, "Command aborted due to connection close", but only once the client is ready again; not reported yet | An ioredis release Studio installs fails the commands in flight when the connection closes, with `autoResendUnfulfilledCommands` off |
+| `oracledb@26.0.0` | `patches/oracledb@26.0.0.patch` | `lib/thin/sqlnet/ntTcp.js`: when an HTTPS proxy named in a TCPS descriptor answers the CONNECT with any status but 200, the socket the proxy answered on is destroyed at once; the driver kept no reference to it and it had no `error` listener, so it stayed open and a later reset of it was thrown out of the socket's event handler. Also in `ntTcp.js`: a TNS packet header shorter than 8 bytes is refused on the socket that read it, so a header that arrives after the client has closed the session itself fails the connect with its own error instead of failing inside the socket's event handler ([oracle.md §4.5](providers/oracle.md#45-a-proxy-that-refuses-the-connect-and-a-packet-header-the-driver-cannot-read)) | [`oracle-thin-transport.test.ts`](../tests/integration/db/oracle-thin-transport.test.ts) | The proxy flaw is in every release up to 26.0.0, the latest, the header flaw in every release from 7.0.0 to 26.0.0; neither reported yet | An oracledb release Studio installs destroys the socket of a refused proxy CONNECT and refuses a short header on the socket that read it |
+
 ## Rollout order and per-phase gate
 
 1. Biome formatter + `.editorconfig` (one-shot reformat PR).
@@ -484,7 +587,8 @@ seconds, and the merged report is 100% of 57157 lines. Two mechanics of that mer
 Windows: the report list is handed over as a manifest (`--inputs-from=<file>`) because 500-odd paths
 do not fit in a Windows command line, and `merge-lcov.mjs` normalises a backslash `SF:` path, so
 coverage produced on Windows merges as the same file as coverage produced on Linux instead of as a
-second file the `src/` filter then drops.
+second file the source filter then drops.
+The source filter keeps `src/` (minus `src/components/ui/`) and each workspace package's `packages/<name>/src/` ("Workspace packages (`packages/`)" below).
 
 Holding 100% honestly requires knowing how bun measures:
 
@@ -522,6 +626,119 @@ Holding 100% honestly requires knowing how bun measures:
 `src/exports/index.js` (one-line CJS shim) is the single `sonar.coverage.exclusions` entry — it is
 smoke-tested functionally in `tests/isolated/exports-shim.test.ts`.
 
+## The host page benchmark
+
+`bun run bench:host-page` (`scripts/host-page-benchmark.ts`) measures what the provider host adds to an editor query's answer, and checks it against the thresholds the owner signed for it, T1 to T5.
+Each case answers a generated page twice: on today's path, composed from the production helpers without the host, and on the host's in-process path, through `runEditorQuery`, the legacy bridge, the host core's execute call and the SDK's pump.
+The rows are generated, never real data: a narrow shape of 5 columns and a wide shape of 20, at 50, 500, 10,000 and 100,000 rows and at the most rows a 32 MiB page holds.
+Both paths must answer the same text on every row the host answers in every case before anything is timed, compared row by row outside every timed section; where the host cut the page by bytes, its rows are today's first rows and the rest of its body is today's with the cut's row count and pagination.
+
+The thresholds read the median time the host adds over 25 repetitions at 10,000 rows and 9 at the largest pages:
+- T1, at most 150 ms per 10,000 wide rows.
+- T2, at most 250 ms at the largest page the editor asks for, 100,000 narrow rows and the 32 MiB wide page.
+- T3, at most 600 ms at a 32 MiB page of either shape.
+- T4, at most 50 ms for the longest event-loop slice while the host's execute call runs, in every case, read by a `setImmediate` ticker.
+- T5, at most 160 MiB of live heap the host path adds at a 32 MiB page, read after a forced gc at every turn the host yields and at the answer.
+
+The whole-page `rowsWithNonFiniteWords` and the route's `JSON.stringify` are today's cost on both paths, so T4 leaves them out.
+A 100,000-row wide page is larger than 32 MiB, so the host answers its first 32 MiB and today's path all of it; that case is printed and read by no threshold.
+
+The runner bundles its case module with `Bun.build` into a temporary directory under `node_modules/.cache`, so the bundle's external packages resolve from the repository's own `node_modules`, then runs one fresh Node child per case and path, one at a time, under `--expose-gc --max-old-space-size=3000` with a 300 s timeout.
+The child's entry is its composition root: it installs the process's host core (`installHostCore(createHostCore(), "benchmark-case")`, `src/lib/provider-host/instance.ts`) before the case runs, as `register()` does for the server.
+The case reads its event-loop slice through that installed core (`hostCore().executeCall`), so the slices run on the process's one page budget as production does, and it releases each page record once the page answered.
+It prints the machine, the runtime, every case and a pass or fail per threshold, and exits 1 when a threshold fails or a case failed.
+The lead runs it on the reference machine before a change to the host's query path, through `heavy` with the production Node: `HEAVY_RUN_MEMORY_MAX=4G heavy bun run bench:host-page -- --node <path to node 26.13.1>`.
+A failed threshold is the owner's decision, never a silent change of the threshold or of the path.
+It never runs in `bun run test`: its timings hold only on an idle machine, not on a shared runner.
+`tests/unit/host-page-benchmark.test.ts`, which does run there, holds that the case module imports the production facade, bridge and installed core and declares no pump of its own, that both paths answer the same text on a small page of each shape, that the comparison reads every answered row, a page cut by bytes included, and that the runner's thresholds are T1 to T5.
+
+## Workspace packages (`packages/`)
+
+The root `package.json` declares `"workspaces": ["packages/*"]`, and [`packages/README.md`](../packages/README.md) states the layout: a package is `packages/<name>/` with a `package.json`, its source under `src/` and its tests under `tests/`.
+`scripts/workspace-packages.mjs` lists the packages for every gate that needs the list, and refuses by name a directory under `packages/` without a `package.json` and a link there.
+The gates were widened before any package existed, so the first package, `packages/provider-sdk`, could not fall silently out of any of them.
+
+### The linker
+
+`bunfig.toml` sets `[install] linker = "hoisted"`.
+Measured on bun 1.4.4 (2026-11-22): declaring the workspaces with no package, or with only `packages/README.md`, leaves `bun install --frozen-lockfile`, `bun.lock` and the whole `node_modules` layout byte for byte as they were.
+One package with no dependencies switches bun to its isolated linker: the top level drops from 933 entries to 85 and every package moves under `node_modules/.bun`.
+With the hoisted linker the layout is the same as without packages, plus a link `node_modules/@libredb/<name>` to the package, and `bun.lock` is identical to the isolated one, because the linker is not recorded in it.
+The VS Code extension's `npm ci --ignore-scripts` is unaffected: its `npm prefix` stays `vscode-extension/` and its `node_modules` is unchanged.
+
+### The images
+
+The three Dockerfiles install from a partial file set, where two omissions change the install without failing it (measured 2026-11-22): without `bunfig.toml` the image installs with the isolated linker, and with a `bun.lock` naming a package whose `package.json` is absent, `bun install --frozen-lockfile` exits 0 and does not link the package.
+So the deps stage copies `package.json bun.lock bunfig.toml`, then `patches/`, then one `COPY packages/<name>/package.json ./packages/<name>/` line per package, which `tests/unit/docker-workspace-install.test.ts` holds to the package list.
+The builder asserts that `.next/standalone/packages` does not exist, and `scripts/lib/prune-standalone-payload.sh` removes `packages/` from every standalone payload.
+
+### How each gate covers a package
+
+- Format: `biome.json` `files.includes` has `packages/**`; without it Biome skips a misformatted package file and reports nothing.
+- Lint: oxlint and ESLint lint the whole tree; the type-aware block (Phase 3) covers `packages/*/src/**/*.ts`, the sources only, as its `src/` scopes are; package tests get the untyped rules root tests get.
+  A provider package's source also gets the coupling rules below.
+- knip: it reads the root `package.json` `workspaces` and analyses each package with its defaults, so `knip.json` names no `packages/*` workspace; one there before any package exists only adds a "Remove from knip.json" hint.
+- Tests: the runner (`tests/runner/discover.ts`) collects `packages/<name>/tests/` beside `tests/`, excluding `live/` in each, and accepts a selector under either; the focused-test guard reads the tracked files under `packages/<name>/tests/`.
+- Coverage: `scripts/merge-lcov.mjs` keeps `packages/<name>/src/` records, so an uncovered package line fails the 100% gate; before, the merge dropped every record outside `src/`.
+  `bun run coverage:check` passes `--packages-from=.`, which fails naming any package that has a `src/` directory and no record in the report, since a package no test loads has no record and so no gap to report.
+  The check sits in the gate rather than in the merge, because the merge also serves partial runs, where a package the selection never loads rightly contributes nothing, and the VS Code extension's gate calls the same script without the option.
+- SonarCloud: `sonar.sources` and `sonar.tests` both name `packages`, kept apart by patterns: package tests are `sonar.test.inclusions` and `sonar.exclusions`, and out of duplication detection.
+- The VS Code extension: the host bundle refuses any `packages/` input, and the webview bundles a package file only when a sql-grammar row reaches it, as it does a file under `src/lib/db/providers/`.
+- The standalone payload: pruned, as above.
+- The library: `tsup.config.ts` bundles every package, because `@libredb/studio` on npm cannot depend on an unpublished package: its code through `noExternal`, read from `workspacePackageNames` in `scripts/workspace-packages.mjs`, and its declarations through `dts.compilerOptions.paths`, the root tsconfig's `paths` plus `workspacePackageSourcePaths`, which maps each `exports` entry of each package (root and subpaths) to its file under `packages/<name>/`.
+  rollup-plugin-dts keeps a module TypeScript found through `node_modules` as an external import and inlines any other, so a package resolved through these paths is inlined with its own relative imports; tsup's `dts.resolve` matched a name exactly and resolved to the `node_modules` link, which left a subpath import, or a root package's relative import, in the declarations.
+  `bun run lib:load` fails by name on a bare import of a package, on a declaration's relative import of a file the dist does not have, on a packed manifest that names a package, and on a package dependency the root does not declare ("The packed library loads (`lib:load`)").
+
+### The package import rule
+
+A package's source and tests import their own files, Node built-ins, the names their `package.json` declares and `@libredb/provider-sdk`, and its tests may also import a Bun runtime module; nothing in a package imports an `@/` path or a path out of its directory.
+Core, under `src/`, `bin/`, `scripts/`, `tests/`, `e2e/` and `vscode-extension/src/`, reaches a package only by its name.
+`tests/unit/package-imports.test.ts` reads the specifiers with the TypeScript compiler's `preProcessFile`, through the provider import scanner, and plants a package and core files that break each rule.
+A root file that imports a package by name needs the package in the root `devDependencies` as `"workspace:*"`: knip reports it as an unlisted dependency otherwise (measured with knip 6 on the SDK, 2026-11-23).
+
+### The SDK's generated files
+
+Two generators keep the SDK's contract and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
+
+- `bun run manifest:types` (`scripts/generate-manifest-types.ts`) renders the manifest's TypeScript types and the schema's digest from `packages/provider-sdk/src/manifest/manifest.schema.json`; `tests/unit/provider-sdk/manifest-types.test.ts` fails on drift.
+- `bun run engines:generate` (`scripts/generate-engine-declarations.ts`) writes `src/lib/db/engine-declarations/<type-id>.json` from the per-engine tables and each provider's unconnected declarations; `tests/unit/db/engine-declarations.test.ts` fails on drift.
+
+Both run inside `bun run test`, so neither needs a CI step of its own.
+The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
+
+Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` is the only path through a built artifact.
+
+`tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
+The other rows are held by the tests of the script that implements them.
+
+### Provider source coupling lint
+
+A block in `eslint.config.mjs` covers `packages/provider-*/src/**`, every JavaScript and TypeScript extension, except `packages/provider-kit/**`.
+The kit is outside because it is the tool that checks providers: its CLI reads its own environment, working directory and console by design, and the half of it that runs inside Studio is host code.
+The SDK, `packages/provider-sdk`, is inside, because it is loaded into Studio's process with every provider.
+A new `provider-*` package is covered by default, and excluding one is a change to that block, reviewed with its own reason.
+
+Every rule is an error, so `bun run lint` fails on a violation, and each message names this section:
+
+- `no-restricted-properties` refuses `process.env` and `process.cwd`, in member, computed, destructured and default-parameter form.
+- `no-restricted-globals` refuses `globalThis`, `global` and `console`.
+- `no-restricted-imports` refuses `process`, `node:process`, `console` and `node:console`, which are the same objects under another name.
+
+There is no exception list, and the block sets `linterOptions.noInlineConfig`, because a per-line exception is an exception list too: an `eslint-disable` comment there gets a warning that it has no effect, and the error stands.
+Every value reference to `globalThis` and `global` is refused, not only an assignment to one of their properties.
+The one provider that writes process-global state today, `processLanes` in the modbus agent pacing, writes through an alias (`const holder = globalThis as LanesHolder;` then `holder[LANES_KEY] ??= new Map();`), which a rule on the left-hand side of an assignment cannot see.
+A type-only `typeof globalThis` is not a value reference and is not reported.
+`console` goes through `no-restricted-globals` rather than core `no-console`, which reports `console.warn(...)` but not `const { warn } = console`, `const c = console; c.log(...)` or `globalThis.console.log(...)` (measured on ESLint 10.14.0).
+
+It is a lint-time coupling check, not a security control.
+It cannot see a driver under `node_modules` reading a proxy variable, `const p = process; p.env`, a `require` with a computed name, `createRequire(import.meta.url)("process")`, a dynamic `import("node:process")` or `Function("return this")()`; the kit's run under a poisoned environment is the run-time check.
+
+The cost falls on the provider moves.
+Spark's heartbeat takes `= globalThis` as the default for its timers, which becomes an error in a package, so its move passes `{ setInterval, clearInterval }` instead.
+The providers' `eslint-disable-next-line` comments stop suppressing their warnings once the provider is in a package, so the move types the value or accepts the warning.
+
+`tests/unit/provider-source-coupling-lint.test.ts` proves each rule on a throwaway root that carries the repository's `eslint.config.mjs`, with planted lines copied from today's providers and named by file and enclosing symbol, the scope boundaries above, and a probe in every provider package the repository has.
+
 ## VS Code extension (vscode-extension/)
 
 `vscode-extension/` is a second package beside the Bun root, with its own toolchain and its own CI job.
@@ -548,7 +765,7 @@ React and `@testing-library/react` resolve from the root's install.
 ### The extension's own 100% gate
 
 c8 measures the unit leg only (`.c8rc.json`: `all: true` over `src/**`), and the root's `scripts/check-coverage.mjs` holds `coverage/lcov.info` to 100% lines: `npm run test:unit && npm run coverage:check`.
-The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps the root's `src/` records only.
+The root gate, Sonar and Codecov never see these lines, because `scripts/merge-lcov.mjs` keeps only the root's `src/` records and its workspace packages' `packages/<name>/src/` records.
 The gate is line-granular: a callback written on the line that registers it counts as covered once the registration runs, so its test alone holds it.
 A callback whose behaviour the gate must hold keeps its body on its own line, as `startBackend` in `src/backend/start.ts` does for its `disconnect` listener; without the case that closes the channel, the gate names that line.
 

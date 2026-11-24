@@ -10,6 +10,7 @@ import { FirestoreProvider } from "@/lib/db/providers/document/firestore";
 import { SENTENCES } from "@/lib/db/providers/document/firestore/constants";
 import { ERROR_SENTENCES } from "@/lib/db/providers/document/firestore/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FakeFirestoreSeams, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import {
   fireRequestDeadline,
@@ -41,7 +42,12 @@ async function connected(
   seams: FakeFirestoreSeams,
   overrides: Partial<DatabaseConnection> = {},
 ): Promise<FirestoreProvider> {
-  const firestore = new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, {}, seams);
+  const firestore = new FirestoreProvider(
+    firestoreConnection(overrides),
+    { queryTimeout: 1000 },
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    seams,
+  );
   await firestore.connect();
   return firestore;
 }
@@ -109,7 +115,12 @@ describe("the transport's deadline", () => {
 
   test("a connect probe past the deadline fails, closes its transport and keeps no session", async () => {
     const seams = seamsOf(HANG);
-    const firestore = new FirestoreProvider(firestoreConnection(), { queryTimeout: 1000 }, {}, seams);
+    const firestore = new FirestoreProvider(
+      firestoreConnection(),
+      { queryTimeout: 1000 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      seams,
+    );
     const connecting = firestore.connect();
     await until(() => requestsOf(seams).length === 1);
     fireRequestDeadline(seams, DEADLINE_MS);

@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -24,8 +25,12 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
+import { fakeTextScrub, pinMcpTestEnvironment, resetMcpTestState } from "../../helpers/mcp-fixtures";
 import { recordedAnswer, resultOf, vectorCapture } from "../../helpers/qdrant-surface-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("qdrant");
 
 pinMcpTestEnvironment();
 
@@ -89,7 +94,7 @@ const CONNECTION: DatabaseConnection = {
 };
 
 async function connected(): Promise<QdrantProvider> {
-  const provider = new QdrantProvider(CONNECTION, {}, {}, () => ({
+  const provider = new QdrantProvider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, () => ({
     send: async (request) => answer(request),
     probe: async () => {
       throw new Error("an editor handle sent the read-only proof's probe");
@@ -125,6 +130,7 @@ describe("QE17: the machine surfaces carry the schema and no marker", () => {
     const context = {
       caller: { username: "alice", role: "admin" as const },
       resolve: async () => CONNECTION,
+      textScrub: fakeTextScrub,
       acquire: async () => provider,
     } as unknown as McpConnectionContext;
     const result = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: CONNECTION.id }), {
@@ -173,6 +179,6 @@ describe("QE17: the machine surfaces carry the schema and no marker", () => {
       expect.arrayContaining(["id", "vector.text", "category"]),
     );
     expectNoMarker(JSON.stringify(capture.snapshot));
-    expectNoMarker(packContextForTask(capture.snapshot, COLLECTION));
+    expectNoMarker(packContextForTask(capture.snapshot, COLLECTION, RELAYED_BY));
   });
 });

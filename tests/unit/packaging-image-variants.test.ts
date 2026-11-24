@@ -30,7 +30,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 const ROOT = join(import.meta.dir, "..", "..");
@@ -348,6 +348,45 @@ describe("published image variants", () => {
       expect.stringMatching(/^COPY .*\/usr\/src\/app\/THIRD_PARTY_NOTICES\.txt \.\/THIRD_PARTY_NOTICES\.txt$/),
     );
   });
+
+  test.each(VARIANTS)(
+    "%s sets SEED_ASSETS_DIR to the directory its runner stage copies seed-assets into",
+    (variant) => {
+      // The server reads the built-in samples' assets from SEED_ASSETS_DIR
+      // (docs/DISTRIBUTION.md, "Built-in sample assets"), so the image names the
+      // directory it ships instead of leaving it to the working directory.
+      const runner = instructions(readRepoFile(variant).split(/^FROM .* AS runner$/m)[1] ?? "");
+      const workdir = runner
+        .filter((line) => /^WORKDIR\s/.test(line))
+        .map((line) => line.replace(/^WORKDIR\s+/, ""))
+        .at(-1);
+      const destination = runner
+        .map((line) => /^COPY .*\/usr\/src\/app\/seed-assets\s+(\S+)$/.exec(line)?.[1])
+        .find((match) => match !== undefined);
+      const settings = runner.filter((line) => line.startsWith("ENV SEED_ASSETS_DIR="));
+
+      expect(workdir).toBeDefined();
+      expect(destination).toBeDefined();
+      const expected = posix.resolve(workdir ?? "", destination ?? "");
+      expect(settings).toEqual([`ENV SEED_ASSETS_DIR=${expected}`]);
+      expect(expected).toBe("/app/seed-assets");
+    },
+  );
+
+  test.each(VARIANTS)(
+    "%s sets NEXT_MANUAL_SIG_HANDLE=true in its runner stage, so Studio's shutdown handler owns the exit",
+    (variant) => {
+      // With the variable set, Next.js installs no signal handler and Studio's own drains the requests in flight,
+      // inserts the queued query events and closes the providers before it exits (docs/DISTRIBUTION.md,
+      // "Stopping the server"). Only the runner stage runs the server, so no other stage sets it.
+      const [before, runner] = readRepoFile(variant).split(/^FROM .* AS runner$/m);
+      const settings = (text: string) =>
+        instructions(text ?? "").filter((line) => /^ENV\s+NEXT_MANUAL_SIG_HANDLE\b/.test(line));
+
+      expect(settings(runner)).toEqual(["ENV NEXT_MANUAL_SIG_HANDLE=true"]);
+      expect(settings(before)).toEqual([]);
+    },
+  );
 
   test("the Docker build matrix builds every variant, and only those", () => {
     expect(

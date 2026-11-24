@@ -28,10 +28,11 @@ import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import { INFLUXQL_AGENT_QUERY_TEXT_SENTENCE } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
 import { influxqlTableQuery } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/influxql-provider";
 import { influxqlSource } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import type { DatabaseConnection } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import {
   INFLUX_FIXTURE_VERSIONS,
   type InfluxCapture,
@@ -41,6 +42,7 @@ import {
 } from "../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { errorKind } from "@/lib/db/error-record";
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -92,7 +94,7 @@ function recordedServer(version: InfluxFixtureVersion, extra: Readonly<Record<st
   const wire = recordingInfluxTransport(Array.from({ length: 200 }, () => answer));
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
   const config = version === "1.13.1" ? CONNECTION : { ...CONNECTION, user: "" };
-  return { provider: new InfluxDBProvider(config, {}, {}, factory), wire, capture };
+  return { provider: new InfluxDBProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS }, factory), wire, capture };
 }
 
 async function rejection(promise: Promise<unknown>): Promise<Error> {
@@ -326,7 +328,12 @@ describe("the agent read-only profile", () => {
     const wire = recordingInfluxTransport([...CONNECT[version], listing, ...script]);
     const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
     const base = version === "1.13.1" ? { ...CONNECTION, user: "reader" } : { ...CONNECTION, user: "" };
-    const provider = new InfluxDBProvider({ ...base, database: "home", ...config }, {}, execution, factory);
+    const provider = new InfluxDBProvider(
+      { ...base, database: "home", ...config },
+      {},
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     return { provider, wire };
   }
 
@@ -439,9 +446,9 @@ describe("the agent read-only profile", () => {
     const wire = recordingInfluxTransport(v3);
     const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
     const provider = new InfluxDBProvider(
-      { ...CONNECTION, user: "", password: "not-a-real-token", database: "home" },
+      { ...CONNECTION, user: "", password: crypto.randomUUID(), database: "home" },
       {},
-      AGENT,
+      { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
       factory,
     );
     const error = await rejection(provider.connect());
@@ -556,6 +563,7 @@ describe("the agent read-only profile", () => {
     const error = await rejection(provider.queryReadOnly("SHOW MEASUREMENTS", { ...BUDGET, maxResultRows: 1 }));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toStartWith("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
     await provider.disconnect();
   });
 
@@ -574,6 +582,7 @@ describe("the agent read-only profile", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the byte budget: ${100 * 6 + 64 * 1024 + 1} bytes > 100 allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     const forbidden = await rejection(provider.queryReadOnly('SELECT * FROM "edge".."edge"', BUDGET));
     expect(forbidden).toBeInstanceOf(QueryError);
     expect(forbidden.message).not.toContain("budget");

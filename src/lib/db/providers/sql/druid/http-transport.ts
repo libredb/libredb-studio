@@ -33,7 +33,7 @@ import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint"
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure, networkFailureKind } from "@/lib/db/http/fetch-failure";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 // Shared with `lib/explain/druid-native.ts`, which parses the EXPLAIN plan columns:
 // those arrive as JSON *text* inside this body, so the pass below correctly leaves
 // their digits alone and the inner parse is a second chance to round the same value.
@@ -554,13 +554,21 @@ export class DruidHttpTransport implements DruidTransport {
   private readonly origin: ReturnType<typeof httpOrigin>;
   private readonly endpoint: string;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(config: DatabaseConnection) {
+  constructor(config: DatabaseConnection, egress: EgressDecision) {
+    this.egress = egress;
     // `ssl` is a first-class connection field and independent of the form's
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
     // an explicit mode turns it on (the #264 lesson).
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
+    this.origin = httpOrigin(
+      secure ? "https" : "http",
+      config.host ?? DEFAULT_HOST,
+      config.port ?? DEFAULT_PORT,
+      egress,
+    );
     this.endpoint = endpointUrl(this.origin, SQL_PATH);
     // Spec section 1, live-verified: a default install loads no security extension
     // and IGNORES this header entirely - a bogus Basic header still answers 200 -
@@ -624,12 +632,16 @@ export class DruidHttpTransport implements DruidTransport {
     let response: Response;
     let text: string;
     try {
-      response = await httpTransportFetch(url, {
-        method: "DELETE",
-        headers: this.authorization === undefined ? {} : { authorization: this.authorization },
-        redirect: "manual",
-        signal,
-      });
+      response = await httpTransportFetch(
+        url,
+        {
+          method: "DELETE",
+          headers: this.authorization === undefined ? {} : { authorization: this.authorization },
+          redirect: "manual",
+          signal,
+        },
+        this.egress,
+      );
       text = await response.text();
     } catch (error) {
       if (error instanceof DatabaseConfigError) throw error;
@@ -688,17 +700,21 @@ export class DruidHttpTransport implements DruidTransport {
     let response: Response;
     let text: string;
     try {
-      response = await httpTransportFetch(this.endpoint, {
-        method: "POST",
-        headers: {
-          "content-type": JSON_CONTENT_TYPE,
-          ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+      response = await httpTransportFetch(
+        this.endpoint,
+        {
+          method: "POST",
+          headers: {
+            "content-type": JSON_CONTENT_TYPE,
+            ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+          },
+          body,
+          // A followed redirect would carry the credential to wherever it points.
+          redirect: "manual",
+          ...(signal ? { signal } : {}),
         },
-        body,
-        // A followed redirect would carry the credential to wherever it points.
-        redirect: "manual",
-        ...(signal ? { signal } : {}),
-      });
+        this.egress,
+      );
       text = bounds === undefined ? await response.text() : await readCapped(response, bounds.maxResponseBytes);
     } catch (error) {
       if (error instanceof DatabaseConfigError || error instanceof DruidAnswerTooLargeError) throw error;

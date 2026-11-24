@@ -3,6 +3,7 @@ import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, wr
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { testIf } from "../helpers/posix-tools";
+import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 import { COVERAGE_EXEMPT_FILES, discoverTestFiles, selectTestFiles } from "../runner/discover";
 
 // The guard that replaces tests/unit/component-runner-coverage.test.ts: that file
@@ -41,10 +42,11 @@ const MISSING_FILE_SYMLINKS: string | null =
   process.platform === "win32" ? "file symlinks need a privilege or Developer Mode on Windows" : null;
 
 describe("test discovery", () => {
-  test("runs every *.test.ts(x) file under tests/, except tests/live", () => {
-    const onDisk = walk("tests")
-      .filter((file) => !file.startsWith("tests/live/"))
-      .sort();
+  test("runs every *.test.ts(x) file under tests/ and each package's tests/, except their live/", () => {
+    const packageTests = workspacePackageDirectories(root).flatMap((directory) =>
+      walk(`${directory}/tests`).filter((file) => !file.startsWith(`${directory}/tests/live/`)),
+    );
+    const onDisk = [...walk("tests").filter((file) => !file.startsWith("tests/live/")), ...packageTests].sort();
 
     expect(discoverTestFiles(root)).toEqual(onDisk);
   });
@@ -58,7 +60,13 @@ describe("test discovery", () => {
     }
     // Nothing outside those layers: a new top-level directory has to be added to
     // the list above deliberately, which is where someone reads this test.
-    const outside = files.filter((file) => !layers.some((layer) => file.startsWith(`tests/${layer}/`)));
+    // A workspace package's tests are its own layer, under packages/<name>/tests/.
+    const packages = workspacePackageDirectories(root);
+    const outside = files.filter(
+      (file) =>
+        !layers.some((layer) => file.startsWith(`tests/${layer}/`)) &&
+        !packages.some((directory) => file.startsWith(`${directory}/tests/`)),
+    );
     expect(outside).toEqual([]);
   });
 
@@ -212,6 +220,96 @@ describe("test discovery", () => {
     expect(COVERAGE_EXEMPT_FILES.length).toBeGreaterThan(0);
     for (const file of COVERAGE_EXEMPT_FILES) {
       expect(files.has(file)).toBe(true);
+    }
+  });
+});
+
+/** A throwaway root holding the given empty files; the caller removes it. */
+function rootWith(files: string[]): string {
+  const scratch = mkdtempSync(path.join(tmpdir(), "runner-packages-"));
+  for (const file of files) {
+    mkdirSync(path.dirname(path.join(scratch, file)), { recursive: true });
+    writeFileSync(path.join(scratch, file), "");
+  }
+  return scratch;
+}
+
+describe("test discovery in workspace packages", () => {
+  const planted = [
+    "tests/unit/real.test.ts",
+    "packages/README.md",
+    "packages/planted/package.json",
+    "packages/planted/src/index.ts",
+    "packages/planted/src/inside-src.test.ts",
+    "packages/planted/tests/a.test.ts",
+    "packages/planted/tests/unit/c.test.tsx",
+    "packages/planted/tests/live/b.test.ts",
+  ];
+
+  test("runs a package's tests beside the root's, except its tests/live and anything outside its tests/", () => {
+    const repository = rootWith(planted);
+    try {
+      expect(discoverTestFiles(repository)).toEqual([
+        "packages/planted/tests/a.test.ts",
+        "packages/planted/tests/unit/c.test.tsx",
+        "tests/unit/real.test.ts",
+      ]);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a link under a package's tests/ is refused by name", () => {
+    const repository = rootWith(planted);
+    const elsewhere = mkdtempSync(path.join(tmpdir(), "runner-packages-target-"));
+    try {
+      writeFileSync(path.join(elsewhere, "other.test.ts"), "");
+      symlinkSync(elsewhere, path.join(repository, "packages/planted/tests/linked"), "junction");
+      expect(() => discoverTestFiles(repository)).toThrow(/packages\/planted\/tests\/linked .*does not follow links/);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+      rmSync(elsewhere, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory under packages/ without a package.json is refused by name, so its tests never go unrun", () => {
+    const repository = rootWith([...planted, "packages/stray/tests/d.test.ts"]);
+    try {
+      expect(() => discoverTestFiles(repository)).toThrow(/packages\/stray has no package\.json/);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a package with no tests/ contributes no file, and its source is the coverage gate's to miss", () => {
+    const repository = rootWith(["tests/unit/real.test.ts", "packages/bare/package.json", "packages/bare/src/a.ts"]);
+    try {
+      expect(discoverTestFiles(repository)).toEqual(["tests/unit/real.test.ts"]);
+    } finally {
+      rmSync(repository, { recursive: true, force: true });
+    }
+  });
+
+  test("a selector may name a package's tests/, and a package's src/ is refused for where it is", () => {
+    const repository = rootWith(planted);
+    const cwd = process.cwd();
+    try {
+      process.chdir(repository);
+      expect(selectTestFiles(repository, ["packages/planted/tests"])).toEqual([
+        "packages/planted/tests/a.test.ts",
+        "packages/planted/tests/unit/c.test.tsx",
+      ]);
+      expect(selectTestFiles(repository, ["packages/planted/tests/a.test.ts"])).toEqual([
+        "packages/planted/tests/a.test.ts",
+      ]);
+      expect(() => selectTestFiles(repository, ["packages/planted/src"])).toThrow(
+        /"packages\/planted\/src" is not under tests\/ or packages\/<name>\/tests\//,
+      );
+      expect(() => selectTestFiles(repository, ["packages/planted"])).toThrow(/is not under tests\/ or packages/);
+      expect(() => selectTestFiles(repository, ["packages/planted/tests/live"])).toThrow(/matched no test files/);
+    } finally {
+      process.chdir(cwd);
+      rmSync(repository, { recursive: true, force: true });
     }
   });
 });

@@ -6,8 +6,8 @@
  * table is named in it.
  */
 import { describe, expect, test } from "bun:test";
-import { OXIA_COMMAND_TABLE, parseOxiaCommand } from "@/lib/db/providers/keyvalue/oxia/commands";
-import { readOxiaOperations } from "@/lib/db/providers/keyvalue/oxia/guard";
+import { OXIA_COMMAND_TABLE, parseOxiaCommand } from "@/lib/languages/oxiacli/commands";
+import { readOxiaOperations } from "@/lib/languages/oxiacli/guard";
 import {
   keyOrderWords,
   OXIA_DRAFTED_READS,
@@ -42,10 +42,6 @@ describe("OXIA_LABELS", () => {
       vacuumGlobalTitle: "Not available",
       vacuumGlobalDesc: "Oxia compacts its own storage, and Studio sends it no maintenance.",
       statementLanguage: STATEMENT_LANGUAGE,
-      slowQueriesEmptyState: "Oxia keeps no query log",
-      sessionsEmptyState: "Oxia does not list client sessions",
-      tableStatsCaption:
-        "Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.",
     });
     expect(Object.isFrozen(OXIA_LABELS)).toBe(true);
   });

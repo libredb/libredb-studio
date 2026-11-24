@@ -12,10 +12,12 @@
  * Weaviate takes an API key and an OIDC access token alike as a bearer token, so the secret sits in the password
  * and travels as one `Authorization: Bearer` header, set once per connection, never in a URL or a query string. No
  * other header is ever set (spec W3): a model-provider key such as `X-OpenAI-Api-Key` cannot be sent. REST and
- * GraphQL share the one port dialled; gRPC (50051) never is.
+ * GraphQL share the one port dialled; gRPC (50051) never is. Weaviate takes no user name: core refuses a connection
+ * that sets one before the provider is built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this
+ * module never receives it.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
- * provider reads by the `config.<field>` pattern, and this file reads `config.user` and `config.password` as written.
+ * provider reads by the `config.<field>` pattern, and this file reads `config.password` as written.
  */
 import { readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -27,15 +29,9 @@ import {
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type DatabaseType,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 
 /** Where a read-only mode was set; the provider words its refusal by it. */
 export type WeaviateReadOnlySource = "connection" | "seed" | "execution-profile";
@@ -51,6 +47,8 @@ export interface WeaviateConnectionOptions {
   readonly headers: Readonly<Record<string, string>>;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one response may hold. */
   readonly responseCapBytes: number;
   readonly readOnly?: WeaviateReadOnlySource;
@@ -73,24 +71,23 @@ const SECRET_LABEL = "API key or token";
 const PRINTABLE_ASCII = /^[\x21-\x7E]+$/;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const USER_NOT_TAKEN =
-  "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.";
 const SECRET_NOT_PRINTABLE =
   "The connection's password (the API key or token) holds a space, a line break, a NUL or another character outside printable ASCII; remove it. Nothing was sent.";
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Weaviate was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const SEED_REFUSED =
   "This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
 const QUERY_TIMEOUT_RANGE = "Query timeout must be a whole number between 1 and 2147483647 milliseconds.";
 
-/** Throws DatabaseConfigError for every refusal of W1, W2 and the seed stage; never echoes a value. */
+/**
+ * Throws DatabaseConfigError for every refusal of W1, W2 and the seed stage; never echoes a value. `context.egress` is
+ * the decision the provider was built with, which the dialled origin's literal is checked against.
+ */
 export function buildWeaviateConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
+  context: { readonly executionReadOnly: boolean; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): WeaviateConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? WEAVIATE_DEFAULT_PORT));
+  const farEnd = config[TUNNEL_FAR_END];
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? WEAVIATE_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }
@@ -113,19 +110,12 @@ export function buildWeaviateConnectionOptions(
     tls,
     headers: secret === undefined ? {} : { authorization: `Bearer ${secret}` },
     maxSockets: WEAVIATE_MAX_IN_FLIGHT,
+    egress: context.egress,
     responseCapBytes: WEAVIATE_RESPONSE_CAP_BYTES,
     ...(readOnly === undefined ? {} : { readOnly }),
     callTimeoutMs: callTimeout(context.queryTimeout),
     secretForms: secretForms(secret === undefined ? [] : [secret]),
   };
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(TUNNEL_NOT_OPENED);
-  return farEnd;
 }
 
 function unbracketed(host: string): string {
@@ -141,9 +131,8 @@ function shared<T>(validate: () => T): T {
   }
 }
 
-/** The bearer token, or undefined with none. A user is refused, because Weaviate has none to send it as. */
+/** The bearer token, or undefined with none. Core refused a user before the build, because Weaviate has none to send it as. */
 function credential(config: DatabaseConnection): string | undefined {
-  if (optionalText(config.user, "user") !== undefined) throw configError(USER_NOT_TAKEN);
   const secret = optionalText(config.password, "password");
   if (secret !== undefined && !PRINTABLE_ASCII.test(secret)) throw configError(SECRET_NOT_PRINTABLE);
   return secret;
@@ -173,21 +162,9 @@ function callTimeout(queryTimeout: number): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

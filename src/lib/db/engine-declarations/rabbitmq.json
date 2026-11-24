@@ -1,0 +1,444 @@
+{
+  "id": "rabbitmq",
+  "displayName": "RabbitMQ",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "amqpPort",
+      "apiPath",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 15672
+    },
+    "seedOnly": null,
+    "refused": [
+      {
+        "field": "database",
+        "refusal": "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "namespaces",
+        "refusal": "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent."
+      },
+      {
+        "field": "tlsServerName",
+        "refusal": "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent."
+      }
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": null,
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": false,
+      "refusal": "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two."
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Host"
+        },
+        {
+          "field": "port",
+          "text": "Management port"
+        },
+        {
+          "field": "amqpPort",
+          "text": "AMQP port"
+        },
+        {
+          "field": "apiPath",
+          "text": "Path prefix"
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Send the password without TLS"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A host name, or a pasted https:// management address. A path such as /rabbitmq goes in Path prefix. An amqp:// or amqps:// URL is not taken here: enter its host, its port as AMQP port, and its user and password in their own fields."
+        },
+        {
+          "field": "port",
+          "text": "15671 with TLS; 443 when a TLS proxy serves the management API"
+        },
+        {
+          "field": "amqpPort",
+          "text": "5672, or 5671 with TLS. Only for stream reads; leave empty to browse only. Test Connection checks the management API only; the AMQP port is checked on the first read."
+        },
+        {
+          "field": "apiPath",
+          "text": "The path the management API is served under, for management.path_prefix or a reverse proxy location, such as /rabbitmq. Empty for a direct connection."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Sends the username and password in clear text to the management API and the AMQP port, where anyone on the path can read them. Prefer an SSL mode and the TLS ports 15671 and 5671."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "amqpPort",
+          "text": "Empty: browse only"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "http",
+      "https"
+    ],
+    "credentialWarnings": [
+      {
+        "kind": "pair",
+        "user": "guest",
+        "password": "guest",
+        "message": "guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead."
+      }
+    ],
+    "fieldRules": [
+      {
+        "field": "amqpPort",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$",
+            "flags": ""
+          },
+          "sentence": "AMQP port must be a whole number from 1 to 65535, such as 5672. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "apiPath",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:\\/|(?:\\/(?!api(?:\\/|$))(?!\\.{1,2}(?:\\/|$))[A-Za-z0-9._~!$&'()*+,;=:@-]+)+\\/?)$",
+            "flags": ""
+          },
+          "sentence": "Path prefix starts with / and takes a plain path such as /rabbitmq: no empty, . or .. segment, no %, ? or #, and no segment named api. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "rabbitread",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "rabbitread"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "rabbitmq",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "json",
+      "accent": "border-hue-cyan/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": false,
+    "grammar": {
+      "hash": "comment-unless-operator",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "none"
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BLOB"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "NULL",
+        "-Infinity": "NULL"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": null,
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- RabbitMQ: Cannot generate table DDL. A stream holds messages, not rows with declared columns, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "A stream holds messages, not rows with declared columns, so there is no column definition to change."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/stream/rabbitmq/amqp/codec.ts",
+          "symbol": "isAllowedOutbound"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "stream messages",
+        "columns": [
+          {
+            "column": "offset",
+            "kind": "count"
+          },
+          {
+            "column": "body_bytes",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
+  }
+}

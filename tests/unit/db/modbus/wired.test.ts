@@ -14,16 +14,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
 let open: Server | undefined;
 
 afterEach(() => {
   open?.close();
   open = undefined;
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
 });
 
 /**
@@ -113,14 +110,19 @@ const MAP = JSON.stringify([
 ]);
 
 const provider = (port: number, registerMap = MAP) =>
-  new ModbusProvider({
-    id: "m",
-    name: "device",
-    type: "modbus",
-    host: "127.0.0.1",
-    port,
-    registerMap,
-  } as unknown as DatabaseConnection);
+  new ModbusProvider(
+    {
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port,
+      registerMap,
+    } as unknown as DatabaseConnection,
+    {},
+    // The decision a factory-built provider holds while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset.
+    { egress: ALLOWS_PRIVATE_HOSTS },
+  );
 
 describe("connect answers for the device, not only for the map", () => {
   /**
@@ -131,7 +133,6 @@ describe("connect answers for the device, not only for the map", () => {
    * told "connected, but no health data" goes to fix their map when the fault is the address.
    */
   test("a closed port is refused, and the refusal names the address", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     const port = dev.port;
     open?.close();
@@ -140,7 +141,6 @@ describe("connect answers for the device, not only for the map", () => {
   });
 
   test("an address that answers is accepted, and the map check is still done first", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     await provider(dev.port).connect();
     // The dial sends nothing and holds nothing: one connection, no ADU, and it is closed.
@@ -153,14 +153,12 @@ describe("connect answers for the device, not only for the map", () => {
   });
 
   test("an empty map is a normal state: connect answers for the device and says nothing of the map", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     await expect(provider(dev.port, "[]").connect()).resolves.toBeUndefined();
     await arrives(() => dev.connections === 1);
   });
 
   test("a malformed map is still refused before any socket is opened", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     await expect(provider(dev.port, "{not json").connect()).rejects.toThrow(/valid JSON/);
     expect(dev.connections).toBe(0);
@@ -169,7 +167,6 @@ describe("connect answers for the device, not only for the map", () => {
 
 describe("a read reaches the device and comes back", () => {
   test("named points are read in one request, and the device gets a Modbus read for them", async () => {
-    delete process.env[FLAG];
     const dev = await device([230, 12]);
     const result = await provider(dev.port).query('{"read":["volts","amps"]}');
 
@@ -190,7 +187,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("a range read by address answers one row per register", async () => {
-    delete process.env[FLAG];
     const dev = await device([7, 8, 9]);
     const result = await provider(dev.port).query('{"unit":1,"table":"holding_register","address":0,"count":3}');
     expect(result.rows.map((row) => row.value)).toEqual([7, 8, 9]);
@@ -199,13 +195,11 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("the device's own refusal arrives as a refusal of this read, in the protocol's words", async () => {
-    delete process.env[FLAG];
     const dev = await device([], { exception: 0x02 });
     await expect(provider(dev.port).query('{"read":["volts"]}')).rejects.toThrow(/no such address/i);
   });
 
   test("nothing is held open: a second read dials again", async () => {
-    delete process.env[FLAG];
     const dev = await device([230, 12]);
     const p = provider(dev.port);
     await p.query('{"read":["volts"]}');
@@ -221,7 +215,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("health is an answer, not a connect: it reads one point at the device", async () => {
-    delete process.env[FLAG];
     const dev = await device([230, 12]);
     const health = await provider(dev.port).getHealth();
     expect(health.databaseSize).toBe("2 points");
@@ -231,7 +224,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("with no map health still dials, so a wrong address cannot read as connected", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     const health = await provider(dev.port, "[]").getHealth();
     expect(health.databaseSize).toBe("unknown");
@@ -244,7 +236,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("with no map a closed port fails health, which is the whole point of the dial", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     open?.close();
     open = undefined;
@@ -252,7 +243,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("with a map the dial path is not taken: the read is what proves the device", async () => {
-    delete process.env[FLAG];
     const dev = await device([230, 12]);
     await provider(dev.port).getHealth();
     // One ADU, the quantity-1 read. If the dial-only branch had run as well there would be two
@@ -262,7 +252,6 @@ describe("a read reaches the device and comes back", () => {
   });
 
   test("a request the parser refuses costs no connection at all", async () => {
-    delete process.env[FLAG];
     const dev = await device([230]);
     await expect(provider(dev.port).query('{"read":["nothing_named_this"]}')).rejects.toThrow(/no point named/);
     // CONNECTIONS, not ADUs. A dial sends nothing, so counting ADUs cannot tell "refused before the

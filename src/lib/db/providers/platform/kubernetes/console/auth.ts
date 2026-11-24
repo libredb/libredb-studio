@@ -16,7 +16,7 @@ import { coversSecrets } from "../machine-redaction";
 import { MACHINE_REDACTED } from "../redaction";
 import { resolveResource } from "../resolve";
 import { byCodeUnit, type KubectlContext, type KubectlGrid, goList, objectOf, stringOf, textGrid } from "./context";
-import type { KubectlStatement } from "./parse";
+import type { KubectlStatement } from "@/lib/languages/kubectl/parse";
 
 type CanIStatement = Extract<KubectlStatement, { readonly command: "auth-can-i" }>;
 

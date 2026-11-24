@@ -294,4 +294,19 @@ describe("authenticateBearer", () => {
     const incomplete = await authenticate(await sign(claims()));
     expect(incomplete.kind === "fault" && incomplete.error).toBeInstanceOf(AuthConfigError);
   });
+
+  // OIDC_ALLOWED_EMAIL_DOMAINS is the callback's admission rule, applied to the same claims: a native client cannot
+  // get around the list by presenting an access token instead of signing in.
+  test("denies a token whose domain OIDC_ALLOWED_EMAIL_DOMAINS does not list", async () => {
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "example.test";
+    await expectDenied(
+      await sign(claims({ email: "ada@other.test", email_verified: true })),
+      "bearer_domain_not_allowed",
+    );
+  });
+
+  test("authenticates a token whose verified email domain is listed", async () => {
+    process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "example.test";
+    expect((await authenticate(await sign(claims({ email_verified: true })))).kind).toBe("authenticated");
+  });
 });

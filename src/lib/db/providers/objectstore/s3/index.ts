@@ -27,13 +27,14 @@
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { AuthenticationError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import {
   createNodeByteTransport,
   type NodeByteTransport,
   type NodeByteTransportOptions,
   type RequestSigner,
 } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -53,7 +54,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -191,7 +192,7 @@ export class S3Provider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     deps: Partial<S3ProviderDeps> = {},
   ) {
     super(config, options);
@@ -530,9 +531,11 @@ export class S3Provider extends BaseDatabaseProvider {
   /** The options, the transport and the limited client, with no request: connect and health share it. */
   private openSession(): S3Session {
     // Refused before any transport exists: every connection rule, already worded.
+    const egress = requireEgressDecision(this.execution.egress);
     const options = buildS3ConnectionOptions(this.config, {
       executionReadOnly: this.execution.readOnly === true,
       queryTimeout: this.queryTimeout,
+      egress,
     });
     const signer =
       options.credentials === null
@@ -542,6 +545,7 @@ export class S3Provider extends BaseDatabaseProvider {
       origin: options.origin,
       tls: options.tls,
       maxSockets: S3_MAX_SOCKETS,
+      egress,
       headers: {},
       requestHeaderNames: ["range"],
       responseHeaders: S3_RESPONSE_HEADERS,
@@ -685,7 +689,7 @@ export class S3Provider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** S3 has no tables; `tableStatsCaption` says where its buckets and objects are. */
+  /** S3 has no tables, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getTableStats(): Promise<TableStats[]> {
     // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.tableStats);

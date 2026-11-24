@@ -17,6 +17,7 @@ import { useTabManager } from "@/hooks/use-tab-manager";
 import { logger } from "@/lib/logger";
 import { storage } from "@/lib/storage";
 import type { DatabaseConnection } from "@/lib/types";
+import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
 import { rowWritableObjects } from "@/lib/db/detailed-object";
 import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { s3CompletionBucketsOf } from "@/lib/db/providers/objectstore/s3/editor-completions";
@@ -1051,6 +1052,51 @@ describe("useConnectionManager", () => {
     }
   });
 
+  // An entry whose type names no provider is listed managed whatever the file says (FND-1), so the dismissal a user
+  // recorded by deleting their copy of it is kept while it is listed so: it would otherwise come back as an
+  // Unavailable row the user cannot delete. A dismissed seed the operator lists managed with a known type is kept.
+  test("skips a dismissed seed listed managed because its type names no provider", async () => {
+    storage.saveConnection(makeConnection({ id: "dismiss-me", seedId: "seed-dismissed" }));
+    storage.deleteConnection("dismiss-me");
+    storage.saveConnection(makeConnection({ id: "dismiss-known", seedId: "seed-dismissed-known" }));
+    storage.deleteConnection("dismiss-known");
+
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: {
+          connections: [
+            makeManagedConnection({
+              id: "seed:seed-dismissed",
+              managed: true,
+              seedId: "seed-dismissed",
+              type: "acmefoo" as never,
+            }),
+            makeManagedConnection({
+              id: "seed:seed-kept",
+              managed: true,
+              seedId: "seed-kept",
+              type: "acmefoo" as never,
+            }),
+            makeManagedConnection({
+              id: "seed:seed-dismissed-known",
+              managed: true,
+              seedId: "seed-dismissed-known",
+              type: "postgres",
+            }),
+          ],
+        },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:seed-kept", "seed:seed-dismissed-known"]);
+    });
+  });
+
   test("does not poll for a seed the user has dismissed", async () => {
     process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
     // Deleting a seed copy records the dismissal.
@@ -1931,6 +1977,283 @@ describe("useConnectionManager", () => {
       } finally {
         debugSpy.mockRestore();
       }
+    });
+  });
+
+  // FND-1: a stored connection whose type names no provider is listed, never made active, and a pick of it is refused
+  // by name. The record in storage stays as it was saved.
+  describe("a connection whose type names no provider", () => {
+    const unknown = () =>
+      ({
+        ...makeConnection({ id: "unknown-1", name: "Acme Store" }),
+        type: "acmefoo",
+      }) as unknown as DatabaseConnection;
+    const plain = () => makeConnection({ id: "plain-1", name: "Plain" });
+    const storedUnknown = () => storage.getConnections().find((c) => c.id === "unknown-1");
+
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+    });
+
+    test("the first load makes the first available connection active, not the unknown one", async () => {
+      storage.saveConnection(unknown());
+      storage.saveConnection(plain());
+      const before = storedUnknown();
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      expect(result.current.connections.map((c) => c.id)).toEqual(["unknown-1", "plain-1"]);
+      expect(storedUnknown()).toEqual(before);
+    });
+
+    test("a saved active id naming the unknown connection is refused by name, and the first available one opens", async () => {
+      storage.saveConnection(unknown());
+      storage.saveConnection(plain());
+      storage.setActiveConnectionId("unknown-1");
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      // The connection the reader had open last time is not replaced in silence.
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+      });
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+    });
+
+    test("a saved active id naming the unknown connection is refused by name when nothing else is available", async () => {
+      storage.saveConnection(unknown());
+      storage.setActiveConnectionId("unknown-1");
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+          description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+        });
+      });
+      expect(mockToastError).toHaveBeenCalledTimes(1);
+      expect(result.current.activeConnection).toBeNull();
+      expect(storage.getActiveConnectionId()).toBe("unknown-1");
+    });
+
+    test("a saved active id naming nothing listed opens the first available one with no toast", async () => {
+      storage.saveConnection(plain());
+      storage.setActiveConnectionId("gone-1");
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    test("a pick of the unknown connection is refused by name and changes nothing", async () => {
+      storage.saveConnection(unknown());
+      storage.saveConnection(plain());
+      const before = storedUnknown();
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const active = result.current.activeConnection;
+      // A pick of the available connection first, so it is used: a refused pick must not move the used id.
+      act(() => {
+        result.current.setActiveConnection(active);
+      });
+      expect(result.current.activeAwaitsUse).toBe(false);
+      const target = result.current.connections.find((c) => c.id === "unknown-1");
+      expect(target).toBeDefined();
+
+      let selected: boolean | undefined;
+      act(() => {
+        selected = result.current.setActiveConnection(target ?? null);
+      });
+
+      expect(selected).toBe(false);
+      expect(result.current.activeConnection).toBe(active);
+      expect(result.current.activeAwaitsUse).toBe(false);
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `Acme Store: ${unknownTypeSentence("acmefoo")}`,
+      });
+      expect(storage.getActiveConnectionId()).toBe("plain-1");
+      expect(storedUnknown()).toEqual(before);
+    });
+
+    test("a pick of an available connection answers that it selected", async () => {
+      storage.saveConnection(plain());
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+
+      const target = result.current.connections.find((c) => c.id === "plain-1");
+      expect(target).toBeDefined();
+      let selected: boolean | undefined;
+      act(() => {
+        selected = result.current.setActiveConnection(target ?? null);
+      });
+      expect(selected).toBe(true);
+      expect(result.current.activeConnection?.id).toBe("plain-1");
+
+      act(() => {
+        selected = result.current.setActiveConnection(null);
+      });
+      expect(selected).toBe(true);
+      expect(result.current.activeConnection).toBeNull();
+    });
+
+    test("a pick of a connection with no name and no type is refused as this connection", async () => {
+      const nameless = { id: "nameless-1", createdAt: new Date("2026-01-01") } as unknown as DatabaseConnection;
+      storage.saveConnection(nameless);
+      storage.saveConnection(plain());
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const target = result.current.connections.find((c) => c.id === "nameless-1");
+      act(() => {
+        result.current.setActiveConnection(target ?? null);
+      });
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `This connection: ${ABSENT_TYPE_SENTENCE}`,
+      });
+    });
+
+    test("a pick of a connection with an empty name is refused as this connection", async () => {
+      storage.saveConnection({ ...unknown(), name: "" });
+      storage.saveConnection(plain());
+      mockGlobalFetch({ "/api/db/health": healthy });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      const target = result.current.connections.find((c) => c.id === "unknown-1");
+      act(() => {
+        result.current.setActiveConnection(target ?? null);
+      });
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `This connection: ${unknownTypeSentence("acmefoo")}`,
+      });
+    });
+
+    test("a managed refresh that withdraws the active seed falls back past the unknown connection", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(unknown());
+      storage.saveConnection(plain());
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return { ok: true, json: { connections: managedCalls === 1 ? [firstManaged()] : [] } };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("managed-1");
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["unknown-1", "plain-1"]);
+      });
+      expect(result.current.activeConnection?.id).toBe("plain-1");
+    });
+
+    // A seed entry whose type names no provider is listed by the server as a managed connection of that type (FND-1):
+    // the browser lists it, draws it Unavailable from its type, never opens it and never stores a copy of it.
+    test("a managed seed whose type names no provider is listed, never made active and never stored", async () => {
+      const acme = makeManagedConnection({
+        id: "seed:acme",
+        name: "Acme Store",
+        type: "acmefoo",
+        managed: true,
+        seedId: "acme",
+        host: undefined,
+        port: undefined,
+        database: undefined,
+        user: undefined,
+        password: undefined,
+      } as unknown as Partial<ManagedConnectionPayload>);
+      const pg = makeManagedConnection({ id: "seed:pg", name: "PG", managed: true, seedId: "pg" });
+      mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [acme, pg] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("seed:pg");
+      });
+      expect(result.current.connections.map((c) => c.id)).toEqual(["seed:acme", "seed:pg"]);
+      expect(storage.getConnections()).toEqual([]);
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    test("a refresh that finds the active seed's type names no provider moves to the first available connection and says why by name", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(plain());
+      const pg = makeManagedConnection({ id: "seed:pg", name: "PG", managed: true, seedId: "pg" });
+      let managedCalls = 0;
+      mockGlobalFetch({
+        "/api/connections/managed": () => {
+          managedCalls += 1;
+          return {
+            ok: true,
+            json: { connections: [managedCalls === 1 ? pg : { ...pg, type: "acmefoo" }] },
+          };
+        },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("seed:pg");
+      });
+
+      focusWindow();
+      await waitFor(() => {
+        expect(result.current.activeConnection?.id).toBe("plain-1");
+      });
+      expect(result.current.connections.find((c) => c.id === "seed:pg")?.type).toBe("acmefoo" as never);
+      expect(mockToastError).toHaveBeenCalledWith("Connection unavailable", {
+        description: `PG: ${unknownTypeSentence("acmefoo")}`,
+      });
+      expect(mockToastSuccess).not.toHaveBeenCalledWith("Connection removed", expect.anything());
+    });
+
+    test("a managed refresh with nothing active never picks the unknown connection", async () => {
+      process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS = "60000";
+      storage.saveConnection(unknown());
+      mockGlobalFetch({
+        "/api/connections/managed": { ok: true, json: { connections: [] } },
+        "/api/db/health": healthy,
+      });
+
+      const { result } = renderHook(() => useConnectionManager(true));
+      await waitFor(() => {
+        expect(result.current.connections.map((c) => c.id)).toEqual(["unknown-1"]);
+      });
+      focusWindow();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+      expect(result.current.activeConnection).toBeNull();
     });
   });
 });
@@ -3279,5 +3602,150 @@ describe("useConnectionManager on a server-level connection (#1530)", () => {
     });
     expect(result.current.activeCatalog).toBeUndefined();
     expect(storage.getActiveCatalog("conn-1")).toBeNull();
+  });
+});
+
+// =============================================================================
+// A built-in sample whose copy failed
+// =============================================================================
+
+describe("built-in samples listed unavailable", () => {
+  const sqliteFailed = {
+    seedId: "sqlite-embedded-sample",
+    name: "Sample (Employees)",
+    reason: "asset-missing" as const,
+    sentence: "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied.",
+  };
+  const libredbFailed = {
+    seedId: "libredb-embedded-sample",
+    name: "Sample (LibreDB)",
+    reason: "copy-failed" as const,
+    sentence: "This sample could not be copied into the server's data directory (EACCES).",
+  };
+  const focus = () => {
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+  };
+  const managedCalls = (fetchMock: ReturnType<typeof mockGlobalFetch>) =>
+    fetchMock.mock.calls.filter((c) => String(c[0]).includes("/api/connections/managed")).length;
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  afterEach(() => {
+    restoreGlobalFetch();
+    delete process.env.NEXT_PUBLIC_MANAGED_POLL_MS;
+    delete process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS;
+  });
+
+  test("keeps the server's unavailable samples without the dismissed ones", async () => {
+    // Dismiss the LibreDB sample through the public API: deleting a seed copy records the dismissal.
+    storage.saveConnection(makeConnection({ id: "dismissed-sample", seedId: "libredb-embedded-sample" }));
+    storage.deleteConnection("dismissed-sample");
+    mockGlobalFetch({
+      "/api/connections/managed": {
+        ok: true,
+        json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed, libredbFailed] },
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    // Never a connection.
+    expect(result.current.connections.some((c) => c.seedId === "sqlite-embedded-sample")).toBe(false);
+  });
+
+  test("an answer without the field, or with a field that is not a list, reads as none", async () => {
+    // Rows, then an answer without the field, then rows again, then a field that is not a list.
+    const answers = [
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [] },
+      { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] },
+      { connections: [], pendingSeeds: [], unavailableSamples: "none" },
+    ];
+    let calls = 0;
+    mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return { ok: true, json: answers[Math.min(calls, answers.length) - 1] };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(calls).toBe(2);
+      expect(result.current.unavailableSamples).toEqual([]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    focus();
+    await waitFor(() => {
+      expect(calls).toBe(4);
+      expect(result.current.unavailableSamples).toEqual([]);
+    });
+  });
+
+  test("the pending-seed poll shows a sample whose copy failed", async () => {
+    process.env.NEXT_PUBLIC_MANAGED_POLL_MS = "25";
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1
+          ? { ok: true, json: { connections: [], pendingSeeds: ["sqlite-embedded-sample"] } }
+          : { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+
+    const { result } = renderHook(() => useConnectionManager(true));
+    expect(result.current.unavailableSamples).toEqual([]);
+
+    await waitFor(
+      () => {
+        expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+      },
+      { timeout: 3000 },
+    );
+    expect(managedCalls(fetchMock)).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a quiet refresh that fails keeps the unavailable samples it had", async () => {
+    let calls = 0;
+    const fetchMock = mockGlobalFetch({
+      "/api/connections/managed": () => {
+        calls += 1;
+        return calls === 1
+          ? { ok: true, json: { connections: [], pendingSeeds: [], unavailableSamples: [sqliteFailed] } }
+          : { status: 500, json: { error: "Failed to load managed connections" } };
+      },
+      "/api/db/health": { ok: true, json: { status: "healthy" } },
+    });
+    const { result } = renderHook(() => useConnectionManager(true));
+    await waitFor(() => {
+      expect(result.current.unavailableSamples).toEqual([sqliteFailed]);
+    });
+    const before = result.current.unavailableSamples;
+
+    focus();
+    await waitFor(() => {
+      expect(managedCalls(fetchMock)).toBe(2);
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(result.current.unavailableSamples).toBe(before);
   });
 });

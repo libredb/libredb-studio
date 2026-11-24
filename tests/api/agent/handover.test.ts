@@ -20,12 +20,30 @@
  *    with the budget the checkbox names.
  */
 
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, spyOn } from "bun:test";
 import { configureAgentModel, restoreAgentModel } from "../../helpers/agent-model-env";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { AGENT_ENABLED_ENV } from "@/lib/agent/config";
 import { AGENT_HANDOVER_BUDGET, AGENT_HANDOVER_READ_ALLOWANCE } from "@/lib/agent/execution-policy";
+import { byteBudgetSentence, rowBudgetSentence, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
+import { MSSQL_CUT_VALUE_PREFIX, MSSQL_SERIALISED_PREFIX } from "@/lib/sql/mssql-read-only-refusals";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
+import {
+  AuthenticationError,
+  ByteBudgetRefusal,
+  ConnectionError,
+  CutValueRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
+import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { logger } from "@/lib/logger";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { filterByRoles } from "@/lib/seed/connection-filter";
@@ -413,6 +431,49 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
     expect(mockQuery).not.toHaveBeenCalled();
   });
 
+  test("refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly", async () => {
+    // Whatever acquirer hands the provider over: the refusal is core's, keyed on the resolved connection's type, in
+    // the read path every replay passes, not the factory's alone.
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:sales", name: "Sales", type: "snowflake" });
+    const errorLog = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBe(500);
+      expect(body.error).toBe(
+        'Provider type "snowflake" is not on the review record of engines that run agent and MCP statements (AGENT_EXECUTION_ENGINES), so no statement is sent on it, whatever its provider implements',
+      );
+      expect(mockQueryReadOnly).not.toHaveBeenCalled();
+      expect(mockQuery).not.toHaveBeenCalled();
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+
+  test("refuses a replay whose provider answers more rows than the hand-over budget, and returns none of them", async () => {
+    // The provider's own code refuses past the budget it is handed; this fake does not, so what refuses here is the
+    // route holding the answer to the budget itself.
+    const rows = Array.from({ length: DEFAULT_QUERY_LIMIT + 1 }, (_, index) => ({ region: `region-${index}` }));
+    mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, rows, rowCount: rows.length } as never);
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<{
+      error: string;
+      code: string;
+      kind: string;
+      outcome: string;
+      result?: unknown;
+    }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.error).toBe(rowBudgetSentence(DEFAULT_QUERY_LIMIT + 1, DEFAULT_QUERY_LIMIT));
+    expect(body.kind).toBe("studio-row-budget-refusal");
+    expect(body.outcome).toBe("unknown");
+    expect(body.result).toBeUndefined();
+  });
+
   test("a statement the engine refuses is reported as the error it is", async () => {
     // The case the whole finding is about: a read-only transaction rejecting a write
     // that a syntactic check could not see. It must reach the user as an error, not
@@ -426,5 +487,222 @@ describe("POST /api/agent/runs/[runId]/handover", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(body.error).toContain("read-only transaction");
+  });
+});
+
+describe("a provider's own budget refusal", () => {
+  type RefusalBody = { error: string; code: string; kind: string; outcome: string; result?: unknown };
+
+  const REFUSALS = [
+    [
+      "row budget refusal",
+      "row-budget-refusal",
+      (s: string) => new RowBudgetRefusal(s, "postgres", ANSWER_SQL),
+      rowBudgetSentence(501, 500),
+    ],
+    [
+      "byte budget refusal",
+      "byte-budget-refusal",
+      (s: string) => new ByteBudgetRefusal(s, "postgres", ANSWER_SQL),
+      byteBudgetSentence(9001, 9000),
+    ],
+    [
+      "time budget refusal",
+      "time-budget-refusal",
+      (s: string) => new TimeBudgetRefusal(s, "postgres", ANSWER_SQL),
+      `${TIME_BUDGET_PREFIX} of 50 ms`,
+    ],
+    [
+      "cut value refusal",
+      "cut-value-refusal",
+      (s: string) => new CutValueRefusal(s, "mssql", ANSWER_SQL),
+      `${MSSQL_CUT_VALUE_PREFIX}: column 1`,
+    ],
+    [
+      "serialised result refusal",
+      "serialised-result-refusal",
+      (s: string) => new SerialisedResultRefusal(s, "mssql", ANSWER_SQL),
+      `${MSSQL_SERIALISED_PREFIX}: FOR JSON`,
+    ],
+  ] as const;
+
+  test.each(REFUSALS.map(([label, kind, make, sentence]) => [label, kind, make, sentence] as const))(
+    "a provider's %s answers 400 QUERY_ERROR with its sentence and kind %s",
+    async (_label, kind, make, sentence) => {
+      mockQueryReadOnly.mockRejectedValueOnce(make(sentence));
+
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<RefusalBody>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("QUERY_ERROR");
+      expect(body.error).toBe(sentence);
+      expect(body.kind).toBe(kind);
+      expect(body.outcome).toBe("unknown");
+      expect(body.result).toBeUndefined();
+    },
+  );
+
+  test("a provider's row budget refusal made before sending answers refused-before-send and not-sent", async () => {
+    const sentence = rowBudgetSentence(1000, 500);
+    mockQueryReadOnly.mockRejectedValueOnce(new RefusedBeforeSendError(sentence, "kafka", ANSWER_SQL));
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<RefusalBody>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.code).toBe("QUERY_ERROR");
+    expect(body.error).toBe(sentence);
+    expect(body.kind).toBe("refused-before-send");
+    expect(body.outcome).toBe("not-sent");
+  });
+});
+
+describe("a replay whose provider's text carries the connection's credential", () => {
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const forms = secretForms([password]);
+  const failures: [string, (text: string) => unknown, "acquire" | "statement"][] = [
+    ["a QueryError's message", (text) => new QueryError(text, "postgres"), "statement"],
+    ["a QueryError's detail", (text) => new QueryError("failed", "postgres", undefined, undefined, text), "statement"],
+    ["a ConnectionError", (text) => new ConnectionError(text, "postgres"), "acquire"],
+    [
+      "a provider's ExecutionProfileError",
+      (text) => new ExecutionProfileError(text, "PROFILE_PRIVILEGES_TOO_BROAD"),
+      "acquire",
+    ],
+    ["a RefusedBeforeSendError", (text) => new RefusedBeforeSendError(text, "postgres"), "statement"],
+    [
+      "an AuthenticationError's fixStatement",
+      (text) => new AuthenticationError("denied", "postgres", { fixStatement: text }),
+      "acquire",
+    ],
+    ["a string the provider rejects with", (text) => text, "statement"],
+    ["a string the acquisition rejects with", (text) => text, "acquire"],
+  ];
+
+  type AnswerBody = { error: string; code?: string; kind?: string; outcome?: string; retryable?: boolean };
+
+  /** The status and the closed fields of an answer: what a client branches on, never its text. */
+  function closedFields(status: number, body: AnswerBody) {
+    return { status, code: body.code, kind: body.kind, outcome: body.outcome, retryable: body.retryable };
+  }
+
+  test.each(failures.flatMap(([label, make, phase]) => forms.map((form) => [label, form, make, phase] as const)))(
+    "%s holding %s keeps the status, code, kind and outcome its error answers, and neither the body nor the log holds it",
+    async (_label, form, make, phase) => {
+      mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+      const clean = make("could not run as the reader");
+      const failure = make(`could not run as ${form}`);
+      const reject = (value: unknown) =>
+        phase === "acquire" ? mockAcquire.mockRejectedValueOnce(value) : mockQueryReadOnly.mockRejectedValueOnce(value);
+      const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+        spy.mockImplementation(() => {}),
+      );
+      try {
+        reject(clean);
+        const cleanRes = await POST(request(), params());
+        const cleanBody = await parseResponseJSON<AnswerBody>(cleanRes);
+        for (const spy of logged) spy.mockClear();
+        reject(failure);
+        const res = await POST(request(), params());
+        const body = await parseResponseJSON<AnswerBody>(res);
+
+        expect(closedFields(res.status, body)).toEqual(closedFields(cleanRes.status, cleanBody));
+        expect(body.error).toBe(
+          withheldErrorMessage(failure instanceof Error ? failure.name : `thrown ${typeof failure}`),
+        );
+        const calls = JSON.stringify(
+          logged.flatMap((spy) => spy.mock.calls),
+          (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+        );
+        for (const each of forms) {
+          expect(JSON.stringify(body)).not.toContain(each);
+          expect(calls).not.toContain(each);
+        }
+      } finally {
+        for (const spy of logged) spy.mockRestore();
+        mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+      }
+    },
+  );
+
+  test("a provider's row budget refusal holding the credential keeps its kind", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    mockQueryReadOnly.mockRejectedValueOnce(new RowBudgetRefusal(`too many rows for ${password}`, "postgres"));
+    const quiet = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<AnswerBody>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.code).toBe("QUERY_ERROR");
+      expect(body.kind).toBe("row-budget-refusal");
+      expect(body.error).toBe(withheldErrorMessage("QueryError"));
+      expect(JSON.stringify(body)).not.toContain(password);
+    } finally {
+      quiet.mockRestore();
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
+  test("a failure with a SQLSTATE answers it beside its kind", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    const failure = new QueryError('relation "orders" does not exist', "postgres");
+    failure.sqlstate = "42P01";
+    mockQueryReadOnly.mockRejectedValueOnce(failure);
+    const quiet = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<AnswerBody & { sqlState?: string }>(res);
+
+      expect(res.status).toBe(400);
+      expect(body.kind).toBe("query");
+      expect(body.sqlState).toBe("42P01");
+    } finally {
+      quiet.mockRestore();
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
+  test("under an agent credential, an echo of the connection's own password is kept as written, since the hand-over's provider never receives it", async () => {
+    mockResolveConnection.mockResolvedValue({
+      ...SEED_CONNECTION,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    } as never);
+    const message = `could not run as ${password}`;
+    mockQueryReadOnly.mockRejectedValueOnce(new QueryError(message, "postgres"));
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ error: string }>(res);
+
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(body.error).toContain(message);
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
+  });
+
+  test("a connection that no longer resolves is answered before any provider is built", async () => {
+    mockResolveConnection.mockRejectedValueOnce(new Error("the connection is gone"));
+    const res = await POST(request(), params());
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(mockAcquire).not.toHaveBeenCalled();
+  });
+
+  test("a success's warnings are withheld in the body", async () => {
+    mockResolveConnection.mockResolvedValue({ ...SEED_CONNECTION, password } as never);
+    mockQueryReadOnly.mockResolvedValueOnce({ ...RESULT, warnings: [{ message: `notice ${password}` }] } as never);
+    try {
+      const res = await POST(request(), params());
+      const body = await parseResponseJSON<{ result: { warnings?: unknown } }>(res);
+
+      expect(res.status).toBe(200);
+      expect(body.result.warnings).toEqual([{ message: PROVIDER_TEXT_WITHHELD }]);
+      for (const each of forms) expect(JSON.stringify(body)).not.toContain(each);
+    } finally {
+      mockResolveConnection.mockResolvedValue(SEED_CONNECTION);
+    }
   });
 });

@@ -66,6 +66,7 @@ import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transp
 import { LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PREFIX = "libredb_lb_";
 const DATA = `${PREFIX}data`;
@@ -102,7 +103,7 @@ function connection(port: number, credential: { user?: string; password?: string
   };
 }
 
-const writable = new LibSQLHranaTransport(connection(JWT_PORT, { password: RW }));
+const writable = new LibSQLHranaTransport(connection(JWT_PORT, { password: RW }), egressDecision());
 
 async function write(sql: string): Promise<void> {
   await writable.execute(sql, { timeoutMs: 30_000 });
@@ -239,7 +240,7 @@ async function main(): Promise<void> {
 
   // The open's probes, one by one: each must be the server's authorization refusal for the read-only token, and is
   // a no-op for the writable one, which runs the first and is told the table does not exist by the other two.
-  const reader = new LibSQLHranaTransport(connection(JWT_PORT, { password: RO }));
+  const reader = new LibSQLHranaTransport(connection(JWT_PORT, { password: RO }), egressDecision());
   const probes = agentProbeStatements(probeTableName());
   for (const sql of probes) {
     let answer = "ran";
@@ -273,7 +274,7 @@ async function main(): Promise<void> {
   );
   // A read-only token whose permission claim grants writes on the namespace: the server runs its writes, and the open
   // refuses it on its claims, before a probe is sent with it.
-  const widened = new LibSQLHranaTransport(connection(JWT_PORT, { password: WIDENED }));
+  const widened = new LibSQLHranaTransport(connection(JWT_PORT, { password: WIDENED }), egressDecision());
   const widenedAnswers: string[] = [];
   for (const sql of [
     `INSERT INTO "${SCRATCH}" (id, v) VALUES (200, 'w')`,

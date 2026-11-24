@@ -20,14 +20,13 @@ import { QueryError } from "@/lib/db/errors";
 import { endpointUrl } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport, type NodeTransportOptions } from "@/lib/db/http/node-transport";
 import type { DatabaseType } from "@/lib/types";
-import {
-  WEAVIATE_OPS,
-  type WeaviateAnswer,
-  type WeaviateClient,
-  type WeaviateOp,
-  type WeaviateRequest,
-  type WeaviateRouteTemplate,
-  type WeaviateRouteTemplates,
+import { WEAVIATE_OPS, type WeaviateOp } from "@/lib/languages/weaviateapi/ops";
+import type {
+  WeaviateAnswer,
+  WeaviateClient,
+  WeaviateRequest,
+  WeaviateRouteTemplate,
+  WeaviateRouteTemplates,
 } from "./client";
 import type { WeaviateConnectionOptions } from "./connection-options";
 
@@ -162,6 +161,7 @@ export function createRestWeaviateClient(
     origin: options.origin,
     tls: options.tls,
     maxSockets: options.maxSockets,
+    egress: options.egress,
     headers: options.headers,
     // A connect that never completes names the host, the port and the seconds waited, as a ConnectionError.
     reportsUnreachable: true,

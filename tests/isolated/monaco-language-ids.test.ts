@@ -72,6 +72,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { declaredKinds } from "@/lib/db/object-kinds";
 import type { DatabaseConnection } from "@/lib/db/types";
@@ -159,7 +160,10 @@ const core = extractCoreLanguageIds(
     .join("\n"),
 );
 
-/** The unconnected connection shape the census uses, for the same reason: nothing here dials. */
+/**
+ * The unconnected connection shape the census uses, for the same reason: nothing here dials. Each field the engine
+ * refuses by name is left undefined, since core refuses a connection that sets one before the build.
+ */
 const unconnected = (type: DatabaseType): DatabaseConnection =>
   ({
     id: "language-guard",
@@ -175,6 +179,7 @@ const unconnected = (type: DatabaseType): DatabaseConnection =>
     connectionString: "mongodb://127.0.0.1:1/language_guard",
     localDataCenter: "datacenter1",
     createdAt: new Date(0),
+    ...Object.fromEntries(Object.keys(REFUSED_CONNECTION_FIELDS[type]).map((field) => [field, undefined])),
   }) as DatabaseConnection;
 
 /**
@@ -228,8 +233,14 @@ async function everyDeclaredSourceLanguage(): Promise<
   for (const type of [...EXTERNAL_DATABASE_TYPES, "libredb"] as readonly DatabaseType[]) {
     // Db2 reads a stored connection string at construction and refuses one that is not db2://
     // (#786), so it is built without the shared MongoDB string.
+    // Snowflake is built with a programmatic access token, so the shared password is its token: a key-pair connection
+    // without a key is refused before the build.
     const built = await createDatabaseProvider(
-      type === "db2" ? { ...unconnected(type), connectionString: undefined } : unconnected(type),
+      type === "db2"
+        ? { ...unconnected(type), connectionString: undefined }
+        : type === "snowflake"
+          ? { ...unconnected(type), authMethod: "pat" }
+          : unconnected(type),
     );
     const provider = type === MARIADB_CAPABLE_TYPE ? withMeasuredMariaDBFlavour(built) : built;
     for (const kind of declaredKinds(provider.getCapabilities())) {

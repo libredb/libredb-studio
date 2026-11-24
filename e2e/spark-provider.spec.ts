@@ -6,6 +6,7 @@ import { plaintextSecretRefusal } from "../src/lib/db/http/endpoint";
 import { SPARK_FIELD_SENTENCES } from "../src/lib/db/providers/sql/spark/connection-options";
 import { SPARK_ERROR_SENTENCES } from "../src/lib/db/providers/sql/spark/errors";
 import { SPARK_PASTE_SENTENCES } from "../src/lib/db/providers/sql/spark/sc-uri";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * What a user sees in the connection dialog when choosing Apache Spark.
@@ -25,8 +26,7 @@ async function openDialog(page: Page) {
   await page.getByRole("button", { name: "Sign In" }).click();
   await page.waitForURL("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   return dialog;

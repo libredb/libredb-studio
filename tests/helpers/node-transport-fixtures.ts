@@ -293,6 +293,60 @@ export function countingListener(): Promise<Listener> {
   );
 }
 
+/** A listener that tells the HTTP requests a proxy receives from every other connection to its port. */
+export interface ProxyListener extends Listener {
+  /** The request line of each connection that opened with one, in order: what the clients sent through the proxy. */
+  readonly requests: string[];
+  /**
+   * What each other connection sent before it was decided, up to the byte bound, in latin1: a client of some other
+   * process that landed on this port, or one that sent nothing in time (an empty string). Kept for diagnosis only.
+   */
+  readonly strays: string[];
+}
+
+/** `METHOD SP request-target SP HTTP-version`: a GET in absolute form or a CONNECT is what a proxy receives. */
+const HTTP_REQUEST_LINE = /^[A-Z]+ \S+ HTTP\/1\.[01]$/;
+
+/**
+ * A TCP listener for the proxy role: it reads the first line of each connection, records it in `requests` when it is
+ * an HTTP request line and in `strays` otherwise, then closes the socket, so the client's request fails at once.
+ * countingListener counts every TCP connect, so any local client that reconnects to a recycled port it once used is
+ * counted there as a proxied request; a connection that sends no HTTP request line cannot have come through a proxy
+ * setting, and here it is never counted as one. A connection is decided when its first line ends, when it has sent
+ * `maxLineBytes` without ending one, when it closes, or after `silenceMs`, whichever comes first.
+ */
+export function proxyListener(
+  bounds: { readonly silenceMs?: number; readonly maxLineBytes?: number } = {},
+): Promise<ProxyListener> {
+  const { silenceMs = 1000, maxLineBytes = 8192 } = bounds;
+  const requests: string[] = [];
+  const strays: string[] = [];
+  const server = createTcpServer((socket) => {
+    // A client that resets its end on the close below is not this listener's concern.
+    socket.on("error", () => {});
+    let received = Buffer.alloc(0);
+    let decided = false;
+    const decide = (): void => {
+      if (decided) return;
+      decided = true;
+      clearTimeout(timer);
+      const end = received.indexOf("\r\n");
+      const line = end === -1 ? "" : received.subarray(0, end).toString("latin1");
+      if (HTTP_REQUEST_LINE.test(line)) requests.push(line);
+      else strays.push(received.toString("latin1"));
+      socket.destroy();
+    };
+    const timer = setTimeout(decide, silenceMs);
+    timer.unref();
+    socket.on("data", (chunk: Buffer) => {
+      received = Buffer.concat([received, chunk]).subarray(0, maxLineBytes);
+      if (received.includes("\r\n") || received.length >= maxLineBytes) decide();
+    });
+    socket.on("close", decide);
+  });
+  return observe(server, [], "127.0.0.1").then((listener) => ({ ...listener, requests, strays }));
+}
+
 /** A listener that records each request head byte for byte, as rawHttpListener does. */
 export interface RawListener extends Listener {
   /** Every request head received, the request line and header lines as sent, without the closing blank line. */

@@ -8,6 +8,9 @@
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { readFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
+import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -22,7 +25,10 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import type { CouchbaseHttpTransportDeps } from "@/lib/db/providers/document/couchbase/http-transport";
+import {
+  COUCHBASE_RESPONSE_CAP_BYTES,
+  type CouchbaseHttpTransportDeps,
+} from "@/lib/db/providers/document/couchbase/http-transport";
 import { type NodeRequest, TransportError } from "@/lib/db/http/node-transport";
 import {
   declaredKinds,
@@ -32,12 +38,20 @@ import {
 } from "@/lib/db/object-kinds";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { loadTlsFixtures } from "../../helpers/tls-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
+
+/** The notice an answer carrying database content opens with on this file's couchbase connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("couchbase"));
 
 // ============================================================================
 // Connection
@@ -274,7 +288,7 @@ function bodyOf(match: string): Record<string, unknown> {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<CouchbaseProvider> {
-  const provider = new CouchbaseProvider(makeConnection(overrides));
+  const provider = new CouchbaseProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -306,7 +320,11 @@ afterEach(() => {
 
 describe("CouchbaseProvider metadata", () => {
   test("declares the capabilities issue #262 specifies", () => {
-    const capabilities = new CouchbaseProvider(makeConnection()).getCapabilities();
+    const capabilities = new CouchbaseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities).toEqual({
       queryLanguage: "sql",
@@ -349,18 +367,24 @@ describe("CouchbaseProvider metadata", () => {
     // emitted `WHERE __id = '<key>'` filters on a field no document has, so it
     // matches nothing. Addressing a document needs `META(d).id` or `USE KEYS`, which
     // is per-dialect statement building - deferred to issue #279.
-    expect(new CouchbaseProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(
+      new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsInlineRowEdit,
+    ).toBe(false);
   });
 
   test("declares declaresForeignKeys false because SQL++ has no referential constraint", () => {
     // Collections are schemaless and the columns this provider reports are inferred
     // from a document sample, so `getSchema()`'s empty `foreignKeys` is not "none
     // were declared here" but "none can be declared at all" (#414).
-    expect(new CouchbaseProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
+    expect(
+      new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .declaresForeignKeys,
+    ).toBe(false);
   });
 
   test("labels collections and documents", () => {
-    const labels = new CouchbaseProvider(makeConnection()).getLabels();
+    const labels = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Collection");
     expect(labels.entityNamePlural).toBe("Collections");
@@ -374,7 +398,7 @@ describe("CouchbaseProvider metadata", () => {
   // `reindex` is `BUILD INDEX` over the DEFERRED GSI indexes of one keyspace
   // (`buildDeferredIndexes()`), so none of those three strings described it (#464).
   test("names the deferred GSI build, not a table reindex, in the global reindex card", () => {
-    const labels = new CouchbaseProvider(makeConnection()).getLabels();
+    const labels = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.reindexGlobalLabel).toBe("Build Indexes");
     expect(labels.reindexGlobalTitle).toContain("GSI");
@@ -386,7 +410,11 @@ describe("CouchbaseProvider metadata", () => {
   // PostgreSQL extension. `getSlowQueries()` reads system:completed_requests, which
   // keeps only requests over the query service's threshold.
   test("names system:completed_requests, not a Postgres extension, as the source of query stats", () => {
-    const { slowQueriesEmptyState } = new CouchbaseProvider(makeConnection()).getLabels();
+    const { slowQueriesEmptyState } = new CouchbaseProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
     expect(slowQueriesEmptyState).toContain("system:completed_requests");
     expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
@@ -399,11 +427,15 @@ describe("CouchbaseProvider metadata", () => {
 
 describe("CouchbaseProvider validation", () => {
   test("requires a host or a connection string", () => {
-    expect(() => new CouchbaseProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(
+      () => new CouchbaseProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(DatabaseConfigError);
   });
 
   test("requires a bucket in the database field", () => {
-    expect(() => new CouchbaseProvider(makeConnection({ database: undefined }))).toThrow(/bucket/i);
+    expect(
+      () => new CouchbaseProvider(makeConnection({ database: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(/bucket/i);
   });
 
   test("refuses a bucket the cluster does not have, naming it", async () => {
@@ -411,7 +443,11 @@ describe("CouchbaseProvider validation", () => {
     // the user got wrong surfaces: the management API answers it with 404 and the
     // connect that would have saved it is refused with the name instead.
     stubManage("/pools/default/buckets/nosuchbucket", {}, 404);
-    const provider = new CouchbaseProvider(makeConnection({ database: "nosuchbucket" }));
+    const provider = new CouchbaseProvider(
+      makeConnection({ database: "nosuchbucket" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const attempted = provider.connect();
     await expect(attempted).rejects.toThrow(DatabaseConfigError);
@@ -432,7 +468,7 @@ describe("CouchbaseProvider validation", () => {
 
   test.each([undefined, ""])("uses the URI bucket when database is %s", async (database) => {
     const config = makeConnection({ host: undefined, database, connectionString: "couchbase://localhost/travel" });
-    const provider = new CouchbaseProvider(config);
+    const provider = new CouchbaseProvider(config, {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     await provider.getStorageStats();
     await provider.query("SELECT 1");
@@ -455,7 +491,12 @@ describe("CouchbaseProvider validation", () => {
 
   test("accepts a bucket path with the secure Couchbase scheme", () => {
     expect(
-      () => new CouchbaseProvider(makeConnection({ database: "", connectionString: "couchbases://localhost/travel" })),
+      () =>
+        new CouchbaseProvider(
+          makeConnection({ database: "", connectionString: "couchbases://localhost/travel" }),
+          {},
+          { egress: ALLOWS_PRIVATE_HOSTS },
+        ),
     ).not.toThrow();
   });
 
@@ -488,12 +529,22 @@ describe("CouchbaseProvider validation", () => {
   test.each([undefined, "couchbase://localhost", "couchbase://localhost/", "not a url", "file:travel"])(
     "rejects a missing or malformed URI bucket (%s) with a configuration error",
     (connectionString) => {
-      expect(() => new CouchbaseProvider(makeConnection({ database: undefined, connectionString }))).toThrow(
-        DatabaseConfigError,
-      );
-      expect(() => new CouchbaseProvider(makeConnection({ database: undefined, connectionString }))).toThrow(
-        /URL path or.*database/,
-      );
+      expect(
+        () =>
+          new CouchbaseProvider(
+            makeConnection({ database: undefined, connectionString }),
+            {},
+            { egress: ALLOWS_PRIVATE_HOSTS },
+          ),
+      ).toThrow(DatabaseConfigError);
+      expect(
+        () =>
+          new CouchbaseProvider(
+            makeConnection({ database: undefined, connectionString }),
+            {},
+            { egress: ALLOWS_PRIVATE_HOSTS },
+          ),
+      ).toThrow(/URL path or.*database/);
     },
   );
 
@@ -529,7 +580,7 @@ describe("CouchbaseProvider lifecycle", () => {
 
   test("connect maps rejected credentials to an AuthenticationError", async () => {
     stubManage("/pools/default", {}, 401);
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -537,7 +588,7 @@ describe("CouchbaseProvider lifecycle", () => {
 
   test("connect maps an unreachable cluster to a ConnectionError", async () => {
     networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8091");
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -553,7 +604,7 @@ describe("CouchbaseProvider lifecycle", () => {
   });
 
   test("query before connect is refused", async () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(DatabaseConfigError);
   });
@@ -810,6 +861,181 @@ describe("CouchbaseProvider error mapping", () => {
     queryHandler = () => ({ requestID: "req-1", status: "errors" });
 
     await expect(provider.query("SELECT 1")).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+// ============================================================================
+// Answer bounds: the byte cap and an answer cut short
+// ============================================================================
+
+describe("CouchbaseProvider answer bounds", () => {
+  const TLS = loadTlsFixtures();
+  const TOO_LARGE = `Couchbase answered with more than ${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB, so the answer was not read further`;
+  const ENDED_EARLY = "Couchbase request failed: the server ended the answer before it was complete";
+  const servers: HttpsServer[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      servers.splice(0).map(
+        (server) =>
+          new Promise<void>((resolve) => {
+            server.closeAllConnections();
+            server.close(() => resolve());
+          }),
+      ),
+    );
+  });
+
+  /** Writes a MiB of spaces at a time under backpressure, past the cap, until the client closes the socket. */
+  function writePastTheCap(res: ServerResponse): void {
+    const pad = Buffer.alloc(1024 * 1024, 0x20);
+    let written = 0;
+    const pump = () => {
+      while (written <= COUCHBASE_RESPONSE_CAP_BYTES && !res.destroyed) {
+        written += pad.length;
+        if (!res.write(pad)) {
+          res.once("drain", pump);
+          return;
+        }
+      }
+      if (!res.destroyed) res.end();
+    };
+    pump();
+  }
+
+  /**
+   * A TLS cluster on one port, the query service included, signed by the test CA: every path answers its fixture
+   * except `path`, which answers past the cap (`too-large`), declares 1000 bytes, sends a few and then closes the
+   * socket (`fin`), or answers `101 Switching Protocols` and closes the socket (`switch`). A reset is pinned in the
+   * transport's own tests: Bun cannot reset a TLS socket.
+   */
+  async function tlsCluster(path: string, how: "too-large" | "fin" | "switch"): Promise<number> {
+    let port = 0;
+    const server = createHttpsServer({ cert: TLS.server.cert, key: TLS.server.key }, (req, res) => {
+      req.resume();
+      const target = new URL(req.url ?? "/", "https://127.0.0.1").pathname;
+      if (target === path && how === "too-large") {
+        res.writeHead(200, { "content-type": "application/json" });
+        writePastTheCap(res);
+        return;
+      }
+      if (target === path && how === "switch") {
+        const raw = "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        req.socket.write(raw, () => req.socket.end());
+        return;
+      }
+      if (target === path) {
+        res.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+        res.write('{"results":[', () => res.socket?.end());
+        return;
+      }
+      const answers: Record<string, unknown> = {
+        "/pools/default": POOLS,
+        [`/pools/default/buckets/${BUCKET}`]: BUCKET_INFO,
+        "/pools/default/nodeServices": { nodesExt: [{ hostname: "127.0.0.1", services: { n1qlSSL: port } }] },
+        "/query/service": queryPayload([{ id: "hotel::1" }]),
+      };
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(answers[target] ?? {}));
+    });
+    servers.push(server);
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    port = (server.address() as AddressInfo).port;
+    return port;
+  }
+
+  function tlsProvider(port: number): CouchbaseProvider {
+    return new CouchbaseProvider(
+      makeConnection({ port, ssl: { mode: "verify-ca", caCert: TLS.ca } }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
+  }
+
+  test("a TLS cluster whose pools answer passes the cap fails Test Connection, naming the cap", async () => {
+    const provider = tlsProvider(await tlsCluster("/pools/default", "too-large"));
+
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(`Failed to connect to Couchbase: ${TOO_LARGE}`);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a TLS query answer past the cap fails as a QueryError naming the cap", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "too-large"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(TOO_LARGE);
+    await provider.disconnect();
+  });
+
+  test("a TLS query answer the server closes before it is complete fails as a ConnectionError", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "fin"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(ENDED_EARLY);
+    await provider.disconnect();
+  });
+
+  test("a TLS pools answer the server closes before it is complete fails Test Connection by name", async () => {
+    const provider = tlsProvider(await tlsCluster("/pools/default", "fin"));
+
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(`Failed to connect to Couchbase: ${ENDED_EARLY}`);
+  });
+
+  test("a TLS query answered with a switch of protocols fails as a ConnectionError", async () => {
+    const provider = tlsProvider(await tlsCluster("/query/service", "switch"));
+    await provider.connect();
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      "Couchbase request failed: the server switched protocols instead of answering",
+    );
+    await provider.disconnect();
+  });
+
+  test("a plaintext query answer past the cap fails as a QueryError naming the cap", async () => {
+    const provider = await connectProvider();
+    const cluster = globalThis.fetch;
+    const pad = new Uint8Array(1024 * 1024).fill(0x20);
+    const total = 2 * COUCHBASE_RESPONSE_CAP_BYTES;
+    let sent = 0;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (!String(input).includes("/query/service")) return cluster(input, init);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            if (sent >= total) {
+              controller.close();
+              return;
+            }
+            sent += pad.length;
+            controller.enqueue(pad);
+          },
+        }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const error = await provider.query("SELECT 1").catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(TOO_LARGE);
+    expect(sent).toBeLessThan(total);
   });
 });
 
@@ -1249,7 +1475,7 @@ describe("CouchbaseProvider maintenance", () => {
 
 describe("CouchbaseProvider query preparation", () => {
   test("applies the external row limit to a SELECT", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("SELECT * FROM `travel`.`inventory`.`hotel`", { limit: 25 });
 
@@ -1261,7 +1487,7 @@ describe("CouchbaseProvider query preparation", () => {
   // Couchbase delegates to the shared limiter, so a comment-led SELECT is bounded
   // through the same fix rather than through anything of this provider's own (#275).
   test("applies the external row limit to a comment-led SELECT", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("/* annotated */ SELECT * FROM `travel`.`inventory`.`hotel`", {
       limit: 25,
@@ -1274,7 +1500,7 @@ describe("CouchbaseProvider query preparation", () => {
   // Same inheritance for the trailing edge (#280): the bound has to land before a
   // closing comment, and a backtick-quoted path must not be mistaken for one.
   test("puts the bound before a trailing comment", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("SELECT * FROM `travel`.`inventory`.`hotel` -- daily check", {
       limit: 25,
@@ -1288,7 +1514,7 @@ describe("CouchbaseProvider query preparation", () => {
   // holding a backslash-escaped quote end where Couchbase ends them, and the bound is written after them. The
   // compatibility default read both as unterminated and left the read unbounded.
   test("bounds a read whose subscript key or literal the default could not close", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     for (const query of [
       "SELECT h.reviews[0]['a]b'] FROM `travel`.`inventory`.`hotel` AS h",
@@ -1303,7 +1529,7 @@ describe("CouchbaseProvider query preparation", () => {
   });
 
   test("keeps a SQL++ bound written after its OFFSET", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const query = "SELECT * FROM `travel`.`inventory`.`hotel` OFFSET 5 LIMIT 10";
     const prepared = provider.prepareQuery(query, { limit: 25 });
@@ -1313,7 +1539,7 @@ describe("CouchbaseProvider query preparation", () => {
   });
 
   test("leaves a mutation untouched", () => {
-    const provider = new CouchbaseProvider(makeConnection());
+    const provider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const prepared = provider.prepareQuery("DELETE FROM `travel`.`_default`.`airline`");
 
@@ -2435,7 +2661,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new CouchbaseProvider(makeConnection());
+    const provider: DatabaseProvider = new CouchbaseProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -2546,7 +2772,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const provider = new CouchbaseProvider(
       makeConnection({ user: "agent_ro" }),
       {},
-      execution,
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
       nodeTransports(cluster),
     );
     await provider.connect();
@@ -2614,7 +2840,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const provider = new CouchbaseProvider(
       makeConnection({ user: "agent_ro" }),
       {},
-      AGENT_PROFILE,
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
       nodeTransports(cluster),
     );
     const failure = await provider.connect().catch((error: unknown) => error);
@@ -2720,36 +2946,50 @@ describe("CouchbaseProvider agent read-only profile", () => {
     const cluster = agentCluster();
     cluster.statement = () => ({ status: 200, payload: queryPayload([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]) });
     const provider = await agentProvider(cluster);
-    await expect(provider.queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET)).rejects.toThrow(
-      new QueryError("Read-only execution exceeded the row budget: 4 rows > 3 allowed", "couchbase"),
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT d.n FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget, as rows and as an answer cut by the transport", async () => {
     const cluster = agentCluster();
     cluster.statement = () => ({ status: 200, payload: queryPayload([{ text: "x".repeat(5000) }]) });
     const provider = await agentProvider(cluster);
-    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+    const asRows = await provider
+      .queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((asRows as Error).message).toMatch(
       /^Read-only execution exceeded the byte budget: 50\d\d bytes > 4096 allowed$/,
     );
+    expect(errorKind(asRows)).toBe("byte-budget-refusal");
 
     cluster.statement = () => new TransportError("too-large", "The answer passed its byte cap");
-    await expect(provider.queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)).rejects.toThrow(
+    const cut = await provider
+      .queryReadOnly("SELECT d.text FROM `_default` AS d", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((cut as Error).message).toBe(
       "Read-only execution exceeded the byte budget: 73728 bytes > 4096 allowed; the server's answer passed that many bytes and was not read further",
     );
+    expect(errorKind(cut)).toBe("byte-budget-refusal");
   });
 
   test("refuses on the time budget at its own deadline and at the server's timeout", async () => {
     const cluster = agentCluster();
     const provider = await agentProvider(cluster);
     cluster.statement = () => new TransportError("timeout", "no answer");
-    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+    const ownDeadline = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((caught: unknown) => caught);
+    expect((ownDeadline as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
+    expect(errorKind(ownDeadline)).toBe("time-budget-refusal");
     cluster.statement = () => ({ status: 200, payload: errorPayload(1080, "Timeout 5s exceeded") });
-    await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).rejects.toThrow(
+    const serverTimeout = await provider.queryReadOnly("SELECT 1 AS a", BUDGET).catch((caught: unknown) => caught);
+    expect((serverTimeout as Error).message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
+    expect(errorKind(serverTimeout)).toBe("time-budget-refusal");
   });
 
   test("a statement the user's role does not allow is the statement's failure, so the agent can repair it", async () => {
@@ -2805,12 +3045,13 @@ describe("CouchbaseProvider agent read-only profile", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [SEED],
       resolve: async () => SEED,
+      textScrub: fakeTextScrub,
       acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         const provider = new CouchbaseProvider(
           makeConnection({ user: "agent_ro" }),
           {},
-          executionContextFor(profile),
+          { ...executionContextFor(profile), egress: ALLOWS_PRIVATE_HOSTS },
           nodeTransports(cluster),
         );
         await provider.connect();
@@ -2924,7 +3165,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
         pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
         hint: "Call again with offset 2 for the next page.",
       });
-      expect(textOf(result)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(textOf(result)[0]).toBe(DATABASE_CONTENT_NOTICE);
       const statement = "SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 3";
       expect(paths(cluster.sent)).toEqual([
         "GET /whoami",
@@ -3001,11 +3242,13 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
         expect(result).toEqual({
           content: [
+            { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
             {
               type: "text",
               text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
             },
           ],
+          structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
           isError: true,
         });
         expect(acquired).toEqual(["agent-read-only"]);
@@ -3026,7 +3269,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
       expect(result.isError).toBe(true);
       expect(textOf(result)).toEqual([
-        MCP_UNTRUSTED_NOTICE,
+        DATABASE_CONTENT_NOTICE,
         `${MCP_ENGINE_ERROR_PREFIX}User does not have credentials to run queries accessing user information. Add role admin to allow the statement to run.`,
       ]);
     });
@@ -3040,11 +3283,15 @@ describe("CouchbaseProvider agent read-only profile", () => {
       expect(paths(cluster.sent)).toEqual(["GET /whoami"]);
       expect(result).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket travel; the user agent_ro also holds query_system_catalog, which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[travel:<scope>], one for each scope it reads. ${ENGINES}`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -3056,11 +3303,15 @@ describe("CouchbaseProvider agent read-only profile", () => {
 
       expect(result).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("couchbase")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket travel for the user agent_ro, whose only roles are query_select, so its enforcement is unproven and the connection is refused. ${ENGINES}`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_SERVER_UNENFORCED", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -3092,6 +3343,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
           },
         ],
+        structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -3108,6 +3360,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
           },
         ],
+        structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -3124,6 +3377,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
             text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
           },
         ],
+        structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
       const timeout = String(cluster.sent.at(-1)?.body?.timeout);

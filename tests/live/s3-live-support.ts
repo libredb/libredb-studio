@@ -14,7 +14,7 @@
  *   console                 the refusal parseS3Command answers for the step's command, with the connection's context
  *   keys                    the refusal readS3KeyScanRequest throws for the step's page options and cursor
  *   egress:link-local:<h>   the refusal assertNotLinkLocalLiteral throws for host <h>
- *   egress:blocked:<h>      the refusal assertPublicLiteralHost throws for <h> with DB_HTTP_BLOCK_PRIVATE_HOSTS on
+ *   egress:blocked:<h>      the refusal assertPublicLiteralHost throws for <h> under a decision that blocks private hosts
  *   endpoint:host:<h>       the refusal validateHost throws for <h>
  *   server:<json>           the message toProviderError gives an S3ServerError built from the measured answer <json>
  *   notice:<id>             the preview sentence <id> of S3_PREVIEW_SENTENCES, its placeholders matching any text
@@ -43,6 +43,8 @@ import { S3_PREVIEW_SENTENCES } from "@/lib/db/providers/objectstore/s3/preview-
 import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 import type { DatabaseProvider, KeyScanOptions, KeyScanPage } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { BLOCKS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
+import { withEgressFlag } from "../helpers/egress-flag";
 import type { ObjectSurfaceExpectation } from "../helpers/object-surface-conformance";
 import { normalizeMessage, type S3FixtureSecret } from "../helpers/s3-evidence-scrub";
 import {
@@ -54,6 +56,7 @@ import {
   type S3TransportFactory,
   signingInput,
 } from "../helpers/s3-wire";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 export const ROOT: string =
   typeof import.meta.dir === "string" ? path.resolve(import.meta.dir, "../..") : process.cwd();
@@ -1545,6 +1548,7 @@ function connectionOptions(connection: DatabaseConnection) {
   return buildS3ConnectionOptions(connection as Parameters<typeof buildS3ConnectionOptions>[0], {
     executionReadOnly: true,
     queryTimeout: 30_000,
+    egress: egressDecision(),
   });
 }
 
@@ -1617,17 +1621,10 @@ export function resolveS3Sentence(ref: string, context: S3SentenceContext): S3Re
   if (ref.startsWith("endpoint:host:"))
     return { text: thrown(() => validateHost(ref.slice(14)), "validateHost"), anyNumber: false };
   if (ref.startsWith("egress:blocked:")) {
-    const previous = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
-    try {
-      return {
-        text: thrown(() => assertPublicLiteralHost(ref.slice(15)), "assertPublicLiteralHost"),
-        anyNumber: false,
-      };
-    } finally {
-      if (previous === undefined) delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-      else process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = previous;
-    }
+    return {
+      text: thrown(() => assertPublicLiteralHost(ref.slice(15), BLOCKS_PRIVATE_HOSTS), "assertPublicLiteralHost"),
+      anyNumber: false,
+    };
   }
   if (ref.startsWith("notice:")) {
     const template = (S3_PREVIEW_SENTENCES as Readonly<Record<string, string>>)[ref.slice(7)];
@@ -1959,7 +1956,7 @@ function provider(run: S3RunContext, wire: Wire, connection: DatabaseConnection,
   return new S3Provider(
     connection,
     {},
-    {},
+    { egress: egressDecision() },
     {
       createTransport: wire.createTransport,
       clock: run.clockFor(offsetMs),
@@ -2297,16 +2294,6 @@ function serverToken(cursor: string): string {
   return payload.t;
 }
 
-function withEnv<T>(name: string, value: string | undefined, body: () => Promise<T>): Promise<T> {
-  const previous = process.env[name];
-  if (value === undefined) delete process.env[name];
-  else process.env[name] = value;
-  return body().finally(() => {
-    if (previous === undefined) delete process.env[name];
-    else process.env[name] = previous;
-  });
-}
-
 const needsLive = (row: string) => {
   throw new Error(`${row} runs only in tests/live/s3-live-check.ts, which gives the run its live context`);
 };
@@ -2318,7 +2305,7 @@ function linkLocalSteps(): Record<string, S3StepFunction> {
   for (const host of LINK_LOCAL_HOSTS)
     for (const setting of ["unset", "false"] as const)
       steps[`${host} ${setting}`] = (run, wire) =>
-        withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", setting === "unset" ? undefined : "false", () =>
+        withEgressFlag(setting === "unset" ? undefined : "false", () =>
           testStep(`${host} ${setting}`, { role: "root", host, allowInsecureAuth: true })(run, wire),
         );
   for (const host of NUMERIC_HOSTS) steps[host] = testStep(host, { role: "root", host });
@@ -2416,8 +2403,7 @@ export const S3_RUNNERS: Readonly<Record<string, Readonly<Record<string, S3StepF
   },
   A55: linkLocalSteps(),
   A55b: {
-    blocked: (run, wire) =>
-      withEnv("DB_HTTP_BLOCK_PRIVATE_HOSTS", "true", () => testStep("blocked", { role: "root" })(run, wire)),
+    blocked: (run, wire) => withEgressFlag("true", () => testStep("blocked", { role: "root" })(run, wire)),
   },
   A63: {
     plain: (run, wire) => tunnelStep(run, wire, "plain", "silo", 9000, false),
@@ -2848,13 +2834,14 @@ export async function s3Fingerprint(
 ): Promise<Readonly<Record<string, string>>> {
   const options = buildS3ConnectionOptions(
     s3LiveConnection(target, principals, { role: "root" }, ca) as Parameters<typeof buildS3ConnectionOptions>[0],
-    { executionReadOnly: true, queryTimeout: 60_000 },
+    { executionReadOnly: true, queryTimeout: 60_000, egress: egressDecision() },
   );
   if (options.credentials === null) throw new Error("the fingerprint signs as root, and root has no key pair");
   const transport = createTransport({
     origin: options.origin,
     tls: options.tls,
     maxSockets: 1,
+    egress: egressDecision(),
     headers: {},
     requestHeaderNames: ["range"],
     responseHeaders: S3_RESPONSE_HEADERS,

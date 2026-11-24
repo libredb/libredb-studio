@@ -47,7 +47,8 @@ let originalMatchMedia: typeof window.matchMedia;
 const mockHandleLogout = mock(() => {});
 // Connection Manager
 const mockSetConnections = mock(() => {});
-const mockSetActiveConnection = mock(() => {});
+/** The hook's setter answers whether it selected: true for every pick here unless a test refuses one (FND-1). */
+const mockSetActiveConnection = mock<(next: unknown) => boolean>(() => true);
 const mockSetSchema = mock(() => {});
 const mockFetchSchema = mock(() => {});
 const mockLoadObjects = mock(() => {});
@@ -109,6 +110,7 @@ const mockRevokeObjectURL = mock(() => {});
 // test read a changed prop that no real render produces.
 const STABLE_USER = { username: "admin", role: "admin" };
 const EMPTY_SCHEMA: unknown[] = [];
+const NO_UNAVAILABLE_SAMPLES: unknown[] = [];
 const EMPTY_PENDING_CHANGES: unknown[] = [];
 
 // ---- Hook override objects (spread into mock returns per-test) ----
@@ -159,6 +161,7 @@ mock.module("@/hooks/use-connection-manager", () => ({
     markActiveUsed: mockMarkActiveUsed,
     activateFallback: mockActivateFallback,
     customConnections: true,
+    unavailableSamples: NO_UNAVAILABLE_SAMPLES,
     ...connMgrOverride,
   })),
 }));
@@ -412,9 +415,11 @@ mock.module("@/components/CommandPalette", () => ({
   },
 }));
 
+let capturedSchemaDiagramProps: Record<string, unknown> = {};
 mock.module("@/components/SchemaDiagram", () => ({
-  SchemaDiagram: () => {
+  SchemaDiagram: (props: Record<string, unknown>) => {
     if (failingSplitViews.has("diagram")) throw new ChunkLoadError("Loading chunk 7 failed");
+    capturedSchemaDiagramProps = props;
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     return React.createElement("div", { "data-testid": "schemadiagram" }, "SchemaDiagram");
@@ -560,6 +565,7 @@ const { default: Studio } = await import("@/components/Studio");
 import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseObject } from "@/lib/db/types";
 import type { TreeRowActionHandlers } from "@/components/object-tree/row-actions";
+import type { CreateTableNames } from "@/components/CreateTableModal";
 
 // =============================================================================
 // Test data
@@ -987,6 +993,21 @@ describe("Studio", () => {
 
     expect(mockActivateFallback).toHaveBeenCalledWith(remaining[0]);
     expect(mockSetActiveConnection).not.toHaveBeenCalled();
+  });
+
+  // FND-1: a connection whose type names no provider is never made active by the page, so the fallback skips it.
+  test("deleting the active connection falls back past a connection whose type names no provider", () => {
+    const unknown = { id: "u1", type: "acmefoo", name: "Acme" };
+    const next = { id: "c2", type: "mysql", name: "MySQL" };
+    mockStorageGetConnections.mockReturnValue([unknown, next]);
+    connMgrOverride = { activeConnection: pgConn, connections: [pgConn, unknown, next] };
+    render(<Studio />);
+
+    act(() => (capturedSidebarProps.onDeleteConnection as (id: string) => void)("c1"));
+    fireEvent.click(within(document.body as HTMLElement).getByText("Delete"));
+
+    expect(mockActivateFallback).toHaveBeenCalledWith(next);
+    expect(mockActivateFallback).not.toHaveBeenCalledWith(unknown);
   });
 
   /**
@@ -1685,6 +1706,27 @@ describe("Studio", () => {
     await waitFor(() => expect(capturedConnectionModalProps.isOpen).toBe(true));
     expect(capturedConnectionModalProps.editConnection).toEqual(pgConn);
   });
+
+  test.each(["desktop", "mobile"] as const)(
+    "hands the hook's unavailable samples to the %s connections list",
+    (surface) => {
+      const unavailableSamples = [
+        {
+          seedId: "sqlite-embedded-sample",
+          name: "Sample (Employees)",
+          reason: "asset-missing",
+          sentence: "This sample's file is not in the seed assets directory (SEED_ASSETS_DIR), so it was not copied.",
+        },
+      ];
+      connMgrOverride = { unavailableSamples };
+      render(<Studio />);
+      if (surface === "mobile") {
+        act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+      }
+      const props = surface === "mobile" ? capturedConnectionsListProps : capturedSidebarProps;
+      expect(props.unavailableSamples).toBe(unavailableSamples);
+    },
+  );
 
   // --- onAddConnection ---
   test.each(["desktop", "mobile"])("duplicate opens a detached copy in the %s connection editor", (surface) => {
@@ -2413,6 +2455,22 @@ describe("Studio", () => {
     expect(mockHandleDiscardChanges).toHaveBeenCalled();
   });
 
+  test("the Create Table form is handed the active connection's name quoting, by its type", () => {
+    // The declaration names PostgreSQL's port, so only the connection's type can quote with backticks.
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" as const } };
+    capabilitiesOverride = { defaultPort: 5432 };
+    render(<Studio />);
+    const names = capturedCreateTableProps.names as CreateTableNames;
+    expect(names.typed("a b")).toBe("`a b`");
+    expect(names.container(["app db"])).toBe("`app db`");
+  });
+
+  test("with no active connection the form is handed no names", () => {
+    connMgrOverride = { activeConnection: null };
+    render(<Studio />);
+    expect(capturedCreateTableProps.names).toBeUndefined();
+  });
+
   // --- Inline-edit capability gate (#269) ---
   test("asks the connection pulse about the active connection once its metadata answers, and shows its answer in both headers", () => {
     connMgrOverride = { activeConnection: pgConn };
@@ -2603,7 +2661,19 @@ describe("Studio", () => {
     render(<Studio />);
     const fn = capturedSafetyDialogProps.onProceed as () => void;
     act(() => fn());
-    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users");
+    // A dialog that asked for no typed value hands none on.
+    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users", undefined);
+  });
+
+  test("QuerySafetyDialog is handed the safety check's typed confirmation, and its typed value reaches forceExecuteQuery", () => {
+    const name = crypto.randomUUID();
+    const typedConfirmation = { type: "connection-name", expected: name, targets: [] };
+    queryExecOverride = { safetyCheckQuery: "DROP TABLE users", safetyCheckTypedConfirmation: typedConfirmation };
+    render(<Studio />);
+    expect(capturedSafetyDialogProps.typedConfirmation).toEqual(typedConfirmation);
+    const fn = capturedSafetyDialogProps.onProceed as (typed?: string) => void;
+    act(() => fn(name));
+    expect(mockForceExecuteQuery).toHaveBeenCalledWith("DROP TABLE users", name);
   });
 
   test("QuerySafetyDialog is handed the active connection's name, which a typed confirmation of it asks for (#1089)", () => {
@@ -2714,6 +2784,31 @@ describe("Studio", () => {
     const fn = capturedSidebarProps.onShowDiagram as () => void;
     await act(async () => fn());
     expect(queryByTestId("schemadiagram")).not.toBeNull();
+  });
+
+  // A failed catalog read empties the schema the diagram draws, so the diagram is handed the
+  // read's error and a way to ask again, and does not wait on a read that already ended.
+  test("the diagram is handed the catalog read's error, its loading state and a retry of the read", async () => {
+    connMgrOverride = { activeConnection: pgConn, schemaError: "database is locked", isLoadingSchema: false };
+    render(<Studio />);
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
+    mockFetchSchema.mockClear();
+
+    expect(capturedSchemaDiagramProps.schemaError).toBe("database is locked");
+    expect(capturedSchemaDiagramProps.isLoadingSchema).toBe(false);
+    act(() => (capturedSchemaDiagramProps.onRetrySchema as () => void)());
+    expect(mockFetchSchema).toHaveBeenCalledTimes(1);
+    expect(mockFetchSchema).toHaveBeenCalledWith(pgConn);
+  });
+
+  test("with no connection active, the diagram's retry reads nothing", async () => {
+    connMgrOverride = { schemaError: "database is locked" };
+    render(<Studio />);
+    await act(async () => (capturedSidebarProps.onShowDiagram as () => void)());
+    mockFetchSchema.mockClear();
+
+    act(() => (capturedSchemaDiagramProps.onRetrySchema as () => void)());
+    expect(mockFetchSchema).not.toHaveBeenCalled();
   });
 
   // A split view whose chunk never arrives must not take the shell down with it (X5).
@@ -2920,6 +3015,19 @@ describe("Studio", () => {
     act(() => selectFn(pgConn));
     expect(mockSetActiveConnection).toHaveBeenCalledWith(pgConn);
     expect(queryByTestId("connections-list")).toBeNull();
+  });
+
+  test("a refused pick keeps the mobile connections list open", () => {
+    const unknown = { id: "u1", type: "acmefoo", name: "Acme" };
+    connMgrOverride = { connections: [pgConn, unknown] };
+    const { queryByTestId } = render(<Studio />);
+    act(() => (capturedMobileNavProps.onTabChange as (tab: string) => void)("database"));
+    mockSetActiveConnection.mockImplementationOnce(() => false);
+
+    act(() => (capturedConnectionsListProps.onSelectConnection as (c: unknown) => void)(unknown));
+
+    expect(mockSetActiveConnection).toHaveBeenCalledWith(unknown);
+    expect(queryByTestId("connections-list")).not.toBeNull();
   });
 
   /*
@@ -3164,6 +3272,14 @@ describe("Studio", () => {
     const fn = capturedQueryEditorProps.onContentChange as (val: string) => void;
     act(() => fn("SELECT 2"));
     expect(mockUpdateTabById).toHaveBeenCalledWith("tab-1", { query: "SELECT 2" });
+  });
+
+  test("QueryEditor, the Test Data dialog and the import dialog are handed the active connection's type, which picks an SQL engine's quoting", () => {
+    connMgrOverride = { activeConnection: { ...pgConn, type: "mysql" } };
+    render(<Studio />);
+    expect(capturedQueryEditorProps.databaseType).toBe("mysql");
+    expect(capturedTestDataProps.databaseType).toBe("mysql");
+    expect(capturedDataImportProps.databaseType).toBe("mysql");
   });
 
   test("QueryEditor onExplain executes explain query", () => {

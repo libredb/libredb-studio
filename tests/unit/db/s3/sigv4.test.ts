@@ -1,118 +1,12 @@
 /**
- * The SigV4 core and the S3 signer: 24 of 24 AWS suite vectors, the smithy S3-mode vector, and
- * the signer's contract with PR 1's hook: three returned names, the signed headers, the date read at send time, the
- * empty-payload hash, and the canonical query sorted by the signer itself.
+ * The S3 signer's contract with the byte transport's hook: three returned names, the signed headers, the date read at
+ * send time, the empty-payload hash, and the canonical query sorted by the signer itself. The SigV4 core it signs
+ * with, and the AWS suite vectors, are tested in tests/unit/db/auth/aws/sigv4.test.ts.
  */
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { rfc3986Path } from "@/lib/db/http/endpoint";
+import { EMPTY_PAYLOAD_SHA256, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import type { SigningInput } from "@/lib/db/http/node-transport";
-import { s3Query } from "@/lib/db/providers/objectstore/s3/encoding";
-import {
-  amzDateOf,
-  type CanonicalRequest,
-  canonicalQueryOf,
-  EMPTY_PAYLOAD_SHA256,
-  s3Signer,
-  signatureV4,
-} from "@/lib/db/providers/objectstore/s3/sigv4";
-
-interface SuiteVector {
-  readonly name: string;
-  readonly request: {
-    readonly method: string;
-    readonly path: string;
-    readonly query: Readonly<Record<string, string | null | readonly (string | null)[]>>;
-    readonly headers: Readonly<Record<string, string>>;
-    readonly body?: string;
-  };
-  readonly authorization: string;
-}
-
-const suite = JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/s3/sigv4-suite.json"), "utf8")) as {
-  readonly header: {
-    readonly accessKeyId: string;
-    readonly secretAccessKey: string;
-    readonly region: string;
-    readonly service: string;
-    readonly amzDate: string;
-  };
-  readonly vectors: readonly SuiteVector[];
-};
-const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");
-
-function canonicalOf(vector: SuiteVector): CanonicalRequest {
-  const pairs = Object.entries(vector.request.query).flatMap(([name, value]) =>
-    (Array.isArray(value) ? value : [value]).map((one): [string, string] => [name, one ?? ""]),
-  );
-  return {
-    method: vector.request.method,
-    canonicalUri: rfc3986Path(vector.request.path.slice(1).split("/")),
-    canonicalQuery: s3Query(pairs),
-    headers: Object.fromEntries(
-      Object.entries(vector.request.headers).map(([name, value]) => [name.toLowerCase(), String(value)]),
-    ),
-    payloadHash: sha256(vector.request.body ?? ""),
-  };
-}
-
-describe("the AWS SigV4 suite", () => {
-  test("holds 24 vectors", () => {
-    expect(suite.vectors).toHaveLength(24);
-  });
-
-  test.each(suite.vectors.map((vector) => [vector.name, vector]))("%s", (_name, vector) => {
-    const { header } = suite;
-    expect(
-      signatureV4(canonicalOf(vector as SuiteVector), header, {
-        region: header.region,
-        service: header.service,
-        amzDate: header.amzDate,
-      }),
-    ).toBe((vector as SuiteVector).authorization);
-  });
-});
-
-test("the smithy S3-mode vector /foo=bar", () => {
-  const authorization = signatureV4(
-    {
-      method: "POST",
-      canonicalUri: rfc3986Path(["foo=bar"]),
-      canonicalQuery: "",
-      headers: {
-        host: "foo.us-bar-1.amazonaws.com",
-        "x-amz-date": "20000101T000000Z",
-        "x-amz-content-sha256": EMPTY_PAYLOAD_SHA256,
-      },
-      payloadHash: EMPTY_PAYLOAD_SHA256,
-    },
-    { accessKeyId: "foo", secretAccessKey: "bar" },
-    { region: "us-bar-1", service: "foo", amzDate: "20000101T000000Z" },
-  );
-  expect(authorization.split("Signature=")[1]).toBe("0d859e5a74374efc2c9f14ba9352df14c68e411a1f44bd639fdd024e5f7b7ef1");
-});
-
-test("signs header names in code-unit order, where a locale order would put a~ before ab", () => {
-  const authorization = signatureV4(
-    {
-      method: "GET",
-      canonicalUri: "/",
-      canonicalQuery: "",
-      headers: { "a~": "2", host: "127.0.0.1:9000", ab: "1" },
-      payloadHash: EMPTY_PAYLOAD_SHA256,
-    },
-    { accessKeyId: "AKIDTESTKEY", secretAccessKey: "test-secret-key" },
-    { region: "us-east-1", service: "s3", amzDate: "20261009T131443Z" },
-  );
-  expect(["ab", "a~"].sort((a, b) => a.localeCompare(b))).toEqual(["a~", "ab"]);
-  expect(authorization).toContain("SignedHeaders=ab;a~;host, Signature=");
-});
-
-test("the empty-payload hash is the SHA-256 of nothing", () => {
-  expect(EMPTY_PAYLOAD_SHA256).toBe(sha256(""));
-});
+import { s3Signer } from "@/lib/db/providers/objectstore/s3/sigv4";
 
 describe("s3Signer", () => {
   const credentials = { accessKeyId: "AKIDTESTKEY", secretAccessKey: "test-secret-key" };
@@ -127,6 +21,7 @@ describe("s3Signer", () => {
       range: "bytes=0-9",
       "x-amz-checksum-mode": "ENABLED",
     }),
+    body: "",
   };
 
   test("lists exactly the three names it returns", () => {
@@ -179,16 +74,5 @@ describe("s3Signer", () => {
     expect(() => signer.sign({ ...input, query: "versions" })).toThrow(
       'The request query holds a pair with no "=", so it cannot be signed',
     );
-  });
-});
-
-describe("helpers", () => {
-  test("amzDateOf writes YYYYMMDDTHHMMSSZ in UTC", () => {
-    expect(amzDateOf(new Date("2015-08-30T12:36:00.123Z"))).toBe("20150830T123600Z");
-  });
-
-  test("canonicalQueryOf sorts pairs by encoded name then value and keeps the empty query", () => {
-    expect(canonicalQueryOf("")).toBe("");
-    expect(canonicalQueryOf("prefix=&max-keys=1&list-type=2&a=2&a=1")).toBe("a=1&a=2&list-type=2&max-keys=1&prefix=");
   });
 });

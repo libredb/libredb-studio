@@ -5,9 +5,9 @@
  * (`src/lib/db/console/shell-words.ts`): its quoting, its refusals and its one-command rule. This module adds what
  * is S3's: a scan for the Windows `^` continuation before the reader runs, the prompt and the optional `aws` a
  * pasted line carries, the refusal of a leading environment assignment, the option-word rule, where the service and
- * the operation stand, and the role each token takes in the editor. The lead-stripping layer repeats Oxia's
- * (`src/lib/db/providers/keyvalue/oxia/lexer.ts`) with S3's lead words, because a provider may not import another
- * provider's module; the consolidation is a backlog entry.
+ * the operation stand, and the role each token takes in the editor. The lead-stripping layer repeats the Oxia CLI
+ * language's (`src/lib/languages/oxiacli/lexer.ts`) with S3's lead words; BACKLOG D268 consolidates the two into one
+ * engine-neutral module under `src/lib/db/console/`.
  *
  * The line-by-line reading names the lead, the service and the operation only on the line the command begins on,
  * and only up to the shared tokenizer's eighth word: the per-line state does not hold earlier words' text. The

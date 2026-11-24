@@ -25,10 +25,6 @@ test("every member, written out", () => {
     vacuumGlobalTitle: "Not available",
     vacuumGlobalDesc: "Studio sends an S3 server no maintenance: this version only reads.",
     statementLanguage: s3StatementLanguage(),
-    slowQueriesEmptyState: "S3 keeps no query log",
-    sessionsEmptyState: "S3 does not list client sessions",
-    tableStatsCaption:
-      "S3 has no tables: buckets are listed under Buckets, and objects in the Keys panel and with aws s3 ls in the console.",
   });
   expect(Object.isFrozen(S3_LABELS)).toBe(true);
 });

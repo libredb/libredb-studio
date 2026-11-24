@@ -16,21 +16,28 @@
  *
  * Checks nothing when the variable is unset or empty. Never prints file content,
  * only the path and the reason.
+ *
+ * The check is core's read of the trust material (`trustMaterialSetting` in
+ * `@/lib/db/trust-material`), which keeps the file's CA certificates for the life of the
+ * process for the providers whose TLS does not read Node's store (Db2). So the boot read is the
+ * read every later build of such a provider is handed, as Node's own read at start is the one
+ * its TLS keeps, and the files refused here are the files that module refuses: missing,
+ * unreadable, empty, holding a block under the legacy `X509 CERTIFICATE` label, holding no
+ * certificate block, or leaving one with no END line.
  */
 
-import { readFileSync } from "node:fs";
-
-const PEM_CERTIFICATE_MARKER = "-----BEGIN CERTIFICATE-----";
+import { trustMaterialSetting } from "@/lib/db/trust-material";
 
 function refuse(path: string, reason: string): false {
   console.error(
     [
       "",
       "============================================================",
-      " LibreDB Studio cannot start: NODE_EXTRA_CA_CERTS names no certificate bundle",
+      " LibreDB Studio cannot start: NODE_EXTRA_CA_CERTS names a file Studio does not accept as a certificate bundle",
       ` Path: ${path}`,
       ` Reason: ${reason}`,
-      " Node would only warn and trust no extra CA, so every TLS connection",
+      " Node would warn and trust none or only part of it, or, for a legacy label,",
+      " trust a CA that Studio's Db2 connections would not, so TLS connections",
       " behind the private CA would fail later. Fix it either way:",
       "   1. Point NODE_EXTRA_CA_CERTS at a PEM file holding the CA certificates",
       "   2. Unset NODE_EXTRA_CA_CERTS when no private CA is needed",
@@ -45,27 +52,12 @@ function refuse(path: string, reason: string): false {
 }
 
 /**
- * Validate the file `NODE_EXTRA_CA_CERTS` names. Returns true when the variable
- * is unset or empty, or the file holds a PEM certificate block; otherwise prints
- * a banner, exits with status 1 and returns false.
+ * Validate the file `NODE_EXTRA_CA_CERTS` names, through core's read of it. Returns true
+ * when the variable is unset or empty, or the file's certificate blocks were taken;
+ * otherwise prints a banner, exits with status 1 and returns false.
  */
 export function verifyExtraCaCertsAtBoot(): boolean {
-  const path = process.env.NODE_EXTRA_CA_CERTS;
-  if (!path) return true;
-
-  let content: string;
-  try {
-    content = readFileSync(path, "utf8");
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
-    return refuse(path, `the file cannot be read (${code})`);
-  }
-
-  if (content.trim() === "") {
-    return refuse(path, "the file is empty");
-  }
-  if (!content.includes(PEM_CERTIFICATE_MARKER)) {
-    return refuse(path, `the file holds no ${PEM_CERTIFICATE_MARKER} block`);
-  }
+  const setting = trustMaterialSetting();
+  if ("invalid" in setting) return refuse(setting.invalid.path, setting.invalid.reason);
   return true;
 }

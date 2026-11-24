@@ -823,21 +823,13 @@ describe("connect and disconnect", () => {
     }
   });
 
-  test("an SSH tunnel is refused before any client exists (spec 6.1)", async () => {
-    let created = 0;
-    const provider = new KafkaProvider(
-      { ...CONNECTION, sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" } } as DatabaseConnection,
-      {},
-      {},
-      async (options) => {
-        created++;
-        return createPlatformaticClient(options, brokerLib().lib);
-      },
-    );
-    const error = await provider.connect().catch((e) => e);
+  test("an SSH tunnel is refused before any provider or client exists (spec 6.1, FND-2 slice 5)", async () => {
+    const error = await createDatabaseProvider({
+      ...CONNECTION,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+    } as DatabaseConnection).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toContain("SSH tunnel");
-    expect(created).toBe(0);
+    expect((error as Error).message).toStartWith("Kafka does not run through an SSH tunnel");
   });
 
   test("with no client factory, the provider loads the real library, and an unreachable broker is a ConnectionError", async () => {
@@ -1673,8 +1665,8 @@ describe("declarations", () => {
     // The control: the base provider's SQL pattern matches that same click.
     expect(new RegExp("(CREATE|DROP|ALTER|TRUNCATE)\\b", "i").test('{"topic":"orders-drop"}')).toBe(true);
     // Every label, and no other: the maintenance ones are never rendered behind supportsMaintenance
-    // false, and are worded true for Kafka all the same (spec 6.3); no Tables caption, since that
-    // list is empty rather than a ranked subset.
+    // false, and are worded true for Kafka all the same (spec 6.3); no empty-state sentence and no
+    // Tables caption, since Kafka offers none of those panels.
     expect(provider.getLabels()).toEqual({
       entityName: "Topic",
       entityNamePlural: "Topics",
@@ -1684,8 +1676,6 @@ describe("declarations", () => {
       generateAction: "Generate Read Request",
       searchPlaceholder: "Search topics...",
       statementLanguage: expect.stringContaining("the JSON read request this editor executes"),
-      slowQueriesEmptyState: "Kafka exposes no query log",
-      sessionsEmptyState: "Kafka does not report client sessions over its protocol",
       analyzeAction: "Analyze Topic",
       vacuumAction: "Compact Topic",
       analyzeGlobalLabel: "Analyze",
@@ -2382,6 +2372,56 @@ describe("failures (spec 5.6)", () => {
       expect(got).toEqual("value" in want ? { answered: want.value } : tableAnswer(want.error, failure));
     },
   );
+
+  test("a consumer-protocol group whose coordinator connection fails once open is a ConnectionError naming the coordinator, and the connection is closed", async () => {
+    // As the client reports a reset: an error event on the connection with the socket's error as its
+    // cause, then the request in flight rejected with a bare "Connection closed".
+    const reset = Object.assign(new Error("Connection error"), {
+      code: "PLT_KFK_NETWORK",
+      cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+    });
+    const closed = Object.assign(new Error("Connection closed"), { code: "PLT_KFK_NETWORK" });
+    const { provider, recorded } = await connected({
+      "admin.findCoordinator": () => [{ key: "lag-kip848", nodeId: 2, host: "broker-2.example", port: 9093 }],
+      consumerGroupDescribeV0: () => {
+        for (const [emitter, event, listener] of recorded.listeners)
+          if (emitter === "connection" && event === "error") listener(reset);
+        throw closed;
+      },
+    });
+    const error = await provider.readObjectSource(["lag-kip848"], "consumer_group").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({
+      message:
+        'The connection to broker-2.example:9093, the coordinator the broker named for group "lag-kip848", failed once it was open (ECONNRESET)',
+      host: "broker-2.example",
+      port: 9093,
+    });
+    expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
+  });
+
+  test("a consumer-protocol group whose coordinator closes the connection under the request is a ConnectionError naming the coordinator, never an authentication failure", async () => {
+    // As the client reports a graceful close: a close event on the connection and no error event, then
+    // the request in flight rejected with a bare "Connection closed".
+    const closed = Object.assign(new Error("Connection closed"), { code: "PLT_KFK_NETWORK" });
+    const { provider, recorded } = await connected({
+      "admin.findCoordinator": () => [{ key: "lag-kip848", nodeId: 2, host: "broker-2.example", port: 9093 }],
+      consumerGroupDescribeV0: () => {
+        for (const [emitter, event, listener] of recorded.listeners)
+          if (emitter === "connection" && event === "close") listener();
+        throw closed;
+      },
+    });
+    const error = await provider.readObjectSource(["lag-kip848"], "consumer_group").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(error).toMatchObject({
+      message:
+        'The connection to broker-2.example:9093, the coordinator the broker named for group "lag-kip848", failed once it was open (connection-lost)',
+      host: "broker-2.example",
+      port: 9093,
+    });
+    expect(closesOf(recorded.calls)).toEqual(["connection.close"]);
+  });
 });
 
 describe("delegation (spec 3.5)", () => {

@@ -15,6 +15,7 @@ import { KUBERNETES_LABELS } from "@/lib/db/providers/platform/kubernetes/labels
 import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes/machine-read";
 import { MACHINE_REDACTED } from "@/lib/db/providers/platform/kubernetes/redaction";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { fakeCluster, type FakeClusterOptions, manyRows } from "../../../helpers/kubernetes-cluster";
 import { kubernetesConnection } from "../../../helpers/kubernetes-connection";
 import { KUBERNETES_SAMPLE_MARKERS as M } from "../../../helpers/kubernetes-markers";
@@ -26,6 +27,7 @@ import {
   statusAnswer,
   testSeams,
 } from "../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 function providerWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseConnection>) {
   const transport = recordingKubernetesTransport(answer);
@@ -33,6 +35,7 @@ function providerWith(answer: KubernetesAnswerFn, overrides?: Partial<DatabaseCo
     kubernetesConnection(overrides),
     { queryTimeout: 30_000 },
     testSeams(transport),
+    { egress: ALLOWS_PRIVATE_HOSTS },
   );
   return { provider, transport };
 }
@@ -152,7 +155,8 @@ describe("connect", () => {
   });
 
   test("a refused connection is refused before any transport is built", async () => {
-    const { provider, transport } = providerWith(fakeCluster(), { user: "admin" });
+    // A token with a Bearer prefix, which Studio adds itself.
+    const { provider, transport } = providerWith(fakeCluster(), { password: `Bearer ${crypto.randomUUID()}` });
     await expect(provider.connect()).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(transport.built).toEqual([]);
   });
@@ -408,14 +412,16 @@ describe("queryReadOnly", () => {
       kubernetesConnection(overrides),
       { queryTimeout: 30_000 },
       { ...testSeams(transport), sleep: () => new Promise<void>(() => {}) },
-      { readOnly: true },
+      { readOnly: true, egress: ALLOWS_PRIVATE_HOSTS },
     );
     return { provider, transport };
   }
 
   test("refuses on a provider not opened under the read-only profile", async () => {
     const transport = recordingKubernetesTransport(fakeCluster(SHOP));
-    const provider = new KubernetesProvider(kubernetesConnection(), {}, testSeams(transport));
+    const provider = new KubernetesProvider(kubernetesConnection(), {}, testSeams(transport), {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     await provider.connect();
     const before = transport.calls.length;
     await expect(provider.queryReadOnly("get pods", BUDGET)).rejects.toThrow(MACHINE_PROFILE_SENTENCE);
@@ -463,9 +469,9 @@ describe("queryReadOnly", () => {
     expect(result.warnings ?? []).toEqual([]);
     expect(result.pagination).toBeUndefined();
     // The same statement on the agent's path is refused rather than truncated past its 200 rows.
-    await expect(provider.queryReadOnly("get pods -n shop", BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget",
-    );
+    const refused = await provider.queryReadOnly("get pods -n shop", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("an estimated plan is refused before anything is sent", async () => {

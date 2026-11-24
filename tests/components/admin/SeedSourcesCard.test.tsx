@@ -8,6 +8,7 @@ import { mockGlobalFetch, restoreGlobalFetch, type MockFetchResponse } from "../
 import type { SeedSourcesResponse } from "@/app/api/admin/seed-sources/route";
 import type { OperatorSkip, OperatorSourceReport, SourceNote } from "@/lib/seed/sources/types";
 import { SeedSourcesCard } from "@/components/admin/SeedSourcesCard";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 
 const SEED_PATH = "/app/config/seed-connections.yaml";
 
@@ -29,6 +30,7 @@ function report(overrides: Partial<OperatorSourceReport> = {}): OperatorSourceRe
     connected: [{ id: "reporting", name: "Reporting", type: "postgres" }],
     skipped: [],
     notes: [],
+    unavailable: [],
     ...overrides,
   };
 }
@@ -227,6 +229,20 @@ describe("SeedSourcesCard", () => {
       `billing (${SEED_PATH}): Environment variable BILLING_PASSWORD is not defined`,
     );
     expect(getByText("Skipped (1)")).not.toBeNull();
+  });
+
+  test("lists the connections a source holds as unavailable, with the reason", async () => {
+    const reason = unknownTypeSentence("acmefoo");
+    mockGlobalFetch({
+      "/api/admin/seed-sources": answer(
+        report({ unavailable: [{ id: "acme", name: "Acme Store", type: "acmefoo", origin: SEED_PATH, reason }] }),
+      ),
+    });
+    const { findByTestId, getByText } = await renderCard();
+
+    expect((await findByTestId("seed-source-unavailable")).textContent).toBe(`acme (${SEED_PATH}): ${reason}`);
+    expect(getByText("Unavailable (1)")).not.toBeNull();
+    expect(getByText("Connected (1)")).not.toBeNull();
   });
 
   test("shows an ignored variable and an ignored URL parameter", async () => {

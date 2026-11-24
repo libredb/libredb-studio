@@ -805,6 +805,11 @@ export function useInlineEditing({
     //    confirms, silently dropping the rest. Apply is the confirmation here: these
     //    statements are generated rather than typed, each carries a WHERE on the
     //    detected key, and the pending changes were reviewed in the grid first.
+    //    On a connection whose environment is production, the server still asks for
+    //    the connection's name for each row (FND-5 slice 6c): `executeQuery` opens the
+    //    safety dialog with that ask and waits for it, so this loop goes on to the next
+    //    row only once the row before was answered, and a row whose dialog was closed
+    //    counts as failed.
     const failedRows = new Set<number>();
     for (const statement of statements) {
       const outcome = await executeQuery(statement.sql, currentTab.id, false, {

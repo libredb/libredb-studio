@@ -8,8 +8,8 @@
  * classifies it with the confirmation gate's reader.
  */
 import type { ProviderLabels } from "@/lib/db/types";
-import { OXIA_COMMAND_TABLE, type OxiaCommandKind } from "./commands";
-import { OXIA_MAX_LIMIT } from "./constants";
+import { OXIA_COMMAND_TABLE, type OxiaCommandKind } from "@/lib/languages/oxiacli/commands";
+import { OXIA_MAX_LIMIT } from "@/lib/languages/oxiacli/constants";
 import type { OrderVerdict } from "./order";
 
 /** The reads plan mode drafts, in the order of the parser's table: all three. */
@@ -53,10 +53,6 @@ export const OXIA_LABELS: ProviderLabels = Object.freeze({
   vacuumGlobalTitle: "Not available",
   vacuumGlobalDesc: "Oxia compacts its own storage, and Studio sends it no maintenance.",
   statementLanguage: oxiaStatementLanguage(),
-  slowQueriesEmptyState: "Oxia keeps no query log",
-  sessionsEmptyState: "Oxia does not list client sessions",
-  tableStatsCaption:
-    "Oxia has no tables: its shards are listed under Shards, and its keys in the Keys panel and with list in the console.",
 });
 
 /**

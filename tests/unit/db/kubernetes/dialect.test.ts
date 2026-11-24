@@ -46,10 +46,10 @@ describe("the kubectl dialect's records", () => {
   });
 
   test("a tree click and Generate Command write one get, never a MongoDB document", () => {
-    expect(generateTableQuery(["shop", "widgets.probe.libredb.dev"], KUBECTL)).toBe(
+    expect(generateTableQuery(["shop", "widgets.probe.libredb.dev"], "kubernetes", KUBECTL)).toBe(
       "kubectl get widgets.probe.libredb.dev -n shop",
     );
-    expect(generateSelectQuery(["Cluster", "node/k3d-0"], [], KUBECTL)).toBe("kubectl get node/k3d-0");
+    expect(generateSelectQuery(["Cluster", "node/k3d-0"], [], "kubernetes", KUBECTL)).toBe("kubectl get node/k3d-0");
   });
 });
 

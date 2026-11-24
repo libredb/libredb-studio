@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -15,13 +15,26 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
 
-// ─── Mock provider ──────────────────────────────────────────────────────────
+const { createDatabaseProvider, readProviderDeclarations: realReadProviderDeclarations } = await import(
+  "@/lib/db/factory"
+);
+
+// ─── Mock declarations ──────────────────────────────────────────────────────
+// The route reads a provider's declarations through readProviderDeclarations, which hands back data: the mock's
+// answer is what the real one reads off `provider`, with supportsQueryCancel off the provider's surface.
 const mockProvider = createMockProvider();
-const mockCreateDatabaseProvider = mock(async () => mockProvider);
+const declarationsOf = (provider: ReturnType<typeof createMockProvider>) => ({
+  capabilities: provider.getCapabilities(),
+  labels: provider.getLabels(),
+  supportsQueryCancel: typeof (provider as { cancelQuery?: unknown }).cancelQuery === "function",
+});
+const mockReadProviderDeclarations = mock(async () => declarationsOf(mockProvider));
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -64,7 +77,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mock(),
-  createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
@@ -80,7 +93,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -102,12 +114,34 @@ const validConnection = {
 describe("POST /api/db/provider-meta", () => {
   beforeEach(() => {
     clearRateLimitState();
-    mockCreateDatabaseProvider.mockClear();
-    mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
+    mockReadProviderDeclarations.mockClear();
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
     mockGetSession.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () =>
+      POST(createMockRequest("/api/db/provider-meta", { method: "POST", body: { connection } }) as never);
+    mockReadProviderDeclarations.mockRejectedValueOnce(
+      new DatabaseConfigError(`the file ${password} is not a database`, "postgres"),
+    );
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "CONFIG_ERROR", error: withheldErrorMessage("DatabaseConfigError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockReadProviderDeclarations.mockRejectedValueOnce(
+      new DatabaseConfigError("the file is not a database", "postgres"),
+    );
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "CONFIG_ERROR", error: "the file is not a database" });
   });
 
   test("returns 401 when no session exists", async () => {
@@ -151,7 +185,7 @@ describe("POST /api/db/provider-meta", () => {
     }>(res);
 
     expect(res.status).toBe(200);
-    expect(mockCreateDatabaseProvider).toHaveBeenCalled();
+    expect(mockReadProviderDeclarations).toHaveBeenCalled();
     expect(data.capabilities).toBeDefined();
     expect(data.labels).toBeDefined();
     expect(data.capabilities.queryLanguage).toBe("sql");
@@ -171,8 +205,60 @@ describe("POST /api/db/provider-meta", () => {
     expect((await read()).supportsQueryCancel).toBe(false);
 
     const cancellable = Object.assign(createMockProvider(), { cancelQuery: async () => true });
-    mockCreateDatabaseProvider.mockImplementation(async () => cancellable);
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(cancellable));
     expect((await read()).supportsQueryCancel).toBe(true);
+  });
+
+  test("answers a tunnelled record's declarations without opening its tunnel", async () => {
+    mockReadProviderDeclarations.mockImplementation(realReadProviderDeclarations as never);
+    const res = await POST(
+      createMockRequest("/api/db/provider-meta", {
+        method: "POST",
+        body: {
+          ...validConnection,
+          sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+        },
+      }) as never,
+    );
+    const data = await parseResponseJSON<{ capabilities: Record<string, unknown>; error?: string }>(res);
+
+    expect(data.error).toBeUndefined();
+    expect(res.status).toBe(200);
+    expect(data.capabilities.queryLanguage).toBe("sql");
+    expect(data.capabilities.supportsQueryCancel).toBe(true);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+  });
+
+  test("a masking exemption a provider declares that Studio's record does not hold never reaches the browser", async () => {
+    mockReadProviderDeclarations.mockImplementation(realReadProviderDeclarations as never);
+    const prototype = Object.getPrototypeOf(
+      await createDatabaseProvider(validConnection as DatabaseConnection),
+    ) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    const declaring = spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      const capabilities: ProviderCapabilities = {
+        ...original.call(this),
+        maskingExemptColumns: {
+          column: ".*",
+          reason: "Every column of this engine is said to carry no personal data.",
+        },
+      };
+      return capabilities;
+    });
+    try {
+      const res = await POST(
+        createMockRequest("/api/db/provider-meta", { method: "POST", body: validConnection }) as never,
+      );
+      const data = await parseResponseJSON<{ capabilities: Record<string, unknown>; error?: string }>(res);
+
+      expect(data.error).toBeUndefined();
+      expect(res.status).toBe(200);
+      expect(data.capabilities.queryLanguage).toBe("sql");
+      expect(Object.hasOwn(data.capabilities, "maskingExemptColumns")).toBe(false);
+      expect(declaring).toHaveBeenCalled();
+    } finally {
+      declaring.mockRestore();
+    }
   });
 
   test("returns 400 when body is empty", async () => {
@@ -203,7 +289,7 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 503 for ConnectionError", async () => {
-    mockCreateDatabaseProvider.mockRejectedValueOnce(new ConnectionError("Connection refused"));
+    mockReadProviderDeclarations.mockRejectedValueOnce(new ConnectionError("Connection refused"));
 
     const req = createMockRequest("/api/db/provider-meta", {
       method: "POST",
@@ -218,7 +304,7 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 500 for DatabaseError", async () => {
-    mockCreateDatabaseProvider.mockRejectedValueOnce(
+    mockReadProviderDeclarations.mockRejectedValueOnce(
       new DatabaseError("Internal failure", "postgres", "INTERNAL_ERROR"),
     );
 
@@ -236,7 +322,7 @@ describe("POST /api/db/provider-meta", () => {
   });
 
   test("returns 500 for generic error", async () => {
-    mockCreateDatabaseProvider.mockRejectedValueOnce(new Error("Unexpected failure"));
+    mockReadProviderDeclarations.mockRejectedValueOnce(new Error("Unexpected failure"));
 
     const req = createMockRequest("/api/db/provider-meta", {
       method: "POST",

@@ -14,6 +14,7 @@ import {
   ExecutionProfileError,
   PermissionDeniedError,
   QueryError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import { createErrorResponse } from "@/lib/api/errors";
 import { ApiErrorCode } from "@/lib/api/error-codes";
@@ -30,13 +31,19 @@ import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table"
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
+
+/** The notice an answer carrying database content opens with on this file's oracle connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("oracle"));
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -68,6 +75,7 @@ let connectionLog: {
   attrs?: Record<string, unknown>;
 }[] = [];
 let mockRollbackFn: () => Promise<void> = async () => {};
+let mockCommitFn: () => Promise<void> = async () => {};
 
 const createMockConnection = () => {
   const conn = {
@@ -82,7 +90,10 @@ const createMockConnection = () => {
       return mockConnCloseFn();
     },
     break: () => mockBreakFn(),
-    commit: async () => {},
+    commit: () => {
+      connectionLog.push({ event: "commit" });
+      return mockCommitFn();
+    },
     rollback: () => {
       connectionLog.push({ event: "rollback" });
       return mockRollbackFn();
@@ -135,6 +146,42 @@ const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMES
 const DB_TYPE_BFILE: oracledb.DbType = { num: 2020, name: "DB_TYPE_BFILE" };
 const DB_TYPE_CURSOR: oracledb.DbType = { num: 2021, name: "DB_TYPE_CURSOR" };
 const DB_TYPE_OBJECT: oracledb.DbType = { num: 2023, name: "DB_TYPE_OBJECT" };
+// A VECTOR column: dense, sparse and flexible ones share this one type; the value tells them apart.
+const DB_TYPE_VECTOR: oracledb.DbType = { num: 2033, name: "DB_TYPE_VECTOR" };
+
+/**
+ * The driver's `SparseVector`, as node-oracledb 26.0.0 decodes a sparse VECTOR value: the dimension
+ * count, a `Uint32Array` of positions and a typed array of values. The mocked module exports this class
+ * under the driver's name, so the provider's `instanceof oracledb.SparseVector` meets it as it meets the real one.
+ */
+class SparseVector {
+  constructor(
+    readonly numDimensions: number,
+    readonly indices: Uint32Array,
+    readonly values: Float32Array | Float64Array | Int8Array,
+  ) {}
+}
+
+/**
+ * Rows as the driver hands them under a per-call `fetchTypeHandler`: it asks the handler about every
+ * column and puts each value through the converter the handler answers, on `execute()` and on a result
+ * set's `getRows()` alike (node-oracledb `lib/impl/resultset.js`). A row's column with no converter is
+ * handed on as it came.
+ */
+function driverRows(rows: readonly unknown[], metaData: readonly unknown[], opts: unknown): unknown[] {
+  const handler = (opts as { fetchTypeHandler?: oracledb.FetchTypeHandler } | undefined)?.fetchTypeHandler;
+  const converters = (metaData as oracledb.Metadata[]).map((column) => {
+    const answer = handler?.(column);
+    return answer !== undefined && "converter" in answer ? ([column.name, answer.converter] as const) : undefined;
+  });
+  return rows.map((row) => {
+    const converted = { ...(row as Record<string, unknown>) };
+    for (const entry of converters) {
+      if (entry !== undefined) converted[entry[0]] = entry[1](converted[entry[0]]);
+    }
+    return converted;
+  });
+}
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -155,6 +202,8 @@ mock.module("oracledb", () => {
     DB_TYPE_BFILE,
     DB_TYPE_CURSOR,
     DB_TYPE_OBJECT,
+    DB_TYPE_VECTOR,
+    SparseVector,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -666,6 +715,8 @@ describe("OracleProvider", () => {
   beforeEach(() => {
     mockExecuteFn = async (sql: string) => defaultExecute(sql);
     mockConnCloseFn = async () => {};
+    mockCommitFn = async () => {};
+    mockRollbackFn = async () => {};
     mockBreakFn = async () => {};
     mockPoolCloseFn = async () => {};
     mockCreatePoolFn = async () => createMockPool();
@@ -989,6 +1040,77 @@ describe("OracleProvider", () => {
   // =========================================================================
 
   describe("query()", () => {
+    /** A pool that hands `connect()` its one connection and then refuses every checkout with `error`. */
+    function poolRefusingAfterConnect(error: Error) {
+      let checkouts = 0;
+      mockCreatePoolFn = async () => ({
+        getConnection: async () => {
+          checkouts += 1;
+          if (checkouts > 1) throw error;
+          connectionLog.push({ event: "acquire" });
+          return createMockConnection();
+        },
+        close: async () => {},
+        connectionsOpen: 1,
+        connectionsInUse: 1,
+      });
+    }
+
+    test("a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing", async () => {
+      poolRefusingAfterConnect(
+        new Error(
+          "NJS-503: connection to host 127.0.0.1 port 1521 could not be established. (CONNECTION_ID=x)\nconnect ECONNREFUSED 127.0.0.1:1521",
+        ),
+      );
+      await provider.connect();
+      connectionLog = [];
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(connectionLog).toEqual([]);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a pool checkout that waits out the queue timeout answers a ConnectionError naming the wait, not-sent", async () => {
+      poolRefusingAfterConnect(
+        new Error("NJS-040: connection request timeout. Request exceeded queueTimeout of 60000"),
+      );
+      await provider.connect();
+
+      const refused = await provider.query("SELECT 1 FROM dual").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      await provider.connect();
+      connectionLog = [];
+      mockExecuteFn = async () => {
+        throw new Error("NJS-500: connection to the Oracle Database was broken");
+      };
+
+      const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+      expect(failed).toBeInstanceOf(DatabaseError);
+      expect((failed as DatabaseError).outcome).toBeUndefined();
+      expect(connectionLog.map((entry) => entry.event)).toEqual(["acquire", "execute", "close"]);
+    });
+
     test("returns rows and fields from metaData", async () => {
       await provider.connect();
       const result = await provider.query("SELECT * FROM DUAL");
@@ -1074,6 +1196,8 @@ describe("OracleProvider", () => {
         error: "Permission denied: ORA-01031: insufficient privileges",
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 
@@ -1508,6 +1632,137 @@ describe("OracleProvider", () => {
         await provider.rollbackTransaction();
       });
     });
+
+    // VECTOR columns. Measured 2026-11-23 against Oracle 23.26.3 Free with node-oracledb 26.0.0 Thin
+    // (tests/live/oracle-vector-values.ts): the driver hands a FLOAT32, FLOAT64 or INT8 vector as a
+    // Float32Array, Float64Array or Int8Array, a flexible VECTOR(*, *) per row by its stored format, a
+    // sparse one as its SparseVector class and a binary one as a Uint8Array. A typed array of numbers is
+    // outside the value codec MCP answers every cell through, so the whole answer was refused, and the
+    // editor route wrote each one as an index-keyed object Oracle cannot read back.
+    describe("VECTOR columns", () => {
+      const VECTOR = (name: string) => ({ name, dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" });
+
+      /** An execute() that answers `rows` under `meta`, through the per-call handler's converters, as the driver does. */
+      function vectorExecute(meta: readonly oracledb.Metadata[], rows: Record<string, unknown>[]) {
+        return async (_sql: string, _params?: unknown[], opts?: unknown) => ({
+          rows: driverRows(rows, meta, opts),
+          metaData: meta,
+        });
+      }
+
+      beforeEach(async () => {
+        await provider.connect();
+      });
+
+      test("a VECTOR column is given a converter, and every other column keeps the driver's default", async () => {
+        await provider.query("SELECT v FROM vec_probe");
+        const handler = lastExecuteOpts.fetchTypeHandler as oracledb.FetchTypeHandler;
+        const answer = handler(VECTOR("V"));
+        expect(answer !== undefined && "converter" in answer && typeof answer.converter).toBe("function");
+        expect(handler({ dbType: DB_TYPE_VARCHAR, name: "NAME" })).toBeUndefined();
+        expect(handler({ dbType: DB_TYPE_RAW, name: "R" })).toBeUndefined();
+      });
+
+      test("a FLOAT32, FLOAT64 and INT8 vector, and a flexible column's rows, reach the row as arrays of numbers", async () => {
+        const meta = [VECTOR("F32"), VECTOR("F64"), VECTOR("I8"), VECTOR("FLEX")];
+        mockExecuteFn = vectorExecute(meta, [
+          {
+            F32: Float32Array.of(0.1, 1.5, -2.25),
+            F64: Float64Array.of(0.1, 1e300, -2),
+            I8: Int8Array.of(1, -128, 127),
+            FLEX: Float32Array.of(0.5, 2),
+          },
+          { F32: null, F64: null, I8: null, FLEX: Int8Array.of(3, -4) },
+        ]);
+        const result = await provider.query("SELECT f32, f64, i8, flex FROM vec_probe");
+        const [first, second] = result.rows as Record<string, unknown>[];
+        for (const cell of [first.F32, first.F64, first.I8, first.FLEX, second.FLEX]) {
+          expect(Array.isArray(cell)).toBe(true);
+        }
+        expect(first).toEqual({
+          F32: [Math.fround(0.1), 1.5, -2.25],
+          F64: [0.1, 1e300, -2],
+          I8: [1, -128, 127],
+          FLEX: [0.5, 2],
+        });
+        expect(second).toEqual({ F32: null, F64: null, I8: null, FLEX: [3, -4] });
+        expect(JSON.stringify(result.rows)).not.toContain('{"0":');
+        expect(result.columnTypes).toEqual({ F32: "VECTOR", F64: "VECTOR", I8: "VECTOR", FLEX: "VECTOR" });
+      });
+
+      test("a sparse vector reaches the row as its dimension count and two arrays of numbers", async () => {
+        const meta = [VECTOR("SP"), VECTOR("SP8")];
+        mockExecuteFn = vectorExecute(meta, [
+          {
+            SP: new SparseVector(5, Uint32Array.of(0, 3), Float32Array.of(1.5, 2.5)),
+            SP8: new SparseVector(4, Uint32Array.of(1), Int8Array.of(-7)),
+          },
+        ]);
+        const result = await provider.query("SELECT sp, sp8 FROM vec_probe");
+        const row = result.rows[0] as Record<string, { numDimensions: unknown; indices: unknown; values: unknown }>;
+        expect(row).toEqual({
+          SP: { numDimensions: 5, indices: [0, 3], values: [1.5, 2.5] },
+          SP8: { numDimensions: 4, indices: [1], values: [-7] },
+        });
+        expect(Array.isArray(row.SP.indices) && Array.isArray(row.SP.values)).toBe(true);
+        expect(Array.isArray(row.SP8.indices) && Array.isArray(row.SP8.values)).toBe(true);
+      });
+
+      // A binary vector's bits are bytes, and the value codec already answers bytes with its own tag,
+      // so the driver's Uint8Array is handed on untouched. This guard fails if it is turned into numbers.
+      test("a binary vector stays the driver's bytes, and a NULL stays null", async () => {
+        const bytes = Uint8Array.of(255, 1);
+        mockExecuteFn = vectorExecute([VECTOR("BIN"), VECTOR("F32")], [{ BIN: bytes, F32: null }]);
+        const result = await provider.query("SELECT bin, f32 FROM vec_probe");
+        const row = result.rows[0] as Record<string, unknown>;
+        expect(row.BIN).toBe(bytes);
+        expect(row.F32).toBeNull();
+      });
+
+      test.each([
+        ["a Uint16Array", Uint16Array.of(1, 2)],
+        ["an instance of the class Object", { numDimensions: 5 }],
+        ["an object with no class", Object.create(null) as object],
+        ["a string", "[1,2]"],
+      ])("a VECTOR value of a form the driver does not hand is refused by name: %s", async (form, value) => {
+        mockExecuteFn = vectorExecute([VECTOR("V")], [{ V: value }]);
+        const refused = await provider.query("SELECT v FROM vec_probe").catch((caught: unknown) => caught);
+        expect(refused).toBeInstanceOf(QueryError);
+        expect((refused as Error).message).toBe(
+          `Oracle handed a VECTOR value as ${form}, which this provider does not read`,
+        );
+      });
+
+      test("queryInTransaction() converts the same way", async () => {
+        await provider.beginTransaction();
+        mockExecuteFn = vectorExecute([VECTOR("F32")], [{ F32: Float32Array.of(0.5, 1.5) }]);
+        const result = await provider.queryInTransaction("SELECT f32 FROM vec_probe");
+        expect(result.rows).toEqual([{ F32: [0.5, 1.5] }]);
+        await provider.rollbackTransaction();
+      });
+
+      // The export writes an object cell as its quoted JSON, and Oracle reads a dense vector back from
+      // exactly that text: measured accepted into a FLOAT32 and an INT8 column. The index-keyed form the
+      // typed array gave before was refused (ORA-51804).
+      test("a SQL INSERT export of the read writes vector literals Oracle reads back", async () => {
+        mockExecuteFn = vectorExecute(
+          [VECTOR("F32"), VECTOR("I8")],
+          [{ F32: Float32Array.of(0.1, 1.5, -2.25), I8: Int8Array.of(1, -128, 127) }],
+        );
+        const result = await provider.query("SELECT f32, i8 FROM vec_probe");
+        const rows = JSON.parse(JSON.stringify(result.rows)) as Record<string, unknown>[];
+        const file = buildResultExport("sql-insert", {
+          rows,
+          fields: result.fields,
+          tabName: "vec_probe",
+          dialect: "oracle",
+          columnTypes: result.columnTypes,
+        });
+        expect(file.content).toBe(
+          `INSERT INTO vec_probe ("F32", "I8") VALUES ('[0.10000000149011612,1.5,-2.25]', '[1,-128,127]');`,
+        );
+      });
+    });
   });
 
   // =========================================================================
@@ -1576,8 +1831,8 @@ describe("OracleProvider", () => {
       // The polarity of this guard is unchanged: no trailing `;`, because that is what
       // Oracle answers ORA-00933 for. What moved is the row bound, which #816 took out of
       // the generated text and into the `limit` execution option.
-      expect(generateTableQuery(["APP", "APP_CUSTOMERS"], caps)).toBe("SELECT * FROM APP.APP_CUSTOMERS");
-      expect(generateSelectQuery(["APP", "APP_CUSTOMERS"], [], caps)).toBe(
+      expect(generateTableQuery(["APP", "APP_CUSTOMERS"], "oracle", caps)).toBe("SELECT * FROM APP.APP_CUSTOMERS");
+      expect(generateSelectQuery(["APP", "APP_CUSTOMERS"], [], "oracle", caps)).toBe(
         "SELECT\n  *\nFROM APP.APP_CUSTOMERS\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
       );
     });
@@ -2524,6 +2779,74 @@ describe("OracleProvider", () => {
       await expect(provider.queryInTransaction("SELECT 1 FROM DUAL")).rejects.toThrow(QueryError);
     });
 
+    /** A pool that hands out connections until `refuseNext` is set, then refuses one checkout with it. */
+    function poolRefusingOnce() {
+      const state: { refuseNext: Error | undefined } = { refuseNext: undefined };
+      mockCreatePoolFn = async () => ({
+        ...createMockPool(),
+        getConnection: async () => {
+          const refusal = state.refuseNext;
+          state.refuseNext = undefined;
+          if (refusal !== undefined) throw refusal;
+          connectionLog.push({ event: "acquire" });
+          return createMockConnection();
+        },
+      });
+      return state;
+    }
+
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent and holds no transaction", async () => {
+      const pool = poolRefusingOnce();
+      await provider.connect();
+      connectionLog = [];
+      pool.refuseNext = new Error(
+        "NJS-503: connection to host 127.0.0.1 port 1521 could not be established. (CONNECTION_ID=x)\nconnect ECONNREFUSED 127.0.0.1:1521",
+      );
+
+      const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(connectionLog).toEqual([]);
+      expect(provider.isInTransaction()).toBe(false);
+      const response = createErrorResponse(refused, { route: "api/db/transaction" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin whose pool checkout waits out the queue timeout answers a ConnectionError naming the wait, not-sent", async () => {
+      const pool = poolRefusingOnce();
+      await provider.connect();
+      pool.refuseNext = new Error("NJS-040: connection request timeout. Request exceeded queueTimeout of 60000");
+
+      const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      expect(provider.isInTransaction()).toBe(false);
+      const response = createErrorResponse(refused, { route: "api/db/transaction" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
     test("queryInTransaction maps driver errors", async () => {
       await provider.connect();
       await provider.beginTransaction();
@@ -2537,6 +2860,135 @@ describe("OracleProvider", () => {
 
       mockExecuteFn = async (sql: string) => defaultExecute(sql);
       await provider.rollbackTransaction();
+    });
+
+    /** The driver's end of a transaction a test makes fail, per provider method. */
+    const driverEnd = {
+      commitTransaction: (fn: () => Promise<void>) => {
+        mockCommitFn = fn;
+      },
+      rollbackTransaction: (fn: () => Promise<void>) => {
+        mockRollbackFn = fn;
+      },
+    } as const;
+
+    /** A Thick-mode close that fails with the native error, as node-oracledb can raise it on a pooled close. */
+    const closeFails = async () => {
+      throw new Error("DPI-1010: not connected");
+    };
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s whose connection close fails answers its own success, says why, and holds no transaction",
+      async (end) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        mockConnCloseFn = closeFails;
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const answered = await provider[end]().catch((error: unknown) => error);
+
+          expect(answered).toBeUndefined();
+          expect(provider.isInTransaction()).toBe(false);
+          const warnings = warn.mock.calls.map((call) => String(call[0]));
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toContain("connection of an ended transaction");
+          expect(warnings[0]).toContain("DPI-1010");
+        } finally {
+          warn.mockRestore();
+        }
+        mockConnCloseFn = async () => {};
+        await provider.beginTransaction();
+        expect(provider.isInTransaction()).toBe(true);
+        await provider.rollbackTransaction();
+      },
+    );
+
+    test.each([
+      ["commitTransaction", "ORA-02091: transaction rolled back\nORA-00001: unique constraint (APP.ORDERS_N) violated"],
+      ["rollbackTransaction", "ORA-03113: end-of-file on communication channel"],
+    ] as const)(
+      "%s that fails answers its own mapped error rather than the close's, and holds no transaction",
+      async (end, message) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        driverEnd[end](async () => {
+          throw new Error(message);
+        });
+        mockConnCloseFn = closeFails;
+        const warn = spyOn(console, "warn").mockImplementation(() => {});
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect((failed as DatabaseError).message).toContain(message.slice(0, 9));
+          expect((failed as DatabaseError).message).not.toContain("DPI-1010");
+          expect(errorOutcome(failed)).toBe("unknown");
+          expect(provider.isInTransaction()).toBe(false);
+          expect(warn.mock.calls.map((call) => String(call[0])).join("\n")).toContain("DPI-1010");
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          warn.mockRestore();
+        }
+      },
+    );
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s whose connection is lost answers a DatabaseError with outcome unknown, not an internal error",
+      async (end) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        connectionLog = [];
+        driverEnd[end](async () => {
+          throw new Error("NJS-500: connection to the Oracle Database was broken");
+        });
+
+        const failed = await provider[end]().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(provider.isInTransaction()).toBe(false);
+        expect(connectionLog.map((entry) => entry.event).at(-1)).toBe("close");
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.DATABASE_ERROR,
+          kind: "database",
+          outcome: "unknown",
+        });
+      },
+    );
+
+    test("a ROLLBACK sent while the COMMIT of the same transaction closes its connection answers its own outcome and closes the connection once", async () => {
+      await provider.connect();
+      await provider.beginTransaction();
+      // The first close waits until the test opens the gate; a later close of the same connection
+      // answers what node-oracledb answers a close of a connection already closing.
+      const closeReached = Promise.withResolvers<void>();
+      const gate = Promise.withResolvers<void>();
+      let closes = 0;
+      mockConnCloseFn = async () => {
+        closes += 1;
+        if (closes > 1) throw new Error("NJS-003: invalid or closed connection");
+        closeReached.resolve();
+        await gate.promise;
+      };
+
+      const committed = provider.commitTransaction().catch((error: unknown) => error);
+      const rolledBack = provider.rollbackTransaction().catch((error: unknown) => error);
+      await closeReached.promise;
+      gate.resolve();
+
+      expect(await committed).toBeUndefined();
+      expect(await rolledBack).toBeUndefined();
+      expect(closes).toBe(1);
+      expect(provider.isInTransaction()).toBe(false);
     });
 
     // The five-minute timeout of PostgreSQL and MySQL, armed only on a provider created with an owner
@@ -6509,14 +6961,15 @@ describe("OracleProvider.queryReadOnly", () => {
       if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
         return answered;
       }
-      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched.
+      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched, each value
+      // through the per-call handler's converter.
       const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
       return {
         metaData,
         resultSet: {
           getRows: async (count: number) => {
             connectionLog.push({ event: `getRows ${count}` });
-            return rows.slice(0, count);
+            return driverRows(rows.slice(0, count), metaData, opts);
           },
           close: async () => {
             connectionLog.push({ event: "closeResultSet" });
@@ -6625,9 +7078,13 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : { rows: [{ DOC: "x".repeat(500) }], metaData: [{ name: "DOC", dbType: DB_TYPE_CLOB, dbTypeName: "CLOB" }] };
-    await expect(provider.queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET)).rejects.toThrow(
+    const refused = await provider
+      .queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the byte budget: 512 bytes > 400 allowed",
     );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
     expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
@@ -6636,9 +7093,35 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : { rows: [{ ID: 1 }, { ID: 2 }, { ID: 3 }], metaData: [{ name: "ID", dbType: DB_TYPE_VARCHAR }] };
-    await expect(provider.queryReadOnly("SELECT id FROM app_owner.t1", BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const refused = await provider
+      .queryReadOnly("SELECT id FROM app_owner.t1", BUDGET)
+      .catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
+  });
+
+  test("a VECTOR column is converted on the result set's rows", async () => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : {
+            rows: [
+              {
+                F32: Float32Array.of(0.5, -2.25),
+                SP: new SparseVector(3, Uint32Array.of(2), Float64Array.of(4.5)),
+              },
+            ],
+            metaData: [
+              { name: "F32", dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" },
+              { name: "SP", dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" },
+            ],
+          };
+    const result = await provider.queryReadOnly("SELECT f32, sp FROM app_owner.vec", {
+      ...BUDGET,
+      maxResultBytes: 4_096,
+    });
+    expect(result.rows).toEqual([{ F32: [0.5, -2.25], SP: { numDimensions: 3, indices: [2], values: [4.5] } }]);
+    expect(Array.isArray((result.rows[0] as Record<string, unknown>).F32)).toBe(true);
   });
 
   test.each([
@@ -6683,9 +7166,11 @@ describe("OracleProvider.queryReadOnly", () => {
       CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
         ? undefined
         : new Error("NJS-123: call timeout of 2500 ms exceeded");
-    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the time budget: no answer within 2500ms",
     );
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     expect(events().slice(-2)).toEqual(["rollback", "close"]);
   });
 
@@ -6872,6 +7357,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [target],
       resolve: async () => target,
+      textScrub: fakeTextScrub,
       acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         return acquireExecutionProfileProvider(connection, profile);
@@ -6906,10 +7392,14 @@ describe("MCP run_read_query on an Oracle connection", () => {
       if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
         return answered;
       }
+      // The rows only when fetched, each value through the per-call handler's converter, as the driver does.
       const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
       return {
         metaData,
-        resultSet: { getRows: async (count: number) => rows.slice(0, count), close: async () => {} },
+        resultSet: {
+          getRows: async (count: number) => driverRows(rows.slice(0, count), metaData, opts),
+          close: async () => {},
+        },
       };
     };
     mockConnCloseFn = async () => {};
@@ -6958,7 +7448,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
       hint: "Call again with offset 2 for the next page.",
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("the check runs before every statement, never once at the open", async () => {
@@ -6971,6 +7461,45 @@ describe("MCP run_read_query on an Oracle connection", () => {
       "SET TRANSACTION READ ONLY",
       ...CHECKS,
       "SELECT id FROM app_owner.orders FETCH FIRST 101 ROWS ONLY",
+    ]);
+  });
+
+  // MCP answers every cell through the value codec, which refuses a typed array of numbers and the driver's
+  // SparseVector by name, and that refusal took the whole answer: "The value codec cannot encode a
+  // Float32Array, at "/0/F32"." The binary vector was already answered, as the codec's bytes tag.
+  test("a statement that selects numeric, sparse and binary vectors answers its rows", async () => {
+    const vector = (name: string) => ({ name, dbType: DB_TYPE_VECTOR, dbTypeName: "VECTOR" });
+    statement = () => ({
+      rows: [
+        {
+          ID: 1,
+          F32: Float32Array.of(0.5, 1.5, -2.25),
+          I8: Int8Array.of(1, -128, 127),
+          SP: new SparseVector(5, Uint32Array.of(0, 3), Float32Array.of(1.5, 2.5)),
+          BIN: Uint8Array.of(255, 1),
+        },
+      ],
+      metaData: [ID, vector("F32"), vector("I8"), vector("SP"), vector("BIN")],
+    });
+
+    const result = await call({ sql: "SELECT id, f32, i8, sp, bin FROM app_owner.vec" });
+
+    expect(result.isError).toBeUndefined();
+    const answer = result.structuredContent as { rows: unknown[]; columns: { name: string; type?: string }[] };
+    expect(answer.rows).toEqual([
+      {
+        ID: 1,
+        F32: [0.5, 1.5, -2.25],
+        I8: [1, -128, 127],
+        SP: { numDimensions: 5, indices: [0, 3], values: [1.5, 2.5] },
+        BIN: { $: "bytes", v: "/wE=" },
+      },
+    ]);
+    expect(answer.columns.filter((column) => column.name !== "ID").map((column) => column.type)).toEqual([
+      "VECTOR",
+      "VECTOR",
+      "VECTOR",
+      "VECTOR",
     ]);
   });
 
@@ -7044,7 +7573,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(executed().at(-1)).toBe("DELETE FROM app_owner.orders");
     expect(result.isError).toBe(true);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect((result.content[1] as { text: string }).text).toStartWith(
       `${MCP_ENGINE_ERROR_PREFIX}ORA-28194: Can perform read operations only`,
     );
@@ -7068,6 +7597,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
     expect((result.content[1] as { text: string }).text).toContain("ORA-01456");
   });
 
+  // Studio's own refusal at the open, in its own words with no notice.
   const refused = (sentence: string) => ({
     content: [
       {
@@ -7075,16 +7605,25 @@ describe("MCP run_read_query on an Oracle connection", () => {
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: {
+      error: { kind: "studio-profile-refusal", code: "AGENT_CREDENTIAL_WITH_CONNECTION_STRING", outcome: "unknown" },
+    },
     isError: true as const,
   });
 
   // The check runs on the statement call, and its refusal quotes names any user of the database may have chosen, so it
-  // comes behind the untrusted-data notice.
+  // comes behind the notice naming the provider that wrote it.
   const refusedAtStatement = (sentence: string) => ({
     content: [
-      { type: "text" as const, text: MCP_UNTRUSTED_NOTICE },
-      { type: "text" as const, text: `run_read_query cannot run on this connection: ${sentence}.` },
+      { type: "text" as const, text: providerTextNotice(providerAuthor("oracle")) },
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
     ],
+    structuredContent: {
+      error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+    },
     isError: true as const,
   });
 
@@ -7166,6 +7705,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
           text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });
@@ -7190,6 +7730,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
           text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
         },
       ],
+      structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
     const sent = connectionLog.filter((entry) => entry.event === "execute").at(-1);

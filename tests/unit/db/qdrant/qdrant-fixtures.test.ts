@@ -43,6 +43,7 @@ import {
   QDRANT_OPENAPI_SOURCE,
   QDRANT_V1_OPERATION_IDS,
 } from "../../../live/qdrant-openapi-extract";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const IMAGE = "ghcr.io/qdrant/qdrant/qdrant:v1.19.1";
 const DIGEST = "sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822";
@@ -57,7 +58,7 @@ const OPTIONS = buildQdrantConnectionOptions(
     port: 6333,
     createdAt: new Date(0),
   } as unknown as DatabaseConnection,
-  { executionReadOnly: false, queryTimeout: 30_000 },
+  { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
 );
 
 const context = (op: QdrantOp, phase: "connect" | "request" = "request"): QdrantErrorContext => ({

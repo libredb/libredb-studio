@@ -8,9 +8,9 @@
  * server-side row or byte bound, so the transport stops reading at the cap below and the parsed rows are held to the
  * budget again; every refusal is the shared sentence of `read-only-budget.ts`.
  */
-import { QueryError } from "@/lib/db/errors";
+import { ByteBudgetRefusal, RowBudgetRefusal } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
+import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type { LibSQLStatementResult } from "./transport";
 
 /**
@@ -39,11 +39,11 @@ export function readAgentAnswer(
 ): QueryResult {
   const rows = answer.rows;
   if (rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "libsql", sql);
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "libsql", sql);
   }
   const bytes = measureResultBytes(rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "libsql", sql);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "libsql", sql);
   }
   const reportedMs = Math.round(answer.executionTimeMs);
   return {

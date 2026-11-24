@@ -4,7 +4,7 @@
  * Uses ssh2 library for tunnel creation.
  */
 
-import { Client } from "ssh2";
+import { Client, type ClientChannel } from "ssh2";
 import net from "net";
 import crypto from "crypto";
 import { tunnelRoute } from "@/lib/db/connection-fingerprint";
@@ -34,9 +34,10 @@ export interface TunnelInfo {
 }
 
 /**
- * One forward, as the pool's lookups ask for it: the route it goes through and the address it
- * reaches. Both, because both are in the key - a forward is only the same forward when the bytes
- * enter by the same bastion and leave at the same far end.
+ * One forward, as the pool's lookups ask for it: the route it goes through, the credential it was
+ * opened with and the host key it pins (all read from `ssh`) and the address it reaches. All of them,
+ * because all of them are in the key - a forward is only the same forward when the bytes enter by the
+ * same bastion, under the same credential and pin, and leave at the same far end.
  *
  * `farEnd` is {@link TunnelFarEnd} rather than a second `{ host, port }` of this module's own: it
  * is the same value the factory puts under `TUNNEL_FAR_END`, and one name for it keeps the pool
@@ -47,15 +48,32 @@ export interface TunnelForward {
   farEnd: TunnelFarEnd;
 }
 
+/**
+ * Who holds one pooled forward, for the one question a failed connect asks: may it close the forward?
+ *
+ * Concurrent connects of one forward are handed the one forward, so the answer is not the caller's
+ * own: a sibling may still be connecting through it, or a provider may already serve through it.
+ * `connecting` counts the callers handed the forward (the one that dialled it, those that joined the
+ * dial, and those served it from the pool) whose provider has neither opened nor failed yet.
+ * `providerOpened` records that a provider opened on it, which leaves the forward to the connection's
+ * own teardown (`removeProvider`, the idle sweep), as every forward serving a provider is.
+ */
+interface ForwardClaims {
+  connecting: number;
+  providerOpened: boolean;
+}
+
 interface PooledTunnel {
   /** Kept beside the entry so the by-connection lookups can answer without parsing the key. */
   connectionId: string;
   info: TunnelInfo;
+  claims: ForwardClaims;
 }
 
 /**
  * Active pooled tunnels, keyed by connection id AND the whole forward: the bastion route it is
- * opened through and the far end it reaches.
+ * opened through, the far end it reaches, the credential it was opened with and the host key it pins
+ * ({@link poolKey}).
  *
  * WHY THE FORWARD IS IN THE KEY (D86). Keyed by the connection id alone, this map answered a
  * lookup for `db-b:5432` with the forward a previous caller had opened to `db-a:5432`, and
@@ -84,36 +102,102 @@ interface PooledTunnel {
  * BY CONNECTION ID, and `closeSSHTunnel` closes every forward under it.
  *
  * WHAT THAT COSTS, stated rather than left to be found: one connection id may hold as many live
- * forwards as it has been asked for distinct (route, far end) pairs, each an open SSH client and
- * a listening loopback socket, and nothing here bounds that count. MEASURED: 50 far ends across
- * two bastions under one id gave 50 live servers and 50 live clients. Nothing in this map reaps a
- * superseded forward either - the provider cache miss that opens the next one disconnects the
- * PROVIDER and leaves the forward pooled - so what takes them is the connection's own teardown,
- * `removeProvider` and the 30-minute idle sweep, both of which close BY CONNECTION ID and take
- * every forward with them. The count is therefore what one id accumulates inside one idle window,
- * and it is caller-driven: `src/lib/seed/resolve-connection.ts` returns a posted inline connection
- * verbatim, id included. Refusing instead would cap it at one, and is exactly what the paragraph
+ * forwards as it has been asked for distinct (route, far end, credential, pin) tuples, each an open SSH
+ * client and a listening loopback socket, and nothing here bounds that count. MEASURED: 50 far
+ * ends across two bastions under one id gave 50 live servers and 50 live clients. Nothing in this
+ * map reaps a superseded forward either, and the provider cache miss that opens the next one leaves the
+ * provider on the old forward in its own cache entry, so what takes them is the connection's own
+ * teardown: `removeProvider`, and the 30-minute idle sweep once no provider of the connection is left,
+ * both of which close BY CONNECTION ID and take every forward with them, or the end of that forward's
+ * own SSH session. The count is therefore
+ * what one id accumulates inside one idle window, and it is caller-driven:
+ * `src/lib/seed/resolve-connection.ts` returns a posted inline connection verbatim, id included.
+ * Refusing instead would cap it at one, and is exactly what the paragraph
  * above says the honest population cannot afford; bounding it is filed rather than guessed at.
  */
 const activeTunnels = new Map<string, PooledTunnel>();
 
 /**
+ * The dial in progress for a pool key, under the same key as {@link activeTunnels}, so concurrent
+ * calls for one tunnel share one SSH connection: a call that finds no pooled forward but a dial
+ * under way is handed that dial, and every caller waiting on it receives the one forward it opens,
+ * or the one error it fails with.
+ *
+ * An entry lives only while its dial is pending. A dial that succeeds has put its forward in
+ * `activeTunnels` before it resolves, so the next call finds the forward there; a dial that fails
+ * leaves nothing behind, so the next call dials again.
+ */
+const pendingDials = new Map<string, { dial: Promise<TunnelInfo>; claims: ForwardClaims }>();
+
+/**
+ * The claims of every pooled forward, by the `TunnelInfo` its callers were handed, which is what
+ * {@link tunnelProviderOpened} and {@link releaseUnopenedTunnel} are given. A one-shot tunnel has none.
+ */
+const forwardClaims = new WeakMap<TunnelInfo, ForwardClaims>();
+
+/**
  * Length-framed, every component by the same `${length}:${value}` rule and none of them bare, so
- * no two different (id, far end, route) tuples can slide across a boundary and answer one key -
- * `connectionFingerprint`'s own rule, for its own reason: a connection id is a string the caller
+ * no two different (id, far end, route, credential, pin) tuples can slide across a boundary and answer
+ * one key - `connectionFingerprint`'s own rule, for its own reason: a connection id is a string the caller
  * supplies, and so is a host.
  *
  * The route component is `tunnelRoute`'s output rather than a second reading of `SSHTunnelConfig`,
  * so the pool can only reuse a forward between two records the object-edit seal calls the same
- * server. That also decides what is NOT in the key: the tunnel's secrets and its pinned host key,
- * which `tunnelRoute` leaves out because they say who may reach the bastion and what this
- * connection trusts, not which machine it is - rotating a password must not strand the live
- * forward behind a second one.
+ * server.
+ *
+ * THE CREDENTIAL IS IN THE KEY TOO, as {@link tunnelCredentialDigest} of it: a forward is shared only
+ * by calls that present the credential it was opened with. A call that presents another one dials its
+ * own forward with that credential, and a dial that fails is that call's own failure.
+ *
+ * THE PINNED HOST KEY IS IN THE KEY as well, as the connection's own `hostKeyFingerprint` (empty when
+ * it pins none): a forward is shared only by calls that pin the bastion host key it was opened under,
+ * or that pin none beside a forward opened with none. The pin is checked only when a forward is dialled,
+ * so a call that pins another key dials its own forward and that dial checks it. The pin is public key
+ * material and is framed as it is, not digested.
+ *
+ * WHAT THAT COSTS, decided rather than left to be found: a changed credential or pin opens its own
+ * forward, and the forward opened with the old one is not closed by the change. It stays open, shared by
+ * calls that present the old credential, until the connection's own teardown closes every forward under
+ * the connection id: removing the connection's providers (`removeProvider`, or disconnecting the
+ * connection), or the idle sweep once no provider of the connection is left. A forward no provider
+ * opened on also closes on its last release, and every forward ends with its own SSH session. That is
+ * the same lifetime every superseded forward of the {@link activeTunnels} docblock already has. The
+ * provider cache key frames the tunnel credential and pin too, so the provider opened on the old forward
+ * is a provider of its own and goes by its own idle eviction.
  */
 function poolKey(connectionId: string, sshConfig: SSHTunnelConfig, remoteHost: string, remotePort: number): string {
-  return [connectionId, remoteHost, String(remotePort), tunnelRoute(sshConfig)]
+  return [
+    connectionId,
+    remoteHost,
+    String(remotePort),
+    tunnelRoute(sshConfig),
+    tunnelCredentialDigest(sshConfig),
+    sshConfig.hostKeyFingerprint ?? "",
+  ]
     .map((value) => `${value.length}:${value}`)
     .join("");
+}
+
+/**
+ * A SHA-256 digest of the credential a tunnel presents to its bastion: the auth method, the password,
+ * the private key and its passphrase, length-framed by the rule {@link poolKey} follows, so no two
+ * credentials answer one digest by sliding a value across a boundary. It is the construction
+ * `credentialDigest` in `src/lib/db/provider-cache-key.ts` uses for the same four values, taken
+ * synchronously here because the pool's lookups are synchronous: {@link getTunnelInfo}, and the
+ * check in {@link createSSHTunnel} that must find a dial under way before it registers its own.
+ *
+ * A digest rather than the values themselves, so the pool's keys never hold the secret a second time.
+ */
+function tunnelCredentialDigest(sshConfig: SSHTunnelConfig): string {
+  const framed = [
+    String(sshConfig.authMethod),
+    sshConfig.password ?? "",
+    sshConfig.privateKey ?? "",
+    sshConfig.passphrase ?? "",
+  ]
+    .map((value) => `${value.length}:${value}`)
+    .join("");
+  return crypto.createHash("sha256").update(framed).digest("hex");
 }
 
 /**
@@ -172,7 +256,12 @@ export interface CreateSSHTunnelOptions {
    * Whether the tunnel joins the by-connection-id pool every other provider for that
    * connection reuses. Default true, which is the pooled lifecycle: the tunnel outlives
    * the call, and `removeProvider` / the idle sweep close it once nothing serves the
-   * connection.
+   * connection. A tunnel whose SSH session ends, by an error or by the bastion ending it,
+   * closes itself and leaves the pool, pooled or not.
+   *
+   * A shared call counts its caller as connecting through the forward until the caller makes
+   * exactly one report: {@link tunnelProviderOpened} or {@link releaseUnopenedTunnel}. The last
+   * release of a forward no provider opened on closes it.
    *
    * `false` requests a one-shot tunnel for a caller that owns the whole lifecycle and
    * closes it itself - the routes that build a provider outside both provider caches
@@ -186,6 +275,11 @@ export interface CreateSSHTunnelOptions {
 /**
  * Create an SSH tunnel for a database connection.
  * Returns the local host/port to connect the database client to.
+ *
+ * Every shared call is answered by exactly one of {@link tunnelProviderOpened} or
+ * {@link releaseUnopenedTunnel} on the tunnel it returned, whether it dialled the forward,
+ * joined the dial under way or was served the pooled forward. The last release of a forward no
+ * provider opened on closes it.
  */
 export async function createSSHTunnel(
   connectionId: string,
@@ -197,17 +291,26 @@ export async function createSSHTunnel(
   const shared = options.shared !== false;
   const key = poolKey(connectionId, sshConfig, remoteHost, remotePort);
 
-  // Return the existing tunnel for THIS route and far end if one is already active.
-  // Note: cached tunnel may be stale if the SSH connection dropped silently.
-  // Callers should handle connection errors and call closeSSHTunnel() to evict stale entries.
+  // Return the existing tunnel for THIS route, far end, credential and pin if one is already active.
+  // A tunnel whose SSH session ssh2 has seen end is not here: that end runs its cleanup. A session that
+  // drops without a FIN or an RST still is, and may be stale, since neither SSH nor TCP keepalive is configured.
+  // A call made while the dial for this forward is still under way shares that dial.
+  // Each such caller is counted as connecting through the forward until it reports its provider.
   if (shared) {
     const existing = activeTunnels.get(key);
     if (existing) {
+      existing.claims.connecting += 1;
       return existing.info;
+    }
+    const pending = pendingDials.get(key);
+    if (pending) {
+      pending.claims.connecting += 1;
+      return pending.dial;
     }
   }
 
-  return new Promise((resolve, reject) => {
+  const claims: ForwardClaims = { connecting: 1, providerOpened: false };
+  const dial = new Promise<TunnelInfo>((resolve, reject) => {
     const sshClient = new Client();
     let localServer: net.Server | null = null;
     // What the host key verifier decided, read back after ssh2 reports the handshake
@@ -215,12 +318,22 @@ export async function createSSHTunnel(
     // fingerprint, and the two fingerprints are the whole diagnostic value here.
     let hostKeyRejection: string | null = null;
     let acceptedFingerprint: string | undefined;
+    // Whether this call has handed its tunnel out, which happens once the loopback listener is up.
+    let handedOut = false;
+    // Set by the first cleanup. The session's end reaches cleanup again after the owner closed the
+    // tunnel, and by then a newer forward may hold this pool key, so only the first run may act.
+    let closed = false;
 
     const cleanup = async () => {
-      // Only a pooled tunnel owns its map entry. A one-shot tunnel may share the id of a
-      // pooled one serving live providers, and deleting that entry would orphan it: the
-      // SSH client and local server would stay open with nothing left holding a handle.
-      if (shared) {
+      if (closed) return;
+      closed = true;
+      // Only a pooled tunnel owns its map entry, and only while the entry is still its own. A one-shot
+      // tunnel may share the id of a pooled one serving live providers. A pooled forward is the only one
+      // under its key while it lives, since a call for the key joins the dial under way instead of
+      // dialling a second; the identity check keeps that invariant from being assumed here. Deleting
+      // another forward's entry would orphan it: its SSH client and local server would stay open with
+      // nothing left holding a handle.
+      if (shared && activeTunnels.get(key)?.info.close === cleanup) {
         activeTunnels.delete(key);
       }
       if (localServer) {
@@ -228,6 +341,20 @@ export async function createSSHTunnel(
         localServer = null;
       }
       sshClient.end();
+    };
+
+    // The SSH session is gone or can no longer open channels. Cleanup takes the forward out of the pool
+    // and closes its loopback listener, so the provider that used it meets a refused connection on its
+    // next dial, and the next request for the forward opens a new session. Once the tunnel was handed
+    // out, the loss is logged once here, since the event that ended the session reaches no caller. Before
+    // that, the same event is the dial's own failure, which the caller receives as the rejection.
+    const sessionLost = (cause: string) => {
+      if (handedOut && !closed) {
+        logger.warn(`SSH tunnel for ${connectionId} to ${remoteHost}:${remotePort} closed: ${cause}`, {
+          connectionId,
+        });
+      }
+      cleanup();
     };
 
     // ssh2 (1.17.0) dials the bastion with Nagle left on, so under Node every small request
@@ -241,20 +368,45 @@ export async function createSSHTunnel(
     sshClient.on("ready", () => {
       // Create a local TCP server that forwards to the remote host through SSH
       localServer = net.createServer((socket) => {
-        sshClient.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
-          if (err) {
-            socket.end();
-            return;
-          }
-          // Prevent unhandled stream errors from crashing the process
-          stream.on("error", () => {
-            socket.destroy();
-          });
-          socket.on("error", () => {
-            stream.close();
-          });
-          socket.pipe(stream).pipe(socket);
+        // Attached first: the socket can fail (a client reset) while the channel open is still pending,
+        // and a socket with no 'error' listener raises the error instead of reporting it.
+        let channel: ClientChannel | null = null;
+        socket.on("error", () => {
+          channel?.close();
         });
+        // A channel the bastion refuses fails this connection only, with that error. One ssh2 cannot ask
+        // for because its session is no longer writable ('Not connected', thrown synchronously) fails this
+        // connection the same way and also ends the tunnel, since no later connection could open a channel.
+        const failOpen = (err: Error) => {
+          logger.warn(
+            `SSH tunnel for ${connectionId} could not open a channel to ${remoteHost}:${remotePort}: ${err.message}`,
+            { connectionId },
+          );
+          socket.destroy(err);
+        };
+        try {
+          sshClient.forwardOut("127.0.0.1", 0, remoteHost, remotePort, (err, stream) => {
+            if (err) {
+              failOpen(err);
+              return;
+            }
+            channel = stream;
+            // Prevent unhandled stream errors from crashing the process
+            stream.on("error", () => {
+              socket.destroy();
+            });
+            // The loopback client went away while the open was pending. A reset destroys the socket without
+            // an 'end', so a pipe would never end this channel, and the bastion would hold it open.
+            if (socket.destroyed) {
+              stream.close();
+              return;
+            }
+            socket.pipe(stream).pipe(socket);
+          });
+        } catch (err) {
+          failOpen(err as Error);
+          sessionLost(`the SSH session can no longer open channels: ${(err as Error).message}`);
+        }
       });
 
       // Attach error handler before listen to catch bind/listen errors
@@ -274,8 +426,10 @@ export async function createSSHTunnel(
           close: cleanup,
           hostKeyFingerprint: acceptedFingerprint,
         };
+        handedOut = true;
         if (shared) {
-          activeTunnels.set(key, { connectionId, info: tunnelInfo });
+          forwardClaims.set(tunnelInfo, claims);
+          activeTunnels.set(key, { connectionId, info: tunnelInfo, claims });
         }
         logger.info(`Tunnel created for ${connectionId}: 127.0.0.1:${address.port} -> ${remoteHost}:${remotePort}`, {
           connectionId,
@@ -287,9 +441,22 @@ export async function createSSHTunnel(
     sshClient.on("error", (err) => {
       // Ensure SSH file descriptors are released before rejecting
       sshClient.end();
-      cleanup();
+      sessionLost(`SSH connection error: ${err.message}`);
       reject(new Error(hostKeyRejection ?? `SSH connection error: ${err.message}`));
     });
+
+    // A session that ends without an error: the bastion sent DISCONNECT by application, or closed its
+    // side of the TCP connection with a FIN, as a restarting bastion does. ssh2 reports both as 'end'
+    // and 'close' and not as 'error', so the tunnel listens for them as well. Before the tunnel is
+    // ready, the same end is the dial's failure.
+    const sessionEnded = () => {
+      sessionLost("the bastion ended the SSH session");
+      reject(
+        new Error(`SSH connection to ${pinAddress(sshConfig.host, sshConfig.port)} closed before the tunnel was ready`),
+      );
+    };
+    sshClient.on("end", sessionEnded);
+    sshClient.on("close", sessionEnded);
 
     // Build SSH connection options
     const connectOptions: Parameters<Client["connect"]>[0] = {
@@ -329,6 +496,52 @@ export async function createSSHTunnel(
 
     sshClient.connect(connectOptions);
   });
+
+  if (shared) {
+    pendingDials.set(key, { dial, claims });
+    const settled = () => pendingDials.delete(key);
+    dial.then(settled, settled);
+  }
+  return dial;
+}
+
+function claimsOf(tunnel: TunnelInfo): ForwardClaims {
+  const claims = forwardClaims.get(tunnel);
+  if (!claims) {
+    throw new Error(
+      `The SSH tunnel to ${tunnel.remoteHost}:${tunnel.remotePort} is not pooled, so no connect holds a claim on it`,
+    );
+  }
+  return claims;
+}
+
+/**
+ * Report that the provider a caller connected through a pooled tunnel opened. The caller no longer
+ * counts as connecting, and the forward is left to the connection's own teardown (`removeProvider`,
+ * the idle sweep), which closes it once nothing serves the connection.
+ */
+export function tunnelProviderOpened(tunnel: TunnelInfo): void {
+  const claims = claimsOf(tunnel);
+  claims.connecting -= 1;
+  claims.providerOpened = true;
+}
+
+/**
+ * Release a pooled tunnel whose caller's provider did not open: its constructor refused the record,
+ * its connect failed, or the caller refused it before connecting.
+ *
+ * The forward closes only when this release leaves no other caller connecting through it and no
+ * provider opened on it. A concurrent connect of the same forward is handed the same forward, so
+ * closing it for one caller's failure would close the transport of a sibling that is connecting
+ * through it, or already serving through it. A forward every caller failed on is closed by the last
+ * of them, since nothing else would close it soon: no cache entry holds a provider on it.
+ */
+export async function releaseUnopenedTunnel(tunnel: TunnelInfo): Promise<void> {
+  const claims = claimsOf(tunnel);
+  claims.connecting -= 1;
+  if (claims.connecting === 0 && !claims.providerOpened) {
+    await tunnel.close();
+  }
 }
 
 /**
@@ -365,12 +578,9 @@ export async function closeSSHTunnel(connectionId: string): Promise<void> {
  * Whether a tunnel is pooled for a connection: `forward` specifically when one is given, and
  * any forward otherwise.
  *
- * The factory asks the specific question, because the answer decides whether a failed
- * connect may tear the tunnel down: only a forward this call opened may be closed, and with
- * the route and the far end both in the pool key that is exactly "nothing was pooled for this
- * forward before". `tests/isolated/factory.test.ts` asserts the arguments it passes, because the
- * loose question would answer `true` for a forward this call is about to open and the FD would
- * then be left behind on failure.
+ * It answers for forwards that are open, and not for a dial still under way. It does not decide
+ * whether a failed connect may close a forward: a call that joins a dial would read `false` for a
+ * forward a sibling is about to use, so that decision is {@link releaseUnopenedTunnel}'s.
  */
 export function hasTunnel(connectionId: string, forward?: TunnelForward): boolean {
   return getTunnelInfo(connectionId, forward) !== undefined;
@@ -380,6 +590,10 @@ export function hasTunnel(connectionId: string, forward?: TunnelForward): boolea
  * The pooled tunnel for a connection: the one carrying `forward` when one is given, and
  * otherwise the first pooled for the id, which is all a caller asking the loose question can
  * be told once a connection may hold more than one.
+ *
+ * What it returns is not a claim on the forward, so it is never reported to
+ * {@link tunnelProviderOpened} or {@link releaseUnopenedTunnel}: only a call to
+ * {@link createSSHTunnel} is counted.
  */
 export function getTunnelInfo(connectionId: string, forward?: TunnelForward): TunnelInfo | undefined {
   if (forward) {

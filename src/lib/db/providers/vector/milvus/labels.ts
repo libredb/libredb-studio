@@ -55,8 +55,6 @@ export const MILVUS_LABELS: ProviderLabels = {
   generateAction: "Generate Command",
   searchPlaceholder: "Search collections...",
   statementLanguage: milvusStatementLanguage(),
-  slowQueriesEmptyState: "Milvus keeps query statistics on its management port 9091, which Studio does not dial",
-  sessionsEmptyState: "Milvus reports client sessions on its management port 9091, which Studio does not dial",
   tableStatsCaption: MILVUS_TABLE_STATS_CAPTION,
   // Never rendered: Milvus declares neither analyze nor vacuum, and its Load and Release are per-row controls worded
   // by their specs (maintenance.ts). Worded true anyway.

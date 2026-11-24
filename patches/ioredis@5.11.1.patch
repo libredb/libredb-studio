@@ -1,0 +1,66 @@
+diff --git a/built/DataHandler.js b/built/DataHandler.js
+index 7f95466b0260668ba81d68e937af4e49002a1714..4e076b2070a5858a8d339a5ce70f448377681d8b 100644
+--- a/built/DataHandler.js
++++ b/built/DataHandler.js
+@@ -23,7 +23,14 @@ class DataHandler {
+         });
+         // prependListener ensures the parser receives and processes data before socket timeout checks are performed
+         redis.stream.prependListener("data", (data) => {
+-            parser.execute(data);
++            // A reply the parser cannot hold (an array header no JS array can take, or nesting deeper than the
++            // stack) makes it throw; the throw takes the fatal-error path a protocol error takes, as ioredis 6 does.
++            try {
++                parser.execute(data);
++            }
++            catch (err) {
++                this.returnFatalError(err);
++            }
+         });
+         // prependListener() doesn't enable flowing mode automatically - we need to resume the stream manually
+         redis.stream.resume();
+diff --git a/built/Redis.js b/built/Redis.js
+index 30c5b4573e2df2601ca637b72383702d6efbbc3d..0c606910aa149dfb16ad6a21d3c1c822ffbee46f 100644
+--- a/built/Redis.js
++++ b/built/Redis.js
+@@ -208,7 +208,20 @@ class Redis extends Commander_1.default {
+                     process.nextTick(eventHandler.connectHandler(_this));
+                 }
+                 if (!stream.destroyed) {
+-                    stream.once("error", eventHandler.errorHandler(_this));
++                    // For the stream's whole life, so an error after the first, while the socket closes, also
++                    // reaches the client.
++                    const errorHandler = eventHandler.errorHandler(_this);
++                    stream.on("error", function (err) {
++                        // An error the socket survives (a TLS record it cannot decrypt) leaves it open with no reply
++                        // to come, so it takes the fatal-error path a parser error takes: the commands in flight fail
++                        // with it, and the connection closes and reconnects. A destroyed socket is closing anyway,
++                        // and its error is only reported.
++                        if (!stream.destroyed) {
++                            _this.recoverFromFatalError(err, err, { offlineQueue: false });
++                            return;
++                        }
++                        errorHandler(err);
++                    });
+                     stream.once("close", eventHandler.closeHandler(_this));
+                 }
+                 const connectionReadyHandler = function () {
+diff --git a/built/redis/event_handler.js b/built/redis/event_handler.js
+index ba8b1dc27e4752be9dafd10f109d3c1d524d2f1f..aedb2b60df64ec28ccff0452fd8c73ee2fbba635 100644
+--- a/built/redis/event_handler.js
++++ b/built/redis/event_handler.js
+@@ -172,7 +172,14 @@ function closeHandler(self) {
+                 self.prevCondition = self.condition;
+             }
+             if (self.commandQueue.length) {
+-                self.prevCommandQueue = self.commandQueue;
++                if (self.options.autoResendUnfulfilledCommands) {
++                    self.prevCommandQueue = self.commandQueue;
++                }
++                else {
++                    // Not to be sent again, so failed now: kept, readyHandler would drop them on the next connection
++                    // and their promises would never settle. Commands not yet sent stay in the offline queue.
++                    self.flushQueue(new Error(utils_1.CONNECTION_CLOSED_ERROR_MSG), { offlineQueue: false });
++                }
+             }
+         }
+         if (self.manuallyClosing) {

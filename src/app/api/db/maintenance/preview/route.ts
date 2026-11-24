@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { getOrCreateProvider, type MaintenanceOperation } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub, scrubMaintenancePreview } from "@/lib/db/operations/provider-text";
 import { maintenanceControl } from "@/lib/db/types";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { assertMaintenanceAccepted, assertMaintenanceOffered } from "@/lib/db/engine-facets/maintenance";
 
 const ROUTE = "POST /api/db/maintenance/preview";
 
@@ -14,8 +16,10 @@ const ROUTE = "POST /api/db/maintenance/preview";
  *
  * A read, and still a route on the credential path, so it stands behind the same doors as `POST /api/db/maintenance`:
  * the same `guardRoute` bucket, the admin check with its audited denial, and the request checks that route makes
- * before it runs anything, in the same order, so the two cannot disagree about a request. A preview is per object, so
- * a non-empty `target` is required where the maintenance route reads its absence as the whole-database form.
+ * before it runs anything, in the same order, so the two cannot disagree about a request: `type` present and text,
+ * `container` text or absent, the operation listed in the engine's `ENGINE_FACETS` row before any provider is built
+ * (`400 FACET_NOT_OFFERED`), and the operation the connected server accepts (the same code). A preview is per object,
+ * so a non-empty `target` is required where the maintenance route reads its absence as the whole-database form.
  *
  * Neither route proves that the target exists, because neither calls the provider before its one method: existence is
  * the provider's, and `previewMaintenance` raises a `QueryError` naming what is missing. Nothing but that method is
@@ -30,6 +34,9 @@ export async function POST(request: Request) {
     return adminRequiredResponse();
   }
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     // A body that is not JSON, or JSON that is not an object (`null`, an array, a number), is the caller's mistake and
     // answers 400 in a fixed sentence, rather than reaching the destructuring below as a raw runtime error.
@@ -40,9 +47,15 @@ export async function POST(request: Request) {
     const { type, target, container } = body;
 
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     if (!type) {
       return NextResponse.json({ error: "Maintenance type is required" }, { status: 400 });
+    }
+
+    // The maintenance route's type rule: an operation is named by text, and a value that is not text is not repeated.
+    if (typeof type !== "string") {
+      return NextResponse.json({ error: `"type" must be a string naming a maintenance operation` }, { status: 400 });
     }
 
     // The maintenance route's container rule: a string or absent, and an empty string is the absence of one.
@@ -59,21 +72,14 @@ export async function POST(request: Request) {
 
     const requestedContainer: string | undefined = container || undefined;
 
+    // The maintenance route's two operation checks: the engine facets row before any provider is built, and the
+    // connected server's declaration after, each refused 400 FACET_NOT_OFFERED.
+    assertMaintenanceOffered(connection.type, type);
+
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     const capabilities = provider.getCapabilities();
 
-    if (!capabilities.supportsMaintenance) {
-      return NextResponse.json({ error: `Maintenance operations not supported for this database` }, { status: 400 });
-    }
-
-    if (!capabilities.maintenanceOperations.includes(type as MaintenanceOperation)) {
-      return NextResponse.json(
-        {
-          error: `Operation '${type}' not supported for this database. Supported: ${capabilities.maintenanceOperations.join(", ")}`,
-        },
-        { status: 400 },
-      );
-    }
+    assertMaintenanceAccepted(connection.type, type, capabilities);
 
     // The maintenance route's placement gate, for the one placement a preview has: a named object. It speaks only
     // where the provider offers the other placement, which is that route's reading of a spec with both halves false.
@@ -96,8 +102,8 @@ export async function POST(request: Request) {
     // The object's path, container levels then the object (spec 3.11): one container level is all this body names.
     const path = requestedContainer === undefined ? [target] : [requestedContainer, target];
     const preview = await provider.previewMaintenance(type as MaintenanceOperation, path);
-    return NextResponse.json({ preview });
+    return NextResponse.json({ preview: scrubMaintenancePreview(scrub, preview) });
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/maintenance/preview" });
+    return createErrorResponse(error, { route: "api/db/maintenance/preview", scrub });
   }
 }

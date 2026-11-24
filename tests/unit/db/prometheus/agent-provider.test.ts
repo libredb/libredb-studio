@@ -42,6 +42,7 @@ import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import type { DatabaseConnection } from "@/lib/types";
 import { capture } from "../../../helpers/prometheus-fixtures";
+import { errorKind } from "@/lib/db/error-record";
 
 const ORIGIN = "http://prometheus.test:9090";
 const TEST_ENDPOINT: PrometheusEndpoint = {
@@ -404,6 +405,7 @@ describe("how an answer counts against the row budget", () => {
     const error = await failureOf(provider.queryReadOnly("up", BUDGET));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a server that cut its answer at the limit is refused, never shown in part", async () => {
@@ -411,6 +413,7 @@ describe("how an answer counts against the row budget", () => {
     queryAnswer = () => Promise.resolve(vector(2, { warnings: ["results truncated due to limit"] }));
     const error = await failureOf(provider.queryReadOnly("up", BUDGET));
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a matrix counts every sample of every series", async () => {
@@ -420,6 +423,7 @@ describe("how an answer counts against the row budget", () => {
     queryAnswer = () => Promise.resolve(matrix(2, 2));
     const error = await failureOf(provider.queryReadOnly("up[1m]", BUDGET));
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a matrix counts native histogram points like samples: the budget itself is answered, one histogram past it is refused", async () => {
@@ -442,6 +446,7 @@ describe("how an answer counts against the row budget", () => {
     const error = await failureOf(provider.queryReadOnly("latency[1m]", BUDGET));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a series' labels reach the answer projected: an instance with userinfo keeps its host and port", async () => {
@@ -484,6 +489,7 @@ describe("how an answer counts against the row budget", () => {
     expect((await provider.queryReadOnly("up", { ...BUDGET, maxResultBytes: bytes })).rowCount).toBe(1);
     const error = await failureOf(provider.queryReadOnly("up", { ...BUDGET, maxResultBytes: bytes - 1 }));
     expect(error.message).toBe(`Read-only execution exceeded the byte budget: ${bytes} bytes > ${bytes - 1} allowed`);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("the engine's notices travel with the rows, verbatim", async () => {
@@ -502,6 +508,7 @@ describe("how a failure is worded", () => {
     queryAnswer = () => Promise.resolve(replay("error-timeout"));
     const error = await failureOf(provider.queryReadOnly("count_over_time(up[1h:1ms])", BUDGET));
     expect(error).toBeInstanceOf(TimeoutError);
+    expect(errorKind(error)).toBe("timeout");
     expect(error.message).toBe(PROMETHEUS_AGENT_FAILURE_SENTENCES.serverTimeout(4000));
     expect(error.message).not.toContain("query timed out");
   });
@@ -551,6 +558,7 @@ describe("how a failure is worded", () => {
     const pending = failureOf(provider.queryReadOnly("up", { ...BUDGET, statementTimeoutMs: 30 }));
     const error = await pending;
     expect(error).toBeInstanceOf(TimeoutError);
+    expect(errorKind(error)).toBe("timeout");
     expect(error.message).toBe(PROMETHEUS_AGENT_FAILURE_SENTENCES.deadline(30));
   });
 
@@ -563,6 +571,7 @@ describe("how a failure is worded", () => {
     const waiting = failureOf(provider.queryReadOnly("count(up)", { ...BUDGET, statementTimeoutMs: 40 }));
     const error = await waiting;
     expect(error).toBeInstanceOf(TimeoutError);
+    expect(errorKind(error)).toBe("timeout");
     expect(error.message).toBe(PROMETHEUS_AGENT_FAILURE_SENTENCES.deadline(40));
     expect(sent.filter((request) => request.body?.startsWith("query=count")).length).toBe(0);
     for (const release of releases) release();

@@ -37,7 +37,13 @@
  * Budgets refuse rather than truncate: the request's response cap comes from the byte budget, and a result past the
  * row budget, the cell budget or the byte budget throws the shared sentence of `read-only-budget.ts`.
  */
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertReadOnlyBudget,
@@ -45,7 +51,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { QueryWarning } from "@/lib/types";
 import type { InfluxAnswer, InfluxRequest } from "./client";
@@ -288,13 +294,13 @@ export function shapeInfluxqlAgentAnswer(
   if (shaped.partial) throw new QueryError(INFLUXQL_AGENT_PARTIAL_SENTENCE, "influxdb", statement);
   const rows = [...shaped.rows];
   if (rows.length > budget.maxResultRows) {
-    throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "influxdb", statement);
+    throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "influxdb", statement);
   }
   // Under the row budget and still cut: the cell budget kept fewer rows than the result holds.
-  if (shaped.cut) throw new QueryError(rowBudgetSentence(rows.length + 1, rows.length), "influxdb", statement);
+  if (shaped.cut) throw new RowBudgetRefusal(rowBudgetSentence(rows.length + 1, rows.length), "influxdb", statement);
   const bytes = measureResultBytes(rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "influxdb", statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "influxdb", statement);
   }
   return { fields: [...shaped.fields], rows, warnings: [...shaped.warnings] };
 }
@@ -311,14 +317,14 @@ export function influxqlAgentReadFailure(
 ): QueryError | undefined {
   if (!(error instanceof TransportError)) return undefined;
   if (error.kind === "too-large") {
-    return new QueryError(
+    return new ByteBudgetRefusal(
       byteBudgetSentence(influxqlAgentResponseCap(budget) + 1, budget.maxResultBytes),
       "influxdb",
       statement,
     );
   }
   if (error.kind === "timeout") {
-    return new QueryError(
+    return new TimeBudgetRefusal(
       `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
       "influxdb",
       statement,

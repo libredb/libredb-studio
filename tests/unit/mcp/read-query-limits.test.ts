@@ -1,32 +1,46 @@
 /**
- * The pure rules of run_read_query (#246): the offset rule's answers, the mapping of this
- * repository's own provider refusals, the timeout classification, the deadline race and the texts
- * a caller reads. The provider files are read, never edited, so a reworded message breaks this
- * build instead of falling through to an engine error, and a provider that types out the row or
- * byte refusal again instead of calling the shared constructor breaks it too (D367).
+ * The pure rules of run_read_query (#246): the offset rule's answers, the mapping of a failure to
+ * its answer by its error kind, whatever its words, the timeout classification, the deadline race
+ * and the texts a caller reads. Which provider sites raise a budget refusal as its class is held by
+ * tests/unit/db/operations/budget-refusal-census.test.ts.
  */
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ERROR_KINDS } from "@libredb/provider-sdk/errors";
+import {
+  ByteBudgetRefusal,
+  ConnectionError,
+  CutValueRefusal,
+  QueryError,
+  ReadAllowanceExceededError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  StudioByteBudgetRefusal,
+  StudioRowBudgetRefusal,
+  StudioTimeBudgetRefusal,
+  StudioTimeoutRefusal,
+  TimeBudgetRefusal,
+  TimeoutError,
+} from "@/lib/db/errors";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
-import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import {
   MSSQL_CUT_VALUE_PREFIX,
   MSSQL_SERIALISED_PREFIX,
   MSSQL_TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/mssql-read-only-refusals";
+} from "@/lib/sql/mssql-read-only-refusals";
 import {
   BYTE_BUDGET_PREFIX,
   byteBudgetSentence,
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   classifyReadQueryFailure,
   fenceRefusalText,
   inSqlPaging,
+  MCP_FAILURE_OF_KIND,
   MCP_TIMEOUT_BOUNDS_MS,
   moreRowsThanPageableHint,
   nextPageHint,
@@ -34,15 +48,12 @@ import {
   pagesWithOffset,
   profileRefusalText,
   raceDeadline,
-  READ_ONLY_REFUSALS,
   ROW_OVER_CAP_TEXT,
   timeoutText,
   tooLargeTextsOf,
 } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
-const REPO = join(import.meta.dir, "../../..");
-const read = (file: string): string => readFileSync(join(REPO, file), "utf8");
 const ROWS =
   "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.";
 const BYTES =
@@ -319,47 +330,46 @@ describe("the offset rule", () => {
 describe("the provider refusal mapper", () => {
   const deadline = 10_000;
 
-  test.each([
-    ["Read-only execution exceeded the row budget: 1001 rows > 1000 allowed", { kind: "too-large", text: ROWS }],
-    [
-      "Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed",
-      { kind: "too-large", text: BYTES },
-    ],
-    [
-      "Read-only execution refused a value the server cut at the byte budget: payload came back at the ceiling",
-      { kind: "too-large", text: CUT_VALUE },
-    ],
-    [
-      "Read-only execution cannot bound a serialised result: SQL Server compiled this as FOR JSON",
-      { kind: "too-large", text: SERIALISED },
-    ],
-    ["Read-only execution exceeded the time budget: 900ms > 500ms allowed", { kind: "timeout" }],
-    ["Read-only execution exceeded its time budget: the statement was cancelled after 500 ms", { kind: "timeout" }],
-  ] as const)("maps %p", (message, expected) => {
-    expect(classifyReadQueryFailure(new Error(message), 1_000, deadline)).toEqual(expected);
+  test("answers any failure that settles at or after the deadline as the deadline", () => {
+    expect(classifyReadQueryFailure(new Error("Query was cancelled"), deadline, deadline)).toEqual({
+      kind: "deadline",
+    });
+    expect(
+      classifyReadQueryFailure(new RowBudgetRefusal(rowBudgetSentence(1001, 1000)), deadline + 1, deadline),
+    ).toEqual({
+      kind: "deadline",
+    });
   });
 
-  test("answers any failure that settles at or after the deadline as the timeout", () => {
-    expect(classifyReadQueryFailure(new Error("Query was cancelled"), deadline, deadline)).toEqual({ kind: "timeout" });
-    expect(
-      classifyReadQueryFailure(new Error("Read-only execution exceeded the row budget: late"), deadline + 1, deadline),
-    ).toEqual({
+  test("a failure settling at or after the deadline is the deadline, whatever its class", () => {
+    for (const error of [
+      new TimeBudgetRefusal(rowBudgetSentence(1001, 1000), "postgres"),
+      new QueryError("relation does not exist", "postgres"),
+      new RefusedBeforeSendError("the statement writes", "postgres"),
+      "a thrown string",
+    ]) {
+      expect(classifyReadQueryFailure(error, deadline, deadline)).toEqual({ kind: "deadline" });
+      expect(classifyReadQueryFailure(error, deadline + 1, deadline)).toEqual({ kind: "deadline" });
+    }
+  });
+
+  test("a time budget refusal before the deadline is the timeout", () => {
+    expect(classifyReadQueryFailure(new TimeBudgetRefusal("over time", "postgres"), deadline - 1, deadline)).toEqual({
       kind: "timeout",
     });
   });
 
-  test("answers a refusal the provider raised before sending in this server's words", () => {
+  test("answers a pre-send refusal with the error itself, for the caller to render", () => {
     const error = new RefusedBeforeSendError(
       "Read-only execution refused the statement before sending it: not-a-real-fence",
     );
-    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({
-      kind: "not-sent",
-      text: "The statement was refused before it reached the database: Read-only execution refused the statement before sending it: not-a-real-fence.",
-    });
-    expect(classifyReadQueryFailure(new RefusedBeforeSendError("Refused already."), 1_000, deadline)).toEqual({
-      kind: "not-sent",
-      text: "The statement was refused before it reached the database: Refused already.",
-    });
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "not-sent", error });
+  });
+
+  test("answers a provider's own subclass of a pre-send refusal with the error itself", () => {
+    class FenceRefusal extends RefusedBeforeSendError {}
+    const error = new FenceRefusal(`${crypto.randomUUID()} ${crypto.randomUUID()}`, "postgres");
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "not-sent", error });
   });
 
   test("keeps the read allowance's refusal as too large, though it too is refused before sending", () => {
@@ -371,40 +381,130 @@ describe("the provider refusal mapper", () => {
     const error = new Error("no such table: missing");
     expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "engine", error });
   });
-
-  test("reads a thrown value that is not an Error", () => {
-    expect(classifyReadQueryFailure("Read-only execution exceeded the byte budget: 2 > 1", 1, 2)).toEqual({
-      kind: "too-large",
-      text: BYTES,
-    });
-  });
 });
 
-describe("the budget sentences every provider shares (D367)", () => {
-  test("read the way the mapper and rowBudgetIn read them", () => {
-    expect(rowBudgetSentence(1001, 1000)).toBe("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed");
-    expect(byteBudgetSentence(2000000, 1048576)).toBe(
-      "Read-only execution exceeded the byte budget: 2000000 bytes > 1048576 allowed",
+describe("a failure is answered by its class", () => {
+  const deadline = 10_000;
+  const words = () => `${crypto.randomUUID()} ${crypto.randomUUID()}`;
+  const TIMEOUT = { kind: "timeout" } as const;
+  const tooLarge = (text: string) => ({ kind: "too-large", text }) as const;
+
+  test.each([
+    ["RowBudgetRefusal", "too-large", (text: string) => new RowBudgetRefusal(text, "postgres"), tooLarge(ROWS)],
+    [
+      "StudioRowBudgetRefusal",
+      "too-large",
+      (text: string) => new StudioRowBudgetRefusal(text, "postgres"),
+      tooLarge(ROWS),
+    ],
+    ["ByteBudgetRefusal", "too-large", (text: string) => new ByteBudgetRefusal(text, "postgres"), tooLarge(BYTES)],
+    [
+      "StudioByteBudgetRefusal",
+      "too-large",
+      (text: string) => new StudioByteBudgetRefusal(text, "postgres"),
+      tooLarge(BYTES),
+    ],
+    ["CutValueRefusal", "too-large", (text: string) => new CutValueRefusal(text, "mssql"), tooLarge(CUT_VALUE)],
+    [
+      "SerialisedResultRefusal",
+      "too-large",
+      (text: string) => new SerialisedResultRefusal(text, "mssql"),
+      tooLarge(SERIALISED),
+    ],
+    ["TimeBudgetRefusal", "the timeout", (text: string) => new TimeBudgetRefusal(text, "postgres"), TIMEOUT],
+    [
+      "StudioTimeBudgetRefusal",
+      "the timeout",
+      (text: string) => new StudioTimeBudgetRefusal(text, "postgres"),
+      TIMEOUT,
+    ],
+  ] as const)("a %s answers %s, whatever its words", (_label, _answer, make, expected) => {
+    expect(classifyReadQueryFailure(make(words()), 1_000, deadline)).toEqual(expected);
+  });
+
+  test("an arm's own texts answer each too-large class in its statement language's words", () => {
+    const texts = { rows: words(), bytes: words(), "cut-value": words(), serialised: words() };
+    expect(classifyReadQueryFailure(new RowBudgetRefusal(words()), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts.rows),
+    );
+    expect(classifyReadQueryFailure(new ByteBudgetRefusal(words()), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts.bytes),
+    );
+    expect(classifyReadQueryFailure(new CutValueRefusal(words()), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts["cut-value"]),
+    );
+    expect(classifyReadQueryFailure(new SerialisedResultRefusal(words()), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts.serialised),
     );
   });
 
-  // The mapper matches the very openings the constructors write, so neither can be reworded alone.
-  test("the mapper's row and byte entries are the shared module's prefixes", () => {
-    expect(READ_ONLY_REFUSALS.filter(({ kind }) => kind === "rows" || kind === "bytes")).toEqual([
-      { prefix: ROW_BUDGET_PREFIX, kind: "rows" },
-      { prefix: BYTE_BUDGET_PREFIX, kind: "bytes" },
-    ]);
-    expect(rowBudgetSentence(1, 0).startsWith(`${ROW_BUDGET_PREFIX}: `)).toBe(true);
-    expect(byteBudgetSentence(1, 0).startsWith(`${BYTE_BUDGET_PREFIX}: `)).toBe(true);
+  // A `TimeoutError` says some timeout fired, not that it was the call's: Cassandra's coordinator, a connection's own
+  // query timeout or a client socket timeout may be shorter than timeout_ms. Before the deadline the provider's own
+  // text names which one, so the timeout answer, which says timeout_ms was reached, would be false.
+  test("a timeout of any author before the deadline is the engine's, whose text names which timeout fired", () => {
+    for (const error of [
+      new TimeoutError(words(), "cassandra", 1_000),
+      new StudioTimeoutRefusal(words(), "postgres", 1_000),
+    ]) {
+      expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "engine", error });
+    }
+  });
+
+  test("a timeout of any author at or after the deadline answers the deadline", () => {
+    for (const error of [
+      new TimeoutError(words(), "cassandra", 1_000),
+      new StudioTimeoutRefusal(words(), "postgres", 1_000),
+    ]) {
+      expect(classifyReadQueryFailure(error, deadline, deadline)).toEqual({ kind: "deadline" });
+    }
+  });
+
+  test("a failure whose class is no budget's is the engine's, whatever its words", () => {
+    const sentences = [
+      ROW_BUDGET_PREFIX,
+      BYTE_BUDGET_PREFIX,
+      TIME_BUDGET_PREFIX,
+      MSSQL_CUT_VALUE_PREFIX,
+      MSSQL_SERIALISED_PREFIX,
+      MSSQL_TIME_BUDGET_PREFIX,
+      rowBudgetSentence(1001, 1000),
+      byteBudgetSentence(2000000, 1048576),
+    ];
+    for (const sentence of sentences) {
+      for (const error of [
+        new QueryError(sentence, "postgres"),
+        new Error(sentence),
+        sentence,
+        new ConnectionError(sentence, "postgres"),
+      ]) {
+        expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "engine", error });
+      }
+    }
+  });
+
+  test("MySQL's and MongoDB's deadline refusal is the timeout before the deadline", () => {
+    const error = new TimeBudgetRefusal(
+      "Read-only execution exceeded the statement deadline of 500ms and was killed server-side",
+      "mysql",
+    );
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual(TIMEOUT);
+  });
+
+  test("every error kind has one answer", () => {
+    expect(Object.keys(MCP_FAILURE_OF_KIND).sort()).toEqual([...ERROR_KINDS].sort());
   });
 
   // Oracle has no LIMIT, so its budget refusals name its own row limiting clause.
   test("answers Oracle's budget refusals in Oracle's clause", () => {
-    expect(tooLargeTextsOf("oracle")).toEqual({
+    const texts = tooLargeTextsOf("oracle");
+    expect(texts).toEqual({
       rows: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
       bytes:
         "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
     });
+    expect(classifyReadQueryFailure(new RowBudgetRefusal(words(), "oracle"), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts.rows ?? ""),
+    );
     for (const type of ["postgres", "mssql", "clickhouse", "opensearch"] as const) {
       expect(tooLargeTextsOf(type)).toEqual({});
     }
@@ -412,119 +512,21 @@ describe("the budget sentences every provider shares (D367)", () => {
 
   // Db2 names its own row limiting clauses too, LIMIT among them, never SQL Server's TOP.
   test("answers Db2's budget refusals in Db2's clause", () => {
-    expect(tooLargeTextsOf("db2")).toEqual({
+    const texts = tooLargeTextsOf("db2");
+    expect(texts).toEqual({
       rows: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or LIMIT and page with offset.",
       bytes:
         "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
     });
+    expect(classifyReadQueryFailure(new ByteBudgetRefusal(words(), "db2"), 1_000, deadline, texts)).toEqual(
+      tooLarge(texts.bytes ?? ""),
+    );
   });
 
-  // MongoDB's row refusal adds a cursor-bound tail after the shared sentence; the mapper still reads it.
   // kubectl's own refusals are fed to the mapper in tests/unit/db/kubernetes/machine-read.test.ts.
   test("maps MongoDB's row refusal at the cursor bound to too-large", () => {
-    const message = rowBudgetRefusal(
-      201,
-      { statementTimeoutMs: 1, maxResultRows: 200, maxResultBytes: 1 },
-      "{}",
-      true,
-    ).message;
-    expect(classifyReadQueryFailure(new Error(message), 1_000, 10_000)).toEqual({ kind: "too-large", text: ROWS });
-  });
-});
-
-describe("the prefixes the mapper matches still start a message in each provider that raises it", () => {
-  const SHARED = "src/lib/db/providers/sql/read-only-budget.ts";
-  // The row and byte openings are constants of the shared module, so they are checked as declared there.
-  const SHARED_PREFIXES = [ROW_BUDGET_PREFIX, BYTE_BUDGET_PREFIX];
-  // Each opening an engine raises on its own, by the constant that declares it beside the provider and the files
-  // that open a message with it.
-  const RAISED_IN: Record<string, { readonly prefix: string; readonly files: readonly string[] }> = {
-    MSSQL_CUT_VALUE_PREFIX: { prefix: MSSQL_CUT_VALUE_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
-    MSSQL_SERIALISED_PREFIX: { prefix: MSSQL_SERIALISED_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
-    TIME_BUDGET_PREFIX: {
-      prefix: TIME_BUDGET_PREFIX,
-      files: [
-        "src/lib/db/providers/sql/sqlite.ts",
-        "src/lib/db/providers/sql/duckdb/index.ts",
-        "src/lib/db/providers/sql/libsql/index.ts",
-        "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
-        "src/lib/db/providers/sql/search/index.ts",
-        "src/lib/db/providers/sql/oracle/agent-read.ts",
-        "src/lib/db/providers/sql/db2/index.ts",
-        "src/lib/db/providers/sql/cassandra/index.ts",
-        "src/lib/db/providers/document/couchbase/index.ts",
-      ],
-    },
-    MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
-  };
-  // Each provider with a queryReadOnly, by the files that raise its row or byte refusal.
-  const SHARED_USERS: Record<string, readonly string[]> = {
-    postgres: ["src/lib/db/providers/sql/postgres.ts"],
-    mysql: ["src/lib/db/providers/sql/mysql.ts"],
-    mssql: ["src/lib/db/providers/sql/mssql.ts"],
-    sqlite: ["src/lib/db/providers/sql/sqlite.ts"],
-    duckdb: ["src/lib/db/providers/sql/duckdb/index.ts"],
-    clickhouse: ["src/lib/db/providers/sql/clickhouse/agent-read.ts", "src/lib/db/providers/sql/clickhouse/index.ts"],
-    libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
-    influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
-    elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
-    oracle: ["src/lib/db/providers/sql/oracle/agent-read.ts"],
-    db2: ["src/lib/db/providers/sql/db2/agent-read.ts"],
-    cassandra: ["src/lib/db/providers/sql/cassandra/index.ts"],
-    couchbase: ["src/lib/db/providers/document/couchbase/index.ts"],
-    mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
-    kubernetes: [
-      "src/lib/db/providers/platform/kubernetes/machine-read.ts",
-      "src/lib/db/providers/platform/kubernetes/console/describe.ts",
-      "src/lib/db/providers/platform/kubernetes/console/events.ts",
-      "src/lib/db/providers/platform/kubernetes/console/get-documents.ts",
-      "src/lib/db/providers/platform/kubernetes/console/logs.ts",
-    ],
-  };
-
-  test("every prefix the mapper matches is listed here", () => {
-    expect(READ_ONLY_REFUSALS.map((refusal) => refusal.prefix).sort()).toEqual(
-      [...SHARED_PREFIXES, ...Object.values(RAISED_IN).map(({ prefix }) => prefix)].sort(),
-    );
-  });
-
-  test.each(Object.entries(RAISED_IN).flatMap(([name, { files }]) => files.map((file) => [name, file] as const)))(
-    "%s opens a message in %s",
-    (name, file) => {
-      expect(read(file)).toContain("`${" + name + "}");
-    },
-  );
-
-  // The MCP mapper answers a refusal by its opening and names no engine: every opening, and every engine's own
-  // answer text, is declared beside the provider that raises it.
-  test("the MCP module spells no refusal opening and no engine's answer of its own", () => {
-    const source = read("src/lib/mcp/tools/read-query-limits.ts");
-    expect(source.match(/["'`]Read-only execution[^"'`]*/g) ?? []).toEqual([]);
-    expect(source.match(/SQL Server|SQLite|DuckDB/g) ?? []).toEqual([]);
-  });
-
-  test.each(SHARED_PREFIXES)("%p is written once, in the shared module", (prefix) => {
-    expect(read(SHARED).split(prefix)).toHaveLength(2);
-  });
-
-  // The whole source tree, the MCP mapper included: it imports the prefixes rather than typing its own copy.
-  test.each(SHARED_PREFIXES)("%p is written in no source file but the shared module", (prefix) => {
-    const writers = readdirSync(join(REPO, "src"), { recursive: true, encoding: "utf8" })
-      .filter((file) => /\.tsx?$/.test(file))
-      // readdirSync answers with the platform separator; the census names files with "/".
-      .map((file) => `src/${file.replaceAll("\\", "/")}`)
-      .filter((file) => read(file).includes(prefix));
-    expect(writers).toEqual([SHARED]);
-  });
-
-  test.each(
-    Object.entries(SHARED_USERS).flatMap(([provider, files]) => files.map((file) => [provider, file] as const)),
-  )("%s builds its budget refusal with the shared constructor in %s", (_provider, file) => {
-    const source = read(file);
-    expect(source).toMatch(
-      /import \{[^}]*\b(rowBudgetSentence|byteBudgetSentence)\b[^}]*\} from "[^"]*read-only-budget";/,
-    );
-    expect(source).toMatch(/\b(rowBudgetSentence|byteBudgetSentence)\(/);
+    const error = rowBudgetRefusal(201, { statementTimeoutMs: 1, maxResultRows: 200, maxResultBytes: 1 }, "{}", true);
+    expect(classifyReadQueryFailure(error, 1_000, 10_000)).toEqual(tooLarge(ROWS));
   });
 });
 

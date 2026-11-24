@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { buildConnectionPayload } from "@/hooks/use-connection-payload";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { logger } from "@/lib/logger";
 
 /**
  * The widest fan-out one request may ask for. guardRoute bounds how OFTEN this route is called,
@@ -73,6 +74,9 @@ export async function POST(request: Request) {
     const results: FleetHealthItem[] = await Promise.all(
       connections.map(async (conn): Promise<FleetHealthItem> => {
         const start = Date.now();
+        // Core's scrub of this item's resolved connection, held out here for the `catch` below: before the connection
+        // resolves no provider ran.
+        let scrub: ProviderTextScrub | undefined;
         try {
           /*
            * Every item goes through `resolveConnection`, the caller's own connections included: a
@@ -84,9 +88,11 @@ export async function POST(request: Request) {
            * refused item is reported as that item's error, beside the health of the rest.
            */
           const resolved = await resolveConnection(buildConnectionPayload(conn), guard.session);
+          scrub = providerTextScrub(resolved, "any");
           const execution = editorExecutionContext(guard.session, resolved);
           /*
-           * The capability is read off an unconnected provider, the provider-meta pattern: a
+           * The capability is read through `readProviderDeclarations`, the provider-meta pattern, which
+           * builds the provider without connecting it or opening its tunnel and hands back data: a
            * connection that resumes billed compute (a suspended Databend Cloud warehouse wakes on
            * any statement) is answered without a cached provider or a statement, since a check on
            * every dashboard refresh would keep it awake and billed. The factory logs its
@@ -94,8 +100,8 @@ export async function POST(request: Request) {
            * as provider-meta does; the declaration is read each time because an edit of the
            * connection can change it.
            */
-          const unconnected = await createDatabaseProvider(resolved, {}, execution);
-          if (unconnected.getCapabilities().resumesBilledCompute) {
+          const declarations = await readProviderDeclarations(resolved, execution);
+          if (declarations.capabilities.resumesBilledCompute) {
             return {
               connectionId: conn.id,
               connectionName: conn.name,
@@ -112,10 +118,16 @@ export async function POST(request: Request) {
           // Best-effort and outside the latency measurement above: getOverview() is a second
           // round-trip this route did not previously make, and a provider that cannot answer it
           // (or has none of this data) must not turn a working connection into an error result.
-          const databaseSizeBytes = await provider
-            .getOverview()
-            .then((overview) => overview.databaseSizeBytes)
-            .catch(() => undefined);
+          // It is read only where the engine offers the overview panel (FND-4): elsewhere the
+          // overview is not a reading of the engine, so it is never asked for and no byte figure
+          // is carried.
+          const databaseSizeBytes =
+            engineFacetsFor(resolved.type).monitoring.overview === "offered"
+              ? await provider
+                  .getOverview()
+                  .then((overview) => overview.databaseSizeBytes)
+                  .catch(() => undefined)
+              : undefined;
 
           return {
             connectionId: conn.id,
@@ -136,7 +148,14 @@ export async function POST(request: Request) {
             environment: conn.environment,
             status: "error",
             latencyMs: Date.now() - start,
-            error: err instanceof Error ? err.message : "Connection failed",
+            // A failure whose text holds a credential of the item's connection answers Studio's sentence naming its
+            // class.
+            error:
+              err instanceof Error
+                ? scrub === undefined
+                  ? err.message
+                  : (withheldProviderError(scrub, err)?.message ?? err.message)
+                : "Connection failed",
           };
         }
       }),

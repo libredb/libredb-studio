@@ -5,6 +5,8 @@ import { type AddressInfo, createServer, type Socket } from "node:net";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CancellationToken, CancellationTokenSource, ErrorCodes, ResponseError } from "vscode-jsonrpc/node";
+import { connectBudgetFor } from "@/lib/db/connect-budget";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { Container, DatabaseObject, KindCount, ObjectDetail } from "@/lib/db/types";
 import { ENABLED_PROVIDERS } from "../../src/host/channel";
 import {
@@ -185,10 +187,10 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     }
   });
 
-  it("answers initialize with protocol version 1, the enabled providers and the runtime it runs on", async () => {
+  it("answers initialize with protocol version 2, the enabled providers and the runtime it runs on", async () => {
     const answer = await freshChild().initialize();
     console.log(`initialize answered ${JSON.stringify(answer)}`);
-    assert.equal(answer.protocolVersion, 1);
+    assert.equal(answer.protocolVersion, 2);
     assert.deepEqual(answer.enabledProviders, ENABLED_PROVIDERS);
     if (runtime.name === "node") {
       assert.equal(answer.runtime.electron, null);
@@ -205,11 +207,11 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     const session = freshChild();
     const early = await errorOf(runQuery(session, "postgres-main", "select 1"));
     assert.equal(early.code, ErrorCodes.ServerNotInitialized);
-    const mismatch = await errorOf(session.initialize(2));
+    const mismatch = await errorOf(session.initialize(3));
     assert.equal(mismatch.code, 500);
     assert.equal(
       mismatch.message,
-      "The LibreDB backend speaks protocol version 1, but the extension sent version 2. Reinstall the LibreDB extension.",
+      "The LibreDB backend speaks protocol version 2, but the extension sent version 3. Reinstall the LibreDB extension.",
     );
     assert.deepEqual(mismatch.data, { code: "PROTOCOL_MISMATCH" });
   });
@@ -326,6 +328,26 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     assert.equal(second.pagination.hasMore, false);
   });
 
+  it("withholds a PostgreSQL error that holds the connection's password, keeping its status and code, and answers a clean one in the engine's words", async () => {
+    const password = String(engineOf("postgres").environment.POSTGRES_PASSWORD);
+    const connectionId = mainId(engineFixture("postgres"));
+    // The engine quotes the text it could not read as an integer, so its sentence holds the password.
+    const held = await errorOf(
+      runQuery(sharedChild(), connectionId, `select '${password.replaceAll("'", "''")}'::int`),
+    );
+    assert.equal(held.code, 400);
+    assert.equal(held.data?.code, "QUERY_ERROR");
+    assert.equal(held.data?.kind, "query");
+    assert.equal(held.message, withheldErrorMessage("QueryError"));
+    // Asserted by inclusion and never printed: the message names only the field.
+    assert.equal(JSON.stringify({ message: held.message, data: held.data }).includes(password), false, "the answer");
+
+    const clean = await errorOf(runQuery(sharedChild(), connectionId, "select 'abc'::int"));
+    assert.equal(clean.code, 400);
+    assert.equal(clean.data?.code, "QUERY_ERROR");
+    assert.equal(clean.message, 'invalid input syntax for type integer: "abc"');
+  });
+
   it("caps a 100,000-row read at its limit, reads the next page, and carries a 10 MB cell", async () => {
     const child = sharedChild();
     const connectionId = mainId(engineFixture("postgres"));
@@ -405,13 +427,13 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
         refused.message,
         `The ${connection.type} provider is not available in this distribution of LibreDB Studio.`,
       );
-      assert.deepEqual(refused.data, { code: "CONFIG_ERROR" });
+      assert.deepEqual(refused.data, { code: "CONFIG_ERROR", kind: "config", outcome: "unknown" });
     }
     assert.doesNotMatch(session.stdout(), /\[DB\] Creating (duckdb|db2|oracle) provider/);
     assert.doesNotMatch(session.stderr(), /Cannot find module/);
   });
 
-  it("ends connection/test against a listener that never answers, and keeps serving other connections", async () => {
+  it("ends connection/test against a listener that never answers within its engine's connect budget, and keeps serving other connections", async () => {
     const child = sharedChild();
     const held: Socket[] = [];
     const silent = createServer((socket) => {
@@ -440,7 +462,9 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
         assert.equal(error.code, 503, `${service}: ${error.message}`);
         assert.equal(error.data?.code, "CONNECTION_ERROR", service);
         assert.equal(error.data?.retryable, true, service);
-        assert.ok(took < 12_000, `${service} answered after ${took} ms`);
+        // Each engine ends its own connect against the silent listener, PostgreSQL and SQL Server at their pools' 60 s
+        // acquire bound and MySQL and MongoDB at 10 s, inside the connect budget the host waits for Test connection.
+        assert.ok(took < connectBudgetFor(service), `${service} answered after ${took} ms`);
       }
       assert.ok(selectTook < 2000, `select 1 took ${selectTook} ms`);
     } finally {
@@ -460,9 +484,16 @@ describe("the backend child against PostgreSQL, SQL Server, MySQL and MongoDB", 
     console.log(`pg-short: ${error.code} ${JSON.stringify(error.data)} "${error.message}" after ${took} ms`);
     assert.ok(took < 4000, `the run ended after ${took} ms`);
     // Measured 2026-10-20 on postgres:18: the pool's statement_timeout ends the statement with SQLSTATE 57014, which
-    // the error mapping of src/lib/db/errors.ts reads as a TimeoutError, answered 504 TIMEOUT_ERROR.
+    // the error mapping of src/lib/db/errors.ts reads as a TimeoutError, answered 504 TIMEOUT_ERROR with that SQLSTATE,
+    // as the query route's body answers it.
     assert.equal(error.code, 504);
-    assert.deepEqual(error.data, { code: "TIMEOUT_ERROR", retryable: true });
+    assert.deepEqual(error.data, {
+      code: "TIMEOUT_ERROR",
+      kind: "timeout",
+      outcome: "unknown",
+      retryable: true,
+      sqlState: "57014",
+    });
   });
 
   /** A fresh child with a PostgreSQL session open in libredb_it_lifecycle, which psql sees. */

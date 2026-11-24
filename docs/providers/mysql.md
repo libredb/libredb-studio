@@ -22,6 +22,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, maintenance (`analyze`, `optimize`, `check`, `kill`) and the transaction route all send writes |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.getConnection()`) for a statement or for a transaction's `BEGIN`, which comes before anything is sent, answers outcome `not-sent`, and every failure after it `unknown` |
 
 ---
 
@@ -40,7 +41,7 @@ which is the SQL reference implementation. The headline differences:
 | Schema introspection | One set of shared `MATERIALIZED` CTEs behind the object surface | `information_schema` behind the object surface; the bulk column read is four statements per folder ([§7.1](#71-the-object-surface-789)) |
 | Schema scope | All non-system schemas, cross-schema FKs | **Single database** (`TABLE_SCHEMA = <db>`), bare table names, lifted by the object surface ([§7.1](#71-the-object-surface-789)) |
 | Maintenance ops | `vacuum`, `analyze`, `reindex`, `kill` | `analyze`, `optimize`, `check`, `kill` |
-| Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** — no server-side query timeout |
+| Query timeout | `statement_timeout` from `queryTimeout` | **Not wired** in the provider; Studio answers an editor statement still running at `queryTimeout` plus 10 s and kills it with `KILL QUERY` ([§3.5](#35-no-server-side-query-timeout)) |
 | Pool config honored | `min`/`max`/`idleTimeout`/`acquireTimeout` | **`max` only** (`connectionLimit`) |
 | Queries-per-second metric | `undefined` (needs sampling) | Reported (`Queries`/`Uptime`) |
 | BLOB/binary values | driver-native | driver-native ([§3.3](#33-blob--binary-values-reach-every-surface-as-bytes)) |
@@ -125,7 +126,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mysql': {
   const { MySQLProvider } = await import('./providers/sql/mysql');
-  return new MySQLProvider(connection, options);
+  return new MySQLProvider(connection, options, context);
 }
 ```
 
@@ -437,8 +438,10 @@ decoding paths, and pins the text it receives.
 
 The pool config, built by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)), intentionally sets only
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
-timeout (MySQL has no direct `statement_timeout` pool option like Postgres). A runaway query is not
-auto-killed by the provider; cancellation is explicit via [`cancelQuery()`](#53-query-cancellation).
+timeout (MySQL has no direct `statement_timeout` pool option like Postgres).
+The provider kills no statement on its own; its kill is [`cancelQuery()`](#53-query-cancellation).
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `KILL QUERY` on its thread, when the request named a `queryId`.
 
 ### 3.6 Maintenance over all tables when no target
 
@@ -630,7 +633,7 @@ options set by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/providers/sql/
 
 > ⚠️ Only `max` from `DEFAULT_POOL_CONFIG` is honored. `min`, `idleTimeout`, and `acquireTimeout`
 > are **not** mapped (the mysql2 pool model differs from `pg`), and `queryTimeout` is **not** applied
-> (see [§3.5](#35-no-server-side-query-timeout)).
+> by the pool (see [§3.5](#35-no-server-side-query-timeout)).
 >
 > ⚠️ When a **`connectionString`** is supplied, `buildPoolConfig()` returns `{ ...baseConfig, timezone, uri }`
 > and takes the discrete-fields branch **not at all**, so `ssl`/`connection.ssl` and
@@ -714,7 +717,7 @@ It runs no seed load check.
 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mysql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is declared in [`mysql-execution-ui.ts`](../../src/lib/db/providers/sql/mysql-execution-ui.ts).
-What a tree click and Generate Query write is `MYSQL_SQL_GENERATORS`, its row of `SQL_PORT_GENERATORS` keyed by its default port (its identifier quoting), declared in [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is `MYSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), declared in [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its account-limit and access-refusal error numbers and its interrupted-query words, is the `mysql2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mysql-driver-errors.ts`](../../src/lib/db/providers/sql/mysql-driver-errors.ts).
 
 ---
@@ -964,6 +967,24 @@ Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026
 `//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064.
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
 `[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+The confirmation gate asks before the INSERT-shaped statements whose text changes rows already there, as it asks before `UPDATE` and `DELETE`.
+`REPLACE` (`confirmForms`) deletes the row a new one collides with on a primary or unique key; its `INTO` is optional, so every statement led by the word asks.
+`ON DUPLICATE KEY UPDATE` (`confirmCodeForms`) asks wherever it is in the statement's code, after `VALUES`, `SET` or `SELECT`.
+`INSERT OVERWRITE` (`confirmForms`) is StarRocks' and Apache Doris' statement (`INSERT OVERWRITE TABLE` in Doris) and replaces every row of the table or of the partitions it names.
+MySQL has no such statement, so on MySQL its one false prompt is an `INSERT` without `INTO` into a table named `overwrite`.
+`REPLACE INTO TABLE` (`confirmCodeForms`) is `LOAD DATA`'s and `LOAD XML`'s, after the file name: measured on MySQL 8.4.13, `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned `(1, 'a', 'keep-me')` into the loaded row, `IGNORE` kept it, and a load with neither word refused the duplicate with ERROR 1062, so only `REPLACE` asks.
+`REPLACE` and `TABLE` are reserved and a `REPLACE()` call takes a `(`, so the one other statement found that writes those three words is SingleStore's `CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, which loads nothing until `START PIPELINE` runs it.
+It asks, the form's one accepted false prompt: the definition is the only text that shows the `REPLACE`, and `START PIPELINE` does not ask.
+`CREATE OR REPLACE TABLE` (`confirmForms`) is MariaDB's: measured on MariaDB 11.8.9, it dropped the table and its rows, and the `AS SELECT` form left only the selected rows.
+`CREATE OR REPLACE TEMPORARY TABLE` (`confirmForms`) replaces the session's temporary table of that name and its rows: measured on 11.8.9, a temporary table holding a row read none after it, and the `AS SELECT` form left only the selected row, while a base table of the same name kept its row in a new session.
+It asks as `DROP TEMPORARY TABLE` does for the same rows.
+MySQL 8.4.13 refuses both with ERROR 1064, so on MySQL they never run.
+`CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` replace objects that hold no rows, so none of them asks outside a script led by `BEGIN`.
+A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` do not ask.
+The gate reads the statement, not the table: StarRocks treats an `INSERT` into a Primary Key table, and Apache Doris an `INSERT` into a Unique Key table, as an upsert that overwrites the row with the same key (each engine's table-model documentation), and such an `INSERT` does not ask either.
+Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.
+Every MySQL-wire relative in section 1.1 connects through the `mysql` type id and has no grammar row of its own, so it gets the same answers.
+TiDB's non-transactional `BATCH ... DELETE` and `BATCH ... REPLACE` still run with no confirmation, since the gate reads `BATCH` as the statement's keyword: BACKLOG D476.
 The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
@@ -977,9 +998,9 @@ to the pool until commit/rollback). Surfaced via `POST /api/db/transaction`.
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction(options?)` | `pool.getConnection()` + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
+| `beginTransaction(options?)` | `pool.getConnection()` through `checkoutPhase`, so a failed checkout answers `not-sent` ([§11](#11-error-handling)), + `BEGIN` (`START TRANSACTION` if `BEGIN` is refused as a parse error), arms a **5-minute auto-rollback** timer (`TX_TIMEOUT_MS`, [`mysql.ts`](../../src/lib/db/providers/sql/mysql.ts)). Throws if one is active, refuses a `BEGIN` the server reports as having opened nothing, and answers `{ stateReported }`; with `requireReportedState` (SANDBOX) it also refuses a server that reports no state at all ([§6.0](#60-what-the-server-says-about-the-transaction)). |
 | `queryInTransaction(sql, params?)` | Runs on the transaction's connection (with the same non-SELECT envelope as §5.1). Throws if none active. Ends the session when the server says the statement ended the transaction ([§6.0](#60-what-the-server-says-about-the-transaction)). One statement per call: the route splits a selection of several and calls this once per statement, in order, stopping at the first failure (#1390). Measured on MySQL 26.7.0 before that: two `UPDATE` lines run inside BEGIN or SANDBOX answered "You have an error in your SQL syntax ... at line 2". |
-| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. Throws if none active. |
+| `commitTransaction()` / `rollbackTransaction()` | Ends it, clears the timer, releases the connection. A `COMMIT` or `ROLLBACK` that fails answers its mapped class with `outcome` `unknown` ([§11](#11-error-handling)), and the provider holds no transaction after it. Throws if none active. |
 | `expireTransaction()` | Timeout callback — auto-`rollback()` to prevent leaked locks. |
 | `isInTransaction()` | Current state. |
 
@@ -1121,7 +1142,7 @@ So the absence is the driver's and not the engine's, and implementing the surfac
 It is not done here for a reason peculiar to this type-id: `mysql` also serves MariaDB ([§1.1](#11-mariadb-and-the-other-mysql-protocol-engines)), where `performance_schema` is OFF by default and its tables answer NULL instead of failing, so the same query would report no open transaction on a default MariaDB while one is open, and rolling nothing back is the one outcome worse than reporting nothing.
 Doing it needs a per-server capability probe of the kind `objectKinds` and the EXPLAIN grammar already use here, which is a change of its own and is filed as D90 rather than smuggled into a doc note.
 
-Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and `POST /api/db/multi-query` shape-checks for it.
+Not implementing it is therefore a declared boundary rather than an oversight, and it is declared in the type: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 The cost while it stands: an abandoned transaction keeps its InnoDB row locks until the connection is reused by a caller that ends it, or the pool closes.
 
 ---
@@ -1983,10 +2004,11 @@ measured zero, and that reading is published as `0`/`"0 B"`.
   answers 0 rows without raising — it is the source being *unreadable*: no `performance_schema`
   database (`ERROR 1049`), or the grant denied on it (`ERROR 1142`). Letting that reject is what
   puts the reason on screen: `getMonitoringData()`
-  ([`base-provider.ts`](../../src/lib/db/base-provider.ts)) reads every panel with
-  `Promise.allSettled` and records a rejected one under `errors.slowQueries`, and `QueriesTab`
+  ([`base-provider.ts`](../../src/lib/db/base-provider.ts), orchestrated by
+  [`engine-facets/monitoring.ts`](../../src/lib/db/engine-facets/monitoring.ts)) reads each
+  offered panel independently and records a rejected one under `errors.slowQueries`, and `QueriesTab`
   renders that through `PanelUnavailable` carrying the server's own sentence. One refused panel
-  costs only itself; that method throws only when all four core reads reject.
+  costs only itself; that method rejects only when every panel it read rejected.
 - `getPerformanceMetrics()`: **every field is omitted rather than defaulted.** A server with
   `performance_schema` OFF answers the `global_status` sub-selects with NULL instead of failing, so
   each reading is taken through `measuredNumber()` and a field with nothing behind it is left out of
@@ -2156,6 +2178,29 @@ row counts that data twice. Measured on MySQL 26.7.0 against a 144 KB database, 
 a remainder of `-49152 B`. `getTableStats()` carries `INDEX_LENGTH` as `indexSizeBytes` (it computed
 that number and dropped it before 2026-08-23, which is why the panel had nothing to add up), and
 that is what MySQL itself calls index bytes.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `mysql` offers is its row in `ENGINE_FACETS`, declared in [`mysql-engine-facets.ts`](../../src/lib/db/providers/sql/mysql-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `analyze`, `optimize`, `check`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+The connected server may accept fewer ([section 9.1](#91-which-verbs-the-connected-server-has-measured-at-connect)), and an operation it does not accept is refused with the same code after connect.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
 
 ---
 
@@ -2453,7 +2498,7 @@ Native `mysql2` errors are mapped by the shared `mapDatabaseError()`
 | A refused account, by errno: `1045` and `1698` a refused login (`sqlState` `28000`), `1820` and `1862` an expired password, `3118` a locked account, `3955` an account blocked after failed logins | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Connection refused / DNS (`ECONNREFUSED`, `getaddrinfo`) | `ConnectionError` |
 | Killed query (*"Query execution was interrupted"*) | `QueryCancelledError` |
-| Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`, connection-acquire timeout) | `TimeoutError` |
+| Driver message contains *timeout* / *timed out* (e.g. `Lock wait timeout exceeded`) | `TimeoutError` |
 | Other server errors (most `ER_*` codes) | `QueryError` / `DatabaseError` carrying the original message |
 
 The two refusals are told apart by the errno, not by the words: `1044` and `1227` begin "Access denied" as a refused login does, and the agent read-only profile met both as "Authentication failed" before they had their own class ([§12.1](#121-the-principal-is-the-first-layer-because-a-read-only-transaction-ends-where-ddl-begins)).
@@ -2466,6 +2511,14 @@ MariaDB answers the same numbers, and TiDB declares the same `1142`, `1143` and 
 > `TimeoutError` (the mapping is provider-agnostic). What MySQL lacks is a **server-side query
 > timeout derived from `queryTimeout`** — the provider never configures one
 > ([§3.5](#35-no-server-side-query-timeout)), so it won't auto-kill a long-running query on its own.
+
+The editor's statement (`query`) takes its connection from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and the class its `mysql2` error maps to: `ConnectionError` for a refused or unreachable server, `PoolExhaustedError` for `Pool is closed.`, `AuthenticationError` for a refused account ([CONTRACT](./CONTRACT.md), E-5).
+Before this, the checkout sat outside the mapping, so its failure reached the route as the raw driver error and answered `500 INTERNAL_ERROR` with the driver's text.
+The pool queues a checkout without bound (`waitForConnections: true`, `queueLimit: 0`, and `mysql2` has no acquire timeout), so a full pool waits until Studio's deadline on the statement, which answers `504` with `outcome` `unknown`.
+A connection lost after it was taken (`PROTOCOL_CONNECTION_LOST`) answers `unknown`, since the statement may have reached the server.
+A transaction's `beginTransaction()` takes its connection the same way before it sends the `BEGIN`, so a failed checkout there answers `not-sent` in the same class; its checkout waits without bound too, like the statement's.
+The `BEGIN` itself, a `COMMIT` and a `ROLLBACK` that fail answer the class their `mysql2` error maps to, with `outcome` `unknown`, as a statement does: a lost connection (`PROTOCOL_CONNECTION_LOST`) or a deadlock (`1213`, its SQLSTATE `40001` kept) `500 DATABASE_ERROR`, a `BEGIN` refused as a parse error in both forms `400 QUERY_ERROR`.
+The other paths that take a connection (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 
@@ -2600,6 +2653,10 @@ then a second, idempotent destroy. The two
 layers are complementary: the variable stops the server's own production for a statement with no
 `LIMIT`, and the stream holds the line for one that carries a `LIMIT` past the budget.
 
+A row's bytes are the UTF-8 JSON of the row as it is served, keyed by its column names, so the agent and MCP byte budget counts every row's column names as well as its values.
+That is the measure Studio checks the answer against again on the agent, hand-over and MCP paths (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so the stream stops on the same row that check would refuse.
+The names are not a rounding error: on MySQL 8.4.13, 200 rows of three named columns came to 4,531 bytes as bare values and 17,931 as served rows.
+
 The deadline has a server-side half and a provider-owned half, because the server-side half is
 DEFEATABLE BY THE STATEMENT ITSELF, measured, both engines, both ways:
 
@@ -2630,6 +2687,14 @@ A 1317 the call did not cause is someone else's `KILL` and keeps its own meaning
 result — the value `1` — measured, so a query that resolved while its kill is in flight is refused
 rather than served, because a partial result with no error is the one shape this boundary must not
 hand to a model as an answer.
+
+The KILL is sent from the main pool the read started on, and only while the provider still holds it.
+`disconnect()` ends the read-only pool first, while the main pool is still held: mysql2's `end()` settles only once the statement still running on the pool has ended, so a deadline met while `disconnect()` waits still sends its KILL, and the read is refused as killed server-side.
+The main pool is then let go before its own `end()` is awaited, because a closing pool refuses every new statement.
+A deadline that finds no main pool to send from, or finds another connection's pool after a reconnect, sends no KILL, and that is logged as `KILL QUERY <threadId> for a read-only statement was not sent: the connection was closed`.
+The read is then refused as "The connection was closed while the read-only statement ran, so it was not killed at its deadline of N ms and was not answered" rather than as killed server-side, and an error the statement ended with is carried in the refusal's detail.
+A row or byte budget crossed with no main pool left is refused as that budget, with the same KILL not sent and logged.
+Measured on MySQL 26.10.0 under Node 24 with a 1500 ms budget and a disconnect 300 ms into the read: `SELECT SLEEP(5)`, the same statement carrying `/*+ MAX_EXECUTION_TIME(9000) */`, and a reconnect right after the disconnect were each killed at the deadline, with the read refused and `disconnect()` settled at about 1.53 s.
 
 **Nothing a call set survives it.**
 The session variables leak through mysql2's own `release()` — measured, the next borrower of the same pooled connection read the `sql_select_limit` and deadline the previous call had set — and so do the states no transaction contains: user variables, `GET_LOCK()` locks (which need no privilege), `HANDLER` state and temporary tables.
@@ -2796,7 +2861,7 @@ everything after it, and each session's ORDERED event log is what the tests asse
 property that makes the transaction real rather than recorded. The refusal paths pinned beside it:
 a row past the budget (including a statement whose own `LIMIT 100000000` outranks
 `sql_select_limit` — refused on the row that crosses, killed, connection dropped), a byte past the
-byte budget, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
+byte budget, measured on the keyed rows served, a deadline kill answered as the deadline (1317, 3024 and 1969 alike), a kill that lands while the query resolves, a deadline met while `disconnect()` waits on the read-only pool (still killed), a deadline or a row budget met after the main pool was let go or replaced by a reconnect (no KILL sent, the closed connection named, the statement's own error carried in the detail), a named lock that dies with the closed connection, a write the server refuses with the connection still closed, the principal and engine verified once at the first read rather than at open, a write-capable account that still opens, a column-level SELECT admitted, and a `flags=MULTI_STATEMENTS` connection string held to one statement.
 The model cannot say what the servers do, which is why
 [`tests/live/mysql-agent-profile.ts`](../../tests/live/mysql-agent-profile.ts) exists (§13.4).
 
@@ -2921,10 +2986,10 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## 15. Known limitations & future work
 
-- **No server-side query timeout.** The pool ignores `queryTimeout`; a runaway query is not
-  auto-killed (only explicit `cancelQuery()`/`KILL QUERY`). *Future:* derive a per-statement
-  `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`. (Note `wait_timeout` is
-  unrelated — it bounds idle connections, not query execution.)
+- **No server-side query timeout.** The pool ignores `queryTimeout`, so the server never stops a statement on its own.
+  An editor statement still running at `queryTimeout` plus 10 s is answered `504` by Studio and killed with `KILL QUERY` ([§3.5](#35-no-server-side-query-timeout)); any other statement runs until it ends or is cancelled.
+  *Future:* derive a per-statement `MAX_EXECUTION_TIME` (the SELECT execution limit) from `queryTimeout`.
+  (Note `wait_timeout` is unrelated: it bounds idle connections, not query execution.)
 - **Pool tuning is limited** to `max` (`connectionLimit`); `min`/`idleTimeout`/`acquireTimeout` are
   ignored.
 - **Index `scans` is `CARDINALITY`**, an estimate of distinct values — not a real index-usage/scan

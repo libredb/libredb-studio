@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/gra
 | | |
 |---|---|
 | **Write reach** | none: the shared Cypher read policy, `checkCypherRead`, refuses every statement that is not a read before any Bolt request; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside `session.run()`, the call that sends the statement, so no failure can be shown to come before the send |
 
 ## 1. Overview
 
@@ -339,7 +340,7 @@ A node or relationship found under a column the grid masks by name has every pro
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/graph/neo4j/sql-grammar.ts`](../../src/lib/db/providers/graph/neo4j/sql-grammar.ts), the `neo4j` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `neo4j` takes one Cypher statement, whose strings escape with a backslash, where `//` opens a comment and a backtick quotes a name, so a SQL span reader would misread where a literal ends; the provider reads it with the graph lexer (`src/lib/db/graph/cypher/lexer.ts`) and refuses every write before sending it.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/graph/neo4j/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/graph/cypher/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -395,8 +396,31 @@ Each label in a count statement is backticked by the quoting module and checked 
 The monitoring reads run through the same READ session path without the user's policy, and a unit test checks every one against the policy: every monitoring read but the transactions read passes it.
 The transactions read stays out of the user allowlist (section 3.2), since a user's `SHOW TRANSACTIONS YIELD *` returns other sessions' query text and parameters, and the monitoring read keeps a fixed column list that names no `parameters` column.
 A read the server refuses yields that panel's empty answer, never a throw, while an unreachable server, a timeout or a cancel is raised; a refused overview figure is shown as unreadable and leaves the others standing.
-The Slow queries panel says "Neo4j Community keeps no query log, and this version does not read the Enterprise query log." and the Active sessions panel with nothing running says "No transaction is running."
+The slow-query panel is not offered, so the dashboard draws no Queries tab: Neo4j Community keeps no query log, and this version does not read the Enterprise query log, so `getSlowQueries()` answers `[]` and the labels declare no sentence for the panel.
+The Active sessions panel with nothing running says "No transaction is running."
 Health answers healthy after the connectivity check and the ping, or raises; Bolt reports no cache ratio, size or uptime, so those read "N/A".
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `neo4j` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/graph/neo4j/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `table-stats`, `index-stats`, `health`.
 
 ## 8. Maintenance
 

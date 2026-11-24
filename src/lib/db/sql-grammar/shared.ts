@@ -1,26 +1,4 @@
-import type { SqlGrammar } from "./types";
-
-/**
- * What a call that names no dialect gets.
- *
- * Deliberately today's reading rather than a stricter "report undeterminable
- * wherever the dialects disagree". The strict default is the more honest one in
- * the abstract, but every fixture written for #275, #280, #287, #291 and #294
- * calls these readers without a dialect, and rewriting the meaning of that whole
- * suite in the same change that introduces the channel would leave nothing
- * pinning the old behaviour. Pinned by its own tests instead, so it is a decision
- * rather than an accident.
- */
-export const DEFAULT_SQL_GRAMMAR: SqlGrammar = {
-  hash: "comment-unless-operator",
-  bracket: "quoted-identifier",
-  blockComment: "flat",
-  alternateQuoting: false,
-  doubleSlashComment: false,
-  backslashAlwaysEscapes: false,
-  script: { blocks: "none", separatorLine: null, unit: "statement" },
-  trailingLimitClauses: [],
-};
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 
 /**
  * The one grammar two engines share: `sqlite` and `libsql`, since libSQL reads
@@ -48,6 +26,14 @@ export const SQLITE_GRAMMAR: SqlGrammar = {
   // `incomplete input`.
   script: { blocks: "trigger-body", separatorLine: null, unit: "statement" },
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
+  // The INSERTs that delete the row a new one collides with on a primary or unique key (SQLite reference, "INSERT"
+  // and "The ON CONFLICT Clause"): `REPLACE INTO`, whose INTO is required, and `INSERT OR REPLACE`. Measured through
+  // bun:sqlite on 3.53.4, OR ROLLBACK, OR ABORT and OR FAIL refuse the new row with an error and OR IGNORE skips it,
+  // so none of them changes a row already there and none asks.
+  confirmForms: [
+    ["REPLACE", "INTO"],
+    ["INSERT", "OR", "REPLACE"],
+  ],
 };
 
 /** The empty word set, for an engine that adds no word to a shared set. */

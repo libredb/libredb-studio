@@ -36,6 +36,7 @@ import { randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
@@ -61,7 +62,7 @@ import {
   type ObjectDetailBatch,
   type ObjectSourceDocument,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -73,11 +74,13 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { assertReadOnlyBudget, byteBudgetSentence } from "../read-only-budget";
+import { assertReadOnlyBudget, byteBudgetSentence } from "@/lib/db/read-only-budget";
 import { verifyAgentProfile } from "./agent-boundary";
 import {
   agentBodyCap,
@@ -540,11 +543,15 @@ export class ClickHouseProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
     this.validate();
     this.connection = resolveConnection(config);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
   }
 
   // ==========================================================================
@@ -713,7 +720,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = new ClickHouseHttpTransport(this.connection);
+    const transport = new ClickHouseHttpTransport(this.connection, requireEgressDecision(this.egress));
 
     try {
       // The `database` parameter is not checked when the connection is made -
@@ -885,7 +892,7 @@ export class ClickHouseProvider extends SQLBaseProvider {
         return await transport.query(sql, this.agentQueryOptions(budget));
       } catch (error) {
         if (error instanceof ClickHouseBodyLimitError) {
-          throw new QueryError(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
+          throw new ByteBudgetRefusal(byteBudgetSentence(error.bytesRead, budget.maxResultBytes), this.type, sql);
         }
         if (error instanceof ClickHouseTransportError && error.code === TOO_MANY_ROWS_OR_BYTES) {
           throw rowOverflowRefusal(error.message, budget, sql);

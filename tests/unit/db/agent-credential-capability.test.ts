@@ -1,23 +1,25 @@
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import { AGENT_CREDENTIAL_FORM, CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import type { AgentCredentialForm } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
 /**
- * `ProviderCapabilities.agentCredential` across every shipped provider.
+ * `AGENT_CREDENTIAL_FORM` (src/lib/db/connection-fields.ts), Studio's review record of the agent credential form,
+ * against `ProviderCapabilities.agentCredential` across every shipped provider.
  *
- * `acquireExecutionProfileProvider` reads the declaration from the provider it builds and decides from it which agent
- * credential is complete. A provider declaring a form by mistake would change what its agent signs in as: the token
- * form would turn a SQL engine's half-configured credential, refused today, into an agent that logs in as the
- * connection's user with another password, and `"none"` would refuse a credential the engine needs. A provider losing
- * its form would refuse every Kubernetes agent token. So the census pins which engines declare which form, and that
- * every other engine declares none, the user-and-password form.
+ * `acquireExecutionProfileProvider` reads the form from the record, never from the provider it builds, and decides from
+ * it which agent credential is complete. A row naming a form by mistake would change what its agent signs in as: the
+ * token form would turn a SQL engine's half-configured credential, refused today, into an agent that logs in as the
+ * connection's user with another password, and `"none"` would refuse a credential the engine needs. A row losing its
+ * form would refuse every Kubernetes agent token. So the census holds each row equal to the form its provider declares,
+ * and null to a provider that declares none, the user-and-password form.
  *
  * `"dedicated-user"` is S3's: an S3 agent key is an access key ID and secret of its own, and an agent access key ID equal
  * to the connection's own names the same key, so the narrowing would be false.
@@ -25,22 +27,19 @@ const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor, the reading
  * `CENSUS_CONNECTION` documents.
  */
-const DECLARED_FORMS: Readonly<Partial<Record<DatabaseType, AgentCredentialForm>>> = {
-  kubernetes: "token",
-  qdrant: "token",
-  weaviate: "token",
-  libsql: "token",
-  influxdb3: "token",
-  bigquery: "service-account-key",
-  s3: "dedicated-user",
-  libredb: "none",
-};
-
-describe("agentCredential against each provider's own declaration", () => {
-  test.each([...SHIPPED_DATABASE_TYPES])("%s declares the agent credential form the census names", async (type) => {
-    const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-    expect(provider.getCapabilities().agentCredential).toBe(DECLARED_FORMS[type]);
+describe("AGENT_CREDENTIAL_FORM against each provider's own declaration", () => {
+  test("AGENT_CREDENTIAL_FORM answers for every shipped type-id and for nothing else, and is frozen", () => {
+    expect(Object.keys(AGENT_CREDENTIAL_FORM).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
+    expect(Object.isFrozen(AGENT_CREDENTIAL_FORM)).toBe(true);
   });
+
+  test.each([...SHIPPED_DATABASE_TYPES])(
+    "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none",
+    async (type) => {
+      const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
+      expect(AGENT_CREDENTIAL_FORM[type]).toBe(provider.getCapabilities().agentCredential ?? null);
+    },
+  );
 });
 
 /**
@@ -116,13 +115,17 @@ describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () 
   });
 
   test("the Elasticsearch transport signs with the API key pair when a user and password stand beside it", () => {
-    const transport = new SearchHttpTransport("elasticsearch", {
-      ...CENSUS_CONNECTION.elasticsearch,
-      apiKeyId: "not-a-real-key-id",
-      apiKeySecret: "not-a-real-key-secret",
-      user: "agent_reader",
-      password: STAND_IN_PASSWORD,
-    });
+    const transport = new SearchHttpTransport(
+      "elasticsearch",
+      {
+        ...CENSUS_CONNECTION.elasticsearch,
+        apiKeyId: "not-a-real-key-id",
+        apiKeySecret: "not-a-real-key-secret",
+        user: "agent_reader",
+        password: STAND_IN_PASSWORD,
+      },
+      ALLOWS_PRIVATE_HOSTS,
+    );
     const authorization = (transport as unknown as { readonly authorization?: string }).authorization ?? "";
     expect(authorization.startsWith("ApiKey ")).toBe(true);
   });

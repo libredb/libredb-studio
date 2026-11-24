@@ -10,10 +10,11 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
 import { statementRefusal } from "@/lib/db/destructive-commands";
-import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
-import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR, type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../helpers/stand-in-vocabulary";
+import { OUTSIDE_THE_UNION, refusalOf } from "../helpers/outside-the-union";
 import { schemaContextOf } from "@/lib/db/detailed-object";
 import { SAMPLED_MARKER, sampledSchema } from "../fixtures/sampled-schema";
 
@@ -997,8 +998,9 @@ describe("QuerySafetyDialog", () => {
   });
 
   // A vocabulary that asks for a typed value, or keeps its statements from the analysis (#1089, section 5.5 and
-  // E10). These tests install a row of their own under a key no DatabaseType spells
-  // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any engine's grammar; etcd's row,
+  // E10). These tests install a row of their own under the stand-in type id, trino, which ships no row
+  // (tests/helpers/stand-in-vocabulary.ts), so each rule is pinned apart from any shipped vocabulary row, and the
+  // texts are read under Trino's grammar; etcd's row,
   // the one shipped row that declares both fields, is pinned with its own commands in the describe after this one.
   describe("a vocabulary's typed confirmation and its safety-analysis switch", () => {
     const MISSING_NAME =
@@ -2033,8 +2035,8 @@ describe("isDangerousQuery", () => {
     ["Update"],
     ["DROP"],
   ])("does not prompt when the tree runs a metric named %s on prometheus", (name) => {
-    const click = generateTableQuery([name], prometheusCapabilities);
-    const buffer = generateSelectQuery([name], [], prometheusCapabilities);
+    const click = generateTableQuery([name], "prometheus", prometheusCapabilities);
+    const buffer = generateSelectQuery([name], [], "prometheus", prometheusCapabilities);
     // The premise: the click runs the bare name, and both texts read as a write under SQL.
     expect(click).toBe(name);
     expect(isDangerousQuery(click)).toBe(true);
@@ -2129,8 +2131,8 @@ describe("isDangerousQuery", () => {
   test.each<[string]>([["delete"], ["drop"], ["update"], ["truncate"], ["DROP"]])(
     "does not prompt when the tree reads a topic named %s on kafka",
     (name) => {
-      const click = generateTableQuery([name], kafkaCapabilities);
-      const buffer = generateSelectQuery([name], [], kafkaCapabilities);
+      const click = generateTableQuery([name], "kafka", kafkaCapabilities);
+      const buffer = generateSelectQuery([name], [], "kafka", kafkaCapabilities);
       // The premise: both texts are read requests naming the topic, and neither is a MongoDB command.
       expect(JSON.parse(click).topic).toBe(name);
       expect(JSON.parse(buffer).topic).toBe(name);
@@ -2534,6 +2536,216 @@ describe("QuerySafetyDialog and a column the engine only inferred from sampled d
     const argument = (onAnalyzeSafety.mock.calls[0] as unknown as [{ query: string; schemaContext: string }])[0];
     expect(argument.schemaContext).toContain("category");
     expect(argument.schemaContext).not.toContain(SAMPLED_MARKER);
+  });
+});
+
+// A host hands this published dialog the connection's type as a plain string (FND-1, Q2). A value that is not a type
+// id, the empty string and null included, is refused by name in place of the analysis: nothing is read under another
+// engine's grammar or the SQL defaults, nothing is sent to be analysed, and Execute stays disabled. An omitted
+// databaseType is no connection, as before.
+describe("QuerySafetyDialog and a databaseType outside the union (FND-1)", () => {
+  // An unterminated quote, which a SQL reading would call unreadable, so the test sees that notice is not drawn.
+  const QUERY = "DELETE FROM employee WHERE name = 'x";
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    fetchMock = mock(async () => createStreamResponse({ chunks: ["Plain text analysis output"] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  test.each(OUTSIDE_THE_UNION)(
+    "draws the refusal for %s in place of the analysis, and sends nothing",
+    (_label, value) => {
+      const onAnalyzeSafety = mock(async () => {
+        throw new Error("no analysis is asked for a refused type");
+      });
+      render(
+        <QuerySafetyDialog
+          isOpen
+          query={QUERY}
+          schemaContext=""
+          databaseType={value as string}
+          connectionName="Acme"
+          onClose={() => {}}
+          onProceed={() => {}}
+          onAnalyzeSafety={onAnalyzeSafety}
+        />,
+      );
+      const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+      expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf(value).message}`);
+      expect(within(dialog).queryByText("Connection unavailable")).not.toBeNull();
+      expect(within(dialog).getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+      expect(within(dialog).queryByText("Part of this statement could not be read")).toBeNull();
+      expect(within(dialog).queryByText(/not sent to an AI provider/)).toBeNull();
+      expect(within(dialog).queryByText("Analyzing query safety...")).toBeNull();
+      expect(within(dialog).queryByText(/Review the query before proceeding/)).toBeNull();
+      expect(within(dialog).queryByRole("textbox")).toBeNull();
+      expect(onAnalyzeSafety).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([
+    ["no connection name", undefined],
+    ["an empty connection name", ""],
+  ])("names This connection when the caller gives %s", (_label, connectionName) => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="acmefoo"
+        connectionName={connectionName}
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(
+      `This connection: ${refusalOf("acmefoo").message}`,
+    );
+    // With no onAnalyzeSafety the dialog would post to the safety route, so this is where sending nothing shows.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // etcd's row is the one shipped row that asks for a typed value, and its table is read by index, so a value that
+  // converts to "etcd" is the one that would draw the field if the refusal did not come first.
+  test.each([
+    ['a String object of "etcd"', new String("etcd")],
+    ['the array ["etcd"]', ["etcd"]],
+  ])("draws no typed confirmation for %s, whose conversion names etcd", (_label, value) => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /App/ --prefix"
+        schemaContext=""
+        databaseType={value as unknown as string}
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf(value).message}`);
+    expect(screen.queryByLabelText("Type /App/ to confirm")).toBeNull();
+    expect(screen.getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("its accessible description is the refusal, as the connection dialog's is", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="constructor"
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+    const describedBy = dialog.getAttribute("aria-describedby");
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy!)?.textContent).toBe(`Acme: ${refusalOf("constructor").message}`);
+    // The statement stays on screen as plain text.
+    expect(within(dialog).queryByText(QUERY)).not.toBeNull();
+  });
+
+  test("Cancel closes it, and nothing is run", () => {
+    const onClose = mock(() => {});
+    const onProceed = mock(() => {});
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType=""
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog", { name: "Query Safety Check" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Execute Query" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onProceed).not.toHaveBeenCalled();
+  });
+
+  test("a closed dialog handed such a value renders nothing and does not throw", () => {
+    const { container } = render(
+      <QuerySafetyDialog
+        isOpen={false}
+        query={QUERY}
+        schemaContext=""
+        databaseType="__proto__"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    expect(container.textContent).toBe("");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("a host that swaps the type for one outside the union while the analysis runs stops it and draws the refusal", async () => {
+    const signals: AbortSignal[] = [];
+    const onAnalyzeSafety = mock(
+      ({ signal }: { query: string; schemaContext: string; signal?: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signals.push(signal!);
+          signal!.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const view = (databaseType: string) => (
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType={databaseType}
+        connectionName="Acme"
+        onClose={() => {}}
+        onProceed={() => {}}
+        onAnalyzeSafety={onAnalyzeSafety}
+      />
+    );
+    const { rerender } = render(view("postgres"));
+    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Analyzing query safety...")).not.toBeNull();
+    rerender(view("acmefoo"));
+    expect(signals[0].aborted).toBe(true);
+    expect(screen.getByTestId("query-safety-refusal").textContent).toBe(`Acme: ${refusalOf("acmefoo").message}`);
+    expect(screen.getByRole("button", { name: "Execute Query" }).hasAttribute("disabled")).toBe(true);
+    expect(onAnalyzeSafety).toHaveBeenCalledTimes(1);
+  });
+
+  test("a type id is analysed as before", async () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query={QUERY}
+        schemaContext=""
+        databaseType="postgres"
+        onClose={() => {}}
+        onProceed={() => {}}
+      />,
+    );
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
+    expect(screen.queryByText("Part of this statement could not be read")).not.toBeNull();
+  });
+
+  test("an omitted databaseType is read as no connection, as before", async () => {
+    render(<QuerySafetyDialog isOpen query={QUERY} schemaContext="" onClose={() => {}} onProceed={() => {}} />);
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("query-safety-refusal")).toBeNull();
   });
 });
 
@@ -3127,5 +3339,486 @@ describe("a PostgreSQL DO block asks", () => {
   test("MySQL's DO, which evaluates expressions, is not read as a block", () => {
     expect(isDangerousQuery("DO SLEEP(1)", "mysql")).toBe(false);
     expect(isDangerousQuery("DO 'x'", "mysql")).toBe(false);
+  });
+});
+
+// An INSERT-shaped statement whose text overwrites or deletes rows already there changes rows, so it asks as UPDATE and
+// DELETE do. The gate reads the statement, not the table: a plain INSERT and an INSERT ... SELECT do not ask, also where
+// the table's own definition turns them into a replace.
+describe("MySQL's statements that overwrite rows through an INSERT ask", () => {
+  // REPLACE deletes the row a new one collides with on a primary or unique key, with or without INTO; ON DUPLICATE KEY
+  // UPDATE updates it, after VALUES, SET or SELECT. Measured on MySQL 8.4.13: each ran from the editor with no dialog.
+  // INSERT OVERWRITE is StarRocks' and Apache Doris' (TABLE is Doris' spelling): it replaces every row of the table or
+  // of the partitions it names. The relatives on the mysql type id have no row of their own, so they get these answers.
+  test.each([
+    "REPLACE INTO t (id, v) VALUES (1, 'a')",
+    "REPLACE t (id, v) VALUES (1, 'a')",
+    "REPLACE LOW_PRIORITY INTO t VALUES (1, 'a')",
+    "REPLACE INTO t SET id = 1, v = 'a'",
+    "REPLACE INTO t SELECT id, v FROM u",
+    "replace into t values (1, 'a')",
+    "-- refresh\nREPLACE INTO t VALUES (1, 'a')",
+    "# refresh\nREPLACE INTO t VALUES (1, 'a')",
+    "INSERT INTO t (id, v) VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT INTO t SET id = 1, v = 'a' ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT INTO t SELECT id, v FROM u ON DUPLICATE KEY UPDATE v = u.v",
+    "INSERT INTO t VALUES (1, 'a') AS n ON DUPLICATE KEY UPDATE v = n.v",
+    "insert into t values (1, 'a') on /* c */ duplicate key -- d\nupdate v = 'b'",
+    "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
+    "SELECT 1; INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'",
+    "INSERT OVERWRITE t SELECT id, v FROM u",
+    "INSERT OVERWRITE t PARTITION (p1) SELECT id, v FROM u",
+    "INSERT OVERWRITE t VALUES (1, 'a')",
+    "INSERT OVERWRITE TABLE t SELECT id, v FROM u",
+    "insert /* c */ overwrite t select id, v from u",
+    "SELECT 1; INSERT OVERWRITE t SELECT id, v FROM u",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t (id, v) VALUES (1, 'a')",
+    "INSERT INTO t SELECT id, v FROM u",
+    "INSERT IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO overwrite VALUES (1, 'a')",
+    "SELECT REPLACE(v, 'a', 'b') FROM t",
+    "SELECT 'REPLACE INTO t VALUES (1)' AS note",
+    "INSERT INTO t VALUES ('ON DUPLICATE KEY UPDATE')",
+    "INSERT INTO t VALUES (1, 'a') # ON DUPLICATE KEY UPDATE v = 'b'",
+    "CREATE TABLE t (id INT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+
+  test("a script led by BEGIN that only calls REPLACE() asks: inside a block every form counts anywhere in the code", () => {
+    // The accepted cost of reading a REPLACE without INTO as the statement: the gate reads a block's code for its
+    // forms, and a false prompt costs one click where silence costs an unconfirmed REPLACE.
+    expect(isDangerousQuery("BEGIN; SELECT REPLACE(v, 'a', 'b') FROM t; COMMIT;", "mysql")).toBe(true);
+  });
+
+  const REPLACED_WITHOUT_ROWS = [
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+  ];
+
+  test.each(REPLACED_WITHOUT_ROWS)(
+    "a script led by BEGIN that holds %j asks: the same accepted false prompt",
+    (sql) => {
+      // The object holds no rows of its own, but inside a block led by BEGIN the gate reads every form anywhere in the
+      // code, so the REPLACE in CREATE OR REPLACE counts as the statement: one click, the fail-safe direction.
+      expect(isDangerousQuery(`BEGIN; ${sql}; COMMIT;`, "mysql")).toBe(true);
+    },
+  );
+
+  test.each(REPLACED_WITHOUT_ROWS.flatMap((sql) => [sql, `SELECT 1; ${sql}`, `START TRANSACTION; ${sql}; COMMIT;`]))(
+    "does not ask for %j outside a script led by BEGIN",
+    (sql) => {
+      expect(isDangerousQuery(sql, "mysql")).toBe(false);
+    },
+  );
+
+  test.each(["postgres", "mssql", "oracle"] as const)("%s keeps its verdicts", (type) => {
+    expect(isDangerousQuery("SELECT REPLACE(v, 'a', 'b') FROM t", type)).toBe(false);
+    expect(isDangerousQuery("INSERT INTO t VALUES (1, 'a') ON DUPLICATE KEY UPDATE v = 'b'", type)).toBe(false);
+  });
+});
+
+describe("SQLite's statements that overwrite rows through an INSERT ask", () => {
+  // REPLACE INTO and INSERT OR REPLACE delete the row a new one collides with on a primary or unique key, and so a
+  // different row than the one the key names. OR ROLLBACK, OR ABORT and OR FAIL refuse the new row with an error and
+  // OR IGNORE skips it, so none of them changes a row that is there (measured through bun:sqlite on SQLite 3.53.4, and
+  // on sqld 0.24.33 for libSQL, which reads the same grammar).
+  const ENGINES = ["sqlite", "libsql"] as const;
+  const pairs = (statements: readonly string[]) =>
+    ENGINES.flatMap((type) => statements.map((sql) => [type, sql] as const));
+
+  test.each(
+    pairs([
+      "REPLACE INTO t (id, v) VALUES (1, 'a')",
+      "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
+      "replace into t values (1, 'a')",
+      "insert or replace into t values (1, 'a')",
+      "INSERT /* c */ OR -- d\nREPLACE INTO t VALUES (1, 'a')",
+      "WITH c AS (SELECT 1 AS id) REPLACE INTO t SELECT id, 'a' FROM c",
+      "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
+      "SELECT 1; REPLACE INTO t VALUES (1, 'a')",
+      "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
+    ]),
+  )("%s asks for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(true);
+  });
+
+  test.each(
+    pairs([
+      "INSERT INTO t (id, v) VALUES (1, 'a')",
+      "INSERT INTO t SELECT id, v FROM u",
+      "INSERT OR IGNORE INTO t VALUES (1, 'a')",
+      "INSERT OR ABORT INTO t VALUES (1, 'a')",
+      "INSERT OR FAIL INTO t VALUES (1, 'a')",
+      "INSERT OR ROLLBACK INTO t VALUES (1, 'a')",
+      "SELECT replace(v, 'a', 'b') FROM t",
+      "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+      "SELECT 'INSERT OR REPLACE INTO t' AS note",
+    ]),
+  )("%s does not ask for %j", (type, sql) => {
+    expect(isDangerousQuery(sql, type)).toBe(false);
+  });
+});
+
+describe("MySQL's LOAD DATA and LOAD XML that replace rows ask", () => {
+  // REPLACE before INTO TABLE deletes the row a loaded one collides with on a primary or unique key. Measured on MySQL
+  // 8.4.13: `LOAD DATA INFILE ... REPLACE INTO TABLE t` turned (1, 'a', 'keep-me') into (1, 'loaded', NULL) from the
+  // editor with no dialog, IGNORE kept the row, and a load with neither refused the duplicate with ERROR 1062. The words
+  // follow a file name, not the statement's keyword, so the form is read anywhere in the code.
+  test.each([
+    "LOAD DATA INFILE '/var/lib/mysql-files/rows.csv' REPLACE INTO TABLE t FIELDS TERMINATED BY ','",
+    "LOAD DATA LOCAL INFILE 'rows.csv' REPLACE INTO TABLE t",
+    "LOAD DATA LOW_PRIORITY LOCAL INFILE 'rows.csv' REPLACE INTO TABLE probe.t (id, v)",
+    "LOAD XML LOCAL INFILE 'rows.xml' REPLACE INTO TABLE t ROWS IDENTIFIED BY '<row>'",
+    "load data local infile 'rows.csv' replace into table t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE /* c */ INTO -- d\nTABLE t",
+    "LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE `t`",
+    "SELECT 1; LOAD DATA INFILE 'rows.csv' REPLACE INTO TABLE t",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // What the code form could newly catch and must not: a load that keeps the rows there, the words in a literal or a
+  // comment, and a REPLACE() call, which a `(` follows rather than INTO.
+  test.each([
+    "LOAD DATA INFILE 'rows.csv' IGNORE INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'replace into table.csv' INTO TABLE t",
+    "LOAD DATA INFILE 'rows.csv' INTO TABLE t # REPLACE INTO TABLE t",
+    "SELECT 'REPLACE INTO TABLE t' AS note",
+    "SELECT REPLACE(note, 'INTO', 'TABLE') FROM t",
+    "SELECT `replace` FROM t",
+    "CREATE TABLE u REPLACE SELECT id, v FROM t",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+
+  test("SingleStore's CREATE PIPELINE with a replacing load asks, the accepted false prompt of the form", () => {
+    // SingleStore connects through the mysql type id, and its pipeline definition writes the same words
+    // (`CREATE PIPELINE ... AS LOAD DATA ... REPLACE INTO TABLE t`, SingleStore reference "CREATE PIPELINE"). Creating a
+    // pipeline loads nothing, and the START PIPELINE that runs the replacing load does not ask: the definition is the
+    // only text that shows the REPLACE, so the prompt is kept there.
+    expect(isDangerousQuery("CREATE PIPELINE p AS LOAD DATA S3 'bucket/key' REPLACE INTO TABLE t", "mysql")).toBe(true);
+    expect(isDangerousQuery("START PIPELINE p", "mysql")).toBe(false);
+  });
+});
+
+describe("MariaDB's CREATE OR REPLACE TABLE asks on a mysql connection", () => {
+  // MariaDB connects through the mysql type id. Measured on MariaDB 11.8.9: CREATE OR REPLACE TABLE dropped t and its
+  // row with no dialog, and the AS SELECT form left only the selected row. MySQL refuses the TABLE form (8.4.13, ERROR
+  // 1064), so on MySQL it never runs.
+  test.each([
+    "CREATE OR REPLACE TABLE t (id INT PRIMARY KEY, v VARCHAR(32))",
+    "CREATE OR REPLACE TABLE t AS SELECT 2 AS id, 'other' AS v",
+    "CREATE OR REPLACE TABLE t LIKE u",
+    "create or replace table t (id int)",
+    "CREATE /* c */ OR -- d\nREPLACE TABLE t (id INT)",
+    "SELECT 1; CREATE OR REPLACE TABLE t (id INT)",
+    // A TEMPORARY table replaces the session's temporary table of that name and its rows: measured on MariaDB 11.8.9,
+    // a temporary table holding a row read none after it, and the AS SELECT form left only the selected row, while a
+    // base table of the same name kept its row. DROP TEMPORARY TABLE asks for the same rows. MySQL 8.4.13 refuses the
+    // statement with ERROR 1064.
+    "CREATE OR REPLACE TEMPORARY TABLE tt (id INT, v VARCHAR(32))",
+    "CREATE OR REPLACE TEMPORARY TABLE tt AS SELECT 9 AS id, 'other' AS v",
+    "create or replace temporary table tt (id int)",
+    "CREATE OR /* c */ REPLACE -- d\nTEMPORARY TABLE tt (id INT)",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(true);
+  });
+
+  // Each replaces an object that holds no rows of its own and kept t's row on MariaDB 11.8.9.
+  test.each([
+    "CREATE OR REPLACE VIEW v AS SELECT 1 AS x",
+    "CREATE OR REPLACE PROCEDURE p() SELECT 1",
+    "CREATE OR REPLACE FUNCTION f() RETURNS INT DETERMINISTIC RETURN 1",
+    "CREATE TABLE IF NOT EXISTS t (id INT)",
+    "CREATE TEMPORARY TABLE tt (id INT)",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "mysql")).toBe(false);
+  });
+});
+
+describe("Databend's REPLACE asks", () => {
+  // REPLACE deletes the row a new one collides with on the key its ON clause names. Measured on Databend
+  // v1.2.951-nightly: REPLACE INTO turned (1, 'a', 'keep-me') into (1, 'new', NULL) from the editor with no dialog, INTO
+  // is optional (`REPLACE t ON (id) VALUES ...` replaced the row too), and ON is required ("expecting `ON`").
+  test.each([
+    "REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "REPLACE t ON (id) VALUES (1, 'a')",
+    "REPLACE INTO t (id, v) ON (id) SELECT id, v FROM u",
+    "replace into t on (id) values (1, 'a')",
+    "-- refresh\nREPLACE /* c */ INTO t ON (id) VALUES (1, 'a')",
+    "SELECT 1; REPLACE INTO t ON (id) VALUES (1, 'a')",
+    "BEGIN; REPLACE INTO t ON (id) VALUES (1, 'a'); COMMIT;",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'REPLACE INTO t ON (id)' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "databend")).toBe(false);
+  });
+
+  test("a script led by BEGIN that calls replace() before an ON asks: inside a block the form is read anywhere", () => {
+    // The accepted cost of reading REPLACE with the ON that every REPLACE statement carries: in a block the gate reads
+    // the form anywhere in the code, and a join's ON after the call satisfies it, the fail-safe direction.
+    expect(
+      isDangerousQuery("BEGIN; SELECT replace(t.v, 'a', 'b') FROM t JOIN u ON t.id = u.id; COMMIT;", "databend"),
+    ).toBe(true);
+  });
+});
+
+describe("DuckDB's INSERT OR REPLACE asks", () => {
+  // Measured on DuckDB 1.5.5: INSERT OR REPLACE overwrote (1, 'a', 'keep-me') with (1, 'new', NULL) from the editor with
+  // no dialog, BY NAME included, and ON CONFLICT ... DO UPDATE SET updated it, which the code-wide UPDATE ... SET
+  // reading already asks about. INSERT OR IGNORE, ON CONFLICT DO NOTHING, a plain INSERT and INSERT ... BY NAME or BY
+  // POSITION kept the row, refusing a duplicate key with a Constraint Error where they do not skip it.
+  test.each([
+    "INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t (id, v) VALUES (1, 'a')",
+    "INSERT OR REPLACE INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "insert or replace into t values (1, 'a')",
+    "INSERT /* c */ OR -- d\nREPLACE INTO t VALUES (1, 'a')",
+    "WITH c AS (SELECT 1 AS id) INSERT OR REPLACE INTO t SELECT id, 'a' FROM c",
+    "SELECT 1; INSERT OR REPLACE INTO t VALUES (1, 'a')",
+    "BEGIN; INSERT OR REPLACE INTO t VALUES (1, 'a'); COMMIT;",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET v = EXCLUDED.v",
+  ])("asks for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(true);
+  });
+
+  test.each([
+    "INSERT INTO t VALUES (1, 'a')",
+    "INSERT OR IGNORE INTO t VALUES (1, 'a')",
+    "INSERT INTO t VALUES (1, 'a') ON CONFLICT DO NOTHING",
+    "INSERT INTO t BY NAME SELECT 1 AS id, 'a' AS v",
+    "INSERT INTO t BY POSITION VALUES (1, 'a')",
+    "SELECT replace(v, 'a', 'b') FROM t",
+    "BEGIN; SELECT replace(v, 'a', 'b') FROM t; COMMIT;",
+    "SELECT 'INSERT OR REPLACE INTO t' AS note",
+  ])("does not ask for %j", (sql) => {
+    expect(isDangerousQuery(sql, "duckdb")).toBe(false);
+  });
+});
+
+describe("a typed confirmation the caller already read", () => {
+  const onClose = mock(() => {});
+  const onProceed = mock((_typed?: string) => {});
+  const proceed = () => screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement;
+  const safe = async () => ({
+    riskLevel: "low" as const,
+    summary: "s",
+    warnings: [],
+    affectedRows: "",
+    cascadeEffects: "",
+    recommendation: "",
+  });
+
+  beforeEach(() => {
+    onClose.mockClear();
+    onProceed.mockClear();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  test("draws the field and targets from the prop", async () => {
+    const name = crypto.randomUUID();
+    const target = `/${crypto.randomUUID()}/`;
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM t"
+        schemaContext=""
+        databaseType="postgres"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: [target] }}
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={safe}
+      />,
+    );
+    const dialog = screen.getByRole("alertdialog");
+    expect(dialog.textContent).toContain(target);
+    const field = screen.getByLabelText(`Type ${name} to confirm`) as HTMLInputElement;
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Skip analysis" })).toBeNull());
+    expect(proceed().disabled).toBe(true);
+    fireEvent.change(field, { target: { value: name.toUpperCase() } });
+    expect(proceed().disabled).toBe(true);
+    fireEvent.change(field, { target: { value: name } });
+    expect(proceed().disabled).toBe(false);
+  });
+
+  test("a text ask from the prop draws its field with no targets", () => {
+    const text = `/${crypto.randomUUID()}/`;
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="lease revoke 694d77aa9e38260f"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        typedConfirmation={{ type: "text", expected: text }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(screen.getByLabelText(`Type ${text} to confirm`)).toBeTruthy();
+    expect(screen.getByRole("alertdialog").textContent).not.toContain("Targets");
+  });
+
+  test("a name ask with no targets draws the field and no targets list", () => {
+    const name = crypto.randomUUID();
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: [] }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(screen.getByLabelText(`Type ${name} to confirm`)).toBeTruthy();
+    expect(screen.getByRole("alertdialog").textContent).not.toContain("Targets");
+  });
+
+  test("a null prop draws no field", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        typedConfirmation={null}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    expect(within(screen.getByRole("alertdialog")).queryByRole("textbox")).toBeNull();
+    expect(proceed().disabled).toBe(false);
+  });
+
+  test("Proceed hands the typed value to onProceed", () => {
+    const name = crypto.randomUUID();
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: ["/a"] }}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText(`Type ${name} to confirm`), { target: { value: name } });
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([[name]]);
+  });
+
+  test("Proceed of the dialog's own reading hands the value it asked for", () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="del /App/ --prefix"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={crypto.randomUUID()}
+        onClose={onClose}
+        onProceed={onProceed}
+      />,
+    );
+    fireEvent.change(screen.getByLabelText("Type /App/ to confirm"), { target: { value: "/App/" } });
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([["/App/"]]);
+  });
+
+  test("Proceed without a field hands no value", async () => {
+    render(
+      <QuerySafetyDialog
+        isOpen
+        query="DELETE FROM t"
+        schemaContext=""
+        databaseType="postgres"
+        connectionName={crypto.randomUUID()}
+        onClose={onClose}
+        onProceed={onProceed}
+        onAnalyzeSafety={safe}
+      />,
+    );
+    await waitFor(() => expect(proceed().disabled).toBe(false));
+    fireEvent.click(proceed());
+    expect(onProceed.mock.calls).toEqual([[]]);
+  });
+});
+
+describe("a typed field reopened during the dialog's exit animation", () => {
+  // The content's exit animation keeps it mounted after it closes (Radix Presence waits for `animationend`), and
+  // happy-dom reports no animation, so the stub below reports one on closed content the way a browser does. A dialog
+  // reopened before the animation ends is a new ask: the field starts empty and Proceed waits for the name again.
+  const realGetComputedStyle = globalThis.getComputedStyle;
+
+  beforeEach(() => {
+    const stub = (element: Element, pseudo?: string | null) => {
+      // A browser's computed style is live, and Presence keeps the one it read on mount, so the stub answers from
+      // the element's state at each read.
+      const style = realGetComputedStyle(element, pseudo);
+      return new Proxy(style, {
+        get: (target, property) =>
+          property === "animationName" && element.getAttribute("data-state") === "closed"
+            ? "exit"
+            : Reflect.get(target, property, target),
+      });
+    };
+    globalThis.getComputedStyle = stub as typeof globalThis.getComputedStyle;
+    window.getComputedStyle = stub as typeof window.getComputedStyle;
+  });
+
+  afterEach(() => {
+    cleanup();
+    globalThis.getComputedStyle = realGetComputedStyle;
+    window.getComputedStyle = realGetComputedStyle;
+  });
+
+  test("an opening with the same expected name starts from an empty field and a disabled Proceed", () => {
+    const name = crypto.randomUUID();
+    const dialog = (isOpen: boolean) => (
+      <QuerySafetyDialog
+        isOpen={isOpen}
+        query="del /a /b"
+        schemaContext=""
+        databaseType="etcd"
+        connectionName={name}
+        typedConfirmation={{ type: "connection-name", expected: name, targets: ["/a"] }}
+        onClose={() => {}}
+        onProceed={() => {}}
+      />
+    );
+    const { rerender } = render(dialog(true));
+    const content = screen.getByRole("alertdialog");
+    fireEvent.change(screen.getByLabelText(`Type ${name} to confirm`), { target: { value: name } });
+    rerender(dialog(false));
+    rerender(dialog(true));
+    // The same content node, so the reopening happened inside the exit animation rather than after an unmount.
+    expect(screen.getByRole("alertdialog")).toBe(content);
+    const again = screen.getByLabelText(`Type ${name} to confirm`) as HTMLInputElement;
+    expect(again.value).toBe("");
+    expect((screen.getByRole("button", { name: "Execute Query" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

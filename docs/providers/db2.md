@@ -11,6 +11,7 @@ A sentence that names 1.0.22 or 1.0.24 describes that version and is kept for th
 | | |
 |---|---|
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, maintenance (`analyze`, `optimize`) and the transaction route all send writes; there is no Create Table |
+| **Failed statement outcome** | unknown: every statement is sent on the one client opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 
@@ -47,7 +48,7 @@ The defects 1.0.22 had were reported upstream at [gurungabit/db2-node#12](https:
 |---|---|
 | `capabilities.ts` | `DB2_CONTAINER_LEVELS`, `DB2_OBJECT_KINDS`, `db2Capabilities`, `db2Labels`: pure data, no driver import |
 | `driver.ts` | The `Db2Driver` types, `loadDb2Driver()`, the one `import("db2-node")`, and `describeDriverAbsence()` |
-| `connection.ts` | `resolveTarget()`, `assertTransport()`, `clientOptions()` and `openClient()`: the TLS mapping and the CA temp-file lifecycle |
+| `connection.ts` | `resolveTarget()`, `assertTransport()`, `caPemFor()`, `clientOptions()` and `openClient()`: the TLS mapping, the choice of the CA file's certificates and the CA temp-file lifecycle |
 | `params.ts` | `normaliseParams()`, which refuses an array or object parameter before the driver reads it as bytes |
 | `values.ts` | `db2TypeName()`, `readResult()` and its LOB integrity warning, and `DB2_PREVIEW_PROJECTION` |
 | `catalog.ts` | The catalog SQL, and the decoders that read its rows: names, column types, object detail and source text |
@@ -57,7 +58,7 @@ The defects 1.0.22 had were reported upstream at [gurungabit/db2-node#12](https:
 | `index.ts` | The composition root |
 
 The constructor opens nothing.
-`connect()` resolves the target, checks the transport, loads the driver, writes the CA file when one is given and opens one `Client`; there is no pool.
+`connect()` resolves the target, checks the transport, chooses the CA file's certificates (`caPemFor()`: the connection's own CA, or in Verify (system trust) and Verify full without one the `NODE_EXTRA_CA_CERTS` certificates Studio handed the provider, refusing with "This provider was built without the trust material ..." when it was handed none), loads the driver, writes the CA file when there are certificates to write and opens one `Client`; there is no pool.
 `disconnect()` closes that client, removes the CA file and its directory, and marks the provider disconnected.
 A deployment without the driver answers `describeDriverAbsence()`'s message, "Db2 is not available in this deployment: the db2-node driver is not installed. Install it, or use an image that ships it, to open Db2 connections.", and every other engine keeps working.
 
@@ -105,17 +106,25 @@ The SSL panel's modes map to `db2-node` options as follows:
 |---|---|---|
 | Disabled, with the insecure opt-in | `ssl: false, securityMechanism: "userPassword"` | Nothing; the password travels in cleartext |
 | Require (no verification) | `ssl: true, rejectUnauthorized: false` | Encryption only; a server that impersonates the host is not detected |
-| Verify (system trust) | `ssl: true, rejectUnauthorized: true` | The chain, against the system trust store |
+| Verify (system trust) | `ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "Basic"`, and `caCert: <file>` with the `NODE_EXTRA_CA_CERTS` certificates when that variable names a bundle | The chain, against the system trust store and the `NODE_EXTRA_CA_CERTS` certificates, and the host name |
 | Verify CA | `ssl: true, rejectUnauthorized: true, caCert: <file>, sslClientHostnameValidation: "OFF"` | The chain, against your CA; not the host name |
 | Verify full | `ssl: true, rejectUnauthorized: true, caCert: <file>, sslClientHostnameValidation: "Basic"` | The chain and the host name |
 
 Verification is the default once TLS is on; "Require" is a separate choice you make on purpose.
-Verify full without a CA certificate checks the chain against the system trust store, and the host name as before.
+`db2-node`'s TLS library, rustls, reads the operating system's trust store and never Node.js's, so `NODE_EXTRA_CA_CERTS` does not reach it on its own.
+Studio reads the file that variable names once per process, at boot on a standalone server, and hands its certificates to the provider, which writes them to `ca.pem` as it writes a pasted CA, for Verify (system trust) and for Verify full without a CA certificate.
+A connection with a CA certificate of its own is not handed them.
+The Debian image (`Dockerfile`) carries no system trust store, so there, with `SSL_CERT_FILE` and `SSL_CERT_DIR` unset (rustls reads them as the system trust store), Verify (system trust) trusts exactly the `NODE_EXTRA_CA_CERTS` certificates, and with the variable unset it answers `TLS verification is enabled but no root certificates are available` (measured on 2026-11-22 with the image's Node 26.13.1).
+Studio does not parse the blocks of that file as certificates, and the driver reads them all at connect: when one block is framed as a certificate but its body is not one, where Node.js warns and keeps the certificates before it, every Verify (system trust) connection and every Verify full connection without a CA certificate fails with `TLS error: Failed to add CA cert: invalid peer certificate: BadEncoding`, whatever server it dials (measured on 2026-11-22 through 1.0.25 under Bun 1.4.4); repair or remove that block in the `NODE_EXTRA_CA_CERTS` file.
+A Db2 provider built without Studio's provider factory has none of them, and refuses such a connection with "This provider was built without the trust material Studio reads from the file NODE_EXTRA_CA_CERTS names, so it dials nothing" before it loads the driver.
+Verify (system trust) names `sslClientHostnameValidation: "Basic"`, the driver's own default, so the host name check does not rest on a default in a mode that may carry a CA file.
+Verify full without a CA certificate checks the chain against the system trust store and the `NODE_EXTRA_CA_CERTS` certificates, and the host name as before.
 Verify CA without a CA certificate is refused: it checks no host name, so against the system trust store it would accept any publicly trusted certificate, issued for any name, and send it the password.
-The panel holds the CA as PEM text and `db2-node` wants a file path, so the provider writes the PEM to `ca.pem` in a fresh `libredb-db2-` directory under the system temp directory, mode 0600, on connect, and removes the directory on disconnect and on a failed connect.
+The panel holds the CA as PEM text, Studio holds the operator's `NODE_EXTRA_CA_CERTS` certificates as PEM text too, and `db2-node` wants a file path, so the provider writes the PEM to `ca.pem` in a fresh `libredb-db2-` directory under the system temp directory, mode 0600, on connect, and removes the directory on disconnect and on a failed connect.
 On Windows the mode bits do not apply, and the file is private through the per-user access control on the temp directory under the user profile.
 A client certificate or key is refused with "db2-node 1.0.25 has no client-certificate authentication; remove the client certificate and key from this Db2 connection.", never ignored.
 
+Measured on 2026-11-22 through 1.0.25 under Bun 1.4.4, against a TLS server whose certificate only a CA made for the test signs (`tests/integration/db/db2-trust-material.test.ts`): with that CA in `NODE_EXTRA_CA_CERTS`, Verify (system trust) and Verify full without a CA certificate complete the handshake; with the variable unset the same connection answers `UnknownIssuer` and completes none; with an unrelated CA pasted under Verify full it completes none; and a certificate for another name is refused with "certificate not valid for name".
 Measured through 1.0.24 on 12.1.0.0 and 11.5.9.0, and again through 1.0.25: Verify CA with the CA held as PEM text connects through the provider, and the opt-in connects without TLS where the same connection without the named mechanism is refused.
 Measured through 1.0.22: the connection negotiates TLS 1.3; a CA certificate with host-name validation, host-name validation `OFF` and `rejectUnauthorized: false` each connect; the system trust store alone answers `UnknownIssuer` for a server signed by a private CA; Verify full by an IP address the certificate does not name fails with "invalid peer certificate: certificate not valid for name", where Verify CA connects; and a plaintext connection to the TLS port is reset.
 
@@ -237,7 +246,7 @@ These were measured on 1.0.22, reported upstream at [gurungabit/db2-node#12](htt
 | Foreign keys | Yes | Inherited |
 | Maintenance | Yes | Run Statistics and Reorganize Table, per table only |
 | Connection string | Yes | A `db2://` paste fills the fields |
-| Identifier quoting | Double quotes | Declared, because port 50000 would otherwise fall to the PostgreSQL heuristic |
+| Identifier quoting | Double quotes | Declared, so a later edit of the generators' default cannot move it: Db2 has no row of its own in `SQL_ENGINE_GENERATORS` |
 | Statement terminator | Not declared | A generated statement ends with `;`, the default when none is declared; a trailing `;` is accepted |
 | Container levels | Schema | |
 | Container path shapes | Exact | Like Oracle |
@@ -412,13 +421,17 @@ A timestamp stays a string and is never turned into a `Date`, so no time zone sh
 
 ### 7.4 Timeout and cancel
 
-A statement inside a transaction is bounded by the connection's query timeout (60 seconds unless the connection sets one), and nothing else is: `query()` on the shared client, the catalog reads and maintenance are not, and there is no cancel.
+A statement inside a transaction is bounded by the connection's query timeout (60 seconds unless the connection sets one), and nothing else is bounded by the provider: `query()` on the shared client, the catalog reads and maintenance are not, and there is no cancel.
 The bound needs no privilege, because it sends nothing to the server: at the deadline the provider stops waiting, answers a timeout error, forgets the transaction's session and closes it (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)).
 That ends the wait, not the work.
 Measured on 12.1.0.0 through 1.0.25: `close()` called while a statement runs returns only once that statement has ended on the server, 43.9 seconds later on a cross join that ran 45.9 seconds, and the connection closes then.
 `tests/live/db2-live-check.ts` runs it with a 2-second timeout: the wait ended at 2000 ms, the row the transaction had updated stayed locked until the statement ended on the server, 19968 ms after it began, and then read back unchanged.
 So the timeout error says the statement keeps running, that the transaction is over and is rolled back once the connection closes, and that a new transaction is needed to continue.
 The shared client is not bounded the same way, because closing it would wait for the statement just the same and then end every other request on it.
+
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the statement runs on in the server, holding the shared client, until it ends.
 
 An agent statement is bounded the same way, by its call's own connection (section 10.1).
 Cancelling the statement on the server is D392: `db2-node` 1.0.24 does it through `Client.cancel()` and a `queryTimeout`, given a user with monitoring privileges and `EXECUTE` on `SYSPROC.WLM_CANCEL_ACTIVITY`, which this provider does not ask a user to hold.
@@ -485,13 +498,34 @@ A request without a schema is refused; the provider never falls back to `CURRENT
 Only three things are read: the version, from `SYSIBMADM.ENV_INST_INFO`, the counts of tables and indexes in `SYSCAT`, and the list of user tables and materialized query tables in `SYSCAT.TABLES`.
 The table list is what Run Statistics and Reorganize Table are run from: the object tree's menu items open the admin Operations list, or the monitoring Tables panel, at the table's row.
 Each row carries the catalog's `CARD` as its row count, which is -1 until RUNSTATS has run and reads as 0 then, and no size, which reads N/A.
-Every other panel is empty on purpose in this version, and says so:
+Every other read answers empty on purpose in this version, without asking the server: `getPerformanceMetrics` answers `{}`, and `getSlowQueries`, `getActiveSessions`, `getIndexStats` and `getStorageStats` answer `[]`.
+None of those five panels is offered (see Engine facets below), so `getMonitoringData` never reads them and the dashboard draws no Performance, Queries, Sessions or Storage tab for Db2.
+The provider declares no empty-state sentence for the `[]` that `getActiveSessions()` and `getSlowQueries()` answer: neither the Sessions nor the Queries panel is offered, so nothing would draw one.
 
-- Sessions: "Db2 sessions are not read in this version of the Db2 provider."
-- Slow queries: "Db2 query statistics are not read in this version of the Db2 provider."
+The Overview tab reads database size and uptime as N/A.
+Only the table list can fail: a refused read is reported on that panel with the server's message, and the overview still answers.
 
-Database size and uptime read N/A, the cache ratio reads unavailable, and the index and storage statistics are empty.
-Only the table list can fail: a refused read is reported on that panel with the server's message, and the other panels still answer.
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `db2` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/db2/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: `analyze`, `optimize`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `health`.
 
 ## 10. Agent and MCP
 
@@ -583,7 +617,7 @@ On the measured database the check's eight reads take about 200 ms, and a whole 
 The deadline is the statement budget, over the whole call: past it the call answers the shared time refusal at once and the provider asks the call's connection to close (`boundByClose` in [`driver.ts`](../../src/lib/db/providers/sql/db2/driver.ts)), which ends the wait, not the work, as section 7.4 records for a transaction.
 No cancel reaches the server, so the statement runs there to its end, and only then does the connection close and Db2 roll the unit of work back: measured through MCP on 12.1.0.0, a cross join answered at a two-second `timeout_ms` ran 17.5 seconds more on the server in one run and 30.3 in another, as a statement whose client closed the call does ("MCP read" below).
 No server-side cancel is sent, so the agent user needs no `WLM_CANCEL_ACTIVITY` grant or monitoring privilege (D392).
-Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts) or the server's own error.
 The estimate-plan session mode is refused: Db2's `EXPLAIN` writes its rows into the explain tables, a write the agent user is refused, so the agent composes no estimating plan here (B148).
 
 #### The agent user
@@ -680,7 +714,7 @@ LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun 
 #### MCP read
 
 MCP's `run_read_query` serves Db2 through the agent's own path: it takes the connection under the agent read-only profile and sends the statement through `queryReadOnly`, so the check above runs before every statement, on the statement's own connection, with no verdict kept between calls, and the statement goes out inside the derived table.
-The check runs before each statement, not at the open, so a user it refuses is refused at the first statement, in the tool's sentence (`run_read_query cannot run on this connection: The agent read-only execution profile refuses the Db2 user ...`) behind the untrusted-data notice, since it quotes names users of the database chose, before that statement is sent; a grant added after one call refuses the next call on the same handle.
+The check runs before each statement, not at the open, so a user it refuses is refused at the first statement, in the tool's sentence (`run_read_query cannot run on this connection: The agent read-only execution profile refuses the Db2 user ...`) behind a notice naming the provider that wrote it, "Db2 LUW provider, bundled with Studio", since it quotes names users of the database chose, before that statement is sent; a grant added after one call refuses the next call on the same handle.
 MCP signs in as the seed's [agent credential](../SEED_CONNECTIONS.md#an-agent-credential) when it sets one, and as the seed's own user otherwise, and that user must be one the check admits, such as the compose service's `AGENT_RO`; the instance owner is refused, and so is a fresh database's user until the revokes above have run.
 `inspect_schema` takes the operations profile, which sends no statement and checks no user, so it reads a Db2 connection's schema whatever its user, from the value-free sources of section 6.4.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; `NEXT VALUE FOR` in a `VALUES` and an `EXPLAIN` without `ANALYZE` are reads to it, and the server refuses each inside the derived table (`SQL0348N`, `SQL0104N`).

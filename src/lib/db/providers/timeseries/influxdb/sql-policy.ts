@@ -13,7 +13,8 @@
  * EXPLAIN wrapper's and not this type's.
  */
 
-import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { hasUnterminatedSpan, readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { splitStatements } from "@/lib/sql/statement-splitter";

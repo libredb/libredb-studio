@@ -13,18 +13,13 @@
  * timeout plus LIMITS.deadlineGraceMs; close() aborts what is in flight, closes every lane and the token source, and
  * refuses every later send.
  */
+import { quotaProjectHeaders } from "@/lib/db/auth/google/credentials";
+import { createGoogleTokenSource } from "@/lib/db/auth/google/token-source";
 import { DatabaseError, QueryError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
 import { type NodeResponse, type NodeTransport, TransportError } from "@/lib/db/http/node-transport";
-import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
-import {
-  DEFAULT_DATABASE_ID,
-  FIRESTORE_API_ORIGIN,
-  FIRESTORE_TYPE,
-  FIRESTORE_SCOPE,
-  GOOGLE_TOKEN_URL,
-  LIMITS,
-} from "./constants";
+import { DEFAULT_QUERY_TIMEOUT, type EgressDecision } from "@/lib/db/types";
+import { DEFAULT_DATABASE_ID, FIRESTORE_API_ORIGIN, FIRESTORE_SCOPE, FIRESTORE_TYPE, LIMITS } from "./constants";
 import type { FirestoreAuth } from "./credential-policy";
 import {
   type ErrorContext,
@@ -34,8 +29,6 @@ import {
   mapTransportFailure,
   readGoogleError,
 } from "./errors";
-import { parseMetadataHost } from "./google-credentials";
-import { createTokenSource } from "./google-token-source";
 import { databaseName, type FirestoreTarget } from "./names";
 import { buildRequest, type FirestoreRequest } from "./requests";
 import type { FirestoreSeams } from "./seams";
@@ -48,6 +41,8 @@ export interface SendOptions {
 export interface FirestoreClientOptions {
   /** The connection's query timeout; DEFAULT_QUERY_TIMEOUT when absent. */
   readonly queryTimeoutMs?: number;
+  /** The egress decision the provider was built with, which every origin the client builds is checked against. */
+  readonly egress: EgressDecision;
 }
 
 export interface FirestoreClient {
@@ -66,7 +61,6 @@ export const FIRESTORE_TRANSPORT_SENTENCES = Object.freeze({
 const S = FIRESTORE_TRANSPORT_SENTENCES;
 const API_MAX_SOCKETS = 8;
 const EMULATOR_BEARER = "owner";
-const TOKEN_MAX_SOCKETS = 1;
 
 interface Lane {
   readonly bearer: string;
@@ -83,8 +77,8 @@ export function routingHeaders(target: FirestoreTarget): Readonly<Record<string,
   return { "x-goog-request-params": params, "google-cloud-resource-prefix": databaseName(target) };
 }
 
-function httpsOrigin(url: string): HttpOrigin {
-  return httpOrigin("https", new URL(url).hostname, 443);
+function httpsOrigin(url: string, egress: EgressDecision): HttpOrigin {
+  return httpOrigin("https", new URL(url).hostname, 443, egress);
 }
 
 function tlsFor(origin: HttpOrigin) {
@@ -111,59 +105,29 @@ export function createFirestoreClient(
   target: FirestoreTarget,
   auth: FirestoreAuth,
   seams: FirestoreSeams,
-  options: FirestoreClientOptions = {},
+  options: FirestoreClientOptions,
 ): FirestoreClient {
   const deadlineMs = (options.queryTimeoutMs ?? DEFAULT_QUERY_TIMEOUT) + LIMITS.deadlineGraceMs;
   const closer = new AbortController();
   const origin =
     auth.mode === "emulator"
-      ? httpOrigin("http", auth.emulator.host, auth.emulator.port)
-      : httpsOrigin(FIRESTORE_API_ORIGIN);
-  const tokenOrigin = httpsOrigin(GOOGLE_TOKEN_URL);
+      ? httpOrigin("http", auth.emulator.host, auth.emulator.port, options.egress)
+      : httpsOrigin(FIRESTORE_API_ORIGIN, options.egress);
   const tokens =
     auth.mode === "emulator"
       ? null
-      : createTokenSource(auth.credentials, {
+      : createGoogleTokenSource(auth.credentials, {
           scope: FIRESTORE_SCOPE,
           provider: FIRESTORE_TYPE,
           maxResponseBytes: LIMITS.tokenResponseBytes,
           now: () => seams.now(),
           timeoutSignal: (ms) => seams.timeoutSignal(ms),
-          tokenTransport: () =>
-            seams.createTransport(
-              {
-                origin: tokenOrigin,
-                tls: tlsFor(tokenOrigin),
-                maxSockets: TOKEN_MAX_SOCKETS,
-                headers: {},
-                refusesLinkLocal: true,
-                refusesUpgrade: true,
-              },
-              "token",
-            ),
-          metadataTransport: (host) =>
-            seams.createTransport(
-              {
-                origin: parseMetadataHost(host, FIRESTORE_TYPE),
-                tls: null,
-                maxSockets: TOKEN_MAX_SOCKETS,
-                // The metadata server answers only requests that carry this header.
-                headers: { "metadata-flavor": "Google" },
-                refusesUpgrade: true,
-              },
-              "metadata",
-            ),
+          createTransport: seams.createTransport,
+          egress: options.egress,
         });
   // The emulator lane carries Bearer owner alone: no routing header and no quota project, since no credential exists.
   const extraHeaders: Readonly<Record<string, string>> =
-    auth.mode === "emulator"
-      ? {}
-      : {
-          ...routingHeaders(target),
-          ...(auth.credentials.type === "authorized_user" && auth.credentials.quotaProjectId !== undefined
-            ? { "x-goog-user-project": auth.credentials.quotaProjectId }
-            : {}),
-        };
+    auth.mode === "emulator" ? {} : { ...routingHeaders(target), ...quotaProjectHeaders(auth.credentials) };
   const lanes = new Set<Lane>();
   let current: Lane | null = null;
 
@@ -187,6 +151,7 @@ export function createFirestoreClient(
             origin,
             tls: tlsFor(origin),
             maxSockets: API_MAX_SOCKETS,
+            egress: options.egress,
             headers: { authorization: `Bearer ${bearer}`, ...extraHeaders },
             refusesLinkLocal: true,
             refusesUpgrade: true,

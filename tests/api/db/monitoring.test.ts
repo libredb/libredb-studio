@@ -15,9 +15,9 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -88,7 +88,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
 }));
 
@@ -230,6 +229,59 @@ describe("POST /api/db/monitoring", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("Invalid JSON");
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const send = () => POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError(`permission denied for ${password}`, "postgres"),
+    );
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
+      new QueryError("permission denied", "postgres"),
+    );
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "permission denied" });
+  });
+
+  test("a panel error that holds the connection's credential answers the withheld sentence, and the clean panel errors and the figures as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const overview = {
+      version: "PostgreSQL 16.1",
+      uptime: "10 days",
+      activeConnections: 5,
+      maxConnections: 100,
+      databaseSize: "256 MB",
+      databaseSizeBytes: 268435456,
+      tableCount: 15,
+      indexCount: 30,
+    };
+    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockResolvedValueOnce({
+      timestamp: new Date(0),
+      overview,
+      errors: {
+        slowQueries: `permission denied for ${password}`,
+        tables: "relation pg_stat_user_tables is not readable",
+      },
+    });
+    const res = await POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+    expect(res.status).toBe(200);
+    expect(body.errors).toEqual({
+      slowQueries: PROVIDER_TEXT_WITHHELD,
+      tables: "relation pg_stat_user_tables is not readable",
+    });
+    expect(body.overview).toEqual(overview);
+    expect(JSON.stringify(body)).not.toContain(password);
   });
 
   test("returns 401 when no session exists", async () => {

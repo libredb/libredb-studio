@@ -223,7 +223,12 @@ describe("the Kubernetes access review holds MCP and the agent off", () => {
     delete process.env.KUBERNETES_ACCESS_REVIEW;
     const savedSample = process.env.LIBREDB_EMBEDDED_SAMPLE;
     const { POST: login } = await import("@/app/api/auth/login/route");
-    const { isSampleEnabled } = await import("@/lib/seed/libredb-sample");
+    const { SAMPLES, sampleEnabled } = await import("@/lib/seed/samples");
+    const isSampleEnabled = () => {
+      const spec = SAMPLES.get("libredb");
+      if (spec === undefined) throw new Error("no LibreDB sample row");
+      return sampleEnabled("libredb", spec);
+    };
     try {
       const request = new Request("http://localhost:3000/api/auth/login", {
         method: "POST",

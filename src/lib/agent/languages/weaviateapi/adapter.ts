@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { toJsonText } from "@/lib/db/console/tagged-json";
 import { admitWeaviateapiStatement } from "@/lib/db/operations/weaviateapi-admission";
-import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { readWeaviateAgentStatement } from "@/lib/languages/weaviateapi/metadata-request";
 import type { AgentLanguageServerAdapter } from "../pack";
 import { canonicalText } from "../shared";
 

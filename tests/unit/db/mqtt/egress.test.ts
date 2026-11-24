@@ -2,12 +2,13 @@
  * The dial's address rule (`docs/providers/mqtt.md` section 4.8): the shared `socketEgress` rule, with no address check
  * of the provider's own.
  *
- * A link-local or metadata address is refused whatever DB_HTTP_BLOCK_PRIVATE_HOSTS says, as a literal before any socket
- * and as a DNS answer inside the lookup the socket dials through; with the flag on a loopback, private or special-use
+ * The dial decides by the egress decision it is handed, the one the provider was built with (FND-2 slice 2b-2). A
+ * link-local or metadata address is refused whatever that decision says, as a literal before any socket and as a DNS
+ * answer inside the lookup the socket dials through; with a blocking decision a loopback, private or special-use
  * address is refused too. Both refusals reach the caller as the shared sentences, unchanged.
  *
  * Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that
- * address, as the shared node transport checks it: refused with the flag on, reached with it off.
+ * address, as the shared node transport checks it: refused with a blocking decision, reached with an allowing one.
  *
  * The resolver is mocked, because no real name answers a link-local or a private address, and `node:net`'s `connect`
  * is wrapped to record what the dial asked for. Every dial still opens a real socket, except the one to the public
@@ -18,6 +19,8 @@ import { afterAll, afterEach, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import { EventEmitter } from "node:events";
 import type { TcpNetConnectOpts, Server, Socket } from "node:net";
+import type { EgressDecision } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realDns = { ...(await import("node:dns")) };
 const realNet = { ...(await import("node:net")) };
@@ -80,13 +83,9 @@ const { MqttProvider } = await import("@/lib/db/providers/keyvalue/mqtt/index");
 const { TUNNEL_FAR_END } = await import("@/lib/types");
 type DatabaseConnection = import("@/lib/types").DatabaseConnection;
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const flagBefore = process.env[FLAG];
 const servers: Server[] = [];
 
 afterEach(() => {
-  if (flagBefore === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = flagBefore;
   dials.length = 0;
   lookups.length = 0;
   handedBack.length = 0;
@@ -95,9 +94,10 @@ afterAll(() => {
   for (const server of servers) server.close();
 });
 
-function flag(state: "on" | "off"): void {
-  if (state === "on") process.env[FLAG] = "true";
-  else delete process.env[FLAG];
+/** The decision the next dial is handed: "blocking" blocks private destinations, as an operator's `true` does. */
+let egress: EgressDecision = ALLOWS_PRIVATE_HOSTS;
+function decide(state: "blocking" | "allowing"): void {
+  egress = state === "blocking" ? BLOCKS_PRIVATE_HOSTS : ALLOWS_PRIVATE_HOSTS;
 }
 
 /** A loopback listener that accepts and says nothing, counting what it accepted. */
@@ -115,16 +115,16 @@ async function listener(): Promise<{ port: number; accepted: () => number }> {
 /** What a read settles as: the error it rejected with. */
 async function readError(host: string, port: number, tls = false): Promise<Error> {
   try {
-    await readTopics({ host, port, tls, dialTimeoutMs: 300 });
+    await readTopics({ host, port, tls, dialTimeoutMs: 300, egress });
   } catch (error) {
     return error as Error;
   }
   throw new Error(`the read of ${host} resolved`);
 }
 
-describe("with the flag off", () => {
+describe("with an allowing decision", () => {
   test("a link-local literal is refused before any socket, with the shared sentence", async () => {
-    flag("off");
+    decide("allowing");
     const errors = await Promise.all(["169.254.169.254", "fe80::1", "[fe80::1]"].map((host) => readError(host, 1883)));
     for (const error of errors) {
       expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -134,7 +134,7 @@ describe("with the flag off", () => {
   });
 
   test("a name answering a link-local address is refused by the lookup the socket dials through", async () => {
-    flag("off");
+    decide("allowing");
     const errors = await Promise.all([false, true].map((tls) => readError("metadata.test", 1883, tls)));
     for (const error of errors) {
       expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -144,7 +144,7 @@ describe("with the flag off", () => {
   });
 
   test("a name answering a loopback address is dialled at the address checked", async () => {
-    flag("off");
+    decide("allowing");
     const broker = await listener();
     const error = await readError("loopback.test", broker.port);
     // A listener that says nothing is not a broker, so the read fails on the handshake, after the dial.
@@ -155,9 +155,9 @@ describe("with the flag off", () => {
   });
 });
 
-describe("with the flag on", () => {
+describe("with a blocking decision", () => {
   test("a private literal is refused before any socket, with the guard's sentence", async () => {
-    flag("on");
+    decide("blocking");
     const errors = await Promise.all(["10.0.0.5", "127.0.0.1", "169.254.169.254"].map((host) => readError(host, 1883)));
     for (const error of errors) {
       expect(error).toBeInstanceOf(DatabaseConfigError);
@@ -167,7 +167,7 @@ describe("with the flag on", () => {
   });
 
   test("a name answering a private or a link-local address is refused, with the guard's sentence", async () => {
-    flag("on");
+    decide("blocking");
     const errors = await Promise.all(
       ["private.test", "loopback.test", "metadata.test"].map((host) => readError(host, 1883)),
     );
@@ -178,7 +178,7 @@ describe("with the flag on", () => {
   });
 
   test("a name answering a public address is handed that address to dial", async () => {
-    flag("on");
+    decide("blocking");
     const error = await readError("public.test", 1883);
     expect(error).not.toBeInstanceOf(DatabaseConfigError);
     expect(error.message).toContain("stopped before connecting");
@@ -199,10 +199,10 @@ describe("through an SSH tunnel, the rule is checked against the local forward t
     } as unknown as DatabaseConnection;
   }
 
-  test("with the flag on, a tunnelled connection is refused, because the forward is a loopback address", async () => {
-    flag("on");
+  test("with a blocking decision, a tunnelled connection is refused, because the forward is a loopback address", async () => {
+    decide("blocking");
     const forward = await listener();
-    const error = await new MqttProvider(tunnelled(forward.port)).connect().then(
+    const error = await new MqttProvider(tunnelled(forward.port), {}, { egress }).connect().then(
       () => new Error("connected"),
       (failure: Error) => failure,
     );
@@ -211,10 +211,10 @@ describe("through an SSH tunnel, the rule is checked against the local forward t
     expect(forward.accepted()).toBe(0);
   });
 
-  test("with the flag off, a tunnelled connection dials the forward", async () => {
-    flag("off");
+  test("with an allowing decision, a tunnelled connection dials the forward", async () => {
+    decide("allowing");
     const forward = await listener();
-    const error = await new MqttProvider(tunnelled(forward.port)).connect().then(
+    const error = await new MqttProvider(tunnelled(forward.port), {}, { egress }).connect().then(
       () => new Error("connected"),
       (failure: Error) => failure,
     );

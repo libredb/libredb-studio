@@ -21,9 +21,10 @@ import {
   scriptedTransports,
   testDeps,
 } from "./snowflake-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "./egress-decisions";
 
 export const HOST = "acme-x1.snowflakecomputing.com";
-export const ORIGIN = httpOrigin("https", HOST, 443);
+export const ORIGIN = httpOrigin("https", HOST, 443, ALLOWS_PRIVATE_HOSTS);
 export const TLS = { rejectUnauthorized: true, identity: HOST } as const;
 export const SUBMIT = { method: "POST", path: /^\/api\/v2\/statements$/ } as const;
 export const STATUS = { method: "GET", path: /^\/api\/v2\/statements\/[^/]+$/ } as const;
@@ -70,7 +71,7 @@ export function setup(
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
   const tokens = scriptedTokens(["token-one", "token-two"], "PROGRAMMATIC_ACCESS_TOKEN");
-  const transport = createSnowflakeTransport({ origin: ORIGIN, tls: TLS, tokens }, deps);
+  const transport = createSnowflakeTransport({ origin: ORIGIN, tls: TLS, tokens, egress: ALLOWS_PRIVATE_HOSTS }, deps);
   const statements = createSnowflakeStatements({
     transport,
     origin: ORIGIN,

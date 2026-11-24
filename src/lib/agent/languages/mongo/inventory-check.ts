@@ -20,6 +20,7 @@
  */
 import { addressableObjects } from "../../inventory-objects";
 import type { AgentInventory, AgentInventoryObject } from "../../types";
+import { quoteIdentifierForPrompt } from "../../untrusted-content";
 
 type JsonObject = Readonly<Record<string, unknown>>;
 
@@ -83,15 +84,15 @@ function unknownCollectionSentence(name: string, inventory: AgentInventory): str
   const qualified = objects.find((object) => object.name === name);
   if (qualified !== undefined) {
     const leaf = leafName(qualified);
-    return `"${name}" is the inventory's spelling, with the database in front: a command names the collection alone, as in "collection": "${leaf}". Written whole, "${name}" is a collection of that full name, which does not exist, and the read would answer nothing.`;
+    return `${quoteIdentifierForPrompt(name)} is the inventory's spelling, with the database in front: a command names the collection alone, as in "collection": ${quoteIdentifierForPrompt(leaf)}. Written whole, ${quoteIdentifierForPrompt(name)} is a collection of that full name, which does not exist, and the read would answer nothing.`;
   }
   const lower = name.toLowerCase();
   const sameLetters = objects.find((object) => leafName(object).toLowerCase() === lower);
   if (sameLetters !== undefined) {
-    return `There is no collection "${name}"; MongoDB names are case-sensitive, and the inventory holds "${leafName(sameLetters)}". A read of a collection that does not exist answers nothing rather than an error.`;
+    return `There is no collection ${quoteIdentifierForPrompt(name)}; MongoDB names are case-sensitive, and the inventory holds ${quoteIdentifierForPrompt(leafName(sameLetters))}. A read of a collection that does not exist answers nothing rather than an error.`;
   }
   const shown = objects.map(leafName).slice(0, 20);
-  return `There is no collection "${name}" in this database: a read of a collection that does not exist answers nothing rather than an error. The inventory holds ${shown.map((leaf) => `"${leaf}"`).join(", ")}${objects.length > shown.length ? `, and ${objects.length - shown.length} more` : ""}.`;
+  return `There is no collection ${quoteIdentifierForPrompt(name)} in this database: a read of a collection that does not exist answers nothing rather than an error. The inventory holds ${shown.map((leaf) => quoteIdentifierForPrompt(leaf)).join(", ")}${objects.length > shown.length ? `, and ${objects.length - shown.length} more` : ""}.`;
 }
 
 /** The comparison operators whose operand is a value of the field, and the two whose operand is a list of them. */
@@ -161,7 +162,9 @@ function typedFields(object: AgentInventoryObject): ReadonlyMap<string, "date" |
 }
 
 const literalFor = (comparison: TypedStringComparison): string =>
-  comparison.type === "date" ? `{"$date": "${comparison.value}"}` : `{"$oid": "${comparison.value}"}`;
+  comparison.type === "date"
+    ? `{"$date": ${quoteIdentifierForPrompt(comparison.value)}}`
+    : `{"$oid": ${quoteIdentifierForPrompt(comparison.value)}}`;
 
 /**
  * Why `command` would read nothing for a reason the inventory already shows, or `null`. The sentence is the model's to
@@ -179,7 +182,7 @@ export function mongoInventoryProblem(command: unknown, inventory: AgentInventor
     const found = typedStringComparison(filter, types);
     if (found === null) continue;
     const kind = found.type === "date" ? "a date" : "an ObjectId";
-    return `"${found.field}" holds ${kind} in every sampled document, and this command compares it with the string "${found.value}": a string never equals ${kind}, so the read would match nothing. Write the value as ${literalFor(found)}. Nothing was sent.`;
+    return `${quoteIdentifierForPrompt(found.field)} holds ${kind} in every sampled document, and this command compares it with the string ${quoteIdentifierForPrompt(found.value)}: a string never equals ${kind}, so the read would match nothing. Write the value as ${literalFor(found)}. Nothing was sent.`;
   }
   return null;
 }

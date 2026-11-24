@@ -12,7 +12,7 @@ import {
   influxqlSelectQuery,
   influxqlTableQuery,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { InfluxqlQuoteError } from "@/lib/db/providers/timeseries/influxdb/influxql-quote";
 import type { ColumnSchema } from "@/lib/types";
 

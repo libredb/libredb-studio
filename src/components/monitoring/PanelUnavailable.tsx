@@ -12,7 +12,7 @@ interface PanelUnavailableProps {
 /**
  * Shown in place of ONE monitoring panel whose read failed.
  *
- * `getMonitoringData` reads the seven panels independently, so a panel the engine cannot
+ * `getMonitoringData` reads each panel the engine offers independently, so a panel it cannot
  * answer is absent from the payload with its own message recorded under `errors` while the
  * rest of the dashboard still renders. This is the honest rendering of that absence: not an
  * empty table (which would claim the engine answered "nothing"), and not the whole-dashboard

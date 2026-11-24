@@ -21,12 +21,18 @@ import * as realSeed from "@/lib/seed/resolve-connection";
 import * as realGate from "@/lib/agent/capability-gate";
 import * as realDb from "@/lib/db";
 import * as realManifest from "@/lib/agent/agent-manifest";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
 import { LLMConfigError } from "@/lib/llm/types";
-import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { agentPosture } from "@/lib/agent/posture";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import type { DatabaseProvider } from "@/lib/db/types";
+import type { DatabaseConnection } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 
 const { SeedConnectionError } = realSeed;
 
@@ -50,8 +56,10 @@ const mockResolveConnection = mock(async (body: { connectionId?: string }) => ({
 }));
 
 const mockForCatalog = mock(async (_catalog: string) => ({}));
-const mockGetOrCreateProvider = mock(async () => ({
-  type: "postgres",
+// The provider stands for the connection it is handed, which `catalogChoice` reads (M-57).
+const mockGetOrCreateProvider = mock(async (connection: { type: string }) => ({
+  type: connection.type,
+  config: connection,
   getCapabilities: () => ({ catalogSessions: true }),
   forCatalog: mockForCatalog,
 }));
@@ -549,6 +557,48 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "error" });
   });
 
+  test("a predecessor whose ledger names an id this Studio does not have is declined as an error for its owner, and the run opens", async () => {
+    mockStatus.mockImplementationOnce(async (runId: string) => {
+      throw new AgentRunUnavailableError(
+        runId,
+        { sessionId: "ada", role: "user" },
+        {
+          field: "statementLanguage",
+          reason: "unknown",
+          id: "cobol",
+          named: 'the statement language "cobol"',
+          sentence: "This run was recorded in cobol.",
+        },
+      );
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "error" });
+  });
+
+  test("someone else's predecessor this Studio cannot read is declined as unavailable, as a run that is not theirs", async () => {
+    mockStatus.mockImplementationOnce(async (runId: string) => {
+      throw new AgentRunUnavailableError(
+        runId,
+        { sessionId: "bob", role: "user" },
+        {
+          field: "verifier",
+          reason: "unknown",
+          id: "agent-x.1",
+          named: 'the goal rule "agent-x.1"',
+          sentence: "This run is judged by agent-x.1.",
+        },
+      );
+    });
+
+    const res = await POST(startRequest({ ...VALID_BODY, previousRunId: "arun_1" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].thread).toMatchObject({ declined: "unavailable" });
+  });
+
   test("with the operator switch off, previousRunId is ignored and the run says so", async () => {
     const before = mockStatus.mock.calls.length;
     process.env.LIBREDB_AGENT_THREAD_CONTEXT = "false";
@@ -722,9 +772,24 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).not.toHaveBeenCalled();
   });
 
+  test("an operations run on mqtt is refused 400 with the requirement's sentence before a run is opened", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "mqtt" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "Agent mode takes no operational reading on this engine: it offers agent mode none of the session, slow-query, table, index, storage or health readings, so the operations workflow's reading tool could only refuse. Plan mode drafts here.",
+    );
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
   test("the operations workflow still opens on the same connection", async () => {
-    // It sends no statement at all: its reads are the curated provider methods every
-    // engine implements, under a profile whose gate does not ask for `queryReadOnly`.
+    // It sends no statement at all: its reads are the curated readings this engine offers
+    // agent mode, under a profile whose gate does not ask for `queryReadOnly`.
     mockResolveConnection.mockResolvedValueOnce(UNSUPPORTED_ENGINE);
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
@@ -786,17 +851,18 @@ describe("POST /api/agent/runs", () => {
     expect(source.includes("@/lib/db/providers/")).toBe(false);
   });
 
-  test("plan mode and the operations workflow open on the same connection, and roots open the investigation", async () => {
+  test("plan mode opens on the same connection, and roots open the investigation", async () => {
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
     expect((await POST(startRequest({ ...VALID_BODY, mode: "planning" }))).status).toBe(202);
+    // The operations workflow is not opened here at all: OPC UA offers agent mode no curated reading, roots or not.
     mockResolveConnection.mockResolvedValueOnce(ROOTLESS_PLANT);
-    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(202);
+    expect((await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }))).status).toBe(400);
     mockResolveConnection.mockResolvedValueOnce({
       ...ROOTLESS_PLANT,
       agentReadRoots: ["nsu=urn:plant;s=Line1"],
     } as never);
     expect((await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }))).status).toBe(202);
-    expect(mockStart).toHaveBeenCalledTimes(3);
+    expect(mockStart).toHaveBeenCalledTimes(2);
   });
 
   test("an Apache Spark investigation is refused with the posture's own paragraph", async () => {
@@ -827,7 +893,16 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart.mock.calls[0]?.[0].statementLanguage).toBe("mongo");
   });
 
-  test("a Postgres run is opened with no statement language and no verifier, so its header is unchanged", async () => {
+  test("the start route records the connection's type on the run header", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:events", name: "Events", type: "kafka" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "operations" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls[0]?.[0]).toMatchObject({ engine: "kafka", statementLanguage: "kafkaread" });
+  });
+
+  test("a Postgres run is opened with its engine and no statement language or verifier, which absence reads as", async () => {
     for (const mode of ["agent", "planning"]) {
       mockStart.mockClear();
       const res = await POST(startRequest({ ...VALID_BODY, mode, workflowType: "query-optimization" }));
@@ -835,6 +910,7 @@ describe("POST /api/agent/runs", () => {
       const input = mockStart.mock.calls[0]?.[0] as Record<string, unknown>;
       expect(Object.hasOwn(input, "statementLanguage"), mode).toBe(false);
       expect(Object.hasOwn(input, "verifier"), mode).toBe(false);
+      expect(input.engine, mode).toBe("postgres");
     }
   });
 
@@ -925,6 +1001,20 @@ describe("POST /api/agent/runs", () => {
     },
   );
 
+  test("a statement-sending run on an engine the review record does not list is refused by name before a run, a provider or a model probe exists", async () => {
+    mockWorkflowAvailability.mockReturnValueOnce({ open: false, cause: "not-reviewed" });
+
+    const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(realManifest.notReviewedSentence(getDBConfig("postgres").label));
+    expect(body.refused).toBe("engine-unsupported");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
   test("an engine that HAS a read-only statement path opens every workflow", async () => {
     // The negative control: without it the refusal above could be refusing everything.
     for (const workflowType of ["investigation", "operations", "data-analysis"]) {
@@ -967,6 +1057,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -985,6 +1076,7 @@ describe("POST /api/agent/runs", () => {
       workflowType: "query-optimization",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1017,6 +1109,7 @@ describe("POST /api/agent/runs", () => {
       autoExecute: true,
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1069,6 +1162,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1114,6 +1208,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1132,6 +1227,7 @@ describe("POST /api/agent/runs", () => {
       workflowSource: "inferred",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1171,6 +1267,7 @@ describe("POST /api/agent/runs", () => {
       mode: "agent",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1194,6 +1291,7 @@ describe("POST /api/agent/runs", () => {
       workflowReading: "unclassified",
       actor: { sessionId: "ada", role: "user" },
       connectionId: "seed:sales",
+      engine: "postgres",
       // The database behind that record, fingerprinted by the route (B68). Asserted as a
       // presence here and by value in the re-pointing test below.
       connectionIdentity: expect.any(String),
@@ -1644,6 +1742,7 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
   beforeEach(() => {
     mockResolveConnection.mockImplementation(async () => SERVER);
     mockForCatalog.mockImplementation(async () => ({}));
+    mockForCatalog.mockClear();
     mockStart.mockClear();
   });
 
@@ -1661,6 +1760,19 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     expect(mockStart.mock.calls.at(-1)?.[0].connectionIdentity).not.toBe(shop?.connectionIdentity);
   });
 
+  test("a tunnelled server-level connection reaches its whole server, read without opening its tunnel (FND-2 slice 5)", async () => {
+    mockResolveConnection.mockImplementation(async () => ({
+      ...SERVER,
+      port: 5432,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    }));
+
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+
+    expect(res.status).toBe(202);
+    expect(mockStart.mock.calls.at(-1)?.[0].catalog).toBe("shop");
+  });
+
   test("no database, one the role cannot open, a malformed one, or one on a pinned connection is refused", async () => {
     expect((await POST(startRequest(VALID_BODY))).status).toBe(400);
     expect((await POST(startRequest({ ...VALID_BODY, catalog: 5 }))).status).toBe(400);
@@ -1671,5 +1783,138 @@ describe("POST /api/agent/runs on a server-level connection (#1530)", () => {
     mockResolveConnection.mockImplementation(async () => ({ ...SERVER, database: "sales" }));
     expect((await POST(startRequest({ ...VALID_BODY, catalog: "shop" }))).status).toBe(400);
     expect(mockStart).not.toHaveBeenCalled();
+  });
+
+  /** The postgres or clickhouse provider's own `getCapabilities`, spied to declare catalog sessions on every connection. */
+  async function declaringCatalogSessions(connection: DatabaseConnection): Promise<{ mockRestore(): void }> {
+    const prototype = Object.getPrototypeOf(await createDatabaseProvider(connection)) as DatabaseProvider;
+    const original = prototype.getCapabilities;
+    return spyOn(prototype, "getCapabilities").mockImplementation(function (this: DatabaseProvider) {
+      return { ...original.call(this), catalogSessions: true };
+    });
+  }
+
+  test("a provider that declares catalog sessions on a connection naming a database is not read: a catalog is refused by name, and a run without one starts", async () => {
+    const naming = { ...SERVER, database: "sales" } as DatabaseConnection;
+    mockResolveConnection.mockImplementation(async () => naming);
+    const capabilities = await declaringCatalogSessions(naming);
+    try {
+      const refused = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      expect(refused.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(refused)).error).toBe(
+        "catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: it names its own database, so Studio honours no session per database its provider declares",
+      );
+      expect(mockForCatalog).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+
+      expect((await POST(startRequest(VALID_BODY))).status).toBe(202);
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
+  test("a provider that declares catalog sessions on an engine Studio's record does not hold is not read: a catalog is refused by name", async () => {
+    const clickhouse: DatabaseConnection = {
+      ...CENSUS_CONNECTION.clickhouse,
+      id: SERVER.id,
+      name: SERVER.name,
+      database: "",
+      connectionString: undefined,
+    };
+    mockResolveConnection.mockImplementation(async () => clickhouse);
+    const capabilities = await declaringCatalogSessions(clickhouse);
+    try {
+      const refused = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      expect(refused.status).toBe(400);
+      expect((await parseResponseJSON<{ error: string }>(refused)).error).toBe(
+        "catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: its provider declares a session per database, which Studio grants no clickhouse connection",
+      );
+      expect(mockForCatalog).not.toHaveBeenCalled();
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      capabilities.mockRestore();
+    }
+  });
+
+  test("a configuration error of Studio's own keeps its answer when the credential occurs only in a frame line of its stack", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
+    const message = "No API key is configured for the model";
+    mockAdmitAgentModel.mockImplementation(async () => {
+      const error = new LLMConfigError(message, "openai");
+      error.stack = `LLMConfigError: ${message}\n    at admit (/srv/${password}/.next/server/chunk.js:1:2)`;
+      throw error;
+    });
+    const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+    const body = await parseResponseJSON<{ error: string; code: string }>(res);
+    expect(res.status).toBe(503);
+    expect(body.error).toBe(message);
+  });
+
+  test("a start whose editor provider fails with the connection's credential in its text answers its status, code and kind without it, and logs without it", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({ ...SERVER, password }));
+    mockForCatalog.mockImplementation(async () => {
+      throw new ConnectionError(`could not open shop as ${password}`, "postgres");
+    });
+    const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+      spy.mockImplementation(() => {}),
+    );
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      const answer = await parseResponseJSON<Record<string, unknown>>(res);
+      const body = JSON.stringify(answer);
+
+      expect(res.status).toBe(503);
+      expect(answer).toMatchObject({ code: "CONNECTION_ERROR", retryable: true, kind: "connection" });
+      expect(answer.error).toBe(withheldErrorMessage("ConnectionError"));
+      const calls = JSON.stringify(
+        logged.flatMap((spy) => spy.mock.calls),
+        (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+      );
+      for (const form of secretForms([password])) {
+        expect(body).not.toContain(form);
+        expect(calls).not.toContain(form);
+      }
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
+  });
+
+  test("under an agent credential, a start whose editor provider echoes the connection's own password answers its status, code and kind and logs without it, since that provider is built from it", async () => {
+    const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+    mockResolveConnection.mockImplementation(async () => ({
+      ...SERVER,
+      password,
+      agentUser: "agent_reader",
+      agentPassword: crypto.randomUUID(),
+    }));
+    mockForCatalog.mockImplementation(async () => {
+      throw new ConnectionError(`could not open shop as ${password}`, "postgres");
+    });
+    const logged = [spyOn(logger, "error"), spyOn(logger, "warn"), spyOn(logger, "info")].map((spy) =>
+      spy.mockImplementation(() => {}),
+    );
+    try {
+      const res = await POST(startRequest({ ...VALID_BODY, catalog: "shop" }));
+      const answer = await parseResponseJSON<Record<string, unknown>>(res);
+      const body = JSON.stringify(answer);
+
+      expect(res.status).toBe(503);
+      expect(answer).toMatchObject({ code: "CONNECTION_ERROR", retryable: true, kind: "connection" });
+      expect(answer.error).toBe(withheldErrorMessage("ConnectionError"));
+      const calls = JSON.stringify(
+        logged.flatMap((spy) => spy.mock.calls),
+        (_key, value: unknown) => (value instanceof Error ? { message: value.message, stack: value.stack } : value),
+      );
+      for (const form of secretForms([password])) {
+        expect(body).not.toContain(form);
+        expect(calls).not.toContain(form);
+      }
+      expect(mockStart).not.toHaveBeenCalled();
+    } finally {
+      for (const spy of logged) spy.mockRestore();
+    }
   });
 });

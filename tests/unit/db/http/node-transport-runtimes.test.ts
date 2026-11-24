@@ -8,14 +8,16 @@
  * Both children run one bundle that Bun.build({ target: "node" }) makes of node-transport.ts and endpoint.ts around the
  * text of `runCases`, as tests/unit/db/etcd/tls-handshake.test.ts runs its adapter, against listeners this file starts.
  * Each child starts with HTTP_PROXY, HTTPS_PROXY, their lower-case forms, ALL_PROXY and NODE_USE_ENV_PROXY=1 naming a
- * counting listener, because Node reads NODE_USE_ENV_PROXY only when it starts. After its cases each child sends one
- * control request through the global agent: the counting listener must see exactly that one, which proves the
- * variables were live, and the spy on the global agents must count exactly that one, which proves the spy watches.
+ * proxy listener, because Node reads NODE_USE_ENV_PROXY only when it starts. After its cases each child sends one
+ * control request through the global agent: the proxy listener, which counts HTTP request lines rather than TCP
+ * connects, must see exactly that one, which proves the variables were live, and the spy on the global agents must
+ * count exactly that one, which proves the spy watches.
  *
  * The byte transport's cases run after that control request (runByteCases). Each child starts from an unbundled
  * entry.mjs that answers the name metadata.test with 169.254.169.254 before the bundle loads, so the byte transport's
- * refusal of a link-local DNS answer, and a text transport's built with `refusesLinkLocal`, with
- * DB_HTTP_BLOCK_PRIVATE_HOSTS off, are proven on every runtime listed.
+ * refusal of a link-local DNS answer, and a text transport's built with `refusesLinkLocal`, each handed an allowing
+ * egress decision, are proven on every runtime listed. The transports take the egress decision in their options and read
+ * no setting, so the child is handed an allowing and a blocking decision, written out as plain objects in its entry.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -32,23 +34,31 @@ import { httpOrigin as parentHttpOrigin, originHost } from "@/lib/db/http/endpoi
 import type { createNodeTransport, nodeTlsMaterial } from "@/lib/db/http/node-transport";
 import {
   closeAll,
-  countingListener,
   gzipOfZeros,
   httpListener,
   httpsListener,
   jsonAnswer,
   type Listener,
   makeCertificates,
+  type ProxyListener,
+  proxyListener,
   silentListener,
   streamingAnswer,
 } from "../../../helpers/node-transport-fixtures";
 import { howItFailed } from "../../../helpers/spawn-outcome";
+import { answerWithUpgrade } from "../../../helpers/upgrade-answer";
+import type { EgressDecision } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 interface Deps {
   readonly createNodeTransport: typeof createNodeTransport;
   readonly nodeTlsMaterial: typeof nodeTlsMaterial;
   readonly endpointUrl: typeof endpointUrl;
   readonly httpOrigin: typeof httpOrigin;
+  /** The decision every origin here is built with, so the origin never refuses and the transport's own check decides. */
+  readonly allowsPrivateHosts: EgressDecision;
+  /** The decision the guard cases hand their transport. */
+  readonly blocksPrivateHosts: EgressDecision;
   readonly http: typeof http;
   readonly https: typeof https;
 }
@@ -68,7 +78,8 @@ type PortName =
   | "guarded"
   | "silent"
   | "cut"
-  | "corrupt";
+  | "corrupt"
+  | "upgrading";
 
 interface Plan {
   readonly ports: Readonly<Record<PortName, number>>;
@@ -109,6 +120,7 @@ interface ByteOutcome {
 interface ByteDeps {
   readonly createNodeByteTransport: typeof import("@/lib/db/http/node-transport").createNodeByteTransport;
   readonly httpOrigin: typeof httpOrigin;
+  readonly allowsPrivateHosts: EgressDecision;
   readonly http: typeof http;
   readonly https: typeof https;
 }
@@ -185,10 +197,17 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       method?: "GET" | "POST";
       body?: string;
       keep?: boolean;
+      egress?: EgressDecision;
     } = {},
   ) => {
-    const origin = deps.httpOrigin(scheme, host, port);
-    const transport = deps.createNodeTransport({ origin, tls, maxSockets: 4, headers: { "api-key": SECRET } });
+    const origin = deps.httpOrigin(scheme, host, port, deps.allowsPrivateHosts);
+    const transport = deps.createNodeTransport({
+      origin,
+      tls,
+      maxSockets: 4,
+      egress: extra.egress ?? deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     try {
       return await transport.request({
         method: extra.method ?? "GET",
@@ -285,8 +304,14 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
     once("https", "127.0.0.1", ports.farAddress, material(plan.ca, "127.0.0.1"), "/forward"),
   );
   await record("keep-alive: three at once, then five more, at most two sockets", async () => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", ports.slow);
-    const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 2, headers: { "api-key": SECRET } });
+    const origin = deps.httpOrigin("http", "127.0.0.1", ports.slow, deps.allowsPrivateHosts);
+    const transport = deps.createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 2,
+      egress: deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     const request = () =>
       transport.request({
         method: "GET",
@@ -307,8 +332,14 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
     }
   });
   await record("a request cancelled while queued behind maxSockets", async () => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", ports.silent);
-    const transport = deps.createNodeTransport({ origin, tls: null, maxSockets: 1, headers: { "api-key": SECRET } });
+    const origin = deps.httpOrigin("http", "127.0.0.1", ports.silent, deps.allowsPrivateHosts);
+    const transport = deps.createNodeTransport({
+      origin,
+      tls: null,
+      maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
+      headers: { "api-key": SECRET },
+    });
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 100);
     const send = (path: string, signal: AbortSignal) =>
@@ -329,11 +360,12 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   });
   // A listed per-request header goes out; an unlisted one is refused before a socket, so the guarded listener sees none.
   const sendHeaders = async (port: number, path: string, headers: Record<string, string>) => {
-    const origin = deps.httpOrigin("http", "127.0.0.1", port);
+    const origin = deps.httpOrigin("http", "127.0.0.1", port, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({
       origin,
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: { "api-key": SECRET },
       requestHeaderNames: ["x-databend-session"],
     });
@@ -356,14 +388,15 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
   await record("request headers: an unlisted header is refused before a socket", () =>
     sendHeaders(ports.guarded, "/unlisted", { "x-other": "1" }),
   );
-  // A text transport asked to refuse link-local addresses, with the guard off: entry.mjs answers metadata.test with
+  // A text transport asked to refuse link-local addresses, handed an allowing decision: entry.mjs answers metadata.test with
   // 169.254.169.254, and the lookup on the Agent refuses it before a socket, so the guarded listener sees nothing.
   await record("text: metadata.test refused with refusesLinkLocal", async () => {
-    const origin = deps.httpOrigin("http", "metadata.test", ports.guarded);
+    const origin = deps.httpOrigin("http", "metadata.test", ports.guarded, deps.allowsPrivateHosts);
     const transport = deps.createNodeTransport({
       origin,
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       refusesLinkLocal: true,
     });
@@ -378,22 +411,32 @@ async function runCases(deps: Deps, plan: Plan): Promise<Report> {
       transport.close();
     }
   });
-  // Built before the guard is on, so the refusal below is the transport's own and not httpOrigin's.
-  const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded);
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
-  try {
-    await record("guard: 127.0.0.1 refused before a socket", async () => {
-      kept.push(deps.createNodeTransport({ origin: guardedOrigin, tls: null, maxSockets: 4, headers: {} }));
-      return { status: 0, retryAfter: null, text: "built" };
-    });
-    await record("guard: localhost refused by the lookup on the Agent", () =>
-      once("http", "localhost", ports.guarded, null, "/guarded"),
+  // The guard cases hand their transport a blocking decision; the origin is built with the allowing one, so the
+  // transport's own check is what refuses.
+  const guardedOrigin = deps.httpOrigin("http", "127.0.0.1", ports.guarded, deps.allowsPrivateHosts);
+  await record("guard: 127.0.0.1 refused before a socket", async () => {
+    kept.push(
+      deps.createNodeTransport({
+        origin: guardedOrigin,
+        tls: null,
+        maxSockets: 4,
+        egress: deps.blocksPrivateHosts,
+        headers: {},
+      }),
     );
-  } finally {
-    delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-  }
-  // Read while every kept transport is still open: the cap, the encoding refusal, the redirect and both stops must
-  // have destroyed their sockets themselves.
+    return { status: 0, retryAfter: null, text: "built" };
+  });
+  await record("guard: localhost refused by the lookup on the Agent", () =>
+    once("http", "localhost", ports.guarded, null, "/guarded", { egress: deps.blocksPrivateHosts }),
+  );
+  // A text transport built without refusesUpgrade, against a peer that answers an h2c upgrade and keeps its socket:
+  // node:http has handed the switched socket over, so only the transport's own destroy closes it, which the socket
+  // count below reads.
+  await record("text: a 101 with connection: upgrade and an upgrade header", () =>
+    once("http", "127.0.0.1", ports.upgrading, null, "/upgrade", { keep: true }),
+  );
+  // Read while every kept transport is still open: the cap, the encoding refusal, the redirect, both stops and the
+  // upgrade must have destroyed their sockets themselves.
   await new Promise((resolve) => setTimeout(resolve, 300));
   await record("open sockets on the stopped listeners", () => once("http", "127.0.0.1", ports.plain, null, "/open"));
   const duringCases = globalCalls;
@@ -467,9 +510,10 @@ async function runByteCases(
   };
   const connect = (host: string) =>
     deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", host, plan.bytePort),
+      origin: deps.httpOrigin("http", host, plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 4,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       responseHeaders: { names: ["x-amz-bucket-region"] },
     });
@@ -503,17 +547,18 @@ async function runByteCases(
   await record("byte: a dot-segment target", () => once("127.0.0.1", "/b/sp/./dot.txt"));
   await record("byte: a stored gzip body", () => once("127.0.0.1", "/b/gz"));
   await record("byte: a 301 with x-amz-bucket-region", () => once("127.0.0.1", "/b/region"));
-  // DB_HTTP_BLOCK_PRIVATE_HOSTS is off here (runCases deletes it, and the child starts without it); entry.mjs
-  // answers metadata.test with 169.254.169.254.
+  // The byte transport is handed an allowing decision here, so the guard is off; entry.mjs answers metadata.test with
+  // 169.254.169.254.
   await record("byte: metadata.test with the guard off", () => once("metadata.test", "/b/k"));
   // 5000 requests queued behind one under maxSockets 1, each refused by its signer once the slot frees: a queue that
   // started the next request from inside the last one's failure overflowed the stack on Node past about 1,800 and
   // ended the process. `length` counts the requests that rejected with the signer's own error.
   {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       signer: {
         headerNames: ["authorization"],
@@ -546,9 +591,10 @@ async function runByteCases(
   // Agent's own queue, and Node dialled a socket for it after the cancel. The parent counts that socket.
   await record("byte: a request cancelled as the truncated answer ahead of it resolves", async () => {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
     });
     try {
@@ -578,9 +624,10 @@ async function runByteCases(
   // A selected header whose value is UTF-8 on the wire is returned as the runtime's latin1 reading of those bytes.
   {
     const transport = deps.createNodeByteTransport({
-      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort),
+      origin: deps.httpOrigin("http", "127.0.0.1", plan.bytePort, deps.allowsPrivateHosts),
       tls: null,
       maxSockets: 1,
+      egress: deps.allowsPrivateHosts,
       headers: {},
       responseHeaders: { names: ["x-amz-meta-city"] },
     });
@@ -617,7 +664,7 @@ const PROXY_VARIABLES = new Set([
   "DB_HTTP_BLOCK_PRIVATE_HOSTS",
 ]);
 
-let proxy: Listener;
+let proxy: ProxyListener;
 let target: Listener;
 let plain: Listener;
 let slow: Listener;
@@ -630,6 +677,7 @@ let bomb: Listener;
 let holding: Listener;
 let guarded: Listener;
 let silent: Listener;
+let upgrading: Listener;
 let cutServer: ReturnType<typeof createTcpServer>;
 const cutSockets = new Set<Socket>();
 let corruptServer: ReturnType<typeof createTcpServer>;
@@ -770,7 +818,7 @@ async function byteListener(): Promise<number> {
 beforeAll(async () => {
   const certificates = makeCertificates();
   const bombBody = await gzipOfZeros(1024 * MIB);
-  proxy = await countingListener();
+  proxy = await proxyListener();
   target = await httpListener(jsonAnswer(200, "{}"));
   plain = await httpListener((request, response, body) => {
     const text =
@@ -780,6 +828,7 @@ beforeAll(async () => {
             bomb: bomb.open(),
             holding: holding.open(),
             redirecting: redirecting.open(),
+            upgrading: upgrading.open(),
           })
         : '{"result":"plain"}';
     jsonAnswer(200, text)(request, response, body);
@@ -814,6 +863,10 @@ beforeAll(async () => {
   });
   guarded = await httpListener(jsonAnswer(200, "{}"));
   silent = await silentListener();
+  // Writes the 101 below the server's own response, which is never sent, and keeps the socket open.
+  upgrading = await httpListener((request) => {
+    void answerWithUpgrade(request.socket, "upgrade");
+  });
   const cutPort = await cutListener();
   const corruptPort = await corruptListener(certificates.local);
   const bytePort = await byteListener();
@@ -835,6 +888,7 @@ beforeAll(async () => {
       silent: silent.port,
       cut: cutPort,
       corrupt: corruptPort,
+      upgrading: upgrading.port,
     },
     ca: certificates.ca,
     rogueCa: certificates.rogueCa,
@@ -856,8 +910,13 @@ beforeAll(async () => {
       `const runCases = ${runCases.toString()};`,
       `const runByteCases = ${runByteCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const report = await runCases({ createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, http, https }, plan);",
-      "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, http, https }, plan));",
+      'const allowsPrivateHosts = { blocksPrivateHosts: false, source: "set" };',
+      'const blocksPrivateHosts = { blocksPrivateHosts: true, source: "set" };',
+      "const report = await runCases(",
+      "  { createNodeTransport, nodeTlsMaterial, endpointUrl, httpOrigin, allowsPrivateHosts, blocksPrivateHosts, http, https },",
+      "  plan,",
+      ");",
+      "Object.assign(report, await runByteCases({ createNodeByteTransport, httpOrigin, allowsPrivateHosts, http, https }, plan));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -921,7 +980,6 @@ function childEnvironment(): Record<string, string> {
 }
 
 interface Counts {
-  readonly proxy: number;
   readonly target: number;
   readonly slow: number;
   readonly guarded: number;
@@ -929,7 +987,6 @@ interface Counts {
 }
 
 const counts = (): Counts => ({
-  proxy: proxy.accepted(),
   target: target.accepted(),
   slow: slow.accepted(),
   guarded: guarded.accepted(),
@@ -941,6 +998,7 @@ interface ChildRun {
   readonly delta: Counts;
   /** Index into each listener's `seen` where this child's requests start. */
   readonly from: {
+    readonly proxy: number;
     readonly plain: number;
     readonly secure: number;
     readonly farName: number;
@@ -954,6 +1012,7 @@ interface ChildRun {
 async function runChild(binary: string): Promise<ChildRun> {
   const before = counts();
   const from = {
+    proxy: proxy.requests.length,
     plain: plain.seen.length,
     secure: secure.seen.length,
     farName: farName.seen.length,
@@ -979,7 +1038,6 @@ async function runChild(binary: string): Promise<ChildRun> {
   return {
     report: JSON.parse(line) as Report,
     delta: {
-      proxy: after.proxy - before.proxy,
       target: after.target - before.target,
       slow: after.slow - before.slow,
       guarded: after.guarded - before.guarded,
@@ -1093,6 +1151,13 @@ const EXPECTED: Readonly<Record<string, Expected>> = {
     ok: false,
     errorName: "DatabaseConfigError",
     message: BLOCKED,
+  },
+  "text: a 101 with connection: upgrade and an upgrade header": {
+    ok: false,
+    errorName: "TransportError",
+    kind: "network",
+    message:
+      "The server switched the connection to another protocol, and this transport reads HTTP only, so the response was not read",
   },
   "open sockets on the stopped listeners": OK,
 };
@@ -1261,8 +1326,8 @@ for (const [label, binary] of RUNTIMES) {
 
     test.each(Object.keys(EXPECTED))("%s", (name) => expectCase(run?.report, name));
 
-    test("the proxy variables named a counting listener that saw only the control request", () => {
-      expect(run?.delta.proxy).toBe(1);
+    test("the proxy variables named a proxy listener that received only the control request", () => {
+      expect(proxy.requests.slice(run?.from.proxy)).toEqual([`GET http://127.0.0.1:${plain.port}/control HTTP/1.1`]);
       expect(plain.seen.slice(run?.from.plain).map(({ url }) => url)).not.toContain("/control");
     });
 
@@ -1304,9 +1369,9 @@ for (const [label, binary] of RUNTIMES) {
       expect(servername(farAddress, run?.from.farAddress, "/far-address")).toBe(false);
     });
 
-    test("the cap, the encoding refusal, the redirect and both stops destroyed their sockets while their transports stayed open", () => {
+    test("the cap, the encoding refusal, the redirect, both stops and the upgrade destroyed their sockets while their transports stayed open", () => {
       const text = run?.report.outcomes["open sockets on the stopped listeners"]?.text ?? "null";
-      expect(JSON.parse(text)).toEqual({ big: 0, bomb: 0, holding: 0, redirecting: 0 });
+      expect(JSON.parse(text)).toEqual({ big: 0, bomb: 0, holding: 0, redirecting: 0, upgrading: 0 });
     });
 
     test.each(Object.keys(BYTE_EXPECTED))("%s", (name) => {
@@ -1341,7 +1406,7 @@ for (const [label, binary] of RUNTIMES) {
     });
 
     test("every byte request carried one Host line, equal to originHost of the origin", () => {
-      const host = originHost(parentHttpOrigin("http", "127.0.0.1", byteListenerPort));
+      const host = originHost(parentHttpOrigin("http", "127.0.0.1", byteListenerPort, ALLOWS_PRIVATE_HOSTS));
       const hosts = byteHostLines.slice(run?.from.byteHeads);
       expect(hosts.length).toBeGreaterThan(0);
       expect(hosts.every((lines) => lines.length === 1 && lines[0] === `host: ${host}`)).toBe(true);

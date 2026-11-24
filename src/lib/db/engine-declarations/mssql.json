@@ -1,0 +1,460 @@
+{
+  "id": "mssql",
+  "displayName": "SQL Server",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "user",
+      "password",
+      "database",
+      "instanceName"
+    ],
+    "defaults": {
+      "port": 1433
+    },
+    "seedOnly": null,
+    "refused": [],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": "mssql",
+      "urlTls": "urlTls",
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "mssql://",
+          "Server=… (ADO.NET)"
+        ]
+      },
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "pair",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [],
+      "hints": [
+        {
+          "field": "instanceName",
+          "text": "For named instances (e.g. SQLEXPRESS). Leave empty for default instance."
+        }
+      ],
+      "placeholders": [],
+      "placement": [
+        {
+          "field": "instanceName",
+          "where": "advanced"
+        }
+      ],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "offered",
+      "slowQueries": "offered",
+      "activeSessions": "offered",
+      "tables": "offered",
+      "indexes": "offered",
+      "storage": "offered"
+    },
+    "maintenance": [
+      "analyze",
+      "check",
+      "optimize",
+      "kill"
+    ],
+    "maintenanceSpecs": [
+      {
+        "operation": "analyze",
+        "label": "Update Statistics",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "check",
+        "label": "Check Database",
+        "perEntity": false,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "optimize",
+        "label": "Rebuild Indexes",
+        "perEntity": true,
+        "global": true,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      },
+      {
+        "operation": "kill",
+        "label": "Kill Session",
+        "perEntity": false,
+        "global": false,
+        "title": null,
+        "description": null,
+        "confirmation": null,
+        "preview": false,
+        "kinds": null
+      }
+    ],
+    "agentReadings": [
+      "sessions",
+      "slow-queries",
+      "table-stats",
+      "index-stats",
+      "storage",
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": null,
+          "retry": null,
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": {
+          "kind": "session-mode",
+          "mode": "estimate-plan"
+        },
+        "profileComposition": {
+          "shapeTests": {
+            "email": "emailShapeTest",
+            "digitRun": "digitRunShapeTest"
+          },
+          "incomparableType": {
+            "source": "\\b(xml|geography|geometry)\\b",
+            "flags": "i"
+          },
+          "uncountableType": {
+            "source": "\\b(text|ntext|image)\\b",
+            "flags": "i"
+          }
+        },
+        "statistics": {
+          "probe": null,
+          "build": "statisticsBuild",
+          "limitNote": null
+        },
+        "catalogCapture": null
+      },
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "tsql",
+      "sqlserver"
+    ],
+    "explainFormat": null,
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "quoted-identifier",
+      "blockComment": "nesting",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": "GO",
+        "unit": "batch",
+        "terminatedStatements": [
+          "MERGE"
+        ]
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": "["
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": "placeholder",
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": "boundEdit"
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "NVARCHAR(MAX)",
+        "integer": "BIGINT",
+        "numeric": "FLOAT",
+        "boolean": "BIT",
+        "timestamp": "DATETIME2",
+        "binary": "VARBINARY(MAX)"
+      },
+      "standsAlone": [
+        "text",
+        "ntext",
+        "image",
+        "money",
+        "uniqueidentifier",
+        "datetime",
+        "datetime2",
+        "smalldatetime",
+        "datetimeoffset"
+      ],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "NULL",
+        "-Infinity": "NULL"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": "typedLiteral",
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": {
+      "begin": "BEGIN TRANSACTION;",
+      "commit": "COMMIT;"
+    },
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": []
+  },
+  "sqlGenerators": {
+    "quote": "generatorQuote",
+    "table": null,
+    "select": null,
+    "selectList": "generatorSelectList",
+    "countExpression": "COUNT_BIG(*)"
+  },
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

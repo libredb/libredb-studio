@@ -18,6 +18,7 @@
 | **SSH tunnel** | Refused: a tunnel forwards one address, and a Kafka client reaches every broker at the address the broker advertises ([§4.5](#45-no-ssh-tunnel)) |
 | **EXPLAIN** | None |
 | **Write reach** | none: the client sends only the read APIs of its API key set `KAFKA_READ_APIS`, the editor's text is a read request `parseReadRequest` admits or refuses, and there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted ([§11.5](#115-write-reach-measured-live)) |
+| **Failed statement outcome** | unknown: every statement is sent on the one client opened at connect, and nothing is taken from a pool before it is sent |
 | **Transactions** | Not applicable; reads are read-committed ([§5.2](#52-result-shape)) |
 | **Maintenance** | None |
 | **Query cancellation** | None: a read is bounded by its limit, its budgets and its timeout, and there is no server-side evaluation to stop ([§5.5](#55-timeout-and-cancellation)) |
@@ -137,14 +138,14 @@ Every reader of either field has a Kafka arm or a test pinning that its branch i
 On a topic row both row menus withhold Profile, through `offersColumnProfiling`, Code Generator, through `offersCodeGeneration`, and Generate Test Data, because no kind declares `acceptsRowWrites`.
 Code generation is withheld because the models it writes over a topic's fixed columns reject the rows a read returns: a `Date` timestamp against the ISO string, a record-typed value against text, base64 and the Confluent label.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): a read request is JSON of its own dialect, with no count grammar.
-The execution confirmation gate never asks on a Kafka connection: a read request cannot write, so the `kafka` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/kafka/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer, and a topic named `delete` or `drop` is never read as SQL.
+The execution confirmation gate never asks on a Kafka connection: a read request cannot write, so the `kafka` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kafkaread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer, and a topic named `delete` or `drop` is never read as SQL.
 No Monaco language and no JSON schema for the request are registered; a schema with completion and validation is recorded in `docs/BACKLOG.md`.
 Widening the published `queryDialect` union breaks an external consumer's exhaustive switch over it, and that ships with a release note rather than a compatibility layer.
 
 ### 3.2 Read-only by construction (K4)
 
 Two checks hold the guarantee, and both are required.
-The seam guard, [`tests/unit/db/kafka/seam-guard.test.ts`](../../tests/unit/db/kafka/seam-guard.test.ts), fails the build if `@platformatic/kafka` is loaded anywhere in the repository but `platformatic-client.ts` and the fixture seed `docker/kafka/seed-binary.ts`, or if the provider calls a member of the library's objects outside this allowlist: `metadata`, `listTopics`, `describeConfigs`, `listGroups`, `describeGroups`, `listConsumerGroupOffsets`, `listOffsets`, `listOffsetsWithTimestamps`, `describeLogDirs`, `findCoordinator`, `listApis`, `close`, `connect` on the one-off `Connection` of a consumer-protocol group's description, `get` on the fetch `ConnectionPool`, and the two raw calls `consumerGroupDescribeV0` and `fetchV13`.
+The seam guard, [`tests/unit/db/kafka/seam-guard.test.ts`](../../tests/unit/db/kafka/seam-guard.test.ts), fails the build if `@platformatic/kafka` is loaded anywhere in the repository but `platformatic-client.ts` and the fixture seed `docker/kafka/seed-binary.ts`, or if the provider calls a member of the library's objects outside this allowlist: `metadata`, `listTopics`, `describeConfigs`, `listGroups`, `describeGroups`, `listConsumerGroupOffsets`, `listOffsets`, `listOffsetsWithTimestamps`, `describeLogDirs`, `findCoordinator`, `listApis`, `close`, `connect` on the one-off `Connection` of a consumer-protocol group's description, `get` on the fetch `ConnectionPool`, `connections` and `on`, which send nothing and keep an `error` listener on every connection the provider opens and a `close` listener on a consumer-protocol group description's own ([§3.5](#35-a-host-that-embeds-the-provider-factory)), and the two raw calls `consumerGroupDescribeV0` and `fetchV13`.
 So `consume`, `commit`, `joinGroup`, `leaveGroup`, `Producer`, `createTopics`, `deleteTopics`, `alterConfigs`, `incrementalAlterConfigs`, `alterConsumerGroupOffsets` and `deleteRecords` cannot be written in the provider, and neither can an `autocreateTopics` other than the literal `false` or a Consumer `groupProtocol` other than `"classic"`.
 Every member of the library classes the adapter holds is classified against the installed package as allowed, forbidden or unused, so a client version that adds a member fails the guard until someone classifies it.
 The guard also pins the agent read path ([§15.1](#151-the-boundary)): `KafkaAgentReadClient` picks the client's `metadata`, `listTopics` and `offsets` alone, every agent-mode module names no other client type, imports only the modules and names it lists, and calls nothing else on its client, and the provider hands an agent-mode surface a new object holding those three reads and nothing more.
@@ -175,9 +176,17 @@ The client handles some answers inside its socket handler, where an exception is
 The adapter keeps every input known to throw there away from the client: it refuses an internal topic ([§6.1](#kinds-folders-and-identity)) and a SASL user that is not a string ([§4.2](#42-authentication-and-never-in-the-clear-k3)) before the call, and a read's answer never reaches the client's READ_COMMITTED filter ([§3.4](#34-one-client-per-connection-and-no-fetch-session)).
 A malformed answer, which a hostile broker can send ([§4.4](#44-the-broker-chooses-where-studio-connects-next)), can still throw there on the client's other calls.
 `describeGroups` is no longer one of them: since `@platformatic/kafka` 2.13.0 it resolves a classic group whose member's subscription or assignment it cannot decode with the group's `error` set and only the members before that one, and the provider refuses that group its whole description instead ([§6.1](#consumer-groups-and-lag)).
-In the standalone server, whose Next.js router server registers an `uncaughtException` handler, the exception is logged and that one call never settles until its timeout.
-A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends the process instead.
+In the standalone server the exception ends the process with exit code 70 ([DISTRIBUTION.md](../DISTRIBUTION.md#uncaught-errors-and-restarts)), and whatever started the server may start a fresh one, as the channel table there says, so every user loses the requests in flight and the state held in memory.
+A host that embeds the package's provider factory, `createDatabaseProvider` or `getOrCreateProvider` from `src/exports/providers.ts`, in a Node process that installs no `uncaughtException` handler, ends that process too, with Node.js's own exit code 1.
 Such a host should install a handler before it connects a Kafka provider to a broker it does not trust.
+
+A connection that fails reaches no socket handler unheard: the client reports a connection's failure as an `error` event, which is thrown out of the socket handler when no listener hears it, so every connection the provider opens keeps an `error` listener for its whole life.
+The one-off `Connection` of a consumer-protocol group's description listens from the moment it is built.
+A coordinator whose connection fails once open, by a reset, a close, or an answer to no request it was sent, which the client closes the connection on, fails the description with a `ConnectionError` naming the coordinator's host and port as the broker named them, and the runtime's error code, the client's, or `connection-lost` for a close that carries no error ([§10](#10-error-handling)).
+That holds during the SASL exchange too, so a coordinator that closes the connection there reads as a lost connection, never as a refused credential.
+A failure to connect there is read as any connection failure is.
+The provider also keeps an `error` listener, for the connection's whole life, on every connection the pools of the `Admin`, the `Consumer` and the fetch `ConnectionPool` build.
+The `Admin` and the `Consumer` themselves emit `error` only when a Consumer that joined a group fails to rejoin it, which the provider's never-joined Consumer does not ([§3.2](#32-read-only-by-construction-k4)).
 
 ### 3.6 Measurements
 
@@ -267,6 +276,7 @@ An IP literal is no legal server name, and Node 26, the production runtime, thro
 A handshake or verification failure is a `ConnectionError` carrying the Node error code, and no connection is retried without TLS.
 A verification failure is known by any name Node gives a refused certificate, such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `DEPTH_ZERO_SELF_SIGNED_CERT` or `INVALID_PURPOSE`.
 A client certificate the broker refuses, or none where the broker requires one, reads as a lost connection, not as a TLS failure: under TLS 1.3, which the `kafka-auth` fixture negotiates, a broker refuses a client certificate after the client's half of the handshake, and the client reports only that the connection closed, handing the socket's error, which carries the alert, to no caller.
+The one exception is the one-off connection of a consumer-protocol group's description, which the provider listens to itself, so there the alert's code is reported, such as `ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED` in a `ConnectionError` naming the coordinator ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 A request upstream for the client to keep that error is drafted in `docs/BACKLOG.md`.
 Each outcome is exercised by a real handshake against a local TLS server in [`tests/unit/db/kafka/tls-handshake.test.ts`](../../tests/unit/db/kafka/tls-handshake.test.ts), with certificates generated at test time and never committed, and the server-name rule under Node in a child process, because Bun sends a server name unasked.
 
@@ -281,11 +291,10 @@ An advertised address Studio cannot reach after the bootstrap succeeded is the m
 ### 4.5 No SSH tunnel
 
 A tunnel forwards one address, and the client reaches every broker at the address that broker advertises, which the tunnel does not carry, so the tunnel would carry the bootstrap connection only and every read would go to the advertised addresses directly.
-The dialog hides the SSH panel for Kafka through `showSshTunnel: false`, while it keeps the TLS panel, and `buildConnection` writes `sshTunnel` only for a type that offers the panel (`offersSshTunnel`), so a tunnel left in the dialog's state by another connection is dropped.
-A tunnelled connection that arrives another way, from a seed or the API, is refused before any broker request with a `DatabaseConfigError`: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly".
-There the server opens the tunnel before the provider runs, so an unreachable bastion answers with its SSH error first.
-The server opens a tunnel for any `sshTunnel.enabled` that JavaScript reads as true, such as the string `"true"`, so an `enabled` that is not a boolean is refused too, naming the field, rather than read as no tunnel.
-An `sshTunnel` that is not an object, such as `true`, is refused the same way, as an `ssl` that is not one is, though the server opens no tunnel for it.
+Studio refuses a Kafka connection whose tunnel is on before it dials the bastion or builds the provider: Kafka's row of `SSH_TUNNEL_REFUSAL` in `src/lib/db/compatibility.ts` names the reason, and core refuses with it on every entry point ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+The dialog reads the same row through `offersSshTunnel`: it hides the SSH panel for Kafka, while it keeps the TLS panel, and `buildConnection` writes `sshTunnel` only for a type that offers the panel, so a tunnel left in the dialog's state by another connection is dropped.
+A tunnelled connection that arrives another way, from a seed or the API, is refused with a `DatabaseConfigError`, and no bastion is dialled: "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly."
+An `enabled` that is not true, false or absent, such as the string `"true"`, is refused by name before the engine is read, and so is an `sshTunnel` that is not plain data.
 
 ### Connection string
 
@@ -433,7 +442,7 @@ None: `supportsExplain` is `false`, and the plan view is not offered.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/stream/kafka/sql-grammar.ts`](../../src/lib/db/providers/stream/kafka/sql-grammar.ts), the `kafka` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `kafka` takes a JSON read request (#1088), one object naming a topic and where to read it from, whose strings escape with a backslash as a MongoDB document's do; the provider extends `BaseDatabaseProvider` and parses the text itself.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/stream/kafka/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kafkaread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -535,14 +544,14 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 | `getHealth()` | a metadata read of the brokers, forced past the client's cache, then the log directories | The forced read must succeed, or the mapped error is thrown; `databaseSize` is the overview's figure, the cache hit ratio "N/A", and no active connection count, because Kafka does not report one and absence differs from zero |
 | `getOverview()` | the forced broker read, the topic listing, the configs of the lowest listed node id, and the log directories | `tableCount` is the exact topic count, internal topics excluded; `maxConnections` is that broker's `max.connections`, 0 ("no limit published") when the value is withheld or the configs are refused, and a value that is not a whole number is refused as a protocol error; `databaseSize` is the log-directory sum over every broker, labelled "on disk, all replicas, internal topics excluded", or "N/A" when that read is refused; `version` and `uptime` are "N/A", because the protocol reports neither a product version nor a start time |
 | `getStorageStats()` | the log directories | One row per broker and log directory, `broker <id>: <path>`, with the summed partition sizes of the listed topics and a usage percentage where the broker reports its totals; `[]` when the read is refused |
-| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count |
-| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty states "Kafka exposes no query log" and "Kafka does not report client sessions over its protocol" |
-| `getIndexStats()` | none | `[]`: a topic has no index |
-| `getPerformanceMetrics()` | none | Every metric absent; the panel renders unavailable |
+| `getTableStats()` | none | `[]`: `TableStats.rowCount` is a required number, and a topic has no honest message count, so the panel is not offered |
+| `getSlowQueries()`, `getActiveSessions()` | none | `[]`: Kafka exposes no query log and does not report client sessions over its protocol; neither panel is offered, so neither is read by the dashboard or drawn |
+| `getIndexStats()` | none | `[]`: a topic has no index, so the panel is not offered |
+| `getPerformanceMetrics()` | none | Every metric absent, so the panel is not offered: never read and not drawn |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
 A principal without Describe on the cluster is refused the log directories, and one without DescribeConfigs on the cluster the broker configs, and each refusal degrades only its own figure; any other failure, and a refusal of any other read, still fails the panel.
-The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the broker through them too.
+In agent mode the `operations` workflow takes only the `health` reading on Kafka ([Engine facets](#engine-facets)) and refuses every other kind by name before the broker is reached.
 
 On a handle opened for an agent-mode profile, which the `operations` workflow, plan-mode grounding and MCP open, every surface reads through the agent's client, which holds the Metadata and ListOffsets reads alone ([§15](#15-agent-mode)), so no surface reads a config or a log directory there:
 
@@ -552,6 +561,29 @@ On a handle opened for an agent-mode profile, which the `operations` workflow, p
 | `getOverview()`, `getStorageStats()` | refused with that reason: the overview needs the broker configs and the log directories, storage the log directories |
 | `getTableStats()`, `getIndexStats()`, `getSlowQueries()`, `getActiveSessions()` | refused with the reason Kafka has no such figure, rather than answered `[]`, so the model reads that the reading was not taken, never an empty reading as the broker's answer |
 | `getPerformanceMetrics()` | unchanged, every metric absent; the agent's operations readings do not read it |
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `kafka` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/stream/kafka/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
+`storage` is not offered to agent mode although the panel is: the agent handle refuses it with `KAFKA_AGENT_WITHHELD.storage`.
 
 ---
 
@@ -579,7 +611,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts))
 
-`entityName` "Topic" and "Topics", `rowName` "Message" and "Messages", `selectAction` "Read Latest 50", `generateAction` "Generate Read Request", and the two empty-state sentences of [§7](#7-monitoring--health).
+`entityName` "Topic" and "Topics", `rowName` "Message" and "Messages", `selectAction` "Read Latest 50" and `generateAction` "Generate Read Request"; no empty-state sentence, because neither the Queries nor the Sessions panel is offered ([§7](#7-monitoring--health)).
 `statementLanguage` carries the read request's schema, because plan mode states it verbatim and it is the only fact about how a statement is written that plan mode's prompt carries per engine: the four keys, the `from` forms, the defaults, two examples, and that no other key is taken, that `offset` and `timestamp` go inside `from`, that the inventory's other columns are fields each message comes back with and not keys of the request, and that a read request reads one topic's messages, never a group's lag.
 The integration test parses each example in it with the provider's own parser.
 
@@ -622,6 +654,7 @@ Mapped from the protocol error name, the client's error code and the Node error 
 | a bootstrap address that refuses, does not answer the connect in time, or closes the connection | `ConnectionError` carrying the Node error code, or `connect-timeout` or `connection-lost` where there is none |
 | a `connect()` whose broker read, retries included, has not settled when the query timeout runs out ([§2.4](#24-registration--lifecycle)) | `ConnectionError` with `connect-timeout` |
 | an advertised broker address Studio cannot reach after the bootstrap succeeded | `ConnectionError` naming the advertised host and port ([§4.4](#44-the-broker-chooses-where-studio-connects-next)) |
+| the connection to a consumer-protocol group's coordinator failing once open, during its SASL exchange or after it: reset, closed, or sent an answer to no request | `ConnectionError` naming the coordinator's host and port and the Node error code, the client's code where there is none, or `connection-lost` for a close ([§3.5](#35-a-host-that-embeds-the-provider-factory)) |
 | a request the broker accepted and did not answer in time, and a read past the query timeout | `TimeoutError` |
 | any other protocol error | `QueryError` naming the protocol error name, or the client's code where there is none, never the client's message, which can carry a host and port |
 
@@ -791,7 +824,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **The client decompresses a whole answer before any bound applies** ([§5.4](#54-bounds)).
 - **The broker chooses how much work a SCRAM exchange takes** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **The broker chooses how often a connection authenticates again** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
-- **A malformed answer can end a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
+- **A malformed answer can end the standalone server, and a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 - **A read the budget stops answers older rows than the newest that would fit** ([§5.4](#54-bounds)).
 - **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (`docs/BACKLOG.md` B89).
 - **A principal with no Describe ACL sees an empty cluster**, with no error to tell it apart ([§6.1](#listing-counting-and-scale)).
@@ -800,7 +833,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **No live tail, no streaming results and no push subscriptions.**
 - **No ksqlDB and no SQL over Kafka**: ksqlDB's licence forbids offering it as a competing service, most clusters do not run it, and its queries create server-side groups and topics; SQL over Kafka, if ever wanted, is a separate type-id.
 - **Agent mode and MCP's `run_kafka_read` read metadata only, and send no fetch** ([§15](#15-agent-mode), [§16](#16-mcp), `docs/BACKLOG.md` B157): no record, group, config or log directory reaches an agent or MCP answer, and a platform's own topics are withheld.
-- **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)).
+- **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)), except on a consumer-protocol group description's own connection, which reports the TLS alert's code.
 - **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), `docs/BACKLOG.md` D125).
 
 ---
@@ -831,7 +864,7 @@ The refusal reason it prints, verbatim:
 ## 15. Agent mode
 
 Agent mode reads Kafka metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts).
-The request reader is [`agent-statement.ts`](../../src/lib/db/providers/stream/kafka/agent-statement.ts), the reads and their metadata-only projection are [`agent-metadata-read.ts`](../../src/lib/db/providers/stream/kafka/agent-metadata-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/stream/kafka/agent-surface.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/languages/kafkaread/agent-statement.ts), the reads and their metadata-only projection are [`agent-metadata-read.ts`](../../src/lib/db/providers/stream/kafka/agent-metadata-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/stream/kafka/agent-surface.ts).
 Every claim below about the broker cites a capture under [`tests/fixtures/kafka/4.3.1/agent-boundary/`](../../tests/fixtures/kafka/4.3.1/agent-boundary/) or [`tests/fixtures/redpanda/26.2.2/agent-boundary/`](../../tests/fixtures/redpanda/26.2.2/agent-boundary/), each recorded by its `run.sh` against a fresh digest-pinned broker with automatic topic creation on, with every refused call sent raw by the broker's own Java tools, past every Studio check, and the broker snapshot of [§3.2](#32-read-only-by-construction-k4) taken before and after.
 On Apache Kafka the raw calls are sent twice: as `agent-reader`, a SCRAM-SHA-512 user over TLS under `StandardAuthorizer` that holds Describe on every topic, every group and the cluster and nothing else, and as the plaintext listener's super user, the writable positive control; Redpanda runs with no authentication, so each call is sent once, as that control.
 
@@ -867,7 +900,7 @@ Each read runs under the request's time budget, the wait and not the work, and n
 
 Topic names, partition ids, broker node ids and racks and the cluster id are object names; a record's key, value, headers and timestamp are stored values, and a record's timestamp can be the producer's own, so no read fetches a record or looks anything up by time, and no request can count or filter by a value.
 A broker's advertised host and port, topic and broker configs, log-directory paths and consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read on the agent path either.
-A platform's own topics are withheld on every agent-mode handle: a name with a leading underscore, as Schema Registry's `_schemas`, Confluent's `_confluent-*` and ksqlDB's command topics have, or starting `connect-`, as Kafka Connect's configs, offsets and status topics have by default (`isWithheldKafkaTopic` in [`agent-statement.ts`](../../src/lib/db/providers/stream/kafka/agent-statement.ts)).
+A platform's own topics are withheld on every agent-mode handle: a name with a leading underscore, as Schema Registry's `_schemas`, Confluent's `_confluent-*` and ksqlDB's command topics have, or starting `connect-`, as Kafka Connect's configs, offsets and status topics have by default (`isWithheldKafkaTopic` in [`agent-statement.ts`](../../src/lib/languages/kafkaread/agent-statement.ts)).
 The broker marks none of them internal, so its listing answers them to any principal that may describe them, measured on 4.3.1 (the `control` check of [`tests/fixtures/kafka/4.3.1/mcp-boundary/`](../../tests/fixtures/kafka/4.3.1/mcp-boundary/)); they hold connector configs, schemas and offsets rather than the cluster's data.
 The agent's client drops them from every listing it answers and refuses a request that names one before it is sent, and the reader refuses such a request in agent mode's own sentence; a platform that names its topics otherwise is not recognised, and the principal's own Describe grants are what keep those out.
 Kafka declares `ProviderCapabilities.metadataOnly`, and every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts):

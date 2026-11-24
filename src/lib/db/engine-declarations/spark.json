@@ -1,0 +1,531 @@
+{
+  "id": "spark",
+  "displayName": "Apache Spark",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "password",
+      "database",
+      "schema"
+    ],
+    "defaults": {
+      "port": 15002
+    },
+    "seedOnly": null,
+    "refused": [
+      {
+        "field": "user",
+        "refusal": "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent."
+      }
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": {
+        "reader": "pasteReader",
+        "catchAll": false,
+        "formats": [
+          "sc://"
+        ]
+      },
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "Host"
+        },
+        {
+          "field": "port",
+          "text": "Port"
+        },
+        {
+          "field": "password",
+          "text": "Token"
+        },
+        {
+          "field": "database",
+          "text": "Catalog"
+        },
+        {
+          "field": "schema",
+          "text": "Namespace"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The host of the Spark Connect server, or of a TLS proxy in front of it. Spark Connect listens on 15002 unless the server was started on another port. Paste an sc:// address with Paste URL."
+        },
+        {
+          "field": "password",
+          "text": "The server's spark.connect.authenticate.token (Spark 4.0 and later), sent on every call. Leave it empty for a server without a token. Studio sends a token only over TLS or an SSH tunnel, unless the host is this machine."
+        },
+        {
+          "field": "database",
+          "text": "The catalog unqualified names resolve in, and the one the tree opens first. Empty: the server's default catalog."
+        },
+        {
+          "field": "schema",
+          "text": "The namespace in that catalog, written as in Spark SQL: parts joined by dots, a part with other characters in backticks. Empty: the catalog's current namespace."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "server default (spark_catalog)"
+        },
+        {
+          "field": "schema",
+          "text": "catalog default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "host",
+        "required": "Host is required: the name or address of the Spark Connect server, or of the TLS proxy in front of it. Nothing was sent.",
+        "format": null,
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "password",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[\\x21-\\x7E](?:[\\x20-\\x7E]*[\\x21-\\x7E])?)?$",
+            "flags": ""
+          },
+          "sentence": "Token takes printable ASCII with no space at either end: a gRPC header cannot carry other characters, and Spark compares the token exactly. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[^.\\p{Cc}]{1,255}$",
+            "flags": "u"
+          },
+          "sentence": "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "schema",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
+            "flags": ""
+          },
+          "sentence": "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": null,
+    "overlay": null
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [],
+    "explainFormat": "spark-text",
+    "dialect": null,
+    "language": {
+      "queryLanguage": "sql",
+      "monacoId": "sql",
+      "accent": "border-hue-blue/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": true,
+    "grammar": {
+      "hash": "code",
+      "bracket": "subscript",
+      "blockComment": "nesting",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": true,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": true,
+      "hintsAreCode": true,
+      "lineCommentBackslashContinues": true,
+      "lineCommentEndsAtCarriageReturn": true,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [
+        {
+          "source": "\\s+OFFSET\\s+\\d+\\s*$",
+          "flags": "i"
+        }
+      ],
+      "nonNumericRowBounds": [],
+      "confirmForms": [
+        [
+          "CREATE",
+          "OR",
+          "REPLACE"
+        ],
+        [
+          "REPLACE",
+          "TABLE"
+        ],
+        [
+          "LOAD",
+          "DATA"
+        ],
+        [
+          "CALL"
+        ],
+        [
+          "EXECUTE",
+          "IMMEDIATE"
+        ],
+        [
+          "ADD"
+        ]
+      ],
+      "confirmCodeForms": [
+        [
+          "INSERT",
+          "OVERWRITE"
+        ],
+        [
+          "EVOLUTION",
+          "OVERWRITE"
+        ],
+        [
+          "REPLACE",
+          "WHERE"
+        ],
+        [
+          "REPLACE",
+          "ON"
+        ],
+        [
+          "REPLACE",
+          "USING"
+        ],
+        [
+          "USING",
+          "JAR"
+        ],
+        [
+          "USING",
+          "FILE"
+        ],
+        [
+          "USING",
+          "ARCHIVE"
+        ],
+        [
+          "DROP",
+          "PARTITIONS"
+        ],
+        [
+          "SYNC",
+          "PARTITIONS"
+        ],
+        {
+          "wordThenLiteral": "USING"
+        },
+        [
+          "REFLECT"
+        ],
+        [
+          "JAVA_METHOD"
+        ],
+        [
+          "TRY_REFLECT"
+        ],
+        {
+          "quotedCall": "REFLECT"
+        },
+        {
+          "quotedCall": "JAVA_METHOD"
+        },
+        {
+          "quotedCall": "TRY_REFLECT"
+        },
+        {
+          "computedCall": "IDENTIFIER"
+        },
+        {
+          "dollarQuoted": true
+        }
+      ],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": [
+        "spark.sql.variable.substitute",
+        "spark.sql.defaultCatalog",
+        "spark.sql.catalog."
+      ],
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "sql",
+      "nameQuote": null
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "STRING",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BINARY"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "CAST('NaN' AS DOUBLE)",
+        "Infinity": "CAST('Infinity' AS DOUBLE)",
+        "-Infinity": "CAST('-Infinity' AS DOUBLE)"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": "typedLiteral",
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "written",
+    "transactionWrapper": null,
+    "createTable": {
+      "kind": "written",
+      "primaryKey": "createTablePrimaryKey",
+      "foreignKey": "createTableForeignKey"
+    },
+    "columnDef": "columnDef",
+    "createIndex": "createIndex",
+    "dropIndex": "dropIndex",
+    "addForeignKey": "addForeignKey",
+    "dropForeignKey": "dropForeignKey",
+    "addColumn": "addColumn",
+    "dropColumn": "dropColumn",
+    "modifyColumn": "modifyColumn",
+    "dropTable": "dropTable",
+    "reasons": [
+      "Whether a column's type, nullability or default can change depends on the catalog and the table format; write the change by hand.",
+      "Apache Spark: Cannot generate index DDL. Spark SQL's index statements work only in a catalog whose tables support indexes; write the index change by hand.",
+      "Spark accepts a foreign key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.",
+      "Spark accepts a primary key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "open",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "open"
+      },
+      "objectEdit": {
+        "reach": "open"
+      },
+      "maintenance": {
+        "reach": "open"
+      },
+      "transaction": {
+        "reach": "open"
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

@@ -131,6 +131,7 @@ export function createKubernetesClient(
     origin: endpoint.origin,
     tls: endpoint.tls,
     maxSockets: endpoint.maxSockets,
+    egress: endpoint.egress,
     headers: endpoint.headers,
     requestHeaderNames: ["accept"],
     refusesLinkLocal: true,

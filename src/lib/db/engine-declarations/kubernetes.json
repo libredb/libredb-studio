@@ -1,0 +1,438 @@
+{
+  "id": "kubernetes",
+  "displayName": "Kubernetes",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "password",
+      "database",
+      "namespaces",
+      "apiPath",
+      "tlsServerName"
+    ],
+    "defaults": {
+      "port": 6443
+    },
+    "seedOnly": null,
+    "refused": [
+      {
+        "field": "user",
+        "refusal": "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent."
+      }
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": null,
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": {
+      "form": "secret",
+      "supersededBy": []
+    },
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "host",
+          "text": "API server"
+        },
+        {
+          "field": "password",
+          "text": "Token"
+        },
+        {
+          "field": "database",
+          "text": "Default namespace"
+        },
+        {
+          "field": "namespaces",
+          "text": "Namespaces"
+        },
+        {
+          "field": "apiPath",
+          "text": "API path"
+        },
+        {
+          "field": "tlsServerName",
+          "text": "TLS server name"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "The API server: a host name or address, or a pasted https:// address such as https://api.example:6443, which is split into Host and Port. A path, such as Rancher's /k8s/clusters/<id>, goes under API path. If Studio runs in a container, localhost is that container: use the cluster's Docker network or host.docker.internal. A typed address also needs SSL Mode under SSL / TLS: verify-full with the cluster's CA, or verify-system; the default, disable, is refused for any host but this machine."
+        },
+        {
+          "field": "port",
+          "text": "kubeadm, k3s and kind serve on 6443; managed clusters (EKS, GKE, AKS, Rancher) usually on 443."
+        },
+        {
+          "field": "password",
+          "text": "A bearer token, without the word Bearer. A ServiceAccount token bound to view or studio-reader is the safest choice; kubectl create token lasts one hour unless --duration says otherwise. Leave empty when a client certificate under SSL / TLS signs in, or for kubectl proxy."
+        },
+        {
+          "field": "database",
+          "text": "Empty means default, as kubectl reads it: the namespace the tree opens on and the console reads when a statement names none."
+        },
+        {
+          "field": "namespaces",
+          "text": "Optional: the namespaces the tree lists, separated by commas or spaces. Set it when this identity may not list namespaces; Studio then reads no namespace list."
+        },
+        {
+          "field": "apiPath",
+          "text": "Optional: a path every request goes under, such as /k8s/clusters/c-m-abc12 for a cluster behind Rancher."
+        },
+        {
+          "field": "tlsServerName",
+          "text": "Optional: the name the API server's certificate is checked against, when it differs from Host (kubeconfig tls-server-name)."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [
+      "https",
+      "http"
+    ],
+    "credentialWarnings": [],
+    "fieldRules": [
+      {
+        "field": "database",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$",
+            "flags": ""
+          },
+          "sentence": "Default namespace must be a DNS-1123 label: at most 63 lower-case letters, digits or hyphens, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      },
+      {
+        "field": "namespaces",
+        "required": null,
+        "format": {
+          "pattern": {
+            "source": "^[\\s,]*[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?([\\s,]+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*[\\s,]*$",
+            "flags": ""
+          },
+          "sentence": "Namespaces must list DNS-1123 labels separated by commas or spaces: at most 63 lower-case letters, digits or hyphens each, starting and ending with a letter or digit. Nothing was sent."
+        },
+        "charRange": null,
+        "check": null
+      }
+    ],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": {
+      "label": "Import kubeconfig",
+      "importer": "importer"
+    },
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "kubectl",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "kubectl"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "kubectl",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": {
+        "credentialFlags": [
+          "--token",
+          "--password",
+          "--client-key",
+          "--client-certificate",
+          "--from-literal",
+          "--docker-password"
+        ]
+      }
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "kubectl",
+      "accent": "border-hue-teal-alt/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": false,
+    "grammar": {
+      "hash": "comment-unless-operator",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "none"
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BLOB"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "NULL",
+        "-Infinity": "NULL"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": null,
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- Kubernetes: Cannot generate table DDL. Kubernetes objects follow the schema their API version serves, and Studio writes none, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "Kubernetes objects follow the schema their API version serves, and Studio writes none, so there is no column definition to change."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "token",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": true,
+    "statementRead": true,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/platform/kubernetes/request-policy.ts",
+          "symbol": "admitRequest"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
+  }
+}

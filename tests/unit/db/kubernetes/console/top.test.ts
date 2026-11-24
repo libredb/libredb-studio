@@ -4,15 +4,9 @@
  */
 import { describe, expect, test } from "bun:test";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
-import {
-  METRICS_ABSENT_SENTENCE,
-  milliValue,
-  parseQuantity,
-  readTop,
-  sumQuantities,
-  wholeValue,
-} from "@/lib/db/providers/platform/kubernetes/console/top";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
+import { milliValue, parseQuantity, sumQuantities, wholeValue } from "@/lib/languages/kubectl/quantity";
+import { METRICS_ABSENT_SENTENCE, readTop } from "@/lib/db/providers/platform/kubernetes/console/top";
 import { consoleContext, listAnswer, routes, sentLines } from "../../../../helpers/kubernetes-console";
 import { CORE_DISCOVERY, discoveryList } from "../../../../helpers/kubernetes-discovery";
 import { jsonAnswer, statusAnswer } from "../../../../helpers/kubernetes-transport";

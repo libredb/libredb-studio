@@ -228,6 +228,35 @@ describe("AgentHistory", () => {
     expect(await screen.findByText("That run could not be reopened.")).toBeDefined();
   });
 
+  test("a run this Studio cannot read says why, in the server's sentence", async () => {
+    const sentence =
+      'This run was recorded in the statement language "cobol", which this LibreDB Studio does not have. The run is kept as it was, and this LibreDB Studio does not open, drive, stop or replay it.';
+    mockGlobalFetch({
+      "/api/agent/runs/arun_t_1": {
+        ok: false,
+        status: 409,
+        json: { error: sentence, code: "AGENT_RUN_UNAVAILABLE", statusCode: 409 },
+      },
+      "/api/agent/runs": json(conversationPayload),
+    });
+    render(<AgentHistory />);
+
+    fireEvent.click(await screen.findByText("Why is checkout slow?"));
+    expect(await screen.findByText(sentence)).toBeDefined();
+    expect(screen.queryByText("That run could not be reopened.")).toBeNull();
+  });
+
+  test("a 409 that is not the unavailable-run refusal keeps the generic sentence", async () => {
+    mockGlobalFetch({
+      "/api/agent/runs/arun_t_1": { ok: false, status: 409, json: { error: "Something else", code: "OTHER" } },
+      "/api/agent/runs": json(conversationPayload),
+    });
+    render(<AgentHistory />);
+
+    fireEvent.click(await screen.findByText("Why is checkout slow?"));
+    expect(await screen.findByText("That run could not be reopened.")).toBeDefined();
+  });
+
   test("a successful reopen clears the failure sentence of the report before it", async () => {
     let fail = true;
     mockGlobalFetch({

@@ -1,0 +1,1407 @@
+/**
+ * `serve` puts a provider module record behind the memory test transport (docs/providers/CONTRACT.md, clauses C-19 and
+ * C-22 to C-24): every call crosses as one request frame and one answer frame through the value codec, the provider
+ * receives decoded, frozen copies, the host receives decoded copies, and a session handle or a result source never
+ * crosses.
+ *
+ * Each case serves a fixture module `defineProvider` built over the minimal manifest, records what the implementation
+ * received and what the observer saw, and asserts on both. Every planted value is generated at run time. A call's
+ * failure is captured with a plain `await` inside `failure`, never asserted with `.rejects`.
+ */
+import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  awaitWithin,
+  type BatchLimit,
+  type CallContext,
+  CallRefusalError,
+  CLEANUP_DEADLINE_MS,
+  checkProviderModule,
+  deadlineSignal,
+  defineProvider,
+  encodedRowBytes,
+  envReader,
+  type ExecuteAnswer,
+  type ExecuteRequest,
+  type LateOutcome,
+  type OpenAnswer,
+  type OpenContext,
+  PAGE_MAX_BYTES,
+  ProviderDefinitionError,
+  type ProviderImpl,
+  type ProviderModule,
+  pumpPage,
+  type ResultSource,
+  type RowBatch,
+  rowsSource,
+  type TransactionAnswer,
+  type TransactionRequest,
+  type TreeAnswer,
+  type TreeRequest,
+} from "@libredb/provider-sdk/calls";
+import { FrameRefusalError, type ServedFrame, type ServedHandle, serve } from "@libredb/provider-sdk/testing";
+import { ValueCodecError } from "@libredb/provider-sdk/values";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- a draft each case bends into a shape the transport refuses.
+type Json = Record<string, any>;
+
+const marker = (): string => randomUUID();
+
+interface Seen {
+  readonly call: string;
+  readonly handle?: unknown;
+  readonly request?: unknown;
+  readonly ctx?: CallContext;
+}
+
+interface ProviderHandle {
+  readonly marker: string;
+}
+
+interface Fixture {
+  readonly module: ProviderModule;
+  readonly seen: Seen[];
+  readonly handle: ProviderHandle;
+  /** What each call answers, changed by a case before it calls. */
+  readonly answers: Json;
+}
+
+/** A provider module over the minimal manifest: honours both fields, offers every facet unless told otherwise. */
+function fixture(
+  options: {
+    readonly cancel?: boolean;
+    readonly endScope?: boolean;
+    readonly transaction?: boolean;
+    readonly tree?: boolean;
+    readonly honours?: string[];
+  } = {},
+): Fixture {
+  const manifest = JSON.parse(readFileSync(path.join(import.meta.dir, "../fixtures/minimal-manifest.json"), "utf8"));
+  manifest.calls.console.execute.honours = options.honours ?? ["params", "offset"];
+  manifest.calls.console.cancel = options.cancel === false ? "not-offered" : "offered";
+  manifest.calls.console.endScope = options.endScope === false ? "not-offered" : "offered";
+  manifest.calls.console.transaction = options.transaction === false ? "not-offered" : "offered";
+  manifest.calls.objects.tree = options.tree === false ? "not-offered" : "offered";
+  manifest.engines[0].facets.monitoring.overview = "not-offered";
+  const seen: Seen[] = [];
+  const handle: ProviderHandle = { marker: marker() };
+  const answers: Json = {
+    open: () => ({ handle, serverVersion: marker() }),
+    close: () => undefined,
+    execute: () => ({
+      results: [
+        rowsSource(
+          [{ name: "id" }, { name: "label" }],
+          [
+            [1, marker()],
+            [2, marker()],
+          ],
+          2,
+        ),
+      ],
+      warnings: [{ message: marker(), code: 1 }],
+      executionTimeMs: 3,
+      pageApplied: false,
+      explainPlan: { plan: [marker()] },
+    }),
+    cancel: () => ({ cancelled: true }),
+    endScope: () => ({ openTransaction: "none" }),
+    transaction: () => ({ sessionState: "in-transaction" }),
+    tree: () => ({ containers: [] }),
+  };
+  const impl: Json = {
+    open: async (ctx: OpenContext) => {
+      seen.push({ call: "open", ctx });
+      return answers.open();
+    },
+    close: async (h: unknown, ctx: CallContext) => {
+      seen.push({ call: "close", handle: h, ctx });
+      return answers.close();
+    },
+    console: {
+      execute: async (h: unknown, request: unknown, ctx: CallContext) => {
+        seen.push({ call: "console.execute", handle: h, request, ctx });
+        return answers.execute();
+      },
+    },
+  };
+  if (options.cancel !== false) {
+    impl.console.cancel = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "console.cancel", handle: h, request, ctx });
+      return answers.cancel();
+    };
+  }
+  if (options.endScope !== false) {
+    impl.console.endScope = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "console.endScope", handle: h, request, ctx });
+      return answers.endScope();
+    };
+  }
+  if (options.transaction !== false) {
+    impl.console.transaction = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "console.transaction", handle: h, request, ctx });
+      return answers.transaction();
+    };
+  }
+  if (options.tree !== false) {
+    impl.objects = {
+      tree: async (h: unknown, request: unknown, ctx: CallContext) => {
+        seen.push({ call: "objects.tree", handle: h, request, ctx });
+        return answers.tree();
+      },
+    };
+  }
+  return { module: defineProvider(manifest, impl as ProviderImpl<unknown>), seen, handle, answers };
+}
+
+function openContext(controller = new AbortController()): OpenContext {
+  return {
+    deadline: Date.now() + 60_000,
+    signal: controller.signal,
+    env: envReader([], () => undefined),
+    engine: "exampledb",
+    connectionId: marker(),
+    connection: { host: marker(), port: 7000, user: marker(), password: marker(), allowInsecureAuth: false },
+    tls: { mode: "verify-full", caCert: marker() },
+    egress: { blocksPrivateHosts: true, source: "default" },
+    trust: { certificates: [marker()] },
+    policy: {
+      readOnly: false,
+      sendsStatements: true,
+      allowExternalFileAccess: false,
+      refuseWrites: false,
+      managed: false,
+      literalSeedFile: false,
+    },
+  };
+}
+
+function callContext(controller = new AbortController()): CallContext {
+  return { deadline: Date.now() + 60_000, signal: controller.signal, env: envReader([], () => undefined) };
+}
+
+function request(change: (draft: Json) => void = () => {}): ExecuteRequest {
+  const draft: Json = { statement: `select ${marker()}`, page: { limit: 500, offset: 0 } };
+  change(draft);
+  return draft as ExecuteRequest;
+}
+
+/** What `run` threw; a run that does not throw fails the case. */
+async function failure(run: () => Promise<unknown>): Promise<unknown> {
+  try {
+    await run();
+  } catch (error) {
+    return error;
+  }
+  throw new Error("The call was expected to fail, and it answered.");
+}
+
+/** A served instance of `fx` with an observer that records every frame. */
+function served(fx: Fixture): { readonly impl: ProviderImpl<ServedHandle>; readonly frames: ServedFrame[] } {
+  const frames: ServedFrame[] = [];
+  return { impl: serve(fx.module, { observe: (frame) => frames.push(frame) }), frames };
+}
+
+/** Whether `value` and every plain object and array it holds are frozen. */
+function deepFrozen(value: unknown): boolean {
+  if (typeof value !== "object" || value === null || value instanceof Uint8Array || value instanceof Date) return true;
+  return Object.isFrozen(value) && Object.values(value).every(deepFrozen);
+}
+
+/** `ctx` without its host services, as a frame carries it. */
+function dataOf(ctx: CallContext): Json {
+  return Object.fromEntries(Object.entries(ctx).filter(([key]) => key !== "signal" && key !== "env"));
+}
+
+/** A pull's limit as a host passes it by hand, with `encodedRowBytes` as its measure. */
+function limitOf(maxRows: number, maxBytes: number): BatchLimit {
+  return { maxRows, maxBytes, measure: encodedRowBytes };
+}
+
+/** `ctx` with its deadline already past. */
+function past<C extends CallContext>(ctx: C): C {
+  return { ...ctx, deadline: Date.now() - 1 };
+}
+
+/** A late handler that records each outcome and resolves `first` with the first one. */
+function lateHandler<T>(): {
+  readonly late: (outcome: LateOutcome<T>) => void;
+  readonly calls: LateOutcome<T>[];
+  readonly first: Promise<LateOutcome<T>>;
+} {
+  const calls: LateOutcome<T>[] = [];
+  const { promise, resolve } = Promise.withResolvers<LateOutcome<T>>();
+  return {
+    late: (outcome) => {
+      calls.push(outcome);
+      resolve(outcome);
+    },
+    calls,
+    first: promise,
+  };
+}
+
+/** A source over one row that counts its closes. */
+function countedSource(): { readonly source: ResultSource; readonly closes: () => number } {
+  let closes = 0;
+  const inner = rowsSource([{ name: "id" }, { name: "label" }], [[1, marker()]], 1);
+  return {
+    source: {
+      columns: inner.columns,
+      next: (limit: BatchLimit) => inner.next(limit),
+      close: async () => {
+        closes += 1;
+        await inner.close();
+      },
+    },
+    closes: () => closes,
+  };
+}
+
+describe("serve", () => {
+  test("a served module answers every call through one request frame and one answer frame", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+
+    const opened = await impl.open(openContext());
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    await impl.console.cancel?.(opened.handle, { runId: marker() }, callContext());
+    await impl.console.endScope?.(opened.handle, { scope: marker() }, callContext());
+    const source = answer.results[0] as ResultSource;
+    await source.next(limitOf(10, 1024));
+    await source.close();
+    await impl.close(opened.handle, callContext());
+
+    expect(frames.map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      ["open", "console.execute", "console.cancel", "console.endScope", "result.next", "result.close", "close"].flatMap(
+        (call) => [`to-provider ${call}`, `to-host ${call}`],
+      ),
+    );
+    for (const frame of frames) {
+      expect(Object.isFrozen(frame)).toBe(true);
+      expect(typeof JSON.parse(frame.text)).toBe("object");
+    }
+  });
+
+  test("the provider receives decoded copies, frozen at every depth, with the host's signal and environment reader by reference", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const controller = new AbortController();
+    const ctx = openContext(controller);
+    const sent = request((r) => (r.params = [new Uint8Array([1, 2]), new Date(0), { nested: [marker()] }]));
+
+    const opened = await impl.open(ctx);
+    await impl.console.execute(opened.handle, sent, callContext(controller));
+    const [atOpen, atExecute] = fx.seen as [Seen, Seen];
+
+    expect(dataOf(atOpen.ctx as CallContext)).toEqual(dataOf(ctx));
+    expect(atOpen.ctx).not.toBe(ctx);
+    expect(Object.values(dataOf(atOpen.ctx as CallContext)).every(deepFrozen)).toBe(true);
+    expect(Object.isFrozen(atOpen.ctx)).toBe(true);
+    expect(atOpen.ctx?.signal).toBe(ctx.signal);
+    expect(atOpen.ctx?.env).toBe(ctx.env);
+    expect(atExecute.request).toEqual(sent);
+    expect(atExecute.request).not.toBe(sent);
+    expect(deepFrozen(atExecute.request)).toBe(true);
+    controller.abort();
+    expect(atOpen.ctx?.signal.aborted).toBe(true);
+    expect(atExecute.ctx?.signal.aborted).toBe(true);
+  });
+
+  test("the host's own context and request are left as the host built them, and the host receives decoded copies of each answer", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const ctx = openContext();
+    const sent = request((r) => (r.params = [marker()]));
+    const provided = fx.answers.execute();
+    fx.answers.execute = () => provided;
+    const openAnswer = { handle: fx.handle, serverVersion: marker() };
+    fx.answers.open = () => openAnswer;
+
+    const opened = await impl.open(ctx);
+    const answer = await impl.console.execute(opened.handle, sent, callContext());
+    const cancelAnswer = { cancelled: false };
+    fx.answers.cancel = () => cancelAnswer;
+    const cancelled = await impl.console.cancel?.(opened.handle, { runId: marker() }, callContext());
+
+    expect(Object.isFrozen(ctx)).toBe(false);
+    expect(Object.isFrozen(ctx.connection)).toBe(false);
+    expect(Object.isFrozen(sent)).toBe(false);
+    expect(Object.isFrozen(sent.params)).toBe(false);
+    expect(opened.serverVersion).toBe(openAnswer.serverVersion);
+    expect(Object.keys(opened).sort()).toEqual(["handle", "serverVersion"]);
+    expect(answer.warnings).toEqual(provided.warnings);
+    expect(answer.warnings).not.toBe(provided.warnings);
+    expect(answer.explainPlan).toEqual(provided.explainPlan);
+    expect(answer.explainPlan).not.toBe(provided.explainPlan);
+    expect({ ...answer, results: [] }).toEqual({ ...provided, results: [] });
+    expect(cancelled).toEqual(cancelAnswer);
+    expect(cancelled).not.toBe(cancelAnswer);
+  });
+
+  test("a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+    const executes = () => fx.seen.filter((item) => item.call === "console.execute").length;
+
+    const optionalUndefined = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.runId = undefined)),
+        callContext(),
+      ),
+    );
+    const map = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.params = [new Map()])),
+        callContext(),
+      ),
+    );
+    const extra = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.extra = marker())),
+        callContext(),
+      ),
+    );
+    const dropped = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.params = Object.assign([1], { note: marker() }))),
+        callContext(),
+      ),
+    );
+    const extraContext = await failure(() =>
+      impl.close(opened.handle, { ...callContext(), extra: 1 } as unknown as CallContext),
+    );
+
+    // The codec leaves an undefined member out (V-9), so the round trip refuses the member it dropped.
+    expect(optionalUndefined).toBeInstanceOf(FrameRefusalError);
+    expect((optionalUndefined as FrameRefusalError).refusals).toEqual([
+      { rule: "round-trip-changed", call: "console.execute", part: "request", pointer: "/runId" },
+    ]);
+    expect(map).toBeInstanceOf(ValueCodecError);
+    expect((map as ValueCodecError).path).toBe("/params/0");
+    expect(extra).toBeInstanceOf(FrameRefusalError);
+    expect((extra as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "console.execute", part: "request", pointer: "/extra", name: "extra" },
+    ]);
+    expect((dropped as FrameRefusalError).refusals).toEqual([
+      { rule: "round-trip-changed", call: "console.execute", part: "request", pointer: "/params" },
+    ]);
+    expect((extraContext as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "close", part: "context", pointer: "/extra", name: "extra" },
+    ]);
+    expect(executes()).toBe(0);
+    expect(fx.seen.filter((item) => item.call === "close")).toEqual([]);
+  });
+
+  test("an error a call or a source throws reaches the host as the same object", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const thrown = new Error(marker());
+    const opened = await impl.open(openContext());
+    const source: ResultSource = {
+      columns: [{ name: "id" }],
+      next: async () => {
+        throw thrown;
+      },
+      close: async () => {
+        throw thrown;
+      },
+    };
+    fx.answers.execute = () => ({ results: [source], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    const servedSource = answer.results[0] as ResultSource;
+    fx.answers.open = () => {
+      throw thrown;
+    };
+    fx.answers.cancel = () => {
+      throw thrown;
+    };
+
+    expect(await failure(() => impl.open(openContext()))).toBe(thrown);
+    expect(await failure(() => servedSource.next(limitOf(1, 1)))).toBe(thrown);
+    expect(await failure(() => servedSource.close())).toBe(thrown);
+    expect(await failure(async () => impl.console.cancel?.(opened.handle, { runId: marker() }, callContext()))).toBe(
+      thrown,
+    );
+  });
+
+  test("the session handle and each result source stay in the served instance's tables, and only their ids cross", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const provided = fx.answers.execute();
+    fx.answers.execute = () => provided;
+
+    const opened = await impl.open(openContext());
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    const source = answer.results[0] as ResultSource;
+    await source.next(limitOf(10, 1024));
+    await impl.close(opened.handle, callContext());
+    const executeAnswer = JSON.parse((frames[3] as ServedFrame).text);
+
+    for (const frame of frames) expect(frame.text).not.toContain(fx.handle.marker);
+    expect(opened.handle).not.toBe(fx.handle);
+    expect(Object.isFrozen(opened.handle)).toBe(true);
+    expect(Object.keys(opened.handle)).toEqual(["session"]);
+    expect(JSON.parse((frames[0] as ServedFrame).text).session).toBeUndefined();
+    expect(JSON.parse((frames[1] as ServedFrame).text).session).toBe(opened.handle.session);
+    expect(fx.seen.filter((item) => item.call !== "open").map((item) => item.handle)).toEqual([fx.handle, fx.handle]);
+    expect(fx.seen[1]?.handle).toBe(fx.handle);
+    expect(fx.seen[2]?.handle).toBe(fx.handle);
+    expect(source).not.toBe(provided.results[0]);
+    expect(Object.isFrozen(source)).toBe(true);
+    expect(source.columns).toEqual(provided.results[0].columns);
+    expect(source.rowCount).toBe(2);
+    expect(Object.keys(executeAnswer.answer.results[0]).sort()).toEqual(["columns", "result", "rowCount"]);
+    expect(JSON.parse((frames[4] as ServedFrame).text).result).toBe(executeAnswer.answer.results[0].result);
+  });
+
+  test("a closed or foreign session token is refused as session-not-open before any frame", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const copy = { ...opened.handle };
+    const other = await serve(fx.module).open(openContext());
+    await impl.close(opened.handle, callContext());
+    const before = frames.length;
+
+    const closed = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    const copied = await failure(() => impl.close(copy, callContext()));
+    const foreign = await failure(
+      () => impl.console.endScope?.(other.handle, { scope: marker() }, callContext()) as Promise<unknown>,
+    );
+
+    expect((closed as FrameRefusalError).refusals).toEqual([
+      { rule: "session-not-open", call: "console.execute", part: "handle", pointer: "" },
+    ]);
+    expect((copied as FrameRefusalError).refusals).toEqual([
+      { rule: "session-not-open", call: "close", part: "handle", pointer: "" },
+    ]);
+    expect((foreign as FrameRefusalError).refusals).toEqual([
+      { rule: "session-not-open", call: "console.endScope", part: "handle", pointer: "" },
+    ]);
+    expect((closed as Error).message).toBe(
+      "The session handle at the top level of the console.execute call is not one the served instance holds open, so no frame was sent.",
+    );
+    expect(frames.length).toBe(before);
+  });
+
+  test("a closed result source is refused as result-not-open before any frame", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    const source = answer.results[0] as ResultSource;
+    await source.close();
+    const before = frames.length;
+
+    const pulled = await failure(() => source.next(limitOf(1, 1024)));
+    const closedAgain = await failure(() => source.close());
+
+    expect((pulled as FrameRefusalError).refusals).toEqual([
+      { rule: "result-not-open", call: "result.next", part: "handle", pointer: "" },
+    ]);
+    expect((closedAgain as FrameRefusalError).refusals).toEqual([
+      { rule: "result-not-open", call: "result.close", part: "handle", pointer: "" },
+    ]);
+    expect(frames.length).toBe(before);
+  });
+
+  test("a close takes the session out of both tables even when the provider's close throws", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const thrown = new Error(marker());
+    const opened = await impl.open(openContext());
+    fx.answers.close = () => {
+      throw thrown;
+    };
+
+    expect(await failure(() => impl.close(opened.handle, callContext()))).toBe(thrown);
+    expect(((await failure(() => impl.close(opened.handle, callContext()))) as FrameRefusalError).refusals).toEqual([
+      { rule: "session-not-open", call: "close", part: "handle", pointer: "" },
+    ]);
+    expect(fx.seen.filter((item) => item.call === "close").map((item) => item.handle)).toEqual([fx.handle]);
+
+    const second = await impl.open(openContext());
+    fx.answers.close = () => marker();
+    const answered = await failure(() => impl.close(second.handle, callContext()));
+
+    expect((answered as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "close", part: "answer", pointer: "" },
+    ]);
+    expect(
+      ((await failure(() => impl.close(second.handle, callContext()))) as FrameRefusalError).refusals[0]?.rule,
+    ).toBe("session-not-open");
+  });
+
+  test("a request field or a console facet the session does not offer is refused before any frame", async () => {
+    const fx = fixture({ honours: [], endScope: false });
+    const { impl, frames } = served(fx);
+    fx.answers.open = () => ({ handle: fx.handle, refine: { calls: { console: { cancel: "not-offered" } } } });
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+
+    const params = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.params = [])),
+        callContext(),
+      ),
+    );
+    const scope = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.scope = marker())),
+        callContext(),
+      ),
+    );
+    const cancel = await failure(async () => impl.console.cancel?.(opened.handle, { runId: marker() }, callContext()));
+
+    expect(params).toBeInstanceOf(CallRefusalError);
+    expect((params as CallRefusalError).refusals).toEqual([
+      { rule: "request-field-not-honoured", pointer: "/params", name: "params" },
+    ]);
+    expect((scope as CallRefusalError).refusals).toEqual([{ rule: "request-scope-not-offered", pointer: "/scope" }]);
+    expect((cancel as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/console/cancel", name: "console.cancel" },
+    ]);
+    expect(impl.console.endScope).toBeUndefined();
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const requests: TransactionRequest[] = [
+      { action: "begin", requireReportedState: true },
+      { action: "state" },
+      { action: "commit" },
+      { action: "rollback" },
+    ];
+    const answers: TransactionAnswer[] = [
+      { sessionState: "in-transaction", stateReported: true },
+      { sessionState: "unknown" },
+      { sessionState: "not-in-transaction" },
+      { sessionState: "not-in-transaction" },
+    ];
+    const received: unknown[] = [];
+
+    for (const [index, sent] of requests.entries()) {
+      const answer = answers[index] as TransactionAnswer;
+      fx.answers.transaction = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.console.transaction?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+      received.push(got);
+    }
+    const plainExecute = fx.answers.execute;
+    fx.answers.execute = () => ({ ...plainExecute(), sessionState: "in-transaction" });
+    const inTransaction = request((r) => (r.transaction = true));
+    const statement = await impl.console.execute(opened.handle, inTransaction, callContext());
+    const seen = fx.seen.slice(1);
+
+    expect(received.length).toBe(4);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      [...requests.map(() => "console.transaction"), "console.execute"].flatMap((call) => [
+        `to-provider ${call}`,
+        `to-host ${call}`,
+      ]),
+    );
+    expect(seen.map((item) => item.call)).toEqual([...requests.map(() => "console.transaction"), "console.execute"]);
+    for (const [index, item] of seen.slice(0, 4).entries()) {
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(requests[index]);
+      expect(item.request).not.toBe(requests[index]);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+    const statementSeen = seen[4] as Seen;
+    expect(statementSeen.request).toEqual(inTransaction);
+    expect((statementSeen.request as ExecuteRequest).transaction).toBe(true);
+    expect(statement.sessionState).toBe("in-transaction");
+
+    fx.answers.transaction = () => ({ sessionState: "maybe" });
+    const unreadable = await failure(async () =>
+      impl.console.transaction?.(opened.handle, { action: "state" }, callContext()),
+    );
+    expect((unreadable as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.transaction", part: "answer", pointer: "/sessionState" },
+    ]);
+  });
+
+  test("a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame", async () => {
+    const declaredNot = fixture({ transaction: false });
+    const withdrawn = fixture();
+    withdrawn.answers.open = () => ({
+      handle: withdrawn.handle,
+      refine: { calls: { console: { transaction: "not-offered" } } },
+    });
+    const notServed = served(declaredNot);
+    const narrowed = served(withdrawn);
+    const declaredSession = await notServed.impl.open(openContext());
+    const narrowedSession = await narrowed.impl.open(openContext());
+    const before = [notServed.frames.length, narrowed.frames.length];
+    const inTransaction = request((r) => (r.transaction = true));
+
+    const declaredStatement = await failure(() =>
+      notServed.impl.console.execute(declaredSession.handle, inTransaction, callContext()),
+    );
+    const narrowedStatement = await failure(() =>
+      narrowed.impl.console.execute(narrowedSession.handle, inTransaction, callContext()),
+    );
+    const narrowedCall = await failure(async () =>
+      narrowed.impl.console.transaction?.(narrowedSession.handle, { action: "begin" }, callContext()),
+    );
+
+    expect(notServed.impl.console.transaction).toBeUndefined();
+    for (const refused of [declaredStatement, narrowedStatement]) {
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([
+        { rule: "request-transaction-not-offered", pointer: "/transaction" },
+      ]);
+    }
+    expect((narrowedCall as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/console/transaction", name: "console.transaction" },
+    ]);
+    expect([notServed.frames.length, narrowed.frames.length]).toEqual(before);
+    expect(declaredNot.seen.map((item) => item.call)).toEqual(["open"]);
+    expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const container = [marker()];
+    const path = [...container, marker()];
+    const detail = {
+      path,
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true, defaultValue: marker() }],
+      indexes: [{ name: marker(), columns: ["id"], unique: true }],
+      foreignKeys: [{ columnName: "id", referencedTable: marker(), referencedColumn: "id" }],
+    };
+    const calls: [TreeRequest, TreeAnswer][] = [
+      [{ action: "containers" }, { containers: [{ path: container, name: marker(), level: 0, kinds: ["table"] }] }],
+      [{ action: "containers", parent: container }, { containers: [] }],
+      [{ action: "count", container }, { counts: { table: { count: 2 }, view: { unavailable: marker() } } }],
+      [
+        { action: "list", container, kind: "table" },
+        { objects: [{ path, name: marker(), kind: "table", readRanges: [{ prefix: marker() }] }] },
+      ],
+      [{ action: "describe", path, kind: "table" }, { detail: { ...detail, indexes: { unavailable: marker() } } }],
+      [
+        { action: "describeMany", container, kind: "table", limit: 1, defaultSql: true },
+        { details: [detail], truncated: { limit: 1, reason: marker() } },
+      ],
+    ];
+    const received: unknown[] = [];
+
+    for (const [sent, answer] of calls) {
+      fx.answers.tree = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.objects?.tree?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+      received.push(got);
+    }
+    const seen = fx.seen.slice(1);
+
+    expect(received.length).toBe(calls.length);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual(
+      calls.flatMap(() => ["to-provider objects.tree", "to-host objects.tree"]),
+    );
+    expect(seen.map((item) => item.call)).toEqual(calls.map(() => "objects.tree"));
+    for (const [index, item] of seen.entries()) {
+      const sent = (calls[index] as [TreeRequest, TreeAnswer])[0];
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(sent);
+      expect(item.request).not.toBe(sent);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+
+    fx.answers.tree = () => ({ containers: [], objects: [] });
+    const twoForms = await failure(async () =>
+      impl.objects?.tree?.(opened.handle, { action: "containers" }, callContext()),
+    );
+    expect((twoForms as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "objects.tree", part: "answer", pointer: "" },
+    ]);
+    const unknownAction = await failure(async () =>
+      impl.objects?.tree?.(opened.handle, { action: "search" } as unknown as TreeRequest, callContext()),
+    );
+    expect((unknownAction as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "objects.tree", part: "request", pointer: "/action" },
+    ]);
+    expect(fx.seen.length).toBe(calls.length + 2);
+  });
+
+  test("a tree call on a session without objects.tree is refused before any frame", async () => {
+    const declaredNot = fixture({ tree: false });
+    const withdrawn = fixture();
+    withdrawn.answers.open = () => ({
+      handle: withdrawn.handle,
+      refine: { calls: { objects: { tree: "not-offered" } } },
+    });
+    const notServed = served(declaredNot);
+    const narrowed = served(withdrawn);
+    const narrowedSession = await narrowed.impl.open(openContext());
+    const before = narrowed.frames.length;
+
+    const refused = await failure(async () =>
+      narrowed.impl.objects?.tree?.(narrowedSession.handle, { action: "containers" }, callContext()),
+    );
+
+    expect(notServed.impl.objects?.tree).toBeUndefined();
+    expect(refused).toBeInstanceOf(CallRefusalError);
+    expect((refused as CallRefusalError).refusals).toEqual([
+      { rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" },
+    ]);
+    expect(narrowed.frames.length).toBe(before);
+    expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
+  test("a refinement open answers narrows the served session's calls", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const plain = await impl.open(openContext());
+    fx.answers.open = () => ({ handle: fx.handle, refine: { calls: { console: { execute: { honours: [] } } } } });
+    const narrowed = await impl.open(openContext());
+    const withParams = request((r) => (r.params = [1]));
+
+    await impl.console.execute(plain.handle, withParams, callContext());
+    const refused = await failure(() => impl.console.execute(narrowed.handle, withParams, callContext()));
+
+    expect(narrowed.refine).toEqual({ calls: { console: { execute: { honours: [] } } } });
+    expect((refused as CallRefusalError).refusals).toEqual([
+      { rule: "request-field-not-honoured", pointer: "/params", name: "params" },
+    ]);
+  });
+
+  test("an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources", async () => {
+    const fx = fixture({ endScope: false });
+    const { impl } = served(fx);
+    const closes = () => fx.seen.filter((item) => item.call === "close");
+
+    fx.answers.open = () => ({ handle: fx.handle, refine: { calls: { console: { endScope: "offered" } } } });
+    const widened = await failure(() => impl.open(openContext()));
+    fx.answers.open = () => ({ handle: fx.handle, extra: marker() });
+    const unknown = await failure(() => impl.open(openContext()));
+    fx.answers.open = () => ({ handle: fx.handle, serverVersion: new Map() });
+    const unframed = await failure(() => impl.open(openContext()));
+
+    expect((widened as CallRefusalError).refusals).toEqual([
+      { rule: "refinement-widens", pointer: "/calls/console/endScope" },
+    ]);
+    expect((unknown as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "open", part: "answer", pointer: "/extra", name: "extra" },
+    ]);
+    expect(unframed).toBeInstanceOf(ValueCodecError);
+    expect(closes().map((item) => item.handle)).toEqual([fx.handle, fx.handle, fx.handle]);
+
+    fx.answers.open = () => marker();
+    const notARecord = await failure(() => impl.open(openContext()));
+    fx.answers.open = () => ({ serverVersion: marker() });
+    const noHandle = await failure(() => impl.open(openContext()));
+    let handleReads = 0;
+    fx.answers.open = () =>
+      Object.defineProperty({}, "handle", {
+        enumerable: true,
+        get() {
+          handleReads += 1;
+          return fx.handle;
+        },
+      });
+    const accessor = await failure(() => impl.open(openContext()));
+
+    expect((notARecord as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "open", part: "answer", pointer: "" },
+    ]);
+    expect((noHandle as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-missing", call: "open", part: "answer", pointer: "/handle", name: "handle" },
+    ]);
+    expect((accessor as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "open", part: "answer", pointer: "/handle" },
+    ]);
+    expect(handleReads).toBe(0);
+    expect(closes()).toHaveLength(3);
+
+    fx.answers.open = () => ({ handle: fx.handle });
+    const opened = await impl.open(openContext());
+    const closed: string[] = [];
+    const counted = (name: string): ResultSource => ({
+      columns: [{ name }],
+      next: async () => ({ rows: [], done: true }),
+      close: async () => {
+        closed.push(name);
+      },
+    });
+    fx.answers.execute = () => ({
+      results: [counted("first"), counted("second")],
+      warnings: [{ message: 1 }],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const malformed = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    fx.answers.execute = () => marker();
+    const notAnAnswer = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    const holed: ResultSource[] = [counted("before-hole")];
+    holed.length = 2;
+    fx.answers.execute = () => ({ results: holed, warnings: [], executionTimeMs: 0, pageApplied: false });
+    const hole = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    fx.answers.execute = () => ({ results: marker(), warnings: [], executionTimeMs: 0, pageApplied: false });
+    const notAList = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    const dropping = counted("dropping");
+    fx.answers.execute = () => ({
+      results: [{ ...dropping, columns: Object.assign([{ name: "id" }], { note: marker() }) }],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const columns = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    fx.answers.execute = () => ({
+      results: [counted("before-null"), null],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const nullItem = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    fx.answers.execute = () => ({
+      results: [counted("before-scalar"), marker()],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const scalarItem = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+    const getterError = new Error(marker());
+    const throwing = Object.defineProperty({ ...counted("throwing") }, "rowCount", {
+      enumerable: true,
+      get() {
+        throw getterError;
+      },
+    });
+    fx.answers.execute = () => ({
+      results: [counted("before-getter"), throwing],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const getter = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+
+    expect((nullItem as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/results/1" },
+    ]);
+    expect((scalarItem as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/results/1" },
+    ]);
+    expect(getter).toBe(getterError);
+
+    expect((malformed as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/warnings/0/message" },
+    ]);
+    expect((notAnAnswer as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "" },
+    ]);
+    expect((hole as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/results/1" },
+    ]);
+    expect((notAList as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/results" },
+    ]);
+    expect((columns as FrameRefusalError).refusals).toEqual([
+      { rule: "round-trip-changed", call: "console.execute", part: "answer", pointer: "/results/0/columns" },
+    ]);
+    expect(closed).toEqual([
+      "first",
+      "second",
+      "before-hole",
+      "dropping",
+      "before-null",
+      "before-scalar",
+      "before-getter",
+      "throwing",
+    ]);
+  });
+
+  test("a refused open answer's session is closed with a context of its own, not the open's aborted one", async () => {
+    const fx = fixture({ endScope: false });
+    const { impl } = served(fx);
+    const controller = new AbortController();
+    const reason = new Error(marker());
+    const env = envReader([], () => undefined);
+    fx.answers.open = () => {
+      controller.abort(reason);
+      return { handle: fx.handle, refine: { calls: { console: { endScope: "offered" } } } };
+    };
+    const ctx = { ...openContext(controller), env };
+    const before = Date.now();
+    const refused = await failure(() => impl.open(ctx));
+    const after = Date.now();
+    const closes = fx.seen.filter((item) => item.call === "close");
+
+    expect(refused).toBeInstanceOf(CallRefusalError);
+    expect(controller.signal.aborted).toBe(true);
+    expect(closes).toHaveLength(1);
+    const closeCtx = closes[0]?.ctx as CallContext;
+    expect(closes[0]?.handle).toBe(fx.handle);
+    expect(closeCtx.signal.aborted).toBe(false);
+    expect(closeCtx.signal).not.toBe(controller.signal);
+    expect(closeCtx.deadline).not.toBe(ctx.deadline);
+    expect(closeCtx.deadline).toBeGreaterThanOrEqual(before + CLEANUP_DEADLINE_MS);
+    expect(closeCtx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
+    expect(closeCtx.env).toBe(env);
+    expect(Object.isFrozen(closeCtx)).toBe(true);
+  });
+
+  test("a close that fails beside a refused answer is thrown with the refusal first", async () => {
+    const fx = fixture({ endScope: false });
+    const { impl } = served(fx);
+    const thrown = new Error(marker());
+    fx.answers.open = () => ({ handle: fx.handle, refine: { calls: { console: { endScope: "offered" } } } });
+    fx.answers.close = () => {
+      throw thrown;
+    };
+
+    const opening = await failure(() => impl.open(openContext()));
+
+    expect(opening).toBeInstanceOf(AggregateError);
+    expect((opening as AggregateError).errors[0]).toBeInstanceOf(CallRefusalError);
+    expect((opening as AggregateError).errors.slice(1)).toEqual([thrown]);
+    expect((opening as AggregateError).errors[1]).toBe(thrown);
+
+    fx.answers.open = () => ({ handle: fx.handle });
+    const opened = await impl.open(openContext());
+    const failing: ResultSource = {
+      columns: [{ name: "id" }],
+      next: async () => ({ rows: [], done: true }),
+      close: async () => {
+        throw thrown;
+      },
+    };
+    const quiet = rowsSource([{ name: "id" }], []);
+    fx.answers.execute = () => ({
+      results: [failing, quiet],
+      warnings: [],
+      executionTimeMs: "slow",
+      pageApplied: false,
+    });
+    const executing = await failure(() => impl.console.execute(opened.handle, request(), callContext()));
+
+    expect(executing).toBeInstanceOf(AggregateError);
+    expect(((executing as AggregateError).errors[0] as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "console.execute", part: "answer", pointer: "/executionTimeMs" },
+    ]);
+    expect((executing as AggregateError).errors).toHaveLength(2);
+    expect((executing as AggregateError).errors[1]).toBe(thrown);
+  });
+
+  test("a served result source pulled by pumpPage answers the provider's rows, one frame a batch", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const rows = Array.from({ length: 5 }, (_, index) => [index, "x"]);
+    const pulls: unknown[] = [];
+    const inner = rowsSource([{ name: "id" }, { name: "label" }], rows, 5);
+    fx.answers.execute = () => ({
+      results: [
+        {
+          columns: inner.columns,
+          rowCount: 5,
+          next: (limit: BatchLimit) => {
+            pulls.push(limit);
+            return inner.next(limit);
+          },
+          close: () => inner.close(),
+        },
+      ],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const opened = await impl.open(openContext());
+    const answer: ExecuteAnswer = await impl.console.execute(opened.handle, request(), callContext());
+    const before = frames.length;
+
+    const page = await pumpPage(
+      answer.results[0] as ResultSource,
+      {
+        maxRows: 100,
+        maxBytes: PAGE_MAX_BYTES,
+        batchMaxBytes: 7,
+      },
+      callContext(),
+    );
+    const pumped = frames.slice(before);
+    const requested = pumped.filter((frame) => frame.direction === "to-provider" && frame.call === "result.next");
+
+    expect(page).toEqual({ rows, bytes: 35, end: "done" });
+    expect(page.rows).not.toBe(rows);
+    expect(pulls).toHaveLength(5);
+    expect(requested).toHaveLength(5);
+    expect(requested.map((frame) => JSON.parse(frame.text).request)).toEqual(
+      pulls.map((limit) => {
+        const { maxRows, maxBytes } = limit as BatchLimit;
+        return { maxRows, maxBytes };
+      }),
+    );
+    expect(pumped.map((frame) => `${frame.direction} ${frame.call}`).slice(-2)).toEqual([
+      "to-provider result.close",
+      "to-host result.close",
+    ]);
+    expect(pumped).toHaveLength(12);
+  });
+
+  test("a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only", async () => {
+    const fx = fixture();
+    const { impl, frames } = served(fx);
+    const pulls: BatchLimit[] = [];
+    const inner = rowsSource([{ name: "id" }, { name: "label" }], [[1, marker()]], 1);
+    fx.answers.execute = () => ({
+      results: [
+        {
+          columns: inner.columns,
+          next: (limit: BatchLimit) => {
+            pulls.push(limit);
+            return inner.next(limit);
+          },
+          close: () => inner.close(),
+        },
+      ],
+      warnings: [],
+      executionTimeMs: 0,
+      pageApplied: false,
+    });
+    const opened = await impl.open(openContext());
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    const measured: (readonly unknown[])[] = [];
+    const measure = (row: readonly unknown[]): number => {
+      measured.push(row);
+      return encodedRowBytes(row);
+    };
+    const host: BatchLimit = { maxRows: 7, maxBytes: 1024, measure };
+    const before = frames.length;
+
+    const batch: RowBatch = await (answer.results[0] as ResultSource).next(host);
+    const asked = frames.slice(before).find((frame) => frame.direction === "to-provider");
+
+    expect(JSON.parse((asked as ServedFrame).text).request).toEqual({ maxRows: 7, maxBytes: 1024 });
+    expect(pulls).toHaveLength(1);
+    const [provided] = pulls;
+    expect(provided).not.toBe(host);
+    expect(Object.isFrozen(provided)).toBe(true);
+    expect(Object.keys(provided as BatchLimit).sort()).toEqual(["maxBytes", "maxRows", "measure"]);
+    expect(provided?.maxRows).toBe(7);
+    expect(provided?.maxBytes).toBe(1024);
+    expect(provided?.measure).toBe(measure);
+    expect(measured).toHaveLength(1);
+    expect(batch.rows).toEqual(measured);
+    expect(batch.rows[0]).not.toBe(measured[0]);
+  });
+
+  test("a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called", async () => {
+    const fx = fixture({ honours: [] });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const reason = new Error(marker());
+    const gone = new AbortController();
+    gone.abort(reason);
+    const calls: [string, (ctx: CallContext) => Promise<unknown>][] = [
+      ["open", (ctx) => impl.open({ ...openContext(), deadline: ctx.deadline, signal: ctx.signal })],
+      ["close", (ctx) => impl.close(opened.handle, ctx)],
+      ["console.execute", (ctx) => impl.console.execute(opened.handle, request(), ctx)],
+      ["console.cancel", async (ctx) => impl.console.cancel?.(opened.handle, { runId: marker() }, ctx)],
+      ["console.endScope", async (ctx) => impl.console.endScope?.(opened.handle, { scope: marker() }, ctx)],
+    ];
+
+    const refused = await Promise.all(
+      calls.map(async ([call, run]) => ({
+        call,
+        aborted: await failure(() => run(callContext(gone))),
+        passed: await failure(() => run(past(callContext()))),
+      })),
+    );
+    const withField = await failure(() =>
+      impl.console.execute(
+        opened.handle,
+        request((r) => (r.params = [])),
+        callContext(gone),
+      ),
+    );
+
+    for (const { aborted, passed } of refused) {
+      expect(aborted).toBeInstanceOf(CallRefusalError);
+      expect((aborted as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+      expect((aborted as CallRefusalError).cause).toBe(reason);
+      expect(passed).toBeInstanceOf(CallRefusalError);
+      expect((passed as CallRefusalError).refusals).toEqual([{ rule: "call-deadline-passed", pointer: "/deadline" }]);
+      expect((passed as CallRefusalError).cause).toBeUndefined();
+    }
+    expect(refused.map((item) => item.call)).toEqual(calls.map(([call]) => call));
+    expect((withField as CallRefusalError).refusals).toEqual([{ rule: "call-signal-aborted", pointer: "/signal" }]);
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+
+    const answer = await impl.console.execute(opened.handle, request(), callContext());
+    expect(answer.results).toHaveLength(1);
+    await impl.close(opened.handle, callContext());
+    expect(fx.seen.map((item) => item.call)).toEqual(["open", "console.execute", "close"]);
+  });
+
+  test("the provider's context carries the host's deadline and signal, and its signal aborts at the deadline", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+    fx.answers.execute = () =>
+      new Promise((_, reject) => {
+        const signal = fx.seen.at(-1)?.ctx?.signal as AbortSignal;
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    const deadline = Date.now() + 30;
+    const signal = deadlineSignal(deadline);
+
+    const error = await failure(() =>
+      impl.console.execute(opened.handle, request(), {
+        deadline,
+        signal,
+        env: envReader([], () => undefined),
+      }),
+    );
+
+    const providerCtx = fx.seen.at(-1)?.ctx as CallContext;
+    expect(providerCtx.deadline).toBe(deadline);
+    expect(providerCtx.signal).toBe(signal);
+    expect(error).toBe(signal.reason);
+    expect(error).toBeInstanceOf(DOMException);
+    expect((error as DOMException).name).toBe("TimeoutError");
+  });
+
+  test("an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const opened = await impl.open(openContext());
+
+    const lateExecute = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateExecute.promise;
+    const executeController = new AbortController();
+    const executeHandler = lateHandler<ExecuteAnswer>();
+    const executeWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(executeController)),
+      executeController.signal,
+      executeHandler.late,
+    );
+    const executeReason = new Error(marker());
+    executeController.abort(executeReason);
+    expect(await failure(() => executeWait)).toBe(executeReason);
+    const counted = countedSource();
+    lateExecute.resolve({ results: [counted.source], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const executeOutcome = await executeHandler.first;
+    expect(executeOutcome.kind).toBe("answered");
+    const lateAnswer = (executeOutcome as { readonly value: ExecuteAnswer }).value;
+    expect(lateAnswer.results).toHaveLength(1);
+    await Promise.all(lateAnswer.results.map((result) => result.close()));
+    expect(counted.closes()).toBe(1);
+    expect(executeHandler.calls).toHaveLength(1);
+
+    const lateFailure = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateFailure.promise;
+    const failingController = new AbortController();
+    const failingHandler = lateHandler<ExecuteAnswer>();
+    const failingWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(failingController)),
+      failingController.signal,
+      failingHandler.late,
+    );
+    const failingReason = new Error(marker());
+    failingController.abort(failingReason);
+    expect(await failure(() => failingWait)).toBe(failingReason);
+    const thrown = new Error(marker());
+    lateFailure.reject(thrown);
+    const failedOutcome = await failingHandler.first;
+    expect(failedOutcome.kind).toBe("failed");
+    expect((failedOutcome as { readonly error: unknown }).error).toBe(thrown);
+
+    const lateRefused = Promise.withResolvers<unknown>();
+    fx.answers.execute = () => lateRefused.promise;
+    const refusedController = new AbortController();
+    const refusedHandler = lateHandler<ExecuteAnswer>();
+    const refusedWait = awaitWithin(
+      impl.console.execute(opened.handle, request(), callContext(refusedController)),
+      refusedController.signal,
+      refusedHandler.late,
+    );
+    refusedController.abort(new Error(marker()));
+    await failure(() => refusedWait);
+    const handedOver = countedSource();
+    lateRefused.resolve({ results: [handedOver.source, 7], warnings: [], executionTimeMs: 0, pageApplied: false });
+    const refusedOutcome = await refusedHandler.first;
+    expect(refusedOutcome.kind).toBe("failed");
+    expect((refusedOutcome as { readonly error: unknown }).error).toBeInstanceOf(FrameRefusalError);
+    expect(handedOver.closes()).toBe(1);
+
+    const lateOpen = Promise.withResolvers<unknown>();
+    const lateHandle = { marker: marker() };
+    fx.answers.open = () => lateOpen.promise;
+    const openController = new AbortController();
+    const openHandler = lateHandler<OpenAnswer<ServedHandle>>();
+    const openWait = awaitWithin(impl.open(openContext(openController)), openController.signal, openHandler.late);
+    const openReason = new Error(marker());
+    openController.abort(openReason);
+    expect(await failure(() => openWait)).toBe(openReason);
+    lateOpen.resolve({ handle: lateHandle });
+    const openOutcome = await openHandler.first;
+    expect(openOutcome.kind).toBe("answered");
+    const token = (openOutcome as { readonly value: OpenAnswer<ServedHandle> }).value.handle;
+    const closesBefore = fx.seen.filter((item) => item.call === "close").length;
+    await impl.close(token, callContext());
+    const closes = fx.seen.filter((item) => item.call === "close");
+    expect(closes.length - closesBefore).toBe(1);
+    expect(closes.at(-1)?.handle).toBe(lateHandle);
+    const after = await failure(() => impl.console.execute(token, request(), callContext()));
+    expect((after as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect(openHandler.calls).toHaveLength(1);
+  });
+
+  test("a call that throws fails only that call, and its session and the served instance keep serving", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    const first = await impl.open(openContext());
+    const second = await impl.open(openContext());
+    const earlier = await impl.console.execute(first.handle, request(), callContext());
+    const thrown = new Error(marker());
+    const honest = fx.answers.execute;
+    let throwOnce = true;
+    fx.answers.execute = () => {
+      if (!throwOnce) return honest();
+      throwOnce = false;
+      throw thrown;
+    };
+
+    expect(await failure(() => impl.console.execute(first.handle, request(), callContext()))).toBe(thrown);
+    const again = await impl.console.execute(first.handle, request(), callContext());
+    const other = await impl.console.execute(second.handle, request(), callContext());
+    const pulled = await (earlier.results[0] as ResultSource).next(limitOf(10, 1024));
+
+    expect(again.results).toHaveLength(1);
+    expect(other.results).toHaveLength(1);
+    expect(pulled.rows).toHaveLength(2);
+    expect(pulled.done).toBe(true);
+  });
+
+  test("two sessions of one served module reach only their own handles, and one session's error or close leaves the other serving", async () => {
+    const fx = fixture();
+    const { impl } = served(fx);
+    fx.answers.open = () => ({
+      handle: { marker: ((fx.seen.at(-1) as Seen).ctx as OpenContext).connection.user as string },
+    });
+    const failing = new Set<string>();
+    const thrown = new Error(marker());
+    fx.answers.execute = () => {
+      const own = ((fx.seen.at(-1) as Seen).handle as ProviderHandle).marker;
+      if (failing.has(own)) throw thrown;
+      return {
+        results: [rowsSource([{ name: "who" }], [[own]], 1)],
+        warnings: [],
+        executionTimeMs: 0,
+        pageApplied: false,
+      };
+    };
+    const ctxA = openContext();
+    const ctxB = openContext();
+    const userA = ctxA.connection.user as string;
+    const userB = ctxB.connection.user as string;
+    const a = await impl.open(ctxA);
+    const b = await impl.open(ctxB);
+
+    /** The one row a session's execute answers, pulled through its served source. */
+    const who = async (handle: ServedHandle): Promise<unknown> => {
+      const answer = await impl.console.execute(handle, request(), callContext());
+      const source = answer.results[0] as ResultSource;
+      const batch = await source.next(limitOf(10, 1024));
+      await source.close();
+      return batch.rows[0]?.[0];
+    };
+
+    expect(userA).not.toBe(userB);
+    expect(await who(a.handle)).toBe(userA);
+    expect(await who(b.handle)).toBe(userB);
+
+    failing.add(userA);
+    expect(await failure(() => impl.console.execute(a.handle, request(), callContext()))).toBe(thrown);
+    expect(await who(b.handle)).toBe(userB);
+    failing.delete(userA);
+
+    await impl.close(a.handle, callContext());
+    const closed = fx.seen.filter((item) => item.call === "close");
+    expect(closed.map((item) => (item.handle as ProviderHandle).marker)).toEqual([userA]);
+    expect(await who(b.handle)).toBe(userB);
+    const refused = await failure(() => impl.console.execute(a.handle, request(), callContext()));
+    expect((refused as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+  });
+
+  test("two served instances of one module share no session", async () => {
+    const fx = fixture();
+    const one = served(fx);
+    const two = served(fx);
+    const opened = await one.impl.open(openContext());
+    const oneBefore = one.frames.length;
+
+    const refused = await failure(() => two.impl.console.execute(opened.handle, request(), callContext()));
+    const closing = await failure(() => two.impl.close(opened.handle, callContext()));
+
+    expect(refused).toBeInstanceOf(FrameRefusalError);
+    expect((refused as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect((closing as FrameRefusalError).refusals[0]?.rule).toBe("session-not-open");
+    expect(two.frames).toHaveLength(0);
+    expect(one.frames).toHaveLength(oneBefore);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+    const answer = await one.impl.console.execute(opened.handle, request(), callContext());
+    expect(answer.results).toHaveLength(1);
+  });
+
+  test("a value that is not a provider module record is refused with every refusal before anything is served", () => {
+    const fx = fixture();
+    const broken = { ...fx.module, impl: { ...fx.module.impl, open: undefined, extra: () => {} } };
+    let thrown: unknown;
+    try {
+      serve(broken as unknown as ProviderModule);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(ProviderDefinitionError);
+    expect((thrown as ProviderDefinitionError).refusals).toEqual(checkProviderModule(broken));
+    expect((thrown as ProviderDefinitionError).refusals.map((item) => item.rule)).toEqual([
+      "impl-key-unknown",
+      "call-missing",
+    ]);
+    expect(() => serve({} as ProviderModule)).toThrow(ProviderDefinitionError);
+  });
+
+  test("the served implementation is an implementation of the module's manifest, with the module's facets", () => {
+    const both = fixture();
+    const neither = fixture({ cancel: false, endScope: false, transaction: false, tree: false });
+    const servedBoth = serve(both.module);
+    const servedNeither = serve(neither.module);
+
+    expect(checkProviderModule(defineProvider(both.module.manifest, servedBoth))).toEqual([]);
+    expect(checkProviderModule(defineProvider(neither.module.manifest, servedNeither))).toEqual([]);
+    expect(Object.keys(servedBoth.console).sort()).toEqual(["cancel", "endScope", "execute", "transaction"]);
+    expect(Object.keys(servedNeither.console)).toEqual(["execute"]);
+    expect(Object.keys(servedBoth.objects ?? {})).toEqual(["tree"]);
+    expect(Object.keys(servedNeither.objects ?? {})).toEqual([]);
+    expect(Object.isFrozen(servedBoth)).toBe(true);
+    expect(Object.isFrozen(servedBoth.console)).toBe(true);
+    expect(Object.isFrozen(servedBoth.objects)).toBe(true);
+  });
+});

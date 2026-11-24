@@ -23,14 +23,25 @@ import { TransportError, type NodeRequest, type NodeResponse, type NodeTransport
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, waitFor, writeSeedFile } from "../../helpers/mcp-fixtures";
+import {
+  fakeTextScrub,
+  pinMcpTestEnvironment,
+  resetMcpTestState,
+  waitFor,
+  writeSeedFile,
+} from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's mtconnect connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("mtconnect"));
 
 pinMcpTestEnvironment();
 
@@ -107,7 +118,7 @@ async function acquireOver(connection: ManagedConnection, profile: ExecutionProf
   const provider = new MTConnectProvider(
     connection as DatabaseConnection,
     {},
-    agent ? { readOnly: true, sendsStatements: true } : {},
+    { ...(agent ? { readOnly: true, sendsStatements: true } : {}), egress: ALLOWS_PRIVATE_HOSTS },
     () => standIn(),
   );
   await provider.connect();
@@ -211,7 +222,7 @@ describe("a read", () => {
   test("/current answers its rows behind the notice, the adapter connections left out, recorded under the tool", async () => {
     const result = await mtconnect("/current");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:lathe",
@@ -329,6 +340,7 @@ describe("a refusal", () => {
   test("a read whose answer passes the provider's row budget is refused with the language's own advice", async () => {
     const result = await mtconnect("/sample?count=1000");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {
@@ -386,6 +398,7 @@ describe("the wait", () => {
     const context = {
       caller: { username: "alice", role: "admin" },
       resolve: async () => connection,
+      textScrub: fakeTextScrub,
       acquire: acquireOver,
     } as unknown as McpConnectionContext;
     const input = RUN_MTCONNECT_READ_ARM.inputSchema.parse({

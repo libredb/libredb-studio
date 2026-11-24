@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The MTConnect provider in a browser: its dialog, a real agent behind it, and a read of the past.
@@ -58,8 +59,7 @@ const signIn = async (page: Page): Promise<void> => {
 };
 
 const openDialog = async (page: Page): Promise<void> => {
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5_000 });
 };
 

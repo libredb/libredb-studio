@@ -23,6 +23,8 @@ const GROUPS = {
     "QUERY_CANCELLED",
     "QUERY_ERROR",
     "CONFIG_ERROR",
+    "PROVIDER_UNKNOWN",
+    "FACET_NOT_OFFERED",
     "AUTH_ERROR",
     "PERMISSION_DENIED",
     "TIMEOUT_ERROR",
@@ -40,10 +42,11 @@ const GROUPS = {
     "IDENTITY_PROVIDER_UNAVAILABLE",
     "BEARER_NO_ROLE",
     "BEARER_NO_IDENTITY",
+    "BEARER_DOMAIN_NOT_ALLOWED",
     "ADMIN_REQUIRED",
     "ACCOUNT_STORE_UNAVAILABLE",
   ],
-  transaction: ["TRANSACTION_NOT_OWNED"],
+  transaction: ["TRANSACTION_NOT_OWNED", "TRANSACTION_CALL_RUNNING", "TRANSACTION_LOST"],
   connectionPolicy: ["CUSTOM_CONNECTIONS_DISABLED"],
   governance: [
     "AI_DISABLED",
@@ -52,6 +55,8 @@ const GROUPS = {
     "GOVERNANCE_UNAVAILABLE",
     "TRANSACTION_CREDENTIAL_CHANGED",
   ],
+  agentRun: ["AGENT_RUN_UNAVAILABLE"],
+  runConfirmation: ["CONFIRMATION_REQUIRED", "CONFIRMATION_INVALID"],
   generic: ["INTERNAL_ERROR", "NETWORK_ERROR"],
 } as const;
 
@@ -76,8 +81,23 @@ describe("ApiErrorCode", () => {
     for (const code of GROUPS.llm) expect(ApiErrorCode[code]).toBe(code);
   });
 
+  test("contains the agent run refusal of a run whose ledger names an id this Studio does not have", () => {
+    for (const code of GROUPS.agentRun) expect(ApiErrorCode[code]).toBe(code);
+  });
+
   test("contains generic error codes", () => {
     for (const code of GROUPS.generic) expect(ApiErrorCode[code]).toBe(code);
+  });
+
+  test("contains the unknown-provider refusal, distinct from CONFIG_ERROR", () => {
+    expect(ApiErrorCode.PROVIDER_UNKNOWN).toBe("PROVIDER_UNKNOWN");
+    expect(ApiErrorCode.PROVIDER_UNKNOWN).not.toBe(ApiErrorCode.CONFIG_ERROR);
+  });
+
+  test("contains the refusal of a facet the engine does not offer, distinct from CONFIG_ERROR and QUERY_ERROR", () => {
+    expect(ApiErrorCode.FACET_NOT_OFFERED).toBe("FACET_NOT_OFFERED");
+    expect(ApiErrorCode.FACET_NOT_OFFERED).not.toBe(ApiErrorCode.CONFIG_ERROR);
+    expect(ApiErrorCode.FACET_NOT_OFFERED).not.toBe(ApiErrorCode.QUERY_ERROR);
   });
 
   test("contains the database's privilege refusal code, distinct from its refused credential's AUTH_ERROR", () => {
@@ -139,6 +159,11 @@ describe("ApiErrorCode", () => {
 
   test("contains the object search's refusal over the inventory pair bound", () => {
     expect(ApiErrorCode.INVENTORY_PAIR_LIMIT).toBe("INVENTORY_PAIR_LIMIT");
+  });
+
+  test("contains the run confirmation codes: a statement that needs one, and a token that does not confirm it", () => {
+    for (const code of GROUPS.runConfirmation) expect(ApiErrorCode[code]).toBe(code);
+    expect(ApiErrorCode.CONFIRMATION_REQUIRED).not.toBe(ApiErrorCode.CONFIRMATION_INVALID);
   });
 
   test("contains the application rate-limit error code", () => {

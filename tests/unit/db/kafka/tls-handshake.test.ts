@@ -270,6 +270,37 @@ describe("TLS handshakes through the real client", () => {
     expect(handshook).toBe(false);
   }, 20_000);
 
+  test("a group coordinator whose certificate verify-full rejects fails the description as tls, carrying the code", async () => {
+    // The installed library, with only how a group's coordinator is found replaced: the broker names
+    // the self-signed server, and the consumer-protocol description connects to it on its own connection.
+    const lib = await loadPlatformatic();
+    const Admin = class {
+      constructor(options: object) {
+        return Object.assign(new lib.Admin(options), {
+          findCoordinator: async (o: { keys: string[] }) =>
+            o.keys.map((key) => ({ key, nodeId: 7, host: "localhost", port: selfSigned.port })),
+        });
+      }
+    };
+    const before = selfSigned.handshakes;
+    const client = createPlatformaticClient(
+      kafkaConnectionOptions(connection("localhost", 1, { mode: "verify-full" }), 3000),
+      { ...lib, Admin: Admin as never },
+    );
+    const error = await failure(
+      client.describeGroup({ groupId: "g", state: "Stable", groupType: "consumer", protocolType: "consumer" }),
+    );
+    await client.close();
+    expect(error).toBeInstanceOf(KafkaError);
+    const { category, message, detail } = error as KafkaError;
+    expect([category, message, detail]).toStrictEqual([
+      "tls",
+      "The TLS handshake failed (DEPTH_ZERO_SELF_SIGNED_CERT)",
+      { nodeCode: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    ]);
+    expect(selfSigned.handshakes).toBe(before);
+  }, 20_000);
+
   test("require accepts the self-signed server, because it verifies nothing", async () => {
     const { error, handshook } = await attempt(selfSigned, { mode: "require" });
     expect(handshook).toBe(true);

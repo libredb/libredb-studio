@@ -32,6 +32,7 @@ import {
   SQL_ROUTES,
 } from "@/lib/db/providers/timeseries/influxdb/routes";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -48,7 +49,7 @@ function options(type: InfluxType, overrides: Record<string, unknown> = {}): Inf
       createdAt: new Date(0),
       ...overrides,
     } as unknown as DatabaseConnection,
-    { type, queryTimeout: 30_000 },
+    { type, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -112,11 +113,14 @@ describe("what the client hands the transport", () => {
         origin: { scheme: "http", host: "127.0.0.1", port: 8086 },
         tls: null,
         maxSockets: INFLUX_MAX_IN_FLIGHT,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { authorization: `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASSWORD}`).toString("base64")}` },
         reportsUnreachable: true,
       },
     ]);
     expect(wire.built[0].headers).toBe(INFLUXQL.headers);
+    // The egress decision the connection options were built with, by identity.
+    expect(wire.built[0].egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(wire.requests).toEqual([]);
   });
 

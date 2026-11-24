@@ -58,7 +58,7 @@ import {
 } from "@/lib/db/errors";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import {
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
@@ -76,11 +76,18 @@ import {
   unresolvedRefusal,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+import { errorKind } from "@/lib/db/error-record";
+
+/** The notice an answer carrying database content opens with on this file's elasticsearch connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("elasticsearch"));
 
 // ============================================================================
 // Connection
@@ -1278,7 +1285,7 @@ function pathsSent(): string[] {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<ElasticsearchProvider> {
-  const provider = new ElasticsearchProvider(makeConnection(overrides));
+  const provider = new ElasticsearchProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -1304,7 +1311,11 @@ afterEach(() => {
 
 describe("ElasticsearchProvider metadata", () => {
   test("declares the capabilities Phase 1 settled on", () => {
-    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities).toEqual({
       queryLanguage: "sql",
@@ -1375,11 +1386,15 @@ describe("ElasticsearchProvider metadata", () => {
     // (`src/lib/query-generators.ts`), so this is the whole of the fix: with the
     // terminator declared away, "Select Top 50 Documents" and "Generate Query" both
     // emit a statement this grammar accepts.
-    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities.statementTerminator).toBe("none");
     // No row bound since #816: the preview cap rides the `limit` execution option.
-    expect(generateTableQuery(["orders"], capabilities)).toBe("SELECT * FROM orders");
+    expect(generateTableQuery(["orders"], "elasticsearch", capabilities)).toBe("SELECT * FROM orders");
   });
 
   test("declares no explain format at all, which is what hides the button and the tab", () => {
@@ -1387,7 +1402,11 @@ describe("ElasticsearchProvider metadata", () => {
     // OpenSearch's SQL plugin does not, and one implementation serves both type-ids:
     // a tab that works on half the connections is worse than no tab. Declaring the
     // key at all would render an Explain affordance for a plan nothing can parse.
-    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities.supportsExplain).toBe(false);
     expect(capabilities.explainFormat).toBeUndefined();
@@ -1400,28 +1419,40 @@ describe("ElasticsearchProvider metadata", () => {
     // {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS',
     // 'WITH'}" - the grammar lists everything it accepts and no mutation is among
     // them. Indices are created through the index APIs.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
+    expect(
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().createTable,
+    ).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because UPDATE is not in the grammar either", () => {
     // Same class of refusal as CREATE, so the inline editor's statement could only
     // ever produce an error; false hides the affordance instead of offering it.
     // Documents change through the document APIs, which this provider does not expose.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsInlineRowEdit,
+    ).toBe(false);
   });
 
   test("declares declaresForeignKeys false because the engine has no such constraint", () => {
     // Denormalization is the modelling advice and `nested`/`join` are containment
     // rather than reference, so the empty `foreignKeys` the schema tree reports means
     // "impossible here" rather than "none visible to this role" - the #414 distinction.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
+    expect(
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .declaresForeignKeys,
+    ).toBe(false);
   });
 
   test("offers no maintenance operation, because SQL reaches none of them", () => {
     // Refresh, force-merge and cache-clearing are index APIs rather than statements,
     // and `kill` is impossible for a second reason: an abort closes this client's
     // socket while the cluster keeps working (measured).
-    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
 
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(capabilities.maintenanceOperations).toEqual([]);
@@ -1430,7 +1461,10 @@ describe("ElasticsearchProvider metadata", () => {
   test("declares no connection string, because the cluster is addressed by host and port", () => {
     // Like Druid, and for a second reason: `http://` / `https://` already resolve to
     // ClickHouse in the shared connection-string parser.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().supportsConnectionString).toBe(false);
+    expect(
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsConnectionString,
+    ).toBe(false);
   });
 
   test("names the refresh trigger DELETE, the only statement that can change the tree", () => {
@@ -1438,7 +1472,10 @@ describe("ElasticsearchProvider metadata", () => {
     // never fires - exactly as Druid's `INSERT|REPLACE` never fires against its
     // native engine. It is here because one implementation serves both type-ids and
     // OpenSearch's grammar does have DELETE, behind a non-default setting.
-    expect(new ElasticsearchProvider(makeConnection()).getCapabilities().schemaRefreshPattern).toBe("\\b(DELETE)\\b");
+    expect(
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .schemaRefreshPattern,
+    ).toBe("\\b(DELETE)\\b");
   });
 
   test("calls a table an Index and a row a document", () => {
@@ -1447,7 +1484,7 @@ describe("ElasticsearchProvider metadata", () => {
     // invites statements written for a relational engine. "Indices" is the plural
     // both products use in their own APIs - and "indexes" is already this product's
     // word for the secondary-index objects an index does NOT have.
-    const labels = new ElasticsearchProvider(makeConnection()).getLabels();
+    const labels = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Index");
     expect(labels.entityNamePlural).toBe("Indices");
@@ -1462,22 +1499,22 @@ describe("ElasticsearchProvider metadata", () => {
     // an admin, and both open a panel this engine has no operation for - so they name
     // the closest real cluster concept. `analyzeAction` avoids the bare word "Analyze"
     // because a search cluster's `_analyze` is text analysis, a different operation.
-    const labels = new ElasticsearchProvider(makeConnection()).getLabels();
+    const labels = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.analyzeAction).toBe("Index Statistics");
     expect(labels.vacuumAction).toBe("Merge Segments");
   });
 
-  test("the empty slow-query panel says the slow log is a node file, not a missing extension", () => {
-    // Measured 2026-08-19 in Chrome on an OpenSearch connection: the monitoring Queries
-    // tab told a search cluster to enable `pg_stat_statements` (#463). `getSlowQueries()`
-    // is empty by design on both products, so this panel is ALWAYS empty here, and the
-    // sentence is the one §7 of the provider doc already used.
-    const { slowQueriesEmptyState } = new ElasticsearchProvider(makeConnection()).getLabels();
+  test("declares no slow-query sentence, because the search engines offer no Queries panel to draw it", () => {
+    // The slow log is a node log file no API returns, so neither product's `ENGINE_FACETS`
+    // row offers the panel, and nothing would render a sentence explaining why it is empty.
+    const { slowQueriesEmptyState } = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("slow log");
-    expect(slowQueriesEmptyState).toContain("log file");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 });
 
@@ -1487,7 +1524,9 @@ describe("ElasticsearchProvider metadata", () => {
 
 describe("ElasticsearchProvider validation", () => {
   test("requires a host", () => {
-    expect(() => new ElasticsearchProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(
+      () => new ElasticsearchProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(DatabaseConfigError);
   });
 
   test("ignores the connection's database field entirely", async () => {
@@ -1633,7 +1672,7 @@ describe("ElasticsearchProvider validation", () => {
   });
 
   test("brackets a bare IPv6 host, which is otherwise not a legal URL authority", async () => {
-    const provider = new ElasticsearchProvider(makeConnection({ host: "::1" }));
+    const provider = new ElasticsearchProvider(makeConnection({ host: "::1" }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
 
     expect(sent[0].url).toBe(`http://[::1]:9200${SQL_PATH}`);
@@ -1667,7 +1706,11 @@ describe("ElasticsearchProvider lifecycle", () => {
   });
 
   test("connect honours a configured query timeout", async () => {
-    const provider = new ElasticsearchProvider(makeConnection(), { queryTimeout: 5_000 });
+    const provider = new ElasticsearchProvider(
+      makeConnection(),
+      { queryTimeout: 5_000 },
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
 
     expect(armedDeadlines).toEqual([5_000]);
@@ -1679,7 +1722,11 @@ describe("ElasticsearchProvider lifecycle", () => {
     // problem: calling it connectivity would send the user to check a host that
     // answered perfectly well.
     replyFor = () => fail(401, NO_BODY);
-    const provider = new ElasticsearchProvider(makeConnection({ user: "reader", password: "wrong" }));
+    const provider = new ElasticsearchProvider(
+      makeConnection({ user: "reader", password: "wrong" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -1687,7 +1734,11 @@ describe("ElasticsearchProvider lifecycle", () => {
 
   test("connect maps a denied privilege to an AuthenticationError too", async () => {
     replyFor = () => fail(403, NO_BODY);
-    const provider = new ElasticsearchProvider(makeConnection({ user: "reader", password: "s3cret" }));
+    const provider = new ElasticsearchProvider(
+      makeConnection({ user: "reader", password: "s3cret" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
   });
@@ -1699,7 +1750,7 @@ describe("ElasticsearchProvider lifecycle", () => {
     // `unreachable` rather than a statement fault - and the cluster's own wording is
     // what tells the user which mistake they made.
     replyFor = () => fail(400, NO_SUCH_HANDLER);
-    const provider = new ElasticsearchProvider(makeConnection());
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const failure = provider.connect();
 
@@ -1714,7 +1765,7 @@ describe("ElasticsearchProvider lifecycle", () => {
     // the error itself, and neither top-level message names the reason on its own.
     const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     networkFailure = refused;
-    const provider = new ElasticsearchProvider(makeConnection());
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const failure = provider.connect();
 
@@ -1727,7 +1778,7 @@ describe("ElasticsearchProvider lifecycle", () => {
     // cluster: the probe turns all of those into one failure at the moment the user is
     // still looking at the connection form.
     replyFor = () => fail(404, "<html><head><title>404 Not Found</title></head></html>");
-    const provider = new ElasticsearchProvider(makeConnection({ port: 9201 }));
+    const provider = new ElasticsearchProvider(makeConnection({ port: 9201 }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -1735,7 +1786,7 @@ describe("ElasticsearchProvider lifecycle", () => {
 
   test("a failed connect leaves nothing open behind it", async () => {
     replyFor = () => fail(400, MISSING_INDEX);
-    const provider = new ElasticsearchProvider(makeConnection());
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -1758,7 +1809,7 @@ describe("ElasticsearchProvider lifecycle", () => {
     // APIs that are not among this seam's five calls, so there is no request to send
     // and no answer a socket could change. Requiring one would turn an honest empty
     // into an error.
-    const provider = new ElasticsearchProvider(makeConnection());
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(await provider.getPerformanceMetrics()).toEqual({});
     expect(await provider.getSlowQueries()).toEqual([]);
@@ -2358,7 +2409,7 @@ describe("ElasticsearchProvider error mapping", () => {
 // ============================================================================
 
 describe("ElasticsearchProvider query preparation", () => {
-  const provider = () => new ElasticsearchProvider(makeConnection());
+  const provider = () => new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
   test("applies the external row limit to a plain SELECT, which this product accepts", () => {
     // `LIMIT n` is correct SQL here (measured, HTTP 200 with the rows bounded), and
@@ -2797,7 +2848,7 @@ describe("ElasticsearchProvider monitoring", () => {
     expect(health.activeSessions).toEqual([]);
   });
 
-  test("getMonitoringData fills every panel that has a source on a healthy cluster", async () => {
+  test("getMonitoringData fills every panel that has a source on a healthy cluster and lists the rest as not offered", async () => {
     const provider = await connectProvider();
 
     const data = await provider.getMonitoringData();
@@ -2805,10 +2856,11 @@ describe("ElasticsearchProvider monitoring", () => {
     expect(data.overview?.version).toBe("Elasticsearch 9.1.4");
     expect(data.tables).toHaveLength(3);
     expect(data.storage).toHaveLength(1);
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
-    expect(data.activeSessions).toEqual([]);
-    expect(data.indexes).toEqual([]);
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
+    expect(data.performance).toBeUndefined();
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.activeSessions).toBeUndefined();
+    expect(data.indexes).toBeUndefined();
   });
 });
 
@@ -2855,7 +2907,11 @@ const FIXTURE_OBJECT_COUNTS = { index: 3, alias: 2, pipeline: 3, template: 2, st
 
 describe("object surface", () => {
   test("declares the kinds a search cluster has, at zero container levels", () => {
-    const capabilities = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const capabilities = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getCapabilities();
     const kinds = capabilities.objectKinds ?? [];
 
     expect(kinds.map((kind) => kind.id).sort()).toEqual(["alias", "index", "pipeline", "stream", "template"]);
@@ -2909,7 +2965,9 @@ describe("object surface", () => {
   });
 
   test("declares source on exactly the kinds that have a definition text", () => {
-    const kinds = new ElasticsearchProvider(makeConnection()).getCapabilities().objectKinds ?? [];
+    const kinds =
+      new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().objectKinds ??
+      [];
 
     const declared = kinds
       .filter((kind) => kind.hasSource === true)
@@ -3429,7 +3487,7 @@ describe("Elasticsearch object listings and detail", () => {
     // renders the resulting JS message on a folder badge, presented as the engine's
     // own sentence. Neither is something the cluster said.
     const provider = await connectProvider();
-    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const real = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     spyOn(provider, "getCapabilities").mockReturnValue({
       ...real,
       objectKinds: [
@@ -3918,7 +3976,7 @@ describe("Elasticsearch object source", () => {
     // `?? "json"` would render a text that is not JSON as JSON with nothing saying so;
     // without the second, a declared kind with no reader would call `undefined`.
     const provider = await connectProvider();
-    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const real = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     const kinds = real.objectKinds ?? [];
     const spy = spyOn(provider, "getCapabilities");
     sent = [];
@@ -3970,7 +4028,7 @@ describe("Elasticsearch object paths are derived from the declaration, never fro
 
   /** The real declaration, with `containerLevels` replaced and nothing else. */
   function withLevels(provider: ElasticsearchProvider, containerLevels: ProviderCapabilities["containerLevels"]): void {
-    const real = new ElasticsearchProvider(makeConnection()).getCapabilities();
+    const real = new ElasticsearchProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
     spyOn(provider, "getCapabilities").mockReturnValue({ ...real, containerLevels });
   }
 
@@ -4068,7 +4126,11 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new ElasticsearchProvider(makeConnection());
+    const provider: DatabaseProvider = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -4181,7 +4243,7 @@ describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
 
       // And the agent path refuses each before it is sent, as no SELECT or as a character outside its set, but the one
       // SELECT-shaped write, which reads one visible index: that one is sent, and refused in the engine's own words.
-      const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      const agent = new ElasticsearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
       replyFor = defaultReply;
       await agent.connect();
       overrideSql(fail(entry.status, entry.body));
@@ -4247,7 +4309,7 @@ describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryRead
   )(
     "%s: the provider sends the composed command unchanged, once its table resolves, and answers the engine's rows",
     async (_name, entry) => {
-      const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      const agent = new ElasticsearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
       await agent.connect();
       overrideSql(ok(entry.body));
 
@@ -4269,7 +4331,7 @@ describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryRead
   // The engine answered the composed read of a table no index holds with no rows; the server's resolution of that
   // table answers 404, so the read is refused before it is sent.
   test("catalog-read/columns-missing: a table the server does not resolve is refused before the command is sent", async () => {
-    const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    const agent = new ElasticsearchProvider(makeConnection(), {}, { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS });
     await agent.connect();
     const before = sqlRequests().length;
 
@@ -4292,7 +4354,7 @@ describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryRead
 
 describe("ElasticsearchProvider.queryReadOnly", () => {
   async function agentProvider(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<ElasticsearchProvider> {
-    const provider = new ElasticsearchProvider(makeConnection(), {}, execution);
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     return provider;
   }
@@ -4353,6 +4415,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the row budget: 1000 rows > ${AGENT_BUDGET.maxResultRows} allowed`,
     );
+    expect(errorKind(error)).toBe("row-budget-refusal");
     const close = sent.at(-1);
     expect(close?.path).toBe("/_sql/close");
     expect(close?.body).toEqual({ cursor: AGGREGATION_CURSOR });
@@ -4370,6 +4433,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("an engine refusal keeps the engine's words", async () => {
@@ -4393,6 +4457,7 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the time budget: no answer within ${AGENT_BUDGET.statementTimeoutMs}ms`,
     );
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a cancellation is not a deadline, and keeps the provider's own error", async () => {
@@ -4475,7 +4540,11 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
   });
 
   test("refuses before a connect", async () => {
-    const provider = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    const provider = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     const error = await refusal(provider.queryReadOnly("SELECT 1", AGENT_BUDGET));
 
@@ -4528,7 +4597,11 @@ function serve(replies: Readonly<Record<string, Reply>>): void {
  */
 describe("ElasticsearchProvider.queryReadOnly: the server's answer about the index", () => {
   async function agentProvider(connection: Partial<DatabaseConnection> = {}): Promise<ElasticsearchProvider> {
-    const provider = new ElasticsearchProvider(makeConnection(connection), {}, AGENT_PROFILE);
+    const provider = new ElasticsearchProvider(
+      makeConnection(connection),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await provider.connect();
     return provider;
   }
@@ -4836,7 +4909,7 @@ describe("ElasticsearchProvider agent profile open", () => {
   }
 
   async function openFailure(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<unknown> {
-    const provider = new ElasticsearchProvider(makeConnection(), {}, execution);
+    const provider = new ElasticsearchProvider(makeConnection(), {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS });
     return provider.connect().then(
       () => provider,
       (error: unknown) => error,
@@ -4918,7 +4991,11 @@ describe("ElasticsearchProvider agent profile open", () => {
  */
 describe("ElasticsearchProvider agent profile login check", () => {
   async function opened(): Promise<unknown> {
-    const provider = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    const provider = new ElasticsearchProvider(
+      makeConnection(),
+      {},
+      { ...AGENT_PROFILE, egress: ALLOWS_PRIVATE_HOSTS },
+    );
     return provider.connect().then(
       () => provider,
       (error: unknown) => error,
@@ -5171,9 +5248,14 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     caller: { username: "alice", role: "admin" },
     visibleConnections: async () => [SEED],
     resolve: async () => SEED,
+    textScrub: fakeTextScrub,
     acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
-      const provider = new ElasticsearchProvider(makeConnection(), {}, executionContextFor(profile));
+      const provider = new ElasticsearchProvider(
+        makeConnection(),
+        {},
+        { ...executionContextFor(profile), egress: ALLOWS_PRIVATE_HOSTS },
+      );
       await provider.connect();
       return provider;
     },
@@ -5246,7 +5328,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: null, wasLimited: true },
       hint: `More rows exist than this result holds, and this query cannot be paged with offset. ${KEYSET}`,
     });
-    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+    expect((result.content as { text: string }[])[0]?.text).toBe(DATABASE_CONTENT_NOTICE);
   });
 
   test("a whole answer names no hint", async () => {
@@ -5281,8 +5363,10 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
   /** The tool's answer when the provider refused the statement before it was sent. */
   const refusedUnsent = (sentence: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
     ],
+    structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
     isError: true as const,
   });
 
@@ -5336,7 +5420,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
       const text = (result.content as { text: string }[]).map((part) => part.text);
       expect(result.isError).toBe(true);
-      expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(text[0]).toBe(DATABASE_CONTENT_NOTICE);
       expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
       expect(text[1]).toContain(reason);
     },
@@ -5469,13 +5553,15 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     },
   );
 
-  const refusedAtOpen = (sentence: string) => ({
+  const refusedAtOpen = (sentence: string, code: string) => ({
     content: [
+      { type: "text" as const, text: providerTextNotice(providerAuthor("elasticsearch")) },
       {
         type: "text" as const,
         text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
       },
     ],
+    structuredContent: { error: { kind: "execution-profile", code, outcome: "unknown" } },
     isError: true as const,
   });
 
@@ -5501,7 +5587,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       const result = await call({ sql: "SELECT k FROM probe_buckets" });
 
       expect(acquired).toEqual(["agent-read-only"]);
-      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(result).toEqual(refusedAtOpen(sentence, "PROFILE_UNSUPPORTED_TARGET"));
       expect(statementsAfterOpen()).toEqual([]);
     },
   );
@@ -5515,6 +5601,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     expect(result).toEqual(
       refusedAtOpen(
         "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads",
+        "PROFILE_PRIVILEGES_TOO_BROAD",
       ),
     );
     expect(pathsSent()).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
@@ -5526,7 +5613,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
 
     const result = await call({ sql: "SELECT k FROM probe_buckets" });
 
-    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    const text = (result.content as { text: string }[])[1]?.text ?? "";
     expect(result.isError).toBe(true);
     expect(text).toStartWith(
       "run_read_query cannot run on this connection: The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
@@ -5551,6 +5638,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
           text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.`,
         },
       ],
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
     expect(sent.at(-1)?.path).toBe("/_sql/close");
@@ -5572,6 +5660,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
           text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
         },
       ],
+      structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
     });
   });

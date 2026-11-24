@@ -176,6 +176,16 @@
               "createdAt": {
                 "type": "string"
               },
+              "environment": {
+                "type": "string",
+                "enum": [
+                  "production",
+                  "staging",
+                  "development",
+                  "local",
+                  "other"
+                ]
+              },
               "secretFields": {
                 "type": "array",
                 "uniqueItems": true,
@@ -339,7 +349,7 @@
     "@types/vscode": "1.120.0",
     "@vscode/test-cli": "0.0.15",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "4.1.0",
+    "@vscode/vsce": "4.1.1",
     "c8": "12.0.0",
     "esbuild": "0.28.2",
     "mocha": "12.0.3",

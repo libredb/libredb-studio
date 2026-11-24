@@ -12,8 +12,7 @@ import { GOLDEN_KEYS, goldenFileName, renderGolden } from "./fixtures";
  */
 const GOLDEN_DIR = path.join(import.meta.dir, "golden");
 
-const keyOf = (key: string): string | undefined =>
-  key === "no-connection" ? undefined : key === "empty-string" ? "" : key;
+const keyOf = (key: string): string | undefined => (key === "no-connection" ? undefined : key);
 
 describe("SQL writing golden output", () => {
   test("one golden file per key and no stray file", () => {

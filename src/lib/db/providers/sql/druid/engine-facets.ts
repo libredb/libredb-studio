@@ -1,0 +1,27 @@
+import type { EngineFacets } from "@/lib/db/engine-facets/types";
+
+/**
+ * `druid`: the monitoring panels whose reads ask the engine, now or from what it said at connect. `getMonitoringData`
+ * never reads a panel not offered and no surface draws it:
+ *
+ * - `performance`: `getPerformanceMetrics` answers `{}` without asking the engine.
+ * - `slowQueries`: `getSlowQueries` answers `[]` without asking the engine.
+ * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
+ *
+ * Maintenance: `druid` offers no maintenance operation.
+ *
+ * Agent readings: `sessions`, `table-stats`, `storage` and `health`.
+ */
+export const DRUID_ENGINE_FACETS: EngineFacets = {
+  monitoring: {
+    overview: "offered",
+    performance: "not-offered",
+    slowQueries: "not-offered",
+    activeSessions: "offered",
+    tables: "offered",
+    indexes: "not-offered",
+    storage: "offered",
+  },
+  maintenance: [],
+  agentReadings: ["sessions", "table-stats", "storage", "health"],
+};

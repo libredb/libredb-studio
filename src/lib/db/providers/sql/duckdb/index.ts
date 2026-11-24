@@ -50,7 +50,7 @@
  * panels are honest empties carrying a DuckDB-specific label.
  */
 
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
 import { SQLBaseProvider } from "../sql-base";
 import {
   type ActiveSessionDetails,
@@ -87,12 +87,15 @@ import {
   requireSourceKind,
 } from "../../../object-kinds";
 import {
+  ByteBudgetRefusal,
   DatabaseConfigError,
   DatabaseError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
 } from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
@@ -101,7 +104,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import { findCodeWord } from "@/lib/sql/words";
@@ -159,6 +162,7 @@ import {
 } from "./objects";
 import { comparePaths } from "@/lib/db/object-path";
 import { readCount, toQueryResult } from "./values";
+import { unicodeSpaceRefusal } from "./statement-shape";
 import { createMissingDirectories } from "@/lib/db/utils/create-directory";
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { logger } from "@/lib/logger";
@@ -498,9 +502,9 @@ export class DuckDBProvider extends SQLBaseProvider {
       // single-writer borrow split DuckDB handles by posture because of it, through
       // `READS_FILE_ACCESS_POSTURE`, never a `connection.type` branch.
       readsFileAccessPosture: true,
-      // Declared explicitly rather than left to `query-generators.ts`'s port
-      // heuristics: `defaultPort: null` is shared with sqlite, and two engines behind
-      // one null port is the collision that forced this field for the search engines.
+      // Declared explicitly rather than left to the query generators' default: DuckDB
+      // has no row of its own in `SQL_ENGINE_GENERATORS`, and the declaration pins its
+      // quoting against a later edit of that default.
       identifierQuoting: "double",
       // Only what a live probe accepted. `REINDEX` is a parser error on this engine,
       // and `PRAGMA integrity_check` and `PRAGMA optimize` are both "Pragma Function
@@ -611,24 +615,15 @@ export class DuckDBProvider extends SQLBaseProvider {
   }
 
   /**
-   * The two empty states and the wording for `optimize`, which on this engine is
-   * a checkpoint rather than anything an operator would call optimization.
+   * The global vacuum description: DuckDB reclaims space at checkpoint time, so the card
+   * says when a bare VACUUM does nothing.
    *
-   * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel is
-   * ALWAYS empty here - and the default sentence tells the reader to install a
-   * PostgreSQL extension (#463). `getActiveSessions()` is the same shape for the same
-   * reason: measured on DuckDB v1.5.5, `duckdb_connections()` answers
-   * `Catalog Error: Table Function with name duckdb_connections does not exist!`, so the
-   * default "No active sessions found." would read as "nothing is running right now" on a
-   * panel that can never show a row (#518).
+   * No empty-state sentence: DuckDB offers neither the monitoring Queries panel nor the
+   * Sessions panel, so nothing would draw one.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState:
-        "DuckDB keeps no store of finished statements - it publishes no duckdb_queries() table function - so there is nothing to enable.",
-      sessionsEmptyState:
-        "DuckDB publishes no session list - there is no duckdb_connections() table function - so this panel can never show a row.",
       vacuumGlobalDesc:
         "Runs bare VACUUM over the whole database. DuckDB reclaims space at checkpoint time, so this is a no-op on a database that has just been checkpointed.",
     };
@@ -654,40 +649,24 @@ export class DuckDBProvider extends SQLBaseProvider {
   // ==========================================================================
 
   /**
-   * The resolved target: `:memory:` verbatim, or an absolute filesystem path.
+   * The resolved target: `:memory:` verbatim, or an absolute filesystem path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`): `database` resolved with `path.resolve` against the
+   * working directory when the provider was built, with a NUL byte and Studio's own storage files refused there. A
+   * provider built without the factory holds no admitted file and is refused by name.
    *
-   * Deliberately reads `config.database` and NOTHING else. `factory.ts`'s
-   * `fileIdentity` - which is what matches this connection against an already-open
-   * single-writer handle - computes `path.resolve(connection.database)` from the
-   * connection record, so any second source here (a `connectionString`, an
-   * environment default) would resolve to a path the factory never looks at and the
-   * borrow would silently stop matching. DuckDB declares
+   * Deliberately `database` and NOTHING else. `factory.ts`'s `fileIdentity` - which is what matches this connection
+   * against an already-open single-writer handle - computes `path.resolve(connection.database)` from the connection
+   * record in the same call, so any second source here (a `connectionString`, an environment default) would resolve to
+   * a path the factory never looks at and the borrow would silently stop matching. DuckDB declares
    * `supportsConnectionString: false`, so there is no second source to reconcile.
    *
-   * `..` segments are accepted by design: these are trusted server-side paths, the
-   * same position `docs/providers/sqlite.md` records. A NUL byte is not a path at all
-   * and is refused. DuckDB's own extra spellings - `md:` for MotherDuck, `s3://`,
-   * `:memory:named` - are NOT handled: this provider is local files only, and each of
-   * those would resolve here into a relative filesystem path, which is a worse answer
-   * than none.
+   * `..` segments are accepted by design: these are trusted server-side paths, the same position
+   * `docs/providers/sqlite.md` records. DuckDB's own extra spellings - `md:` for MotherDuck, `s3://`, `:memory:named` -
+   * are NOT handled: this provider is local files only, and each of those resolves into a relative filesystem path,
+   * which is a worse answer than none.
    */
   private getDatabasePath(): string {
-    const configured = this.config.database ?? MEMORY_TARGET;
-
-    if (configured === MEMORY_TARGET) return MEMORY_TARGET;
-
-    if (configured.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "duckdb");
-    }
-
-    const resolved = path.resolve(configured);
-    if (isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "duckdb",
-      );
-    }
-    return resolved;
+    return requireAdmittedFile(this.config, "duckdb");
   }
 
   public async connect(): Promise<void> {
@@ -796,8 +775,15 @@ export class DuckDBProvider extends SQLBaseProvider {
     return readLeadingKeyword(sql, resolveSqlGrammar("duckdb"))?.keyword;
   }
 
+  /**
+   * One statement on the connection. A Unicode space DuckDB reads as a space and Studio's reader does not is refused
+   * before the engine reads the statement (`unicodeSpaceRefusal`, which `queryReadOnly` applies too), so the statement
+   * that runs is the one the confirmation gate and the row limiter read.
+   */
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     this.ensureConnected();
+    const refusal = unicodeSpaceRefusal(sql);
+    if (refusal !== undefined) throw new QueryError(refusal, "duckdb", sql);
 
     return this.trackQuery(async () => {
       if (queryId) this.runningQueryIds.add(queryId);
@@ -904,15 +890,19 @@ export class DuckDBProvider extends SQLBaseProvider {
    *    provider that implements this method.
    * 2. The profile check - a writable handle has no boundary to enforce, so running the
    *    statement there would be exactly the fail-open this layer exists to prevent.
-   * 3. `assertReadOnlyStatementIsBounded` - the statement guard, BEFORE the engine, for
+   * 3. `unicodeSpaceRefusal` - the refusal `query` makes too, of a Unicode space DuckDB
+   *    reads as a space and Studio's readers do not, so the statement the guard below
+   *    reads is the one the engine parses. A `RefusedBeforeSendError` here, as every
+   *    refusal of this path before the engine is.
+   * 4. `assertReadOnlyStatementIsBounded` - the statement guard, BEFORE the engine, for
    *    the forms `access_mode` does not refuse. This is the one step with no equivalent
    *    in `sqlite.ts`, where `PRAGMA query_only` covers the same ground engine-side;
    *    DuckDB has no such pragma, so the boundary has to be drawn here.
-   * 4. The engine, which owns "no writes to this database" and is re-asserted by
+   * 5. The engine, which owns "no writes to this database" and is re-asserted by
    *    construction rather than per statement: `access_mode` is fixed at OPEN and no
    *    statement can change it (unlike `PRAGMA query_only`, which is why sqlite
    *    re-asserts).
-   * 5. The result budgets - rows, then bytes, then time.
+   * 6. The result budgets - rows, then bytes, then time.
    *
    * `client.run()` issues ONE `runAndReadAll`, which executes only the FIRST statement
    * of a multi-statement string (measured: `"SELECT 1 AS a; SELECT 2 AS b"` answers
@@ -930,6 +920,8 @@ export class DuckDBProvider extends SQLBaseProvider {
         sql,
       );
     }
+    const refusal = unicodeSpaceRefusal(sql);
+    if (refusal !== undefined) throw new RefusedBeforeSendError(refusal, "duckdb", sql);
     assertReadOnlyStatementIsBounded(sql);
 
     return this.trackQuery(async () => {
@@ -942,11 +934,11 @@ export class DuckDBProvider extends SQLBaseProvider {
       });
 
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "duckdb", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "duckdb", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "duckdb", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "duckdb", sql);
       }
       // DuckDB has no statement-level timeout setting, so the budget's timeout is a
       // post-execution deadline here: an overrunning statement is not preempted, but its
@@ -954,7 +946,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // engine CAN be interrupted (`cancelQuery`), and wiring the deadline to that is
       // recorded as follow-up work in `docs/providers/duckdb.md` rather than claimed.
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "duckdb",
           sql,

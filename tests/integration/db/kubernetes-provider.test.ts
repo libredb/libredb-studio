@@ -24,6 +24,7 @@ import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index
 import { KUBERNETES_KIND_TABLE } from "@/lib/db/providers/platform/kubernetes/kinds";
 import type { KindCount } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { runAsTheQueryRoute as run } from "../../live/kubernetes-evidence";
 import { gridShows, READER_STATEMENT_FACTS, READER_STATEMENTS } from "../../live/kubernetes-evidence-plan";
 import { discoveryList, GROUPS_DISCOVERY, resource } from "../../helpers/kubernetes-discovery";
@@ -56,7 +57,7 @@ function replayed(set: string, persona: Persona, execution: { readonly readOnly?
     {
       createTransport: replay.factory,
     },
-    execution,
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
   );
   return { provider, replay, capture };
 }
@@ -302,7 +303,9 @@ describe("answers no supported cluster gives, built here", () => {
       if (pathname === "/apis") return jsonAnswer({ kind: "APIGroupList", groups: [] });
       return jsonAnswer({});
     });
-    const provider = new KubernetesProvider(kubernetesConnection(), { queryTimeout: 30_000 }, testSeams(transport));
+    const provider = new KubernetesProvider(kubernetesConnection(), { queryTimeout: 30_000 }, testSeams(transport), {
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     await expect(provider.connect()).rejects.toThrow(DISCOVERY_FLOOR_SENTENCE);
   });
 
@@ -323,6 +326,7 @@ describe("answers no supported cluster gives, built here", () => {
       kubernetesConnection({ database: "shop" }),
       { queryTimeout: 30_000 },
       testSeams(transport),
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
     await provider.connect();
     const result = await run(provider, "kubectl get widgets -n shop");
@@ -361,6 +365,7 @@ describe("answers no supported cluster gives, built here", () => {
       kubernetesConnection({ database: "shop" }),
       { queryTimeout: 30_000 },
       testSeams(transport),
+      { egress: ALLOWS_PRIVATE_HOSTS },
     );
     await provider.connect();
     await run(provider, "kubectl get widgets -n shop");

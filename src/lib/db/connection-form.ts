@@ -23,10 +23,15 @@ import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   SNOWFLAKE_FIELD_SENTENCES,
+  SNOWFLAKE_SIGN_IN_DEFAULT,
   snowflakeAccountRefusal,
   snowflakeHostHint,
   snowflakeHostIdentity,
 } from "@/lib/db/providers/sql/snowflake/account-host";
+import { typeIdRow } from "@/lib/db/type-id";
+// The storage classification, aliased because this module's own `CONNECTION_FIELDS` is the field lists: whether a
+// field is a credential is answered there once, for storage, the VS Code prompts and a required secret's blank rule.
+import { CONNECTION_FIELDS as FIELD_CLASS } from "@/lib/storage/secret-fields";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /** What the connection dialog reads for one engine, apart from the icon and colour `DB_UI_CONFIG` adds. */
@@ -109,14 +114,18 @@ export interface ConnectionFormSpec {
    * A field the connection dialog draws only while another field holds one value, such as Snowflake's private key,
    * drawn only while Sign-in is Key pair. Read through `connectionFieldShown`: the dialog draws such a field only
    * while the condition holds, `buildConnection` writes it only then, and `connectionFieldRefusal` checks its rules
-   * only then, so a hidden field is neither saved nor required. Absent means every field the engine takes is drawn.
+   * only then, so a hidden field is neither saved nor required. A controlling field the connection leaves absent reads
+   * as its `fieldDefaults` value. Absent means every field the engine takes is drawn.
    */
   fieldShownWhen?: Partial<Record<ConnectionField, { readonly field: ConnectionField; readonly equals: string }>>;
   /**
-   * `false` where this engine's connections may not carry an SSH tunnel (#1088), absent meaning the
-   * dialog offers the tunnel. Read through `offersSshTunnel`, never directly.
+   * The value the provider reads for a field a connection leaves absent (undefined or null), declared for a field a
+   * `fieldShownWhen` condition reads, so the dialog and core decide which fields such a connection shows, and so
+   * requires, as the provider does: Snowflake's absent Sign-in is `SNOWFLAKE_SIGN_IN_DEFAULT`, the key pair. Where the
+   * field has `fieldOptions`, the value is one of them; tests/unit/lib/db-ui-config.test.ts holds both. Absent, an
+   * absent controlling field meets no condition.
    */
-  showSshTunnel?: false;
+  fieldDefaults?: Partial<Record<ConnectionField, string>>;
   /**
    * `false` where the engine's endpoint fixes its own TLS, so an SSL mode would be read by nothing. Absent
    * means the dialog offers the panel. Read through `offersSslPanel`, never directly.
@@ -147,7 +156,13 @@ export interface ConnectionFormSpec {
 
 /** A check the connection dialog runs on one field before Test Connection and Save (`fieldRules`). */
 export interface ConnectionFieldRule {
-  /** The refusal of a blank field; absent, a blank field passes. */
+  /**
+   * The refusal of a blank field; absent, a blank field passes. A field is blank when the dialog wrote no value for it
+   * or an empty one; a field the storage classification (`CONNECTION_FIELDS` in src/lib/storage/secret-fields.ts)
+   * calls `secret` is blank, as its provider reads it, also when the value is not text or holds only whitespace. Such a
+   * required secret, while `connectionFieldShown` shows it, is also refused by core, with this sentence, before the
+   * provider is built (`requiredSecretRefusal`), so the sentence names the field as the dialog labels it.
+   */
   readonly required?: string;
   /** A field that is not blank must match `pattern` whole, or `sentence` is the refusal. */
   readonly format?: { readonly pattern: RegExp; readonly sentence: string };
@@ -220,7 +235,8 @@ export const SNOWFLAKE_FIELD_RULES: Readonly<Partial<Record<ConnectionField, Con
   host: { required: SNOWFLAKE_FIELD_SENTENCES.accountEmpty, check: snowflakeAccountRefusal },
   user: { required: SNOWFLAKE_FIELD_SENTENCES.userEmpty },
   // Each credential is required only under its own sign-in method: `fieldShownWhen` hides the other one, and a
-  // hidden field's rules are not checked.
+  // hidden field's rules are not checked. Both are secrets, so a key or token that is not text or holds only
+  // whitespace is blank, as connect() reads it, and core refuses the one the Sign-in needs before the build.
   privateKey: { required: SNOWFLAKE_FIELD_SENTENCES.keyEmpty },
   password: { required: SNOWFLAKE_FIELD_SENTENCES.tokenEmpty },
   role: { required: SNOWFLAKE_FIELD_SENTENCES.roleEmpty },
@@ -735,11 +751,6 @@ export const CONNECTION_FORM: {
     // No URI convention to paste: a Kafka client takes a bootstrap address, and Kafka's
     // connection string row has no `paste`.
     showConnectionStringToggle: false,
-    // No SSH tunnel: a tunnel forwards one address, and a Kafka client reads from every broker at
-    // the address the broker advertises (docs/providers/kafka.md). Read through offersSshTunnel, so
-    // the dialog neither offers a tunnel nor sends one left in its state; the provider still
-    // refuses a tunnelled connection that arrives another way.
-    showSshTunnel: false,
     // No database field: one connection is one cluster (docs/providers/kafka.md). The SASL
     // mechanism is a select declared here, not an isKafka branch in the dialog.
     connectionFields: CONNECTION_FIELDS.kafka,
@@ -810,8 +821,9 @@ export const CONNECTION_FORM: {
     // The connection-string box reads http:// and https:// as ClickHouse, so the vendor's address belongs in the
     // Host box, which splits it (hostAcceptsUri below, vector-family spec 3.12).
     showConnectionStringToggle: false,
-    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and the provider
-    // refuses a non-empty one from a seed or the API naming the field (vector-family spec 4.4). The key or JWT is the password.
+    // No Database box: Qdrant has no container level. No User field: Qdrant has no user name, and core refuses a
+    // non-empty one from a seed or the API naming the field, before the provider is built (vector-family spec 4.4,
+    // `REFUSED_CONNECTION_FIELDS`). The key or JWT is the password.
     connectionFields: CONNECTION_FIELDS.qdrant,
     fieldLabels: { password: "API key or JWT" },
     fieldHints: {
@@ -829,7 +841,8 @@ export const CONNECTION_FORM: {
     // Host box, which splits it (hostAcceptsUri below), as Qdrant's.
     showConnectionStringToggle: false,
     // No Database box: Weaviate has no container level. No User field: an API key and an OIDC access token are both
-    // a bearer token, which is the password, and the provider refuses a non-empty user naming the field.
+    // a bearer token, which is the password, and core refuses a non-empty user naming the field, before the provider
+    // is built (`REFUSED_CONNECTION_FIELDS`).
     connectionFields: CONNECTION_FIELDS.weaviate,
     fieldLabels: { password: "API key or token" },
     fieldHints: {
@@ -865,8 +878,8 @@ export const CONNECTION_FORM: {
     label: "InfluxDB 3 (SQL)",
     defaultPort: "8181",
     showConnectionStringToggle: false,
-    // No User field: InfluxDB 3 has no user name, its token is the password, and the connection layer refuses a user
-    // from a seed or the API naming the field.
+    // No User field: InfluxDB 3 has no user name, its token is the password, and core refuses a user from a seed or
+    // the API naming the field, before the provider is built (`REFUSED_CONNECTION_FIELDS`).
     connectionFields: CONNECTION_FIELDS.influxdb3,
     fieldLabels: { password: "Token" },
     fieldHints: {
@@ -934,9 +947,8 @@ export const CONNECTION_FORM: {
       password: "Service-account key JSON or access token",
       location: "Location",
     },
-    // Always HTTPS to googleapis.com with the system trust store, and a tunnel would forward one address of
-    // several (the API, the token endpoint, the metadata server), so neither panel would be read.
-    showSshTunnel: false,
+    // Always HTTPS to googleapis.com with the system trust store, so an SSL mode would be read by nothing. No SSH panel
+    // either: core's SSH_TUNNEL_REFUSAL row (src/lib/db/compatibility.ts) refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
     fieldPlaceholders: {
       database: "my-gcp-project",
@@ -998,9 +1010,10 @@ export const CONNECTION_FORM: {
       privateKeyPassphrase: { field: "authMethod", equals: "keypair" },
       password: { field: "authMethod", equals: "pat" },
     },
-    // TLS is fixed (the certificate checked, the account host as its name) and nothing is tunnelled, so neither panel
-    // would be read.
-    showSshTunnel: false,
+    // An absent Sign-in is the key pair, the constant connect() and the seed check read.
+    fieldDefaults: { authMethod: SNOWFLAKE_SIGN_IN_DEFAULT },
+    // TLS is fixed (the certificate checked, the account host as its name), so an SSL mode would be read by nothing. No
+    // SSH panel either: core's SSH_TUNNEL_REFUSAL row refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
   },
   spark: {
@@ -1047,8 +1060,8 @@ export const CONNECTION_FORM: {
     defaultPort: "6443",
     // No URI mode: a cluster address belongs in the Host box, which splits it, and a kubeconfig is not a URI.
     showConnectionStringToggle: false,
-    // No User field: basic authentication is refused, and the provider refuses a user from a seed or the API naming
-    // the field. The SSL panel carries the CA and a client certificate; the SSH tunnel stays offered.
+    // No User field: basic authentication is refused, and core refuses a user from a seed or the API naming the
+    // field, before the provider is built (`REFUSED_CONNECTION_FIELDS`). The SSL panel carries the CA and a client certificate; the SSH tunnel stays offered.
     connectionFields: CONNECTION_FIELDS.kubernetes,
     fieldLabels: {
       host: "API server",
@@ -1112,9 +1125,8 @@ export const CONNECTION_FORM: {
     // The database box is the only one of the three that reads a declared placeholder: the dialog draws `***` in the
     // password box and `default` in the schema box for every engine, so their guidance lives in the hints above.
     fieldPlaceholders: { database: "my-project" },
-    // Always HTTPS to googleapis.com with the system trust store, and a tunnel would forward one address of several
-    // (the API, the token endpoint, the metadata server), so neither panel would be read.
-    showSshTunnel: false,
+    // Always HTTPS to googleapis.com with the system trust store, so an SSL mode would be read by nothing. No SSH panel
+    // either: core's SSH_TUNNEL_REFUSAL row refuses a tunnel, and offersSshTunnel reads it.
     showSslPanel: false,
   },
   rabbitmq: {
@@ -1123,8 +1135,6 @@ export const CONNECTION_FORM: {
     defaultPort: "15672",
     // Host and Management port hold the management API. An amqp:// URL is not taken: its parts go in their own fields.
     showConnectionStringToggle: false,
-    // One tunnel carries one port, and the management API and AMQP use two, so the provider refuses a tunnel.
-    showSshTunnel: false,
     hostAcceptsUri: ["http", "https"],
     connectionFields: CONNECTION_FIELDS.rabbitmq,
     fieldLabels: {
@@ -1279,8 +1289,8 @@ export const CONNECTION_FORM: {
     // one way only - an engine with this toggle on must have a scheme, and of the 36 engines
     // measured there was no exception.
     showConnectionStringToggle: false,
-    // AND NO SSL / TLS PANEL. The transport is bare UDP - `client.ts` opens `createSocket("udp4")`
-    // and nothing else - so there is no session for a certificate chain to secure. MEASURED: across
+    // AND NO SSL / TLS PANEL. The transport is bare UDP - `client.ts` opens a udp4 or a udp6
+    // socket, by the agent's address, and nothing else - so there is no session for a certificate chain to secure. MEASURED: across
     // the nineteen files of this provider, `sslMode`, `sslCa`, `sslCert`, `sslKey` and
     // `rejectUnauthorized` appear zero times, so every value the panel collected was written to the
     // connection and read by nothing.
@@ -1290,15 +1300,6 @@ export const CONNECTION_FORM: {
     // beside that sentence contradicts it. What secures this protocol is SNMPv3's own USM, inside
     // the message rather than under it.
     showSslPanel: false,
-    // AND NO SSH TUNNEL, which is a different reason and not the same one twice. Something would
-    // read it - `factory.ts` opens the tunnel for any connection that carries one, with no test on
-    // the engine - and that is exactly the problem: MEASURED, the shared tunnel is a local TCP
-    // listener (`src/lib/ssh/tunnel.ts` is `net.createServer` plus `forwardOut`, and the word
-    // `dgram` does not appear in its 392 lines). The factory then rewrites host and port to that
-    // TCP endpoint, and this provider sends datagrams to it, where nothing is listening for them.
-    // A tunnel the dialog offers and the transport cannot use is a box that breaks the connection
-    // it promises to carry.
-    showSshTunnel: false,
     // FOUR FIELDS. Three are what the provider reads; the fourth is the consent without which it
     // REFUSES to open. `connection-options.ts` turns down a v2c connection to a host that is not
     // loopback unless `allowInsecureAuth` is set, and names two ways out: choose v3, or consent to
@@ -1431,9 +1432,14 @@ export const CONNECTION_PICKER_ORDER: readonly DatabaseType[] = Object.freeze([
   "weaviate",
 ]);
 
-/** Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. */
+/**
+ * Whether the dialog offers the SSL / TLS panel: false only where the entry declares `showSslPanel: false`. The entry is
+ * read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union is refused by name.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
 export function offersSslPanel(type: DatabaseType): boolean {
-  return CONNECTION_FORM[type].showSslPanel !== false;
+  return typeIdRow(CONNECTION_FORM, type).showSslPanel !== false;
 }
 
 /**
@@ -1480,8 +1486,9 @@ export function connectionFieldPlacement(config: ConnectionFormSpec, field: Plac
 
 /**
  * Whether the dialog draws a field the engine takes, by the engine's `fieldShownWhen`: true when the field has no
- * condition, else whether the controlling field holds the declared value. An unset controlling field reads as its
- * first `fieldOptions` value, the choice its select shows first, so Snowflake's unset Sign-in reads as Key pair.
+ * condition, else whether the controlling field holds the declared value. A controlling field left absent (undefined
+ * or null) reads as its declared `fieldDefaults` value, the one the provider reads, so Snowflake's absent Sign-in
+ * reads as Key pair.
  */
 export function connectionFieldShown(
   config: ConnectionFormSpec,
@@ -1490,15 +1497,26 @@ export function connectionFieldShown(
 ): boolean {
   const condition = config.fieldShownWhen?.[field];
   if (condition === undefined) return true;
-  const value = connection[condition.field] ?? config.fieldOptions?.[condition.field]?.[0]?.value;
+  const value = connection[condition.field] ?? config.fieldDefaults?.[condition.field];
   return value !== undefined && String(value) === condition.equals;
+}
+
+/**
+ * Whether `value` is blank for the `required` rule of `field`: for a field the storage classification calls `secret`,
+ * a value that is not text or holds only whitespace, as the provider reads a secret it cannot sign in without; for any
+ * other field, no value or an empty one, as the dialog writes it.
+ */
+function blankForRequired(field: ConnectionField, value: unknown): boolean {
+  if (FIELD_CLASS[field] === "secret") return typeof value !== "string" || value.trim() === "";
+  return value === undefined || value === "";
 }
 
 /**
  * The first refusal of the engine's `fieldRules` for a connection as the dialog built it, or `undefined` when every
  * declared check passes. The fields are checked in `connectionFields` order, so the dialog names the first box to fix.
- * A blank field is one the dialog wrote no value for, or an empty one. A field `connectionFieldShown` hides is not
- * checked, since the dialog neither draws nor writes it.
+ * A `required` field is refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field the
+ * dialog wrote no value for, or an empty one. A field `connectionFieldShown` hides is not checked, since the dialog
+ * neither draws nor writes it.
  */
 export function connectionFieldRefusal(config: ConnectionFormSpec, connection: DatabaseConnection): string | undefined {
   const values = connection as Partial<Record<ConnectionField, unknown>>;
@@ -1507,10 +1525,8 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
     if (rule === undefined) continue;
     if (!connectionFieldShown(config, field, values)) continue;
     const value = values[field];
-    if (value === undefined || value === "") {
-      if (rule.required !== undefined) return rule.required;
-      continue;
-    }
+    if (rule.required !== undefined && blankForRequired(field, value)) return rule.required;
+    if (value === undefined || value === "") continue;
     if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
     if (
       rule.charRange !== undefined &&
@@ -1520,6 +1536,30 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
     }
     const checked = rule.check?.(String(value));
     if (checked !== undefined) return checked;
+  }
+  return undefined;
+}
+
+/**
+ * The sentence of the first required secret the engine's form entry declares that `connection` shows and leaves blank,
+ * or `undefined` when there is none: a `fieldRules` entry with `required` on a field the storage classification calls
+ * `secret`, shown by `connectionFieldShown` (an absent controlling field read as its `fieldDefaults` value), and blank
+ * as `connectionFieldRefusal` reads it, not text or only whitespace. The fields are read in `connectionFields` order,
+ * and only these: every other rule is the dialog's and the provider's. Core reads it before it builds a provider to
+ * connect (`createDatabaseProvider` in ./factory), so a provider is never built without a secret its engine declares
+ * it cannot sign in without. The entry is read through `typeIdRow` (FND-1), so a type outside the `DatabaseType` union
+ * is refused by name.
+ *
+ * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
+ */
+export function requiredSecretRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
+  const config = typeIdRow(CONNECTION_FORM, type);
+  const values = connection as Partial<Record<ConnectionField, unknown>>;
+  for (const field of config.connectionFields) {
+    const required = config.fieldRules?.[field]?.required;
+    if (required === undefined || FIELD_CLASS[field] !== "secret") continue;
+    if (!connectionFieldShown(config, field, values)) continue;
+    if (blankForRequired(field, values[field])) return required;
   }
   return undefined;
 }

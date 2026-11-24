@@ -30,6 +30,7 @@ import {
   manualDeadlines,
   SAMPLE_BODIES,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const CAPABILITIES = new RabbitMQProvider(rabbitmqConnection()).getCapabilities();
 
@@ -43,11 +44,12 @@ const EXCHANGES = (vhost: string) =>
 function surface() {
   const stub = createManagementStub();
   const client = createManagementClient({
-    endpoint: readConnectionOptions(rabbitmqConnection()).management,
+    endpoint: readConnectionOptions(rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS).management,
     transport: stub.factory,
     deadlineSignal: manualDeadlines().factory,
     queryTimeoutMs: 60_000,
     lifetime: new AbortController().signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   return { stub, client, memo: createStreamListingMemo() };

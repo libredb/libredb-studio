@@ -42,7 +42,7 @@ import {
   WEAVIATE_OBJECT_KINDS,
   type WeaviateSurfaceContext,
 } from "@/lib/db/providers/vector/weaviate/objects";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import type { DatabaseConnection, ProviderExecutionContext, ProviderOptions } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { expectCalls } from "../../../helpers/call-log";
@@ -58,6 +58,7 @@ import {
   version,
   WEAVIATE_TEST_CONNECTION,
 } from "../../../helpers/weaviate-surface";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const TEST_KEY = "replay-reader-key";
 
@@ -76,7 +77,7 @@ function providerOf(
   const provider = new WeaviateProvider(
     { ...WEAVIATE_TEST_CONNECTION, ...connection } as DatabaseConnection,
     options,
-    execution,
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
     clients.factory,
   );
   return { provider, clients };
@@ -137,7 +138,7 @@ describe("declarations", () => {
       writeReach: {
         editor: {
           reach: "absent",
-          proof: { module: "src/lib/db/providers/vector/weaviate/routes.ts", symbol: "WEAVIATE_ROUTES" },
+          proof: { module: "src/lib/languages/weaviateapi/routes.ts", symbol: "WEAVIATE_ROUTES" },
         },
         objectEdit: { reach: "absent" },
         maintenance: { reach: "absent" },
@@ -203,7 +204,8 @@ describe("connect", () => {
   });
 
   test("a refused connection builds no client and sends nothing", async () => {
-    const { provider, clients } = providerOf(SURFACE, { user: "admin" });
+    // A secret holding a line break, which no header can carry.
+    const { provider, clients } = providerOf(SURFACE, { password: `${crypto.randomUUID()}\n` });
     await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
     expect(clients.built).toEqual([]);
     expect(provider.isConnected()).toBe(false);

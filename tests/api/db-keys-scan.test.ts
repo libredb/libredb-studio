@@ -39,9 +39,9 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 let activeProvider: DatabaseProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => activeProvider);
@@ -78,6 +78,7 @@ mock.module("@/lib/query-events/sink", () => ({
     if (governanceEnabled()) recordedEvents.push(input);
   },
   queryEventSinkState: () => sinkState,
+  queryEventSinkClosed: () => false,
   flushQueryEvents: async () => {},
   resetQueryEventSink: () => {},
 }));
@@ -122,7 +123,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -420,6 +420,40 @@ describe("POST /api/db/keys/scan in a declared shape", () => {
     // The route neither reads nor replaces the total: 0 travels as the provider answered it.
     expect(body).toEqual(uncountedPage);
     expect(walk).toHaveBeenLastCalledWith({ cursor: "0", pattern: undefined, count: 500, database: undefined });
+  });
+
+  test("a page's skipped reason and read outcome sentences that hold the connection's credential answer the withheld sentence, and its keys as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const page: KeyScanPage = {
+      keys: ["/app/a", "/app/b"],
+      cursor: "k:L2FwcC9i:12:9",
+      total: 9,
+      types: {},
+      skipped: { count: 2, reason: `keys under ${password} are not UTF-8 text` },
+      readOutcome: {
+        scope: "incomplete",
+        endReason: `the server closed the stream for ${password}`,
+        provenLoss: [`a message for ${password} was dropped`, "a message over the size limit was skipped"],
+      },
+    };
+    activeProvider = prefixProvider(async () => page);
+
+    const { status, body } = await post<KeyScanPage>({ connection: { ...CONNECTION, password } });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      keys: ["/app/a", "/app/b"],
+      cursor: "k:L2FwcC9i:12:9",
+      total: 9,
+      types: {},
+      skipped: { count: 2, reason: PROVIDER_TEXT_WITHHELD },
+      readOutcome: {
+        scope: "incomplete",
+        endReason: PROVIDER_TEXT_WITHHELD,
+        provenLoss: [PROVIDER_TEXT_WITHHELD, "a message over the size limit was skipped"],
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain(password);
   });
 
   test("refuses an opaque cursor that is not a non-empty string", async () => {
@@ -1054,6 +1088,41 @@ describe("POST /api/db/keys/scan under governance", () => {
       expect.objectContaining({ status: "error", error_code: "CONNECTION_ERROR", row_count: null, statement: null }),
       expect.objectContaining({ status: "cancelled", error_code: "QUERY_CANCELLED", row_count: null }),
     ]);
+  });
+
+  test("governance: a walk that fails with an error holding the connection's credential records the withheld sentence and the error's API code, and a cancel still records cancelled", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const password = crypto.randomUUID();
+    const connection = { ...GOVERNED, password };
+    const { QueryCancelledError } = await import("@/lib/db/errors");
+    activeProvider = declaringProvider(async () => {
+      throw new QueryError(`SCAN refused for ${password}`, "redis");
+    });
+    const failed = await post({ connection });
+    activeProvider = declaringProvider(async () => {
+      throw new QueryCancelledError(`SCAN of ${password} was cancelled`, "redis");
+    });
+    await post({ connection });
+    activeProvider = declaringProvider(async () => {
+      throw new QueryError("SCAN refused", "redis");
+    });
+    await post({ connection });
+
+    expect(failed.status).toBe(400);
+    expect(rows()).toEqual([
+      expect.objectContaining({
+        status: "error",
+        error_code: "QUERY_ERROR",
+        error_message: withheldErrorMessage("QueryError"),
+      }),
+      expect.objectContaining({
+        status: "cancelled",
+        error_code: "QUERY_CANCELLED",
+        error_message: withheldErrorMessage("QueryCancelledError"),
+      }),
+      expect.objectContaining({ status: "error", error_code: "QUERY_ERROR", error_message: "SCAN refused" }),
+    ]);
+    expect(JSON.stringify(rows())).not.toContain(password);
   });
 
   test("governance: a page that breaks the level contract records status error", async () => {

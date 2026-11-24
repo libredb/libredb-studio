@@ -10,6 +10,7 @@ import { ShortcutsDialog, type ShortcutsDialogRef } from "@/components/Shortcuts
 import { CreateTableModal } from "@/components/CreateTableModal";
 import { ChunkBoundary } from "@/components/LazyView";
 import { lazyRetry } from "@/lib/lazy";
+import { quoteObjectPath, quoteTypedName } from "@/lib/query-generators";
 import { Trash2 } from "lucide-react";
 import {
   AlertDialog,
@@ -137,6 +138,14 @@ export function StudioOverlays({
         onTableCreated={onTableCreated}
         container={createTableContainer}
         capabilities={capabilities}
+        names={
+          activeConnection === null || capabilities === undefined
+            ? undefined
+            : {
+                typed: (name) => quoteTypedName(name, activeConnection.type, capabilities),
+                container: (path) => quoteObjectPath(path, activeConnection.type, capabilities),
+              }
+        }
       />
 
       {/* Delete Connection Confirmation */}

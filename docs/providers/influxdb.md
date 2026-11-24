@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/influxdb/`](../../tests/unit/db/influxdb/) and [`tests/in
 | | |
 |---|---|
 | **Write reach** | none: the InfluxQL policy, `evaluateInfluxql`, refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request, and the route table reaches no write endpoint; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -60,17 +61,19 @@ The factory imports the directory's `index.ts`, which re-exports the two provide
 | `errors.ts` | Every failure worded as one of the repository's error classes, server text through `serverText` redaction |
 | `run-database.ts` | The database a run uses |
 | `monitoring.ts`, `labels.ts` | The health and overview mappings, and the labels of both types |
-| `influxql-lexer.ts` | InfluxQL read as tokens exactly as the influxql v1.4.1 scanner reads it |
-| `influxql-policy.ts` | The read policy, shared by the editor's confirmation gate and the provider |
+| `src/lib/languages/influxql/lexer.ts` | InfluxQL read as tokens exactly as the influxql v1.4.1 scanner reads it, in the influxql family module |
+| `src/lib/languages/influxql/policy.ts` | The read policy, shared by the editor's confirmation gate and the provider, in the influxql family module |
 | `influxql-quote.ts`, `influxql-generators.ts` | Identifier and string quoting, and the preview and Generate Query texts |
 | `influxql-results.ts`, `influxql-objects.ts` | A `/query` answer as a result, and the object surface |
 | `influxql-provider.ts` | The provider: lifecycle, declarations, the connect sequence and each call's permit, deadline and error context |
 | `sql-*.ts` | The `influxdb3` type's modules ([influxdb3.md](./influxdb3.md)) |
 | `index.ts` | The composition root the factory imports |
 
-`influxql-lexer.ts`, `influxql-policy.ts`, `influxql-quote.ts` and `influxql-generators.ts` are pure and shipped to the browser, because the editor, the confirmation gate and the tree read them; they import only each other and types.
+The lexer, the policy, `influxql-quote.ts` and `influxql-generators.ts` are pure and shipped to the browser, because the editor, the confirmation gate and the tree read them; they import only each other and types.
+The lexer and the policy live in the influxql statement language's core family module, `src/lib/languages/influxql/`, with the confirmation gate's row (`destructive.ts`) and the agent's statement reader (`agent-statement.ts`), because core reads them too ([PROVIDER_IMPORTS.md](../PROVIDER_IMPORTS.md)); the quoter and the generators stay in the provider directory.
 The editor's InfluxQL language and completion live in `src/lib/db/providers/timeseries/influxdb/influxql-editor-syntax.ts` and `influxql-editor-completions.ts`, over the same lexer, and `influxql-editor-language.ts` declares them to the editor.
-Two tests hold the layout: `tests/unit/db/influxdb/seam-guard.test.ts` fails when a file imports from another provider directory, or an `influxql-*` module imports an `sql-*` module or the reverse, and `tests/unit/db/influxdb/browser-modules.test.ts` fails when a browser module imports a Node built-in, `Buffer` or a server module.
+Two tests hold the layout: `tests/unit/db/influxdb/seam-guard.test.ts` fails when a file imports from another provider directory, or an `influxql-*` module imports an `sql-*` module or the reverse (a module of the influxql family module counts as an `influxql-*` module), and `tests/unit/db/influxdb/browser-modules.test.ts` fails when a browser module, in either home, imports a Node built-in, `Buffer` or a server module.
+The seam guard also reads every file of the family module as a layer of its own: each may import values only from another family member, never a runtime built-in, `fetch`, `node:http` or a route path, and a family file that is not the lexer, the policy, the confirmation row or the agent's statement reader fails until it is placed on purpose.
 
 ### 2.3 Registration & lifecycle
 
@@ -98,7 +101,7 @@ Text that is recognisably Flux is refused with its own sentence (section 3.5).
 
 ### 3.3 The read policy
 
-`influxql-policy.ts` decides, in the browser and again on the server, whether a text runs; it reads tokens, never text, and it is fail-closed.
+`src/lib/languages/influxql/policy.ts` decides, in the browser and again on the server, whether a text runs; it reads tokens, never text, and it is fail-closed.
 The verdict is the same whatever line the server reports.
 
 1. The text is at most 65,536 bytes of UTF-8, counted before it is read.
@@ -272,6 +275,10 @@ InfluxDB Cloud Serverless answers InfluxQL only for a bucket with an explicit DB
 
 Create the mapping with `influx v1 dbrp create --bucket-id <bucket-id> --db <database> --rp <policy> --default`.
 
+### 4.9 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+
 ### Connection string
 
 `influxdb` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`influxdb-connection-string.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-connection-string.ts)).
@@ -437,8 +444,8 @@ EXPLAIN SELECT count("co") FROM "home".."home"
 ### 5.11 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-sql-grammar.ts), the `influxdb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
-`readsSqlText` is `false`: `influxdb` takes one InfluxQL statement, whose strings escape with a backslash, where `/.../` is a regex where the parser asks for one and a `--` comment ends at a lone `\r`, so a SQL span reader misreads where a literal ends; the provider reads it with its own lexer (`src/lib/db/providers/timeseries/influxdb/influxql-lexer.ts`) and refuses every write before sending it.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/timeseries/influxdb/influxdb-destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+`readsSqlText` is `false`: `influxdb` takes one InfluxQL statement, whose strings escape with a backslash, where `/.../` is a regex where the parser asks for one and a `--` comment ends at a lone `\r`, so a SQL span reader misreads where a literal ends; the provider reads it with its own lexer (`src/lib/languages/influxql/lexer.ts`) and refuses every write before sending it.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/influxql/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -470,15 +477,33 @@ No kind accepts row writes or source edits: an `influxdb` connection is read-onl
 Health is `GET /ping`, reachability only, never evidence of what the credential may read.
 The overview gives the server's version and `tableCount`, the measurements across the databases visible at connect; the count is a floor, and says so, only when a listing cap cut one.
 A database whose listing the server refuses counts none.
-Slow queries are not read:
-
-> InfluxDB keeps no query log Studio reads; 1.x SHOW QUERIES shows other users' statements and is not read.
-
-Sessions are not read either:
-
-> InfluxDB has no session list: every request stands alone.
+Slow queries are not read: InfluxDB keeps no query log Studio reads, and 1.x SHOW QUERIES shows other users' statements and is not read.
+Sessions are not read either: InfluxDB has no session list, and every request stands alone.
+Neither panel is offered, so the dashboard draws neither, and the labels declare no empty-state sentence for them.
 
 Performance, storage, table and index statistics are empty: no route Studio reads reports them, and `/metrics` is never read.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `influxdb` offers is its row in `ENGINE_FACETS`, declared in [`influxdb-engine-facets.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 
@@ -528,8 +553,6 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 | `generateAction` | Generate Query |
 | `searchPlaceholder` | Search measurements... |
 | `statementLanguage` | InfluxQL: one SELECT, SHOW or EXPLAIN statement, no INTO, no Flux; name a measurement as "db".."measurement". |
-| `slowQueriesEmptyState` | InfluxDB keeps no query log Studio reads; 1.x SHOW QUERIES shows other users' statements and is not read. |
-| `sessionsEmptyState` | InfluxDB has no session list: every request stands alone. |
 | `analyzeAction` | Measurement Statistics |
 | `vacuumAction` | Compact Storage |
 | `analyzeGlobalLabel` | Statistics |
@@ -737,7 +760,7 @@ A token's write on a bucket it cannot read is out of InfluxQL's reach (`write-pr
 
 ### 15.3 The statement path
 
-[`influxql-agent-statement.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.3, then four refusals of its own.
+[`src/lib/languages/influxql/agent-statement.ts`](../../src/lib/languages/influxql/agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.3, then four refusals of its own.
 
 - No carriage return and no comment: both lines end a `--` comment at a lone carriage return and run what follows as a second statement, read a carriage return between two words as a space, and run a statement after a `/* */` comment (`fence-*`).
   > The statement holds a carriage return, which an agent read does not take: InfluxDB ends a -- comment at one and reads on past it. Write each line break as a plain newline. Nothing was sent.

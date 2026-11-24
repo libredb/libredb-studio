@@ -16,6 +16,8 @@ import type { DatabaseConnection } from "@/lib/types";
 // which is the shape standing ruling 5b catalogues as a fake that cannot see a change.
 import * as realMongoDriver from "mongodb";
 import {
+  bsonDocumentBytes,
+  bsonUndefinedFor,
   MockBinary,
   type MockCollectionInfo,
   MockObjectId,
@@ -24,6 +26,7 @@ import {
   mongoServerError,
   resetMongoDriver,
 } from "../../helpers/mongodb-driver";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Mock Setup — MUST come before provider import
@@ -875,6 +878,8 @@ describe("MongoDBProvider", () => {
         error: `Permission denied: ${sentence}`,
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 
@@ -2086,6 +2091,34 @@ describe("MongoDBProvider", () => {
       expect(typeof result.rows[0]._id).toBe("string");
     });
 
+    // BSON's deprecated undefined (type 6) decodes to `undefined`. JSON writes it as null inside an array and leaves
+    // a member holding it out, so the editor route's answer was already that; the row itself now says the same
+    // inside an array, which is what lets MCP's value codec answer it. A member keeps `undefined`, which the codec
+    // leaves out as JSON does.
+    test("an undefined inside an array reaches the row as null, and a member whose value is undefined is left as it was", async () => {
+      mongoDriver.collectionData = [
+        {
+          top: undefined,
+          list: [1, undefined, 3],
+          nested: { inner: [undefined] },
+          deep: [[undefined]],
+          docs: [{ a: undefined }],
+        },
+      ];
+      const result = await provider.query(JSON.stringify({ collection: "users", operation: "find", filter: {} }));
+      const row = result.rows[0] as Record<string, unknown>;
+      expect(row).toStrictEqual({
+        top: undefined,
+        list: [1, null, 3],
+        nested: { inner: [null] },
+        deep: [[null]],
+        docs: [{ a: undefined }],
+      });
+      expect(Object.hasOwn(row, "top")).toBe(true);
+      expect(Object.hasOwn((row.docs as Record<string, unknown>[])[0], "a")).toBe(true);
+      expect(JSON.stringify(row)).toBe('{"list":[1,null,3],"nested":{"inner":[null]},"deep":[[null]],"docs":[{}]}');
+    });
+
     // Measured on MongoDB 8.2.12 (#1423): the grid showed `big` as `{"high":2097152,"low":1,"unsigned":false}`,
     // `ts` the same way, `re` as `{}` and `uid` as `<Binary: 16 bytes>`. The values are the driver's own classes,
     // as it reads them back: a Long past 2^53 stays a Long and a regular expression is a native RegExp.
@@ -2416,6 +2449,18 @@ describe("MongoDBProvider", () => {
       /** The cursor or command each read opened, with what it was opened with. */
       const lastCursor = () => mongoDriver.cursors.at(-1) as (typeof mongoDriver.cursors)[number];
 
+      // The agent read decodes the raw cursor's bytes with the real parser, which reads BSON undefined (type 6) as
+      // `undefined`; the stand-in serves bytes carrying it, since the real serializer writes an array's undefined as null.
+      test("an undefined inside an array of a document the cursor serves as BSON reaches the row as null", async () => {
+        mongoDriver.collectionData = [bsonDocumentBytes(bsonUndefinedFor({ list: [1, null, 3] }))];
+        const profiled = profiledProvider();
+        await profiled.connect();
+        const find = await profiled.queryReadOnly(envelope("find"), budget);
+        expect(lastCursor().options.raw).toBe(true);
+        expect(find.rows).toStrictEqual([{ list: [1, null, 3] }]);
+        await profiled.disconnect();
+      });
+
       test("the five read operations answer through the envelope the editor takes", async () => {
         mongoDriver.collectionData = [
           { customer: "Ada", status: "shipped", total: 120 },
@@ -2631,8 +2676,9 @@ describe("MongoDBProvider", () => {
         expect((error as Error).message).toBe(
           'Read-only execution exceeded the row budget: 11 rows > 10 allowed; the read stops one row past the budget, so at least 11 documents match and the total is not known (count it with "operation": "count", or narrow the read)',
         );
+        expect(errorKind(error)).toBe("row-budget-refusal");
         // The sentence is the one the run reads its row-budget advice from.
-        expect(rowBudgetIn((error as Error).message)).toEqual({ projected: 11, allowed: 10 });
+        expect(rowBudgetIn(errorKind(error), (error as Error).message)).toEqual({ projected: 11, allowed: 10 });
         expect(lastCursor()).toMatchObject({ pulled: 11, closes: 1 });
         expect(lastCursor().options.limit).toBe(11);
         // The command's own limit is sent when it is the smaller.
@@ -2654,9 +2700,11 @@ describe("MongoDBProvider", () => {
         const profiled = profiledProvider();
         await profiled.connect();
         const tinyBudget = { statementTimeoutMs: 5000, maxResultRows: 10, maxResultBytes: 512 };
-        await expect(profiled.queryReadOnly(envelope("find"), tinyBudget)).rejects.toThrow(
+        const refused = await profiled.queryReadOnly(envelope("find"), tinyBudget).catch((caught: unknown) => caught);
+        expect((refused as Error).message).toMatch(
           /^Read-only execution exceeded the byte budget: \d+ bytes > 512 allowed$/,
         );
+        expect(errorKind(refused)).toBe("byte-budget-refusal");
         expect(lastCursor()).toMatchObject({ pulled: 2, closes: 1 });
         await profiled.disconnect();
       });
@@ -2668,9 +2716,9 @@ describe("MongoDBProvider", () => {
         );
         const profiled = profiledProvider();
         await profiled.connect();
-        await expect(profiled.queryReadOnly(envelope("find"), budget)).rejects.toThrow(
-          /deadline of 5000ms and was killed server-side/,
-        );
+        const refused = await profiled.queryReadOnly(envelope("find"), budget).catch((caught: unknown) => caught);
+        expect((refused as Error).message).toMatch(/deadline of 5000ms and was killed server-side/);
+        expect(errorKind(refused)).toBe("time-budget-refusal");
         await profiled.disconnect();
       });
 
@@ -2914,13 +2962,18 @@ describe("MongoDBProvider", () => {
         expect(await profiled.readCatalogReadOnly!({ object: "users" }, tight)).toMatchObject({ sampled: 2 });
         expect(mongoDriver.cursors.at(-1)).toMatchObject({ pulled: 3, closes: 1 });
         // A first document that alone crosses it is refused: there is nothing honest to infer from.
-        await expect(
-          profiled.readCatalogReadOnly!({ object: "users" }, { ...budget, maxResultBytes: 100 }),
-        ).rejects.toThrow(/exceeded the byte budget/);
+        const firstTooWide = await profiled.readCatalogReadOnly!(
+          { object: "users" },
+          { ...budget, maxResultBytes: 100 },
+        ).catch((caught: unknown) => caught);
+        expect((firstTooWide as Error).message).toMatch(/exceeded the byte budget/);
+        expect(errorKind(firstTooWide)).toBe("byte-budget-refusal");
         mongoDriver.collectionsByDb = {
           testdb: Array.from({ length: 11 }, (_, i) => ({ name: `c${i}`, type: "collection" })),
         };
-        await expect(profiled.readCatalogReadOnly!({}, budget)).rejects.toThrow("11 rows > 10 allowed");
+        const listing = await profiled.readCatalogReadOnly!({}, budget).catch((caught: unknown) => caught);
+        expect((listing as Error).message).toContain("11 rows > 10 allowed");
+        expect(errorKind(listing)).toBe("row-budget-refusal");
         await profiled.disconnect();
       });
 

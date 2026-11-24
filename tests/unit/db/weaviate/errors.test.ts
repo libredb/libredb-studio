@@ -18,7 +18,8 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { type WeaviateAnswer, WeaviateError, type WeaviateOp } from "@/lib/db/providers/vector/weaviate/client";
+import { type WeaviateAnswer, WeaviateError } from "@/lib/db/providers/vector/weaviate/client";
+import type { WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import {
   answerFailure,
   expectOk,

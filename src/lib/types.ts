@@ -294,6 +294,11 @@ export interface SSLConfig {
   rejectUnauthorized?: boolean;
 }
 
+/**
+ * An SSH tunnel to the database through a bastion. Core decides and opens the tunnel with these fields, the secret ones
+ * (`password`, `privateKey`, `passphrase`) included, and a provider receives none of it: Studio hands it the route under
+ * `TUNNEL_ROUTE` (`providerConnection` in `src/lib/db/provider-connection.ts`).
+ */
 export interface SSHTunnelConfig {
   enabled: boolean;
   host: string;
@@ -368,9 +373,106 @@ export interface WithTunnelFarEnd {
   readonly [TUNNEL_FAR_END]?: TunnelFarEnd;
 }
 
+/**
+ * The SSH tunnel's route, `tunnelRoute` of the record's `sshTunnel` (`src/lib/db/connection-fingerprint.ts`): the
+ * switch, the bastion's host and port and the user name, length-framed. Studio hands it to a provider in place of the
+ * record's `sshTunnel`, so a provider frames the bastion it was built behind without ever receiving the tunnel's
+ * configuration or credentials (FND-2 slice 5b, docs/SECURITY.md control 3.41).
+ *
+ * Set in one place, `providerConnection` in `src/lib/db/provider-connection.ts`, which replaces any value a caller set,
+ * for every connection that carries a tunnel object, on or off: the edit-plan seal frames an off tunnel's route too, so
+ * the provider side must frame the same string as the record side. Read by `connectionFingerprint` (the provider side
+ * of the seal) and through `requireTunnelRoute` in `src/lib/db/utils/require-tunnel-route.ts`, which refuses a
+ * connection that carries a tunnel's far end and no route.
+ *
+ * A symbol key on the footing of {@link TUNNEL_FAR_END}, made with `Symbol()` and not `Symbol.for()`, so only code
+ * holding this export can write it: `JSON.parse` never produces one, so no seed file, request body or stored connection
+ * can carry it, and `JSON.stringify` drops it from every response.
+ */
+export const TUNNEL_ROUTE: unique symbol = Symbol("libredb.tunnelRoute");
+
+/** Carries {@link TUNNEL_ROUTE} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithTunnelRoute {
+  readonly [TUNNEL_ROUTE]?: string;
+}
+
+/**
+ * Marks a connection of a seed file read in literal mode (SEED_LITERAL_VALUES on). That mode exists for a seed file a
+ * platform writes from data its users control, so on such a row `managed: true` does not mean the server side wrote
+ * the credential text, and the row is not server-written (`isServerWritten` in
+ * `src/lib/db/auth/server-identity-gate.ts`): it never signs in with the server's own cloud identity.
+ *
+ * Set in one place, `projectOperatorEntries` in `src/lib/seed/index.ts`, beside `literal`; never on a discovered or
+ * governed row, which carry `literal` too, nor on a built-in sample. Read by `isServerWritten`, and framed in the
+ * provider cache key (`credentialDigest` in `src/lib/db/provider-cache-key.ts`).
+ *
+ * A symbol key on the footing of {@link TUNNEL_FAR_END}: `JSON.parse` never produces one, so no seed file, request
+ * body or stored connection can carry it, `JSON.stringify` drops it from every response, and the three maps over
+ * `keyof DatabaseConnection` never see it. An object spread keeps it, so it survives every copy on the way to a
+ * provider.
+ */
+export const LITERAL_SEED_FILE: unique symbol = Symbol("libredb.literalSeedFile");
+
+/** Carries {@link LITERAL_SEED_FILE} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithLiteralSeedFile {
+  readonly [LITERAL_SEED_FILE]?: true;
+}
+
+/**
+ * The file a SQLite, DuckDB or LibreDB connection opens, as Studio's provider factory admitted it (FND-2 slice 3): an
+ * absolute path, or `:memory:`, resolved against the working directory when the provider was built and checked against
+ * Studio's own storage files there, so the provider opens it and resolves nothing itself.
+ *
+ * Set in one place, `admittedFileConnection` in `src/lib/db/provider-files.ts`, which replaces any value a caller set;
+ * read through `requireAdmittedFile` in `src/lib/db/utils/admitted-file.ts`, which refuses a connection that carries
+ * none, so a provider built without the factory opens nothing.
+ *
+ * A symbol key on the footing of {@link TUNNEL_FAR_END}: `JSON.parse` never produces one, so no seed file, request body
+ * or stored connection can carry it, and `JSON.stringify` drops it from every response. It sits beside the record's
+ * own `database` and `connectionString`, which stay as the record holds them, so neither the connection fingerprint
+ * nor the provider cache key frames it, and both still agree with the record.
+ */
+export const ADMITTED_FILE: unique symbol = Symbol("libredb.admittedFile");
+
+/** Carries {@link ADMITTED_FILE} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithAdmittedFile {
+  readonly [ADMITTED_FILE]?: string;
+}
+
+/** A connection field that names a file on Studio's own host which the provider reads (`HOST_PATH_FIELDS`). */
+export type HostPathField = "clientCertificatePath" | "clientPrivateKeyPath";
+
+/**
+ * The files on Studio's own host a connection's `HOST_PATH_FIELDS` name, as Studio's provider factory admitted them: an
+ * absolute path per field the connection sets, resolved against the working directory when the provider was built and
+ * checked against Studio's own storage files there, so the provider reads them and resolves nothing itself. A field
+ * the connection leaves absent, `null` or empty has no entry.
+ *
+ * Set in one place, `admittedHostPathConnection` in `src/lib/db/provider-files.ts`, which replaces any value a caller
+ * set; read through `requireAdmittedHostPath` in `src/lib/db/utils/admitted-file.ts`, which refuses a connection that
+ * sets a field and carries no admitted path for it, so a provider built without the factory reads none of them.
+ *
+ * A symbol key on the footing of {@link ADMITTED_FILE}: JSON never carries one, and it sits beside the record's own
+ * fields, which stay as the record holds them, so neither the connection fingerprint nor the provider cache key frames
+ * it.
+ */
+export const ADMITTED_HOST_PATHS: unique symbol = Symbol("libredb.admittedHostPaths");
+
+/** Carries {@link ADMITTED_HOST_PATHS} alongside a connection, deliberately not a field of `DatabaseConnection`. */
+export interface WithAdmittedHostPaths {
+  readonly [ADMITTED_HOST_PATHS]?: Readonly<Partial<Record<HostPathField, string>>>;
+}
+
 export interface DatabaseConnection {
   id: string;
   name: string;
+  /**
+   * The connection's type id. A record read from storage or from a request may carry any value here: one saved by a
+   * newer Studio that shares the same storage, one listed from the operator's seed file, one a host application hands
+   * the published components, or one with no type at all.
+   * Studio checks the value and refuses one that names no provider it has, by name, rather than treating the record as
+   * another engine.
+   */
   type: DatabaseType;
   host?: string;
   port?: number;
@@ -934,8 +1036,9 @@ export interface QueryResult {
    * and `columnTypes` above stay the first set's, as they always were. **Absent** for a text
    * with one result set or none.
    *
-   * The multi-statement route reads it to show a batch's last result with rows, the same
-   * rule it applies across a script's statements; `POST /api/db/query` and `POST /api/db/transaction` do not send it.
+   * The multi-statement route reads it to show a batch's last result set, empty or not
+   * (#2286) - the same rule a script's statements follow (#2271). `POST /api/db/query` and
+   * `POST /api/db/transaction` do not send it.
    */
   resultSets?: QueryResultSet[];
 }
@@ -1157,6 +1260,11 @@ export interface SavedQuery {
   name: string;
   query: string;
   description?: string;
+  /**
+   * The type id of the connection the query was saved from. A record read from storage may carry any value here: one
+   * saved by a newer Studio that shares the same storage, or one with no type at all. Studio keeps such a query as
+   * stored, lists it as unavailable, and never loads it into the editor.
+   */
   connectionType: DatabaseType;
   createdAt: Date;
   updatedAt: Date;

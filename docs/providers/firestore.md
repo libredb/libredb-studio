@@ -15,6 +15,7 @@
 | **Connection string**  | Not supported                                                                                     |
 | **EXPLAIN**            | `firestore-explain`: Query Explain, plan only from the button; not offered on an emulator server  |
 | **Write reach** | none: the request builder, `buildRequest`, builds only the read requests of its closed table, before any socket; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on a request of the client opened at connect, and nothing is taken from a pool before it is sent |
 | **Transactions**       | None                                                                                              |
 | **Maintenance**        | None                                                                                              |
 | **Query cancellation** | Supported: the request is aborted                                                                 |
@@ -71,8 +72,8 @@ The embedded workspace has no Keys panel, no connection dialog and no Explain bu
 | `constants.ts` | Type id, limits, endpoints, environment names, shared sentences | Yes |
 | `labels.ts`, `connection-options.ts` | Labels, the statement-language sentence, the field rules | Yes |
 | `names.ts`, `field-path.ts`, `values.ts` | Id rules and path encoding, field paths, REST values both ways | Yes |
-| `google-credentials.ts`, `google-token-source.ts` | Credential parsing, the ADC chain, the grants and the token cache | No |
-| `credential-policy.ts` | The server-identity opt-in, the operator-seed rule, the emulator refusal | No |
+| `src/lib/db/auth/google/credentials.ts`, `token-source.ts` (shared, [DB_AUTH.md](../DB_AUTH.md#google)) | Credential parsing, the ADC chain, the grants and the token cache | No |
+| `credential-policy.ts` | Firestore's rules for the shared Google auth: the accepted kinds, the server-identity opt-in and its sentences, the emulator refusal | No |
 | `requests.ts` | The closed table of the seven read requests | Yes |
 | `transport.ts` | One lane per bearer value, the emulator lane, routing headers, response caps | No |
 | `console/lexer.ts`, `console/parser.ts`, `console/compile.ts`, `console/guard.ts`, `console/generators.ts` | The query chain: tokens, statement, request, the browser-side refusal, generated text | Yes |
@@ -148,8 +149,7 @@ The `password` field holds one of three things:
 
 The fourth form is no credential at all: the server's own identity, for an operator-seeded connection only (section 4.4), or an emulator server (section 4.5).
 Every other `type` (`external_account`, `impersonated_service_account`, `external_account_authorized_user` and any unknown value) is refused with a sentence.
-Every URL a credential file carries (`token_uri`, `auth_uri`, `universe_domain`, `credential_source` and any other) is ignored: the token URL is the constant above.
-The password input strips line feeds, which a key file survives: its line breaks are JSON whitespace and its private key's breaks are `\n` escapes.
+How a credential is parsed, which of its fields are dropped and which endpoints it reaches is the shared Google auth's, in [DB_AUTH.md](../DB_AUTH.md#google).
 
 An empty field on a server without `FIRESTORE_EMULATOR_HOST` is refused, for a connection sent by a browser with:
 
@@ -159,7 +159,11 @@ and for an operator seed on a server without the opt-in with:
 
 > Set FIRESTORE_SERVER_CREDENTIALS=true on the server to let this seeded connection use the server's own Google identity
 
-The token source keeps one token per connection, refreshes it 60 seconds before it expires, shares one refresh among concurrent requests, caches nothing on failure, and never logs or reports a token, an assertion, a key or a key id.
+and for a row of a seed file read in literal mode ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md#literal-values-written-by-a-platform)), with the opt-in on or off, with:
+
+> Paste a service-account key JSON, an authorized-user JSON or an access token: the server's own Google identity is not used for a connection read from a seed file in literal mode (SEED_LITERAL_VALUES)
+
+How tokens are cached, refreshed and refused is the shared token source's, in [DB_AUTH.md](../DB_AUTH.md#tokens).
 
 ### 4.3 IAM and Security Rules
 
@@ -169,8 +173,8 @@ A missing `datastore.entities.list` is not proven on connect; the first listing 
 
 ### 4.4 Server identity
 
-With `FIRESTORE_SERVER_CREDENTIALS=true` on the server and an operator-seeded connection (`managed: true`, which a browser-sent connection can never claim) whose field is empty, Studio reads the server's identity in Application Default Credentials order: the file `GOOGLE_APPLICATION_CREDENTIALS` names, then gcloud's well-known file (`$HOME/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows), then the metadata server (`GCE_METADATA_HOST`, or `metadata.google.internal`).
-A named credentials file that cannot be read is an error, never a fallback to the metadata server.
+With `FIRESTORE_SERVER_CREDENTIALS=true` on the server and an operator-seeded connection (`managed: true`, which a browser-sent connection can never claim), never one read from a seed file in literal mode (`SEED_LITERAL_VALUES`), whose field is empty, Studio reads the server's identity in Application Default Credentials order: the file `GOOGLE_APPLICATION_CREDENTIALS` names, then gcloud's well-known file (`$HOME/.config/gcloud/application_default_credentials.json`, or `%APPDATA%\gcloud\application_default_credentials.json` on Windows), then the metadata server (`GCE_METADATA_HOST`, or `metadata.google.internal`).
+Which read failures move the chain on and which are refused is the shared chain's, in [DB_AUTH.md](../DB_AUTH.md#server-identity).
 On GKE with Workload Identity, the pod's service account is the identity.
 
 ### 4.5 The emulator
@@ -452,6 +456,29 @@ On the no-cost Spark plan, a project that passes a product's no-cost quota has t
 ## 9. Monitoring & health
 
 Health and pulse reuse the connect probe; the overview and the monitoring panels send no request.
+The overview reports the version the server named at connect, so it is the one panel offered; the others answer empty without asking the server, so they are not offered, never read and not drawn.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `firestore` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/document/firestore/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports the version the server named at connect |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 10. Capabilities & labels
 
@@ -519,7 +546,7 @@ Every sentence leads with Google's own message and reason where Google sends the
 
 | Answer | Studio error | What it says |
 | --- | --- | --- |
-| Token endpoint refusal | `AuthenticationError` | Google's `error_description`, never the assertion |
+| Token endpoint refusal | `AuthenticationError` | Google's `error_description`, never the assertion, cut to 300 characters; withheld whole when it holds a form of the credential ([DB_AUTH.md](../DB_AUTH.md#google)) |
 | Probe: Datastore mode | `DatabaseConfigError` | see below |
 | Probe: Firestore API access disabled | `DatabaseConfigError` | see below |
 | Emulator started in Datastore mode | `DatabaseConfigError` | the emulator was started in Datastore mode |

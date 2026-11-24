@@ -20,6 +20,7 @@ import {
   linkSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -30,15 +31,21 @@ import { join } from "node:path";
 import { CATALOG_PREFIX, kv, open, RESERVED_MARKER, table } from "@libredb/libredb";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
+import { forgetStorageLocation } from "@/lib/data-dir";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { type McpStatementArm, mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseConnection } from "@/lib/types";
 import { createSqliteFile, pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+
+/** The notice an answer carrying database content opens with on this file's libredb connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("libredb"));
 
 pinMcpTestEnvironment();
 
@@ -52,19 +59,11 @@ const UNFENCED: McpStatementArm = { ...RUN_LIBREDB_READ_ARM, fence: () => null }
 /** Studio's own state, where the server would keep it: its storage database, sidecars and credential file. */
 const STATE = join(dir, "state");
 const STORAGE = join(STATE, "libredb-storage.db");
-// macOS and Windows file systems fold case, so there a case variant of a name is the same file.
-const FOLDS_CASE = (() => {
-  const probe = join(dir, "case-probe");
-  writeFileSync(probe, "");
-  try {
-    return existsSync(join(dir, "CASE-PROBE"));
-  } finally {
-    rmSync(probe, { force: true });
-  }
-})();
 const BOOTSTRAP = join(STATE, "auth-bootstrap.json");
 const previousStoragePath = process.env.STORAGE_SQLITE_PATH;
 process.env.STORAGE_SQLITE_PATH = STORAGE;
+// Taken again from the setting above: the storage location is kept once per process.
+forgetStorageLocation();
 
 const KV = join(dir, "kv.libredb");
 const MANY = join(dir, "many.libredb");
@@ -137,6 +136,7 @@ afterEach(async () => {
 afterAll(() => {
   if (previousStoragePath === undefined) delete process.env.STORAGE_SQLITE_PATH;
   else process.env.STORAGE_SQLITE_PATH = previousStoragePath;
+  forgetStorageLocation();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -244,7 +244,7 @@ describe("a read", () => {
   test("get answers the key and its value behind the notice, recorded under run_libredb_read", async () => {
     const result = await libredb("get users:1");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:kv",
@@ -304,12 +304,14 @@ describe("a read", () => {
   });
 
   test("reads beside the editor's writer, which holds the lock, and sees what it has committed", async () => {
-    const writer = new LibreDBProvider({
-      id: "editor",
-      name: "editor",
-      type: "libredb",
-      database: SCRATCH,
-    } as DatabaseConnection);
+    const writer = new LibreDBProvider(
+      admittedFileConnection({
+        id: "editor",
+        name: "editor",
+        type: "libredb",
+        database: SCRATCH,
+      } as DatabaseConnection),
+    );
     await writer.connect();
     try {
       expect(existsSync(`${SCRATCH}.lock`)).toBe(true);
@@ -374,12 +376,14 @@ describe("a refusal", () => {
       expect(readFileSync(SCRATCH)).toEqual(before);
       expect(existsSync(`${SCRATCH}.lock`)).toBe(false);
       // The positive control: the same command on the editor's writable handle changes the file.
-      const writer = new LibreDBProvider({
-        id: "editor",
-        name: "editor",
-        type: "libredb",
-        database: SCRATCH,
-      } as DatabaseConnection);
+      const writer = new LibreDBProvider(
+        admittedFileConnection({
+          id: "editor",
+          name: "editor",
+          type: "libredb",
+          database: SCRATCH,
+        } as DatabaseConnection),
+      );
       await writer.connect();
       try {
         await writer.query(statement);
@@ -517,38 +521,25 @@ describe("the data scope", () => {
     expect(existsSync(absent)).toBe(false);
   });
 
-  test.skipIf(FOLDS_CASE)(
-    "a name beside Studio's storage database that is not one of its files is never created by either tool",
-    async () => {
-      const variant = join(STATE, "LIBREDB-STORAGE.DB");
-      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
-      for (const result of [
-        await call("inspect_schema", { connection_id: "seed:variant" }),
-        await libredb("prefix u", {}, "seed:variant"),
-      ]) {
-        expect(result.isError).toBe(true);
-        expect(text(result)).toContain("does not exist");
-      }
-      expect(existsSync(variant)).toBe(false);
-      expect(existsSync(`${variant}.lock`)).toBe(false);
-    },
-  );
-
-  test.skipIf(!FOLDS_CASE)(
-    "on a file system that folds case, a case variant of the storage database's name is refused as that database",
-    async () => {
-      const variant = join(STATE, "LIBREDB-STORAGE.DB");
-      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
-      for (const result of [
-        await call("inspect_schema", { connection_id: "seed:variant" }),
-        await libredb("prefix u", {}, "seed:variant"),
-      ]) {
-        expect(result.isError).toBe(true);
-        expect(text(result)).toContain("This path is reserved for the server's own storage");
-      }
-      expect(existsSync(`${STORAGE}.lock`)).toBe(false);
-    },
-  );
+  // macOS and Windows file systems fold case, so there a case variant of a name is the same file; the check folds it on
+  // every OS.
+  test("a case variant of the storage database's name is refused as that database by both tools, and nothing is created", async () => {
+    const variant = join(STATE, "LIBREDB-STORAGE.DB");
+    writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
+    // On a file system that folds case the variant is the storage database itself, so what holds everywhere is that the
+    // state directory and the database are as they were.
+    const entries = readdirSync(STATE).sort();
+    const storage = readFileSync(STORAGE);
+    for (const result of [
+      await call("inspect_schema", { connection_id: "seed:variant" }),
+      await libredb("prefix u", {}, "seed:variant"),
+    ]) {
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("This path is reserved for the server's own storage");
+    }
+    expect(readdirSync(STATE).sort()).toEqual(entries);
+    expect(readFileSync(STORAGE).equals(storage)).toBe(true);
+  });
 
   test("a reserved path is refused by both tools before anything is created beside it", async () => {
     for (const result of [

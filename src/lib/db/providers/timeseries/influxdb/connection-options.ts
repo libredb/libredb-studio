@@ -12,7 +12,7 @@
  * The credential travels as one `authorization` header, set once per connection, and nowhere else: never in a URL,
  * a query string or a body (E14). `AUTHORIZATION_BY_TYPE` is the whole rule: `influxdb` sends Basic with a user and
  * a password and `Token` with a password alone, which a 1.x server reads as a user's password and a 2.x or 3.x
- * server as a token; `influxdb3` sends `Bearer` and has no user name.
+ * server as a token; `influxdb3` sends `Bearer` and has no user name, which core refuses before the provider is built.
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the host the
  * plaintext rule judges and the identity a certificate is checked against are the tunnel's far end.
@@ -34,15 +34,9 @@ import {
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type QueryWarning,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type QueryWarning, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 
 /** The two connection types this directory serves. */
 export type InfluxType = "influxdb" | "influxdb3";
@@ -61,6 +55,8 @@ export interface InfluxConnectionOptions {
   readonly database: string | undefined;
   /** The provider's in-flight bound, which is the transport's socket bound. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one response may hold. */
   readonly responseCapBytes: number;
   /** The connection's query timeout, which is a statement's deadline. */
@@ -132,7 +128,6 @@ export const INFLUX_CONNECTION_SENTENCES = Object.freeze({
   plaintext:
     "This connection would send its password or token to InfluxDB without TLS, to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS (docs/providers/influxdb.md has a TLS recipe for each version), connect through an SSH tunnel, or tick Send the password without TLS to accept that risk for this connection. Inside a container, localhost is the container itself, not the host. Nothing was sent.",
   userWithoutPassword: "A user without a password sends nothing InfluxDB reads; fill Password or token, or clear User.",
-  influxdb3User: "InfluxDB 3 has no user name: clear User and put the token in Token.",
   userColon: "User holds a colon, which Basic authentication cannot carry; check the user name.",
   malformed: (field: CredentialField): string =>
     `${field} holds a character outside printable ASCII, which an HTTP header cannot carry; re-enter it.`,
@@ -146,8 +141,6 @@ const C0_CONTROL = new RegExp(`[${String.fromCharCode(0)}-${String.fromCharCode(
 const MAX_DATABASE_LENGTH = 255;
 const MAX_QUERY_TIMEOUT_MS = 2_147_483_647;
 
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so InfluxDB was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const DATABASE_TOO_LONG = "The connection's database is longer than 255 characters.";
 const SEED_REFUSED =
   "This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.";
@@ -163,8 +156,9 @@ const DEFAULT_PORT_BY_TYPE: Readonly<Record<InfluxType, number>> = {
 /**
  * The Authorization header value each type sends for a credential, or undefined for none (I6). An empty user or
  * password reads as absent. A credential the type cannot send is refused with a DatabaseConfigError naming the
- * field and never the value: a character outside printable ASCII (C13), a Basic user holding a colon, a user with
- * no password on `influxdb`, and any user on `influxdb3`. `Bearer` is never sent on `influxdb`.
+ * field and never the value: a character outside printable ASCII (C13), a Basic user holding a colon and a user with
+ * no password on `influxdb`. A user on `influxdb3` never arrives: core refuses it before the provider is built.
+ * `Bearer` is never sent on `influxdb`.
  */
 export const AUTHORIZATION_BY_TYPE: Readonly<
   Record<InfluxType, (credential: { readonly user?: string; readonly password?: string }) => string | undefined>
@@ -179,10 +173,9 @@ export const AUTHORIZATION_BY_TYPE: Readonly<
     }
     return `Basic ${Buffer.from(`${user}:${password}`, "utf8").toString("base64")}`;
   },
+  // InfluxDB 3 has no user name: core refuses a connection that sets one before the provider is built
+  // (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so only the token is read.
   influxdb3: (credential) => {
-    if ((credential.user ?? "") !== "") {
-      throw new DatabaseConfigError(INFLUX_CONNECTION_SENTENCES.influxdb3User, "influxdb3");
-    }
     const token = headerText(credential.password, "Token", "influxdb3");
     return token === undefined ? undefined : `Bearer ${token}`;
   },
@@ -198,12 +191,14 @@ function headerText(value: string | undefined, field: CredentialField, type: Inf
 /** Throws DatabaseConfigError for every refusal of spec 6.2, steps 1 to 9; never echoes a value. */
 export function buildInfluxConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly type: InfluxType; readonly queryTimeout: number },
+  context: { readonly type: InfluxType; readonly queryTimeout: number; readonly egress: EgressDecision },
 ): InfluxConnectionOptions {
   const { type } = context;
-  const farEnd = tunnelFarEnd(config, type);
+  const farEnd = config[TUNNEL_FAR_END];
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(type, () => httpOrigin("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type]));
+  const dialled = shared(type, () =>
+    httpOrigin("http", config.host, config.port ?? DEFAULT_PORT_BY_TYPE[type], context.egress),
+  );
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }
@@ -238,6 +233,7 @@ export function buildInfluxConnectionOptions(
     headers: authorization === undefined ? {} : { authorization },
     database,
     maxSockets: INFLUX_MAX_IN_FLIGHT,
+    egress: context.egress,
     responseCapBytes: INFLUX_RESPONSE_CAP_BYTES,
     callTimeoutMs,
     surfaceTimeoutMs: Math.min(INFLUX_SURFACE_TIMEOUT_MS, callTimeoutMs),
@@ -255,14 +251,6 @@ export function buildInfluxConnectionOptions(
 function credentialSecrets(user: string | undefined, password: string | undefined): readonly string[] {
   if (password === undefined) return [];
   return user === undefined ? [password] : [password, `${user}:${password}`];
-}
-
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd, type: InfluxType): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel", type);
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled", type) === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw new DatabaseConfigError(TUNNEL_NOT_OPENED, type);
-  return farEnd;
 }
 
 function unbracketed(host: string): string {
@@ -309,25 +297,9 @@ function callTimeout(queryTimeout: number, type: InfluxType): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(
-  value: unknown,
-  field: string,
-  type: InfluxType,
-): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object", type);
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string, type: InfluxType): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string", type);
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string, type: InfluxType): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false", type);
   return value;
 }
 

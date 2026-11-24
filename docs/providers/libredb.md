@@ -18,6 +18,7 @@
 | **Source** | [`src/lib/db/providers/embedded/libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts) |
 | **Tests** | [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts) |
 | **Write reach** | open: the editor sends `put` and `delete`, and no gate refuses them on a connection |
+| **Failed statement outcome** | unknown: every statement is sent on the engine in Studio's process, and nothing is taken from a pool before it is sent |
 
 ---
 
@@ -46,11 +47,11 @@ generic components render LibreDB-appropriate wording.
 | `query(input)` | A command (`get`/`put`/`delete`/`prefix`/`range`) | `kv` lens methods |
 | `getHealth()` / `getOverview()` | File stats | `fs.statSync` + prefix count |
 | `getStorageStats()` | File path and size on disk | `fs.statSync` |
-| `getSlowQueries()` | Not applicable | returns `[]`, and the Queries panel shows the engine's own sentence ([§9](#getlabels)) |
-| `getActiveSessions()` | Not applicable (single embedded process) | **refuses** — the panel is absent with its reason |
+| `getSlowQueries()` | Not applicable | returns `[]`; the panel is not offered, so the dashboard draws no Queries tab ([Engine facets](#engine-facets)) |
+| `getActiveSessions()` | Not applicable (single embedded process) | **refuses** with its reason; the panel is not offered, so no surface draws it |
 | `runMaintenance(type)` | Not supported (throws) | — |
 | `getTableStats()` | One key-count per namespace | the schema tree's own `kv.range` scan |
-| `getIndexStats()` | No index object exists | **refuses** — the panel is absent with its reason |
+| `getIndexStats()` | No index object exists | **refuses** with its reason; the panel is not offered, so no surface draws it |
 
 ---
 
@@ -101,7 +102,7 @@ out in parallel.
 
 - **State machine** — `setConnected()`, `setError()`, `isConnected()`, `ensureConnected()`.
 - **Instrumentation** — `trackQuery()` (active-query counter) and `measureExecution()` (wall-clock timing).
-- **Helpers** — `formatDuration()`, `getSafeConfig()` (password-stripped logging), `logError()`.
+- **Helpers** — `formatDuration()`, `logError()`.
 - **Default `getMonitoringData()`** — orchestrates `getOverview` + `getPerformanceMetrics` +
   `getSlowQueries` + `getActiveSessions` (+ optional tables/indexes/storage) concurrently.
 
@@ -114,14 +115,15 @@ when a LibreDB connection is actually opened by `createDatabaseProvider()`
 ```ts
 case 'libredb': {
   const { LibreDBProvider } = await import('./providers/embedded/libredb');
-  return new LibreDBProvider(connection, options);
+  return new LibreDBProvider(connection, options, context);
 }
 ```
 
 The package is loaded lazily and the result is cached in a module-level variable — repeated
 `connect()` calls do not re-import. API routes use `getOrCreateProvider()`, which caches the
 connected provider per `connection.id` and evicts it after 30 minutes idle. `disconnect()` is
-called on eviction and on graceful shutdown (`SIGTERM` / `SIGINT`).
+called on eviction and at a shutdown Studio's handler owns on `SIGTERM` / `SIGINT`
+([DISTRIBUTION.md](../DISTRIBUTION.md#stopping-the-server)).
 
 ---
 
@@ -147,12 +149,10 @@ any path, so Test Connection answered "Connected successfully" and left a 0-byte
 named `:memory:` in the server's working directory; `validate()` now throws a `DatabaseConfigError`
 saying LibreDB has no in-memory mode.
 
-A relative path is resolved against the server's working directory, which is where the built-in
-sample connection lives (`./data/sample.libredb` under the default data directory). A path whose
-parent directory does not exist is refused before the file is opened, with "The directory <dir>
-does not exist": the kernel opens its `.lock` sidecar first, so that case used to read as an ENOENT
-about a `<file>.libredb.lock` the user never named. The directory is not created, unlike the SQLite
-provider, because a connection setting should not make directories on the server.
+A relative path is resolved against the server's working directory by Studio's provider factory when it builds the provider (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)), which is where the built-in sample connection lives (`./data/sample.libredb` under the default data directory); the provider opens the absolute path it is handed and resolves nothing itself.
+A path holding a NUL byte is refused there too, with "Invalid database path: NUL bytes are not allowed", before the provider is built.
+A path whose parent directory does not exist is refused before the file is opened, with "The directory <dir> does not exist": the kernel opens its `.lock` sidecar first, so that case used to read as an ENOENT about a `<file>.libredb.lock` the user never named.
+The directory is not created, unlike the SQLite provider, because a connection setting should not make directories on the server.
 
 A path that exists and is not a regular file is refused before the kernel opens anything, by `assertRegularFilesOrMissing` ([`regular-file.ts`](../../src/lib/db/utils/regular-file.ts)), shared with the SQLite and DuckDB providers.
 It asks `stat`, which never opens the path and follows a symlink: the kernel opened a FIFO, took a `.lock` beside it and Test Connection answered "Connected" (measured on bun 1.4.2), while the same FIFO froze the DuckDB provider.
@@ -254,9 +254,8 @@ keeps the stored text too. Every other JSON value is pretty-printed as before.
 Unlike Redis (`INFO`) or PostgreSQL (system catalogs), LibreDB has no server introspection API.
 Overview, table and storage stats derive entirely from `fs.statSync` (file size in bytes) and one
 `kv.range` scan of the keyspace (per-namespace key counts). There is no session list and no index
-object — those two panels are **absent with a sentence** rather than answered empty
-([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)) — and no cache statistics
-either, so there is no cache hit ratio to report
+object: those two methods **refuse with a sentence** rather than answer empty, and neither panel is offered, so neither is read by `getMonitoringData` or drawn ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
+There are no cache statistics either, so there is no cache hit ratio to report
 ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-never-will-be)).
 
 ---
@@ -270,10 +269,13 @@ fields are ignored.
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `database` | Yes | Path to the `.libredb` file on the Studio server's filesystem, absolute or relative to the server's working directory; its directory must exist ([§3.2](#32-no-in-memory-connections)). Throws `DatabaseConfigError` if absent or `:memory:`. |
+| `database` | Yes | Path to the `.libredb` file on the Studio server's filesystem, absolute or relative to the server's working directory when the provider is built; its directory must exist ([§3.2](#32-no-in-memory-connections)). Throws `DatabaseConfigError` if absent or `:memory:`. |
 
 No `host`, `port`, `user`, `password`, or `connectionString` fields are used. The `supportsConnectionString`
 capability is `false`.
+
+LibreDB takes no SSH tunnel: it opens a file on the Studio server, so there is no address to forward to, and the dialog offers no SSH panel for it.
+A stored connection that still carries a tunnel switched on is refused before anything is opened; edit the connection and save it again to clear it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 
 ```ts
 const connection = {
@@ -354,6 +356,13 @@ libredb-platform), Studio automatically creates a connection named **"Sample (Li
 with example data covering each lens (relational table, document collection, raw kv). This gives
 new users a working LibreDB file to explore immediately.
 
+The sample is the committed file [`seed-assets/libredb/sample.libredb`](../../seed-assets/libredb/sample.libredb), built by [`scripts/generate-libredb-sample.mjs`](../../scripts/generate-libredb-sample.mjs) with the `@libredb/libredb` version this repository installs.
+At boot the sample service ([`src/lib/seed/samples.ts`](../../src/lib/seed/samples.ts)) copies it to `<data dir>/sample.libredb`, asynchronously, checked against the size and SHA-256 digest the sample table pins, and never over an existing file; no engine is opened.
+While the copy is in flight the managed-connections API lists the seed id in `pendingSeeds`, and a copy that fails is logged once and listed unavailable with its reason ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+The sample is not offered when `LIBREDB_ENABLED_PROVIDERS` is set and leaves out `libredb`, because the factory refuses every open of a type that list leaves out.
+The server reads that list, the variables below and the sample's path once, at boot; a change takes effect at the next restart.
+An engine or format bump that changes the built bytes fails `tests/unit/seed/libredb-sample-asset.test.ts`; the fix is to rerun the script and update the pin in the sample table.
+
 The sample connection is fully editable and deletable. Once deleted it stays gone — Studio tracks
 dismissed seeds and will not recreate it. It is never injected when Studio runs as an embedded
 package inside libredb-platform.
@@ -363,7 +372,8 @@ package inside libredb-platform.
 | Variable | Default | Notes |
 |----------|---------|-------|
 | `LIBREDB_EMBEDDED_SAMPLE` | `true` | Set to `"false"` to disable the sample connection entirely. With `KUBERNETES_ACCESS_REVIEW` on the default is off, and only `"true"` enables it. |
-| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Optional override for the path of the generated sample file. |
+| `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Optional override for the path of the sample file, a copy of the committed asset. |
+| `SEED_ASSETS_DIR` | None: set by every launcher, and by `bun dev` and `bun start` ([`docs/DISTRIBUTION.md`](../DISTRIBUTION.md#built-in-sample-assets)) | The directory the committed asset, `libredb/sample.libredb`, is copied from; a relative value is resolved against the working directory. Unset or blank, the sample is listed unavailable as `asset-directory-unset` unless its file is already in place, and the working directory is never used instead. |
 
 ### Connection string
 
@@ -598,8 +608,9 @@ A `Database` handle publishes exactly `close` and `transact`. A `Kv` publishes
 constraint anywhere in it.** None of those is declared, and none is declared-and-zero: a kind
 the engine cannot have draws a folder whose zero badge reads as a measurement of an empty
 database rather than as the absence of the concept (standing ruling 4). The same fact is
-already stated on the monitoring side, where the Indexes panel is ABSENT with its own sentence
-rather than empty ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
+already stated on the monitoring side, where `getIndexStats()` refuses with its own sentence
+rather than answering empty, and the index panel is not offered
+([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)).
 
 **But the answer is NOT "keys and nothing else", which is what it would have been before
 0.0.2.** Read cold, a database carries a persisted catalog, and that catalog is a registry of
@@ -874,8 +885,10 @@ summarises, and the row click that opens data runs the same thing.
 
 #### Nothing here opens a second handle
 
-This is the one engine that declares `singleWriterFile`: `open({ path })` takes an exclusive
-`<path>.lock` sidecar and a second open of the same file throws `LOCKED`. Every object read goes
+LibreDB is one of the engines `SINGLE_WRITER_FILE` in
+[`compatibility.ts`](../../src/lib/db/compatibility.ts) names, which the single-writer borrow reads:
+`open({ path })` takes an exclusive `<path>.lock` sidecar and a second open of the same file throws
+`LOCKED`. Every object read goes
 through the `this.db` / `this.kv` handle `connect()` already holds, and nothing in the object
 surface calls `open` at all. A second handle for an object read would lock the session out of its
 own database (`findOpenSingleWriterProvider`). The suite pins it: it asserts that a second `open`
@@ -950,8 +963,8 @@ There is no embedded stats API.
 |--------|--------|---------|
 | `getHealth()` | `fs.statSync` | `activeConnections: 1`, file size as `databaseSize` (`"N/A"` when unmeasurable — [§7.3](#73-when-the-file-size-is-not-measurable)), `cacheHitRatio: "N/A"` |
 | `getOverview()` | `fs.statSync` + schema scan | `version`, file size, namespace count as `tableCount`, `indexCount: 0`; `databaseSizeBytes` is **omitted** and `databaseSize` stays `"N/A"`, never a `0`, when the stat fails — [§7.3](#73-when-the-file-size-is-not-measurable) |
-| `getPerformanceMetrics()` | — | `{}` — nothing is measurable here |
-| `getSlowQueries()` | — | `[]`; the Queries panel renders `slowQueriesEmptyState` |
+| `getPerformanceMetrics()` | none | `{}`: nothing is measurable here, so the panel is not offered |
+| `getSlowQueries()` | none | `[]`, so the panel is not offered: never read and not drawn |
 | `getActiveSessions()` | — | **throws** `LIBREDB_ACTIVE_SESSIONS_REFUSAL` — no session registry exists |
 | `getStorageStats()` | `fs.statSync` | one entry: file path + size; `sizeBytes` is a **required** number, so it stays `0` (never absent) when the stat fails — [§7.3](#73-when-the-file-size-is-not-measurable) |
 | `getTableStats()` | the schema tree's scan | one row per namespace: lens as `schemaName`, key count as `rowCount`, no bytes |
@@ -960,9 +973,8 @@ There is no embedded stats API.
 `getOverview().tableCount` calls the object surface internally — it is a full scan, so it honors the
 10 000-key cap and may undercount for very large files.
 
-Because `getPerformanceMetrics()` returns an empty object, every card on the Overview and Performance
-tabs — *Cache Hit*, *Buffer*, *Deadlocks* — reads `N/A` beside *Not measured* rather than a
-percentage or a `0` badged healthy.
+Because `getPerformanceMetrics()` returns an empty object, the performance panel is not offered: the dashboard draws no Performance tab and no *Cache Hit* or *Performance* card on the Overview for LibreDB.
+The panels the engine offers are its row in `ENGINE_FACETS` ([Engine facets](#engine-facets)).
 
 ### 7.1 There is no cache hit ratio, and there never will be
 
@@ -973,7 +985,7 @@ reads from is this process's own memory rather than a buffer pool with hits and 
 no counter to read and nothing a ratio would be a ratio *of*. A number this provider invents is worse
 than a gap, because the panel cannot tell it apart from a measurement (the rule
 [#424](https://github.com/libredb/libredb-studio/issues/424) exists to enforce). Both sites now omit
-it, permanently: the *Cache Hit* card reads `N/A` / *Not measured*, and the agent's health tool
+it, permanently: the performance panel is not offered, so no *Cache Hit* card is drawn, and the agent's health tool
 reports the string `"N/A"`.
 
 ### 7.2 The two panels that are absent, and the one that is empty
@@ -1009,10 +1021,12 @@ separately:
   database has no indexes yet*, which invites creating one; this engine can never have one.
   `getOverview().indexCount: 0` is not the same claim and stays — there genuinely are zero index
   objects, and that is a measurement.
-- **`getSlowQueries()` — stays empty, deliberately.** `QueriesTab` renders
-  `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider declares one
-  ([§9](#getlabels)), so LibreDB's own sentence already reaches the user without an error. This is
-  the one always-empty panel that is allowed to stay empty.
+- **`getSlowQueries()` stays empty, deliberately.** LibreDB keeps no statistics about finished
+  statements in this version, the answer asks the engine nothing, and the panel is not offered, so
+  `QueriesTab` is not drawn for LibreDB and no label explains an empty one.
+
+None of the three panels with no source (performance, slow queries and sessions) nor the index panel is offered in LibreDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)): `getMonitoringData` never calls these methods and lists the panels in `notOffered`, and the dashboard draws no Performance, Queries or Sessions tab.
+The refusals and the label above are what each method and label answers when read directly.
 
 `getHealth()` keeps answering with `activeSessions: []` where the panel refuses, and that is
 deliberate: `POST /api/db/test-connection` calls it and the connection dialog's **Save** is gated on
@@ -1043,6 +1057,28 @@ own call site — the one place in this file that keeps the old fallback, becaus
 other honest answer. `size`, the formatted string beside it, still reads `"N/A"` through the same
 `fileSizeHuman()` every other caller uses, so the row is not internally consistent between its two size
 fields on a failed read — a required-field limitation, not an oversight.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `libredb` offers is its row in `ENGINE_FACETS`, declared in [`libredb-engine-facets.ts`](../../src/lib/db/providers/embedded/libredb-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` refuses with `LIBREDB_ACTIVE_SESSIONS_REFUSAL` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` refuses with `LIBREDB_INDEX_STATS_REFUSAL` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `storage`, `health`.
 
 ---
 
@@ -1118,12 +1154,8 @@ with no wildcard, repeating in words what `tablesAreDerivedGroupings` says in a 
 is this engine's grouping, so every entry under it is reached with `prefix users:` — the form
 `generateTableQuery` already emits when a person clicks the same row.
 
-One label is about the monitoring tab instead: `slowQueriesEmptyState` -> *"LibreDB keeps no
-statistics about finished statements in this version."* `getSlowQueries()` answers `[]`
-unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the
-Queries panel is always empty here — and this label is why that emptiness is allowed to stand where
-the Sessions and Indexes panels refuse instead. Its sentence was hardcoded to PostgreSQL's
-`pg_stat_statements` advice (#463).
+No label is about the monitoring tabs.
+`getSlowQueries()` answers `[]` unconditionally ([§7.2](#72-the-two-panels-that-are-absent-and-the-one-that-is-empty)), so the slow-query panel is not offered, the dashboard draws no Queries tab here, and nothing would draw a sentence for it.
 
 ### SQL writing
 
@@ -1147,6 +1179,7 @@ The provider raises the shared error classes from
 | Situation | Error |
 |-----------|-------|
 | Missing `database` path at construction | `DatabaseConfigError` |
+| A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` (*"This connection's file could not be checked against the server's own storage files: "* and the filesystem's message), raised by the provider factory before the provider is built |
 | `@libredb/libredb` package not installed | `DatabaseConfigError` — install instructions in message |
 | Operation before `connect()` | `DatabaseConfigError` (via `ensureConnected()`) |
 | `connect()` fails to open the file | `ConnectionError` |
@@ -1364,6 +1397,10 @@ await provider.disconnect();
 
 ## 13. Known limitations & future work
 
+- **No editor statement timeout of the provider's own, and no cancel.**
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+  This provider cannot cancel a run, so Studio sends no cancel, and the command runs on until it ends.
 - **No multi-key transactions in the query UI.** The `@libredb/libredb` kernel exposes a
   `transact()` method for atomic multi-key writes, but it is not surfaced through the provider's
   command grammar in v1. Deferred to a future release.
@@ -1413,10 +1450,13 @@ The refusal reason it prints, verbatim:
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
+Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
+macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.
 
 ## 15. Agent mode: a read-only handle per statement
 
@@ -1501,7 +1541,7 @@ The engine has no principal, so a LibreDB seed proves none and carries none, and
 |---|---|---|
 | Every key of the file the seed names, values included | Yes: this is the connection's data | None; opt in a seed whose file holds only what its roles may read |
 | Another file on the server | No | The tool takes no `database`, and a seed names one path, which the operator chooses and a client cannot change |
-| Studio's storage database, its `-wal` and `-shm` files, `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The target check at open (`isReservedStoragePath`, [`src/lib/data-dir.ts`](../../src/lib/data-dir.ts)), by resolved path and by file identity, so a symbolic or hard link to one is refused too, before anything is opened |
+| Studio's storage database, its `-wal` and `-shm` files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`), `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The provider factory's check before the provider is built (`admittedFileConnection`, [`src/lib/db/provider-files.ts`](../../src/lib/db/provider-files.ts)), by resolved path with letter case and Unicode normalization folded and by file identity, so another case's spelling of one, or a symbolic or hard link to one, is refused too, before anything is opened |
 | A file that is not a LibreDB file, such as a copy of the storage database | No | The kernel's own format check, which refuses it as `NOT_A_DATABASE` and leaves it untouched |
 | The file's reserved internal namespace (the catalog, under U+0000) | No | Each key read is dropped from the answer when `isReservedKey` holds for it, so a `get` of a catalog key and a `range` or `prefix` across it answer no reserved row |
 | A file that does not exist | No | Both tools open an existing file only: `run_libredb_read` through the read-only adapter, and `inspect_schema` through the same adapter under the writer's lock, which is taken only once the file was opened, so neither creates the file or its `.lock`, and a later read still meets the missing file |

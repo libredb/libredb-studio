@@ -3,6 +3,7 @@
  * answer against the budget. The provider wiring is in tests/integration/db/clickhouse-provider.test.ts.
  */
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import { QueryError } from "@/lib/db/errors";
 import {
   AGENT_ENVELOPE_ALLOWANCE_BYTES,
@@ -14,7 +15,7 @@ import {
 } from "@/lib/db/providers/sql/clickhouse/agent-read";
 import { CLICKHOUSE_SQL_GRAMMAR } from "@/lib/db/providers/sql/clickhouse/sql-grammar";
 import type { ClickHouseQueryResult } from "@/lib/db/providers/sql/clickhouse/transport";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/db/sql-grammar/shared";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 const BUDGET = { statementTimeoutMs: 2_500, maxResultRows: 3, maxResultBytes: 200 };
@@ -38,6 +39,16 @@ function refusal(run: () => unknown): string {
   } catch (error) {
     expect(error).toBeInstanceOf(QueryError);
     return (error as Error).message;
+  }
+  throw new Error("expected a refusal");
+}
+
+/** The kind of the error `run` throws. */
+function refusedKind(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
   }
   throw new Error("expected a refusal");
 }
@@ -122,6 +133,9 @@ describe("rowOverflowRefusal", () => {
     expect(rowOverflowRefusal(message, { ...BUDGET, maxResultRows: 50 }, "SELECT 1").message).toBe(
       "Read-only execution exceeded the row budget: 65 rows > 50 allowed",
     );
+    expect(errorKind(rowOverflowRefusal(message, { ...BUDGET, maxResultRows: 50 }, "SELECT 1"))).toBe(
+      "row-budget-refusal",
+    );
   });
 
   test("names one past the budget when the message carries no count", () => {
@@ -175,6 +189,7 @@ describe("readAgentAnswer", () => {
     expect(refusal(() => readAgentAnswer(answer({ rows }), BUDGET, "x", 1))).toBe(
       "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
     );
+    expect(refusedKind(() => readAgentAnswer(answer({ rows }), BUDGET, "x", 1))).toBe("row-budget-refusal");
   });
 
   test("refuses rows past the byte budget", () => {
@@ -182,5 +197,6 @@ describe("readAgentAnswer", () => {
     expect(refusal(() => readAgentAnswer(answer({ rows }), BUDGET, "x", 1))).toBe(
       "Read-only execution exceeded the byte budget: 311 bytes > 200 allowed",
     );
+    expect(refusedKind(() => readAgentAnswer(answer({ rows }), BUDGET, "x", 1))).toBe("byte-budget-refusal");
   });
 });

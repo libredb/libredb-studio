@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KAFKA_AGENT_SHAPE, KAFKA_AGENT_WITHHELD } from "@/lib/db/providers/stream/kafka/agent-surface";
-import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   type KafkaClusterMetadata,
@@ -19,9 +19,10 @@ import {
   type KafkaTopicMetadata,
 } from "@/lib/db/providers/stream/kafka/client";
 import { KAFKA_TOPIC_COLUMNS } from "@/lib/db/providers/stream/kafka/objects";
-import { ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { errorKind } from "@/lib/db/error-record";
 
 const CONNECTION = {
   id: "k1",
@@ -163,6 +164,7 @@ describe("refused before anything is sent", () => {
     const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 8}', budget));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toStartWith(ROW_BUDGET_PREFIX);
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(calls).toEqual([]);
   });
 
@@ -171,6 +173,7 @@ describe("refused before anything is sent", () => {
     const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 201}', BUDGET));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toStartWith(ROW_BUDGET_PREFIX);
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(calls).toEqual([]);
   });
 });

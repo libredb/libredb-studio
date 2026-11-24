@@ -13,6 +13,10 @@ import { join, resolve } from "node:path";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { clearProviderCache } from "@/lib/db/factory";
+import { providerAuthor, type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { providerTextNotice, type ToolResult } from "@/lib/mcp/output";
+import type { DatabaseType } from "@/lib/types";
+import type { ManagedConnection } from "@/lib/seed";
 import { resetCache } from "@/lib/seed";
 
 const ROOT = resolve(import.meta.dir, "../..");
@@ -87,13 +91,17 @@ export function createSqliteFile(path: string, statements: readonly string[]): v
 /** A file-backed DuckDB database, checkpointed so a read-only handle sees every statement. */
 export async function createDuckdbFile(path: string, statements: readonly string[]): Promise<void> {
   const { DuckDBProvider } = await import("@/lib/db/providers/sql/duckdb");
-  const writer = new DuckDBProvider({
-    id: "fixture-writer",
-    name: "fixture writer",
-    type: "duckdb",
-    database: path,
-    createdAt: new Date(),
-  });
+  const { admittedFileConnection } = await import("@/lib/db/provider-files");
+  // Admitted as Studio's provider factory admits it, so the writer opens the file core decided (FND-2 slice 3).
+  const writer = new DuckDBProvider(
+    admittedFileConnection({
+      id: "fixture-writer",
+      name: "fixture writer",
+      type: "duckdb",
+      database: path,
+      createdAt: new Date(),
+    }),
+  );
   await writer.connect();
   try {
     for (const statement of statements) await writer.query(statement);
@@ -217,4 +225,25 @@ export async function resetMcpTestState(): Promise<void> {
   resetCache();
   clearRateLimitState();
   getServerAuditBuffer().clear();
+}
+
+/**
+ * A fake MCP context's `textScrub`: the scrub of the listed connection, which is what the real one answers for a
+ * connection with no Vault reference.
+ */
+export async function fakeTextScrub(listed: ManagedConnection): Promise<ProviderTextScrub> {
+  return providerTextScrub(listed, "profiled");
+}
+
+/**
+ * The sentence of a refusal a provider wrote, as MCP answers one (`providerTextError` in src/lib/mcp/output.ts): two
+ * blocks, the notice naming `type`'s provider and then the sentence, which this returns. Any other shape answers "",
+ * so a check that reads it fails rather than matching a refusal that came without the notice. Studio's own refusals
+ * are one block and are read as they are.
+ */
+export function providerRefusalText(result: ToolResult, type: DatabaseType): string {
+  const [notice, sentence, ...rest] = result.content;
+  if (rest.length > 0 || notice === undefined || sentence === undefined) return "";
+  if (!("text" in notice) || notice.text !== providerTextNotice(providerAuthor(type))) return "";
+  return "text" in sentence ? sentence.text : "";
 }

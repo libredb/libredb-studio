@@ -10,7 +10,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import {
+  ByteBudgetRefusal,
+  CutValueRefusal,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  SerialisedResultRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
 import { TransportError, type NodeRequest, type NodeResponse, type NodeTransport } from "@/lib/db/http/node-transport";
 import {
   agentFailure,
@@ -30,9 +39,20 @@ import {
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { MTConnectProvider, MTCONNECT_STATEMENT_LANGUAGE } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+
+/** What a read rejects with, settled before anything is asserted on it. */
+async function caught(read: Promise<unknown>): Promise<Error> {
+  const outcome = await read.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  if (!(outcome instanceof Error)) throw new Error("the read was answered");
+  return outcome;
+}
 
 const FIXTURES = path.resolve(import.meta.dir, "..", "..", "..", "fixtures", "mtconnect");
 const capture = (name: string): string => readFileSync(path.join(FIXTURES, `${name}.xml`), "utf8");
@@ -91,7 +111,12 @@ async function opened(
   answers?: Readonly<Record<string, Answer>>,
 ): Promise<MTConnectProvider> {
   const transport = standIn(answers);
-  const provider = new MTConnectProvider(connection(), {}, execution, () => transport);
+  const provider = new MTConnectProvider(
+    connection(),
+    {},
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    () => transport,
+  );
   await provider.connect();
   return provider;
 }
@@ -153,7 +178,9 @@ describe("which handle answers an agent read", () => {
   });
 
   test("a closed handle refuses with the connection sentence", async () => {
-    const provider = new MTConnectProvider(connection(), {}, AGENT, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     await expect(provider.queryReadOnly("/current", BUDGET)).rejects.toThrow("Provider is not connected");
   });
 
@@ -509,9 +536,10 @@ describe("what an agent read sends and answers", () => {
       capture("asset-tool").replace("<?xml", '<!DOCTYPE x [<!ENTITY e "boom">]><?xml'),
     ]) {
       const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/asset/TOOL-1722": hostile });
-      await expect(provider.queryReadOnly("/asset/TOOL-1722", BUDGET)).rejects.toThrow(
-        MTCONNECT_AGENT_FAILURE_SENTENCES.refusedByRule,
-      );
+      // oxlint-disable-next-line no-await-in-loop -- each hostile answer is read on its own handle, one after the other.
+      const error = await caught(provider.queryReadOnly("/asset/TOOL-1722", BUDGET));
+      expect(error.message).toContain(MTCONNECT_AGENT_FAILURE_SENTENCES.refusedByRule);
+      expect(errorKind(error)).toBe("query");
     }
   });
 
@@ -683,18 +711,18 @@ describe("what is refused before anything is sent, in agent mode's words with th
 describe("budgets refuse, never cut", () => {
   test("an observation answer one row past the budget is refused; the same budget plus one answers it", async () => {
     const provider = await opened();
-    await expect(provider.queryReadOnly("/current", { ...BUDGET, maxResultRows: 15 })).rejects.toThrow(
-      `${ROW_BUDGET_PREFIX}: 16 rows > 15 allowed`,
-    );
+    const error = await caught(provider.queryReadOnly("/current", { ...BUDGET, maxResultRows: 15 }));
+    expect(error.message).toContain(`${ROW_BUDGET_PREFIX}: 16 rows > 15 allowed`);
+    expect(errorKind(error)).toBe("row-budget-refusal");
     const whole = await provider.queryReadOnly("/current", { ...BUDGET, maxResultRows: 16 });
     expect(whole.rowCount).toBe(16);
   });
 
   test("a device model answer past the budget is refused with its count", async () => {
     const provider = await opened();
-    await expect(provider.queryReadOnly("/probe", { ...BUDGET, maxResultRows: 15 })).rejects.toThrow(
-      MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(16, 15),
-    );
+    const error = await caught(provider.queryReadOnly("/probe", { ...BUDGET, maxResultRows: 15 }));
+    expect(error.message).toContain(MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(16, 15));
+    expect(errorKind(error)).toBe("row-budget-refusal");
     await expect(provider.queryReadOnly("/probe", { ...BUDGET, maxResultRows: 16 })).resolves.toBeDefined();
   });
 
@@ -704,18 +732,20 @@ describe("budgets refuse, never cut", () => {
       '<CuttingTool assetId="TOOL-2" deviceUuid="LIBREDB-1722" timestamp="2026-10-14T23:57:41.021Z"/></Assets>',
     );
     const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": two });
-    await expect(provider.queryReadOnly("/assets", { ...BUDGET, maxResultRows: 1 })).rejects.toThrow(
-      MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(2, 1),
-    );
+    const error = await caught(provider.queryReadOnly("/assets", { ...BUDGET, maxResultRows: 1 }));
+    expect(error.message).toContain(MTCONNECT_AGENT_FAILURE_SENTENCES.overRows(2, 1));
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a result past the byte budget is refused in Studio's words; at the budget it is answered", async () => {
     const provider = await opened();
     const answered = await provider.queryReadOnly("/asset/TOOL-1722", BUDGET);
     const bytes = Buffer.byteLength(JSON.stringify(answered.rows));
-    await expect(provider.queryReadOnly("/asset/TOOL-1722", { ...BUDGET, maxResultBytes: bytes - 1 })).rejects.toThrow(
+    const error = await caught(provider.queryReadOnly("/asset/TOOL-1722", { ...BUDGET, maxResultBytes: bytes - 1 }));
+    expect(error.message).toContain(
       `Read-only execution exceeded the byte budget: ${bytes} bytes > ${bytes - 1} allowed. This is Studio's refusal, not the agent's answer.`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     await expect(
       provider.queryReadOnly("/asset/TOOL-1722", { ...BUDGET, maxResultBytes: bytes }),
     ).resolves.toBeDefined();
@@ -739,6 +769,7 @@ describe("budgets refuse, never cut", () => {
     expect(thrown).toBeInstanceOf(QueryError);
     expect((thrown as Error).message).toBe(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(50));
     expect((thrown as Error).message).toStartWith(TIME_BUDGET_PREFIX);
+    expect(errorKind(thrown)).toBe("time-budget-refusal");
   });
 });
 
@@ -771,7 +802,7 @@ describe("failures are worded by their category, never in the agent's text", () 
 
   test("a model read the agent refuses is worded the same way", async () => {
     const provider = await opened();
-    const refusing = new MTConnectProvider(connection(), {}, AGENT, () =>
+    const refusing = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
       standIn({ ...DEFAULT_ANSWERS, "/probe": errorCapture("error-invalid-uri") }),
     );
     // The handle opened on a good model, and the agent refuses the model read of the next agent read.
@@ -830,16 +861,16 @@ describe("failures are worded by their category, never in the agent's text", () 
 
   test("an answer past the route's byte cap is Studio's refusal", async () => {
     const provider = await failing(() => Promise.reject(new TransportError("too-large", "too large")));
-    await expect(provider.queryReadOnly("/current", BUDGET)).rejects.toThrow(
-      MTCONNECT_AGENT_FAILURE_SENTENCES.tooLarge,
-    );
+    const error = await caught(provider.queryReadOnly("/current", BUDGET));
+    expect(error.message).toContain(MTCONNECT_AGENT_FAILURE_SENTENCES.tooLarge);
+    expect(errorKind(error)).toBe("query");
   });
 
   test("a transport time-out of its own is the time budget", async () => {
     const provider = await failing(() => Promise.reject(new TransportError("timeout", "timed out")));
-    await expect(provider.queryReadOnly("/current", BUDGET)).rejects.toThrow(
-      MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(BUDGET.statementTimeoutMs),
-    );
+    const error = await caught(provider.queryReadOnly("/current", BUDGET));
+    expect(error.message).toContain(MTCONNECT_AGENT_FAILURE_SENTENCES.deadline(BUDGET.statementTimeoutMs));
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("the client's request ceiling keeps Studio's own sentence, which quotes nothing of the agent", () => {
@@ -849,6 +880,17 @@ describe("failures are worded by their category, never in the agent's text", () 
       "Studio refuses to send this request: it is too long.",
     );
     expect(agentFailure(ceiling, false, 10)).toBeInstanceOf(MtconnectAgentError);
+    expect(errorKind(agentFailure(ceiling, false, 10))).toBe("query");
+  });
+
+  test.each(
+    [RowBudgetRefusal, ByteBudgetRefusal, TimeBudgetRefusal, CutValueRefusal, SerialisedResultRefusal].map(
+      (Class) => [Class.name, Class] as const,
+    ),
+  )("a budget refusal passes through agentFailure as it is, even when the read timed out: %s", (_name, Class) => {
+    const refusal = new Class(`refused ${crypto.randomUUID()}`, "mtconnect");
+    expect(agentFailure(refusal, true, 10)).toBe(refusal);
+    expect(agentFailure(refusal, false, 10)).toBe(refusal);
   });
 
   test("anything that is not a failure of the read is passed through as itself", async () => {
@@ -929,12 +971,16 @@ describe("an agent-mode handle's other surfaces", () => {
   });
 
   test("a reading on a handle that is not open says so", async () => {
-    const provider = new MTConnectProvider(connection(), {}, OPERATIONS, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     await expect(provider.getHealth()).rejects.toThrow("Provider is not connected");
   });
 
   test("plan mode drafts from the console's request line, which names what is never drafted", () => {
-    const provider = new MTConnectProvider(connection(), {}, AGENT, () => standIn());
+    const provider = new MTConnectProvider(connection(), {}, { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS }, () =>
+      standIn(),
+    );
     expect(provider.getLabels().statementLanguage).toBe(MTCONNECT_STATEMENT_LANGUAGE);
     expect(MTCONNECT_STATEMENT_LANGUAGE).toContain("one MTConnect request line this editor runs, GET implied");
     expect(MTCONNECT_STATEMENT_LANGUAGE).toContain("no PUT, no POST, no /cancel and no streaming parameter");

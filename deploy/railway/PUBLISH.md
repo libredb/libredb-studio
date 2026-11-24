@@ -35,6 +35,7 @@ The `${{ secret(...) }}` values are generated once, when the template is deploye
 | `STORAGE_PROVIDER` | `sqlite` | Server-side storage for saved connections & settings: 'local' (browser only, no server persistence) \| 'sqlite' (file on the volume) \| 'postgres' (multi-node). Keep 'sqlite'. |
 | `STORAGE_SQLITE_PATH` | `/app/data/libredb-storage.db` | SQLite file path on the mounted volume (/app/data). Keep the default. |
 | `PORT` | `3000` | Port the app listens on. Must match the HTTP Proxy Port. Leave as 3000. |
+| `RAILWAY_DEPLOYMENT_DRAINING_SECONDS` | `30` | Seconds Railway waits between SIGTERM and SIGKILL when it stops or replaces a deployment. Studio's shutdown takes up to 25 s, so keep 30. |
 
 ### Optional variables (add via "+ New Variable" and mark **Optional**)
 

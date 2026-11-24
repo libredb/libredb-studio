@@ -1,4 +1,4 @@
-import type { DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * SQLite primary result codes for a statement the library refused (#1427): `SQLITE_ERROR` (1,

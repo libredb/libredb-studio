@@ -26,8 +26,10 @@
 #                                      pruned to the addons this target loads
 #   - THIRD_PARTY_NOTICES.txt       -> notices for the crates compiled into
 #                                      db2-node's addons
-#   - seed-assets/                  -> vendored sample DB templates (fs-read
-#                                      at runtime, not seen by file tracing)
+#   - seed-assets/                  -> the built-in samples' assets (read at
+#                                      runtime from SEED_ASSETS_DIR, which
+#                                      every launcher sets; not seen by file
+#                                      tracing)
 #   - data/                         -> default SQLite storage directory
 #
 # Usage: scripts/build-standalone-payload.sh <output-dir> [--smoke]
@@ -252,12 +254,24 @@ cp -R node_modules/oracledb "$PAYLOAD_DIR/node_modules/oracledb"
 # addon only loads under initOracleClient(), which needs an Oracle Instant
 # Client that no build runner has. What IS checkable is the failure the copy
 # exists to prevent - the addon for THIS target missing from the payload.
-if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"${ARCH}".node >/dev/null 2>&1; then
-  echo "node_modules/oracledb has no Thick-mode addon for ${OS}-${ARCH} in build/Release." >&2
-  echo "The published package ships one per platform, so this normally means an incomplete" >&2
-  echo "node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
-  exit 1
-fi
+# The targets the installed driver ships no addon for are named here, so their
+# payloads run Thin mode only (oracledb 26.0.0 dropped darwin-x64; see
+# docs/providers/oracle.md section 4.4); tests/unit/packaging-oracledb-thick.test.ts
+# holds this list to the installed package's build/Release.
+ORACLEDB_THIN_ONLY_TARGETS="darwin-x64"
+case " ${ORACLEDB_THIN_ONLY_TARGETS} " in
+  *" ${OS}-${ARCH} "*)
+    echo "==> node_modules/oracledb ships no Thick-mode addon for ${OS}-${ARCH}: this payload runs Oracle in Thin mode only"
+    ;;
+  *)
+    if ! ls "$PAYLOAD_DIR"/node_modules/oracledb/build/Release/oracledb-*-"${OS}"-"${ARCH}".node >/dev/null 2>&1; then
+      echo "node_modules/oracledb has no Thick-mode addon for ${OS}-${ARCH} in build/Release." >&2
+      echo "The published package ships one per platform, so this normally means an incomplete" >&2
+      echo "node_modules - reinstall with 'bun install --frozen-lockfile'." >&2
+      exit 1
+    fi
+    ;;
+esac
 
 # The Db2 driver (#786). No copy here, unlike the three above: db2-node's
 # index.js reaches its eight prebuilt addons through static require literals,
@@ -277,13 +291,18 @@ fi
 # root, next to LICENSE (prune-standalone-payload.sh keeps both).
 cp THIRD_PARTY_NOTICES.txt "$PAYLOAD_DIR/THIRD_PARTY_NOTICES.txt"
 
-# Vendored sample database templates (seed-assets/): read at runtime relative
-# to the payload root, so output file tracing never includes them — copy
-# explicitly (mirrors the Dockerfile runner stage COPY).
-if [ ! -f seed-assets/sqlite/employee.db ]; then
-  echo "seed-assets/sqlite/employee.db not found - the repo checkout is incomplete" >&2
-  exit 1
-fi
+# The built-in sample assets (seed-assets/): read at runtime from
+# SEED_ASSETS_DIR, which every launcher sets to this directory of its payload
+# (docs/DISTRIBUTION.md, "Built-in sample assets"), so output file tracing
+# never includes them: copy explicitly (mirrors the Dockerfile runner stage
+# COPY). Every asset the sample table
+# (src/lib/seed/samples.ts) pins must be here.
+for asset in seed-assets/sqlite/employee.db seed-assets/libredb/sample.libredb; do
+  if [ ! -f "$asset" ]; then
+    echo "$asset not found - the repo checkout is incomplete" >&2
+    exit 1
+  fi
+done
 rm -rf "$PAYLOAD_DIR/seed-assets"
 cp -R seed-assets "$PAYLOAD_DIR/seed-assets"
 
@@ -308,11 +327,13 @@ if [ "$RUN_SMOKE" = "true" ]; then
   mkdir -p "$SMOKE_DIR" "$STORAGE_DIR"
   # The native node.exe on Windows cannot resolve Git Bash's POSIX-style
   # mktemp paths (/tmp/... would land on the current drive root), so every
-  # path handed to node goes through cygpath there; NODE_STORAGE_DIR stays
-  # the plain POSIX path everywhere else.
+  # path handed to node goes through cygpath there; NODE_STORAGE_DIR and
+  # NODE_SEED_ASSETS_DIR stay the plain POSIX paths everywhere else.
   NODE_STORAGE_DIR="$STORAGE_DIR"
+  NODE_SEED_ASSETS_DIR="$SMOKE_DIR/seed-assets"
   if [ "$OS" = "win32" ]; then
     NODE_STORAGE_DIR="$(cygpath -w "$STORAGE_DIR")"
+    NODE_SEED_ASSETS_DIR="$(cygpath -w "$SMOKE_DIR/seed-assets")"
     # Flat zip: nothing to strip. Use the System32 bsdtar explicitly - it
     # reads zip natively, while Git Bash's own `tar` is GNU tar (no zip).
     # Env-var casing differs between shells (SystemRoot vs SYSTEMROOT).
@@ -347,6 +368,7 @@ if [ "$RUN_SMOKE" = "true" ]; then
       PORT="$PORT" \
       STORAGE_PROVIDER=sqlite \
       STORAGE_SQLITE_PATH="$NODE_STORAGE_DIR/storage.db" \
+      SEED_ASSETS_DIR="$NODE_SEED_ASSETS_DIR" \
       node server.js
   ) >"$STAGE_DIR/server.log" 2>&1 &
   SERVER_PID=$!
@@ -373,26 +395,26 @@ if [ "$RUN_SMOKE" = "true" ]; then
 
   echo "==> Smoke: /api/db/health returned 200"
 
-  # The embedded SQLite sample seeds asynchronously after boot: the vendored
-  # template must have shipped in the payload and the copy must land in the
-  # data dir. This catches a payload missing seed-assets/ on every platform
-  # without needing a browser (the full Playwright gate is
+  # Both built-in samples are copied asynchronously after boot: their assets
+  # must have shipped in the payload and both copies must land in the data dir.
+  # This catches a payload missing seed-assets/ on every platform without
+  # needing a browser (the full Playwright gate is
   # scripts/channel-embedded-sample-e2e.sh).
   SAMPLE_SEEDED=false
   for _ in $(seq 1 30); do
-    if [ -f "$STORAGE_DIR/sample-employees.db" ]; then
+    if [ -f "$STORAGE_DIR/sample-employees.db" ] && [ -f "$STORAGE_DIR/sample.libredb" ]; then
       SAMPLE_SEEDED=true
       break
     fi
     sleep 1
   done
   if [ "$SAMPLE_SEEDED" != "true" ]; then
-    echo "Smoke test FAILED: embedded SQLite sample was not seeded within 30s" >&2
+    echo "Smoke test FAILED: the embedded samples were not both copied within 30s" >&2
     echo "---- server.log ----" >&2
     cat "$STAGE_DIR/server.log" >&2 || true
     exit 1
   fi
-  echo "==> Smoke: embedded SQLite sample seeded"
+  echo "==> Smoke: both embedded samples copied"
 fi
 
 echo "==> Done: $OUT_DIR/$ARCHIVE"

@@ -378,6 +378,8 @@ let slowlogRefusal: string | null = null;
 /** Server error replies to `SCAN` and `SELECT`, as an ACL user without the command is refused each. */
 let scanReplyRefusal: string | null = null;
 let selectRefusal: string | null = null;
+/** When set, `SELECT` rejects with this driver error, as ioredis rejects a command whose reply it could not read. */
+let selectFailure: Error | null = null;
 
 /** Keys whose `TYPE` the server refuses, as an ACL user without `+type` is refused. */
 const typeRefusals = new Set<string>();
@@ -427,6 +429,12 @@ let scanPages: string[] | null = null;
  * omitted rather than forwarded as an empty string.
  */
 const scanArgv: Array<{ cursor: string | number; args: (string | number)[] }> = [];
+
+/** When set, called as `SCAN` reaches the server, before it answers: a test's way to act while a read is in flight. */
+let beforeScan: (() => void) | null = null;
+
+/** When set, called as `INFO` reaches the server, before it answers, as `beforeScan` is for `SCAN`. */
+let beforeInfo: (() => void) | null = null;
 
 /**
  * The keys the walk tests page through, in the order the mock's scan answers them.
@@ -552,7 +560,10 @@ const pipelineBatches: string[][] = [];
 mock.module("ioredis", () => {
   class MockRedis {
     private _config: unknown;
-    private _db: number;
+    /** The database this connection is in, by the last `SELECT` the server accepted on it. */
+    private _db = 0;
+    /** The `db` option it was given, which `connect()` selects as the real driver's connect handler does. */
+    private readonly _dbOption: number;
     /**
      * Whether this connection has an open `MULTI`, tracked per INSTANCE because that is
      * where a real server tracks it: measured on redis 7.4.11 through ioredis 5.11.1, a
@@ -565,7 +576,7 @@ mock.module("ioredis", () => {
       this._config = config;
       const options = (config ?? {}) as Record<string, unknown>;
       capturedRedisOptions.push(options);
-      this._db = typeof options.db === "number" ? options.db : 0;
+      this._dbOption = typeof options.db === "number" ? options.db : 0;
       openedClients.push(this._state);
     }
 
@@ -586,7 +597,14 @@ mock.module("ioredis", () => {
         for (const error of connectFailure) for (const listener of this._errorListeners) listener(error);
         throw new Error("Connection is closed.");
       }
-      this._state.database = this._db;
+      // The real driver's connect handler: with the `db` option set, it sends a `SELECT` of its own that no caller
+      // awaits, and a refusal of it is only an `error` event, the connection staying in database 0 (measured, see
+      // `openClient` in redis.ts).
+      if (this._dbOption !== 0) {
+        await this.select(this._dbOption).catch((error: Error) => {
+          for (const listener of this._errorListeners) listener(error);
+        });
+      }
       // The real driver's `ready` handler: with the `readOnly` option set, it sends `READONLY`
       // on every successful (re)connect and swallows a refusal itself (#2031).
       const options = (this._config ?? {}) as Record<string, unknown>;
@@ -605,6 +623,7 @@ mock.module("ioredis", () => {
      */
     async select(db: number) {
       if (selectRefusal !== null) throw replyError(selectRefusal);
+      if (selectFailure !== null) throw selectFailure;
       if (db >= Number(databasesReply[1])) throw replyError("ERR DB index is out of range");
       this._db = db;
       this._state.database = db;
@@ -612,6 +631,8 @@ mock.module("ioredis", () => {
     }
 
     async info() {
+      beforeInfo?.();
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       if (infoRefusal !== null) throw new Error(infoRefusal);
       return infoOverride ?? MOCK_INFO_STRING;
     }
@@ -654,6 +675,8 @@ mock.module("ioredis", () => {
     }
 
     async scan(cursor: string | number, ...args: (string | number)[]): Promise<[string, string[]]> {
+      beforeScan?.();
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       scanCalls += 1;
       scanArgv.push({ cursor, args });
       if (scanRefusal !== null) throw new Error(scanRefusal);
@@ -737,6 +760,8 @@ mock.module("ioredis", () => {
 
     /** The server's canned answer to one command, before the driver decodes it. */
     private async answer(command: string, ...args: string[]): Promise<unknown> {
+      // A closed client fails every command without sending it, with ioredis's own sentence.
+      if (this._state.disconnected) throw new Error("Connection is closed.");
       const cmd = command.toUpperCase();
       capturedCalls.push({ command: cmd, args });
       // Simulate a Redis-side error (e.g. unknown command / wrong arity)
@@ -800,9 +825,7 @@ mock.module("ioredis", () => {
 // ============================================================================
 
 const { RedisProvider } = await import("@/lib/db/providers/keyvalue/redis");
-const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError, isRetryableError } = await import(
-  "@/lib/db/errors"
-);
+const { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError } = await import("@/lib/db/errors");
 const { logger } = await import("@/lib/logger");
 
 // ============================================================================
@@ -894,6 +917,31 @@ describe("RedisProvider", () => {
       expect(capturedRedisOptions[capturedRedisOptions.length - 1]).toMatchObject({ readOnly: true });
     });
 
+    // A command written to a connection that then closed may already have run on the server: ioredis's default sends it
+    // again on the next connection, so an INCR the user ran once could run twice. With the option off, the patched
+    // driver fails it with "Connection is closed." instead (docs/providers/redis.md section 4.6).
+    test("asks ioredis not to send a command in flight again on the next connection", async () => {
+      capturedRedisOptions.length = 0;
+      await provider.connect();
+      await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 });
+      expect(capturedRedisOptions).toHaveLength(2);
+      for (const options of capturedRedisOptions) {
+        expect(options).toMatchObject({ autoResendUnfulfilledCommands: false });
+      }
+    });
+
+    // ioredis records with a command queued while it reconnects the database the client is in, and resets that to its
+    // `db` option on every connection, so a connection that reconnects is given its database there: a command queued
+    // after the next connection opens and before it is ready then runs in that database, never in database 0
+    // (docs/providers/redis.md section 4.6).
+    test("gives each connection that reconnects its database as ioredis's db option", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "2" });
+      capturedRedisOptions.length = 0;
+      await provider.connect();
+      await provider.scanKeysPage({ cursor: "0", count: 10, database: 3 });
+      expect(capturedRedisOptions.map((options) => options.db)).toEqual([2, 3]);
+    });
+
     /*
      * A DATABASE THE SERVER DOES NOT HAVE IS REFUSED, NOT READ AS 0 (#1095).
      *
@@ -911,6 +959,28 @@ describe("RedisProvider", () => {
       expect(provider.isConnected()).toBe(false);
       // Nothing was left open in database 0 to be read from by accident.
       expect(openedClients.every((client) => client.disconnected)).toBe(true);
+    });
+
+    // ioredis rejects a command whose reply its parser could not read with the parser's own RangeError, suffixed
+    // ". Please report this." (docs/providers/redis.md section 4.6). On the SELECT of connect() that is a failed
+    // connect, named as one, never the driver's untyped error.
+    test("a SELECT whose reply the driver could not read fails the connect as a ConnectionError naming it", async () => {
+      selectFailure = new RangeError("Invalid array length. Please report this.");
+      try {
+        provider = new RedisProvider({ ...baseConfig, database: "1" });
+        openedClients.length = 0;
+
+        const error = await provider.connect().then(
+          () => new Error("connect() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
+        expect(provider.isConnected()).toBe(false);
+        expect(openedClients.every((client) => client.disconnected)).toBe(true);
+      } finally {
+        selectFailure = null;
+      }
     });
 
     test("a session database that is not a number is refused before anything is opened", async () => {
@@ -973,7 +1043,6 @@ describe("RedisProvider", () => {
         expect(error.message).toBe(
           "Failed to connect to Redis: WRONGPASS invalid username-password pair or user is disabled.",
         );
-        expect(isRetryableError(error)).toBe(false);
         // The driver's error, and with it the AUTH command, is carried nowhere.
         expect(error.message).not.toContain("not-the-password");
         expect(JSON.stringify(error)).not.toContain("not-the-password");
@@ -993,7 +1062,6 @@ describe("RedisProvider", () => {
         const error = await refusal([networkError("connect ETIMEDOUT", "ETIMEDOUT")]);
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: connect ETIMEDOUT");
-        expect(isRetryableError(error)).toBe(true);
       });
 
       test("no password against a server that requires one is an AuthenticationError", async () => {
@@ -1006,7 +1074,6 @@ describe("RedisProvider", () => {
         const error = await refusal([networkError("connect ECONNREFUSED 127.0.0.1:40009", "ECONNREFUSED")]);
         expect(error).toBeInstanceOf(ConnectionError);
         expect(error.message).toBe("Failed to connect to Redis: connect ECONNREFUSED 127.0.0.1:40009");
-        expect(isRetryableError(error)).toBe(true);
       });
 
       test("an unknown host is a ConnectionError naming the host", async () => {
@@ -1074,6 +1141,130 @@ describe("RedisProvider", () => {
         connectFailure = [replyError("WRONGPASS invalid username-password pair or user is disabled.")];
         await expect(provider.countObjects(["0"])).rejects.toBeInstanceOf(AuthenticationError);
       });
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // A reconnect's SELECT of the database, refused by the server
+  // --------------------------------------------------------------------------
+
+  /*
+   * ioredis sends the SELECT of the `db` option itself on every connection, and a refusal of it is only an `error`
+   * event: the connection goes on in database 0. After the connect, the server can refuse it on a reconnect, for good when
+   * its ACL or its database count changed in between, or for a while (a busy script, a full client table, a refused
+   * sign-in), so the provider closes that client: the command waiting on it fails with the refusal instead of running in
+   * database 0, and the session's provider reports itself disconnected, so the next request connects again
+   * (docs/providers/redis.md section 4.6).
+   */
+  describe("a reconnect's SELECT of the database refused by the server", () => {
+    /** The error event ioredis emits for its own SELECT the server refused, carrying the command it answered. */
+    const refusedSelect = (message: string, database: number): Error =>
+      Object.assign(replyError(message), { command: { name: "select", args: [String(database)] } });
+
+    afterEach(() => {
+      beforeScan = null;
+      beforeInfo = null;
+    });
+
+    test("closes the session's connection and reports it disconnected; the command waiting fails with the refusal", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "1" });
+      errorListeners.length = 0;
+      openedClients.length = 0;
+      await provider.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      const refusal = "Redis refused database 1 after a reconnect: ERR DB index is out of range";
+      try {
+        // The overview's INFO waits for the connection that follows a reset, whose SELECT the server refuses.
+        beforeInfo = () => errorListeners[0][0](refusedSelect("ERR DB index is out of range", 1));
+        await expect(provider.getOverview()).rejects.toThrow(refusal);
+        expect(warn.mock.calls).toEqual([["[Redis] ERR DB index is out of range", { provider: "redis" }]]);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(openedClients).toEqual([{ database: 1, disconnected: true }]);
+      expect(provider.isConnected()).toBe(false);
+
+      // The next call on this provider is refused before anything is sent; a connect opens the database again.
+      capturedCalls.length = 0;
+      await expect(provider.query("GET k")).rejects.toThrow("Provider is not connected. Call connect() first.");
+      expect(capturedCalls).toEqual([]);
+      beforeInfo = null;
+      await provider.connect();
+      expect(provider.isConnected()).toBe(true);
+      expect((await provider.query("GET k")).rows).toEqual([{ result: "hello-world" }]);
+    });
+
+    test("a transient reply to the reconnect's SELECT closes the connection the same way", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "1" });
+      errorListeners.length = 0;
+      await provider.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        beforeInfo = () => errorListeners[0][0](refusedSelect("BUSY Redis is busy running a script.", 1));
+        const error = await provider.getOverview().then(
+          () => new Error("getOverview() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis refused database 1 after a reconnect: BUSY Redis is busy running a script.");
+      } finally {
+        warn.mockRestore();
+      }
+      expect(provider.isConnected()).toBe(false);
+    });
+
+    test("fails an object read whose own connection's SELECT is refused on a reconnect with the refusal", async () => {
+      await provider.connect();
+      scanCalls = 0;
+      beforeScan = () => errorListeners[errorListeners.length - 1][0](refusedSelect("ERR DB index is out of range", 1));
+      const error = await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 }).then(
+        () => new Error("scanKeysPage() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis refused database 1 after a reconnect: ERR DB index is out of range");
+      expect(scanCalls).toBe(0);
+      // The object read's own connection is closed; the session's stays open and serving.
+      expect(provider.isConnected()).toBe(true);
+    });
+
+    test("on an agent-mode handle, names the command refused and never the ACL user", async () => {
+      const agent = new RedisProvider({ ...baseConfig, database: "1" }, {}, { readOnly: true, sendsStatements: false });
+      errorListeners.length = 0;
+      await agent.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        beforeInfo = () =>
+          errorListeners[0][0](
+            refusedSelect("NOPERM User agent_reader has no permissions to run the 'select' command", 1),
+          );
+        await expect(agent.getOverview()).rejects.toThrow(
+          "Redis refused database 1 after a reconnect: the connection's ACL user does not hold the 'select' command it needs (NOPERM).",
+        );
+      } finally {
+        warn.mockRestore();
+      }
+      await agent.disconnect();
+    });
+
+    test("a reset, or a refusal of any other command, is only logged and the connection keeps serving", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "1" });
+      errorListeners.length = 0;
+      openedClients.length = 0;
+      await provider.connect();
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        errorListeners[0][0](Object.assign(new Error("Connection is closed."), { command: { name: "select" } }));
+        errorListeners[0][0](
+          Object.assign(replyError("NOAUTH Authentication required."), { command: { name: "auth", args: [] } }),
+        );
+        expect(warn).toHaveBeenCalledTimes(2);
+      } finally {
+        warn.mockRestore();
+      }
+      expect(openedClients).toEqual([{ database: 1, disconnected: false }]);
+      expect(provider.isConnected()).toBe(true);
+      expect((await provider.query("GET k")).rows).toEqual([{ result: "hello-world" }]);
     });
   });
 
@@ -1338,6 +1529,38 @@ describe("RedisProvider", () => {
       scanRefusal = "NOPERM this user has no permissions to run the 'scan' command";
 
       await expect(provider.scanKeysPage({ cursor: "0", count: 10 })).rejects.toThrow(/NOPERM/);
+    });
+
+    // ioredis rejects a command whose reply its parser could not read with the parser's own RangeError, and a command in
+    // flight on a connection that closed with "Connection is closed." (docs/providers/redis.md section 4.6). The object
+    // read opens a connection of its own, so a SELECT that fails that way is a failed connect, named as connect() names
+    // it, and a read that fails that way is the editor's "Redis error: ...", never the driver's untyped error.
+    test("a SELECT whose reply the driver could not read fails the read as a ConnectionError naming it", async () => {
+      selectFailure = new RangeError("Invalid array length. Please report this.");
+      try {
+        openedClients.length = 0;
+        const error = await provider.scanKeysPage({ cursor: "0", count: 10, database: 1 }).then(
+          () => new Error("scanKeysPage() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(ConnectionError);
+        expect(error.message).toBe("Failed to connect to Redis: Invalid array length. Please report this.");
+        expect(openedClients).toEqual([{ database: 0, disconnected: true }]);
+      } finally {
+        selectFailure = null;
+      }
+    });
+
+    test("a read the driver failed without a reply fails as a QueryError naming the driver's message", async () => {
+      scanRefusal = "Connection is closed.";
+      openedClients.length = 0;
+      const error = await provider.scanKeysPage({ cursor: "0", count: 10 }).then(
+        () => new Error("scanKeysPage() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
+      expect(openedClients).toEqual([{ database: 0, disconnected: true }]);
     });
 
     test("answers each key's type, so a row can be read without a second request", async () => {
@@ -1987,7 +2210,7 @@ describe("RedisProvider", () => {
           { name: "value", type: sample, nullable: true, isPrimary: false },
           { name: "type", type: sample, nullable: false, isPrimary: false },
         ];
-        const out = generateSelectQuery(["user:*"], columns, provider.getCapabilities());
+        const out = generateSelectQuery(["user:*"], columns, "redis", provider.getCapabilities());
         const lines = out
           .split("\n")
           .map((l) => l.trim())
@@ -2031,7 +2254,7 @@ describe("RedisProvider", () => {
       // Plain-form `DEL "say"hi""` tokenizes to `sayhi` — a DIFFERENT key. The
       // generator must fall back to the lossless JSON form for such a line.
       const calls = await runGeneratedLines(
-        generateSelectQuery(['say"hi"'], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery(['say"hi"'], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       for (const call of calls) {
         expect(call.args[0]).toBe('say"hi"');
@@ -2041,7 +2264,7 @@ describe("RedisProvider", () => {
 
     test("a key containing a single quote reaches the driver unmangled (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateSelectQuery(["it's"], KEY_COLUMNS("hash"), provider.getCapabilities()),
+        generateSelectQuery(["it's"], KEY_COLUMNS("hash"), "redis", provider.getCapabilities()),
       );
       for (const call of calls) {
         expect(call.args[0]).toBe("it's");
@@ -2050,28 +2273,28 @@ describe("RedisProvider", () => {
 
     test("a quoted prefix group SCANs the pattern it meant to (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(['a"b:*'], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(['a"b:*'], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", 'a"b:*', "COUNT", "50"] }]);
     });
 
     test("a key containing whitespace still round-trips in plain form (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["my key"], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(["my key"], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "GET", args: ["my key"] }]);
     });
 
     test("an ordinary key still round-trips in plain form (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["user:1"], provider.getCapabilities(), KEY_COLUMNS("zset")),
+        generateTableQuery(["user:1"], "redis", provider.getCapabilities(), KEY_COLUMNS("zset")),
       );
       expect(calls).toEqual([{ command: "ZRANGE", args: ["user:1", "0", "-1", "WITHSCORES"] }]);
     });
 
     test("a glob-escaped prefix reaches the driver with its backslash intact (#427)", async () => {
       const calls = await runGeneratedLines(
-        generateTableQuery(["a[b:*"], provider.getCapabilities(), KEY_COLUMNS("string")),
+        generateTableQuery(["a[b:*"], "redis", provider.getCapabilities(), KEY_COLUMNS("string")),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\\[b:*", "COUNT", "50"] }]);
     });
@@ -2123,7 +2346,7 @@ describe("RedisProvider", () => {
 
     test("a blank line ends what a run reads: the cheatsheet runs only its first command", async () => {
       capturedCalls.length = 0;
-      await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), provider.getCapabilities()));
+      await provider.query(generateSelectQuery(["user:*"], KEY_COLUMNS("string"), "redis", provider.getCapabilities()));
       expect(capturedCalls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "user:*", "COUNT", "50"] }]);
     });
 
@@ -2204,7 +2427,7 @@ describe("RedisProvider", () => {
     test("a node name containing a newline cannot inject a command (#427)", async () => {
       const name = "a\nDEL user:1 x";
       const calls = await runWholeBuffer(
-        generateSelectQuery([name], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery([name], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
@@ -2212,20 +2435,22 @@ describe("RedisProvider", () => {
     test("a node name containing CRLF cannot inject a command (#427)", async () => {
       const name = "a\r\nDEL user:1 x";
       const calls = await runWholeBuffer(
-        generateSelectQuery([name], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery([name], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
 
     test("a node name containing a newline and a quote cannot inject a command (#427)", async () => {
       const name = 'a\nDEL "user:1" x';
-      const calls = await runWholeBuffer(generateSelectQuery([name], KEY_COLUMNS("hash"), provider.getCapabilities()));
+      const calls = await runWholeBuffer(
+        generateSelectQuery([name], KEY_COLUMNS("hash"), "redis", provider.getCapabilities()),
+      );
       expect(calls).toEqual([{ command: "TYPE", args: [name] }]);
     });
 
     test("a newline-bearing prefix group still SCANs its own pattern (#427)", async () => {
       const calls = await runWholeBuffer(
-        generateSelectQuery(["a\nDEL user:1 x:*"], KEY_COLUMNS("string"), provider.getCapabilities()),
+        generateSelectQuery(["a\nDEL user:1 x:*"], KEY_COLUMNS("string"), "redis", provider.getCapabilities()),
       );
       expect(calls).toEqual([{ command: "SCAN", args: ["0", "MATCH", "a\nDEL user:1 x:*", "COUNT", "50"] }]);
     });
@@ -2275,7 +2500,7 @@ describe("RedisProvider", () => {
 
     for (const { name, node, sample, expected } of wholeBufferCases) {
       test(`the whole cheatsheet buffer for ${name} runs exactly its first block (#427)`, async () => {
-        const buffer = generateSelectQuery([node], KEY_COLUMNS(sample), provider.getCapabilities());
+        const buffer = generateSelectQuery([node], KEY_COLUMNS(sample), "redis", provider.getCapabilities());
         const calls = await runWholeBuffer(buffer);
         expect(calls).toEqual([expected]);
       });
@@ -2403,6 +2628,29 @@ describe("RedisProvider", () => {
       discardFailure = new Error("Connection is closed.");
 
       await expect(provider.endOpenQueryTransaction()).rejects.toThrow("Connection is closed.");
+    });
+
+    // A reset while PING or DISCARD waits is not sent again (redisOptions), so the driver fails it; the route that
+    // ends the transaction answers that failure as the editor does (docs/providers/redis.md section 4.6).
+    test("a PING the driver failed raises the editor's QueryError", async () => {
+      pingFailure = new Error("Connection is closed.");
+      const error = await provider.endOpenQueryTransaction().then(
+        () => new Error("endOpenQueryTransaction() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
+    });
+
+    test("a DISCARD the driver failed raises the editor's QueryError", async () => {
+      await provider.query("MULTI");
+      discardFailure = new Error("Connection is closed.");
+      const error = await provider.endOpenQueryTransaction().then(
+        () => new Error("endOpenQueryTransaction() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
     });
 
     test("raises when the reading itself is refused", async () => {
@@ -2573,6 +2821,22 @@ describe("RedisProvider", () => {
       }
     });
 
+    // A reset while INFO waits is not sent again (redisOptions), so the driver fails it; the overview names that
+    // failure as the editor does (docs/providers/redis.md section 4.6).
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getOverview().then(
+          () => new Error("getOverview() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
+    });
+
     test("reads the connection limit under Dragonfly's underscored max_clients", async () => {
       infoOverride = MOCK_INFO_STRING.replace("maxclients:10000", "max_clients:64000");
       try {
@@ -2598,6 +2862,20 @@ describe("RedisProvider", () => {
       expect(typeof metrics.cacheHitRatio).toBe("number");
       // hitRatio: 900/(900+100)*100 = 90.0
       expect(metrics.cacheHitRatio).toBe(90);
+    });
+
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getPerformanceMetrics().then(
+          () => new Error("getPerformanceMetrics() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
     });
   });
 
@@ -2896,6 +3174,20 @@ describe("RedisProvider", () => {
       expect(unbounded.usagePercent).toBeUndefined();
     });
 
+    test("an INFO the driver failed raises the editor's QueryError", async () => {
+      infoRefusal = "Connection is closed.";
+      try {
+        const error = await provider.getStorageStats().then(
+          () => new Error("getStorageStats() resolved"),
+          (failure: Error) => failure,
+        );
+        expect(error).toBeInstanceOf(QueryError);
+        expect(error.message).toBe("Redis error: Connection is closed.");
+      } finally {
+        infoRefusal = null;
+      }
+    });
+
     test("returns memory usage info", async () => {
       const stats = await provider.getStorageStats();
       expect(stats).toBeArray();
@@ -3040,7 +3332,9 @@ describe("RedisProvider", () => {
     ])("refuses an overview whose DBSIZE answered %s, rather than showing 0 keys", async (_label, reply) => {
       dbsizeOverride = reply;
       try {
-        await expect(provider.getOverview()).rejects.toThrow("Redis answered no key count for the overview");
+        await expect(provider.getOverview()).rejects.toThrow(
+          new QueryError("Redis answered no key count for the overview", "redis"),
+        );
       } finally {
         dbsizeOverride = NO_OVERRIDE;
       }
@@ -3400,9 +3694,16 @@ describe("RedisProvider", () => {
       await expect(provider.listContainers()).rejects.toThrow(/LOADING/);
     });
 
-    test("a transport failure on CONFIG GET still raises rather than listing one database", async () => {
+    // A reset while CONFIG GET waits is not sent again (redisOptions), so the driver fails it, and the database list
+    // names that failure as the editor does (docs/providers/redis.md section 4.6).
+    test("a transport failure on CONFIG GET raises the editor's QueryError rather than listing one database", async () => {
       configFailure = new Error("Connection is closed.");
-      await expect(provider.listContainers()).rejects.toThrow("Connection is closed.");
+      const error = await provider.listContainers().then(
+        () => new Error("listContainers() resolved"),
+        (failure: Error) => failure,
+      );
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Redis error: Connection is closed.");
     });
 
     test("counts both kinds, seeded at zero before either read answers", async () => {
@@ -3646,7 +3947,11 @@ describe("RedisProvider", () => {
         objectKinds: [...(base.objectKinds ?? []), { id: "stream", role: "relation", label: "S", labelPlural: "S" }],
       });
 
-      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(/has no command that lists it/);
+      // Exact: the read raised it inside its own connection, and a typed error it raises there passes unchanged, never
+      // wrapped as "Redis error: ...".
+      await expect(provider.listObjects(["0"], "stream")).rejects.toThrow(
+        new QueryError('Redis declares the kind "stream" but has no command that lists it', "redis"),
+      );
       // And the same kind counts as unavailable rather than as zero, carrying that sentence.
       const counts = await provider.countObjects(["0"]);
       expect(counts.stream).toEqual({

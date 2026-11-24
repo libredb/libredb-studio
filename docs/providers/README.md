@@ -64,6 +64,8 @@ in lockstep with the code (see the tri-sync rule in [`../../CLAUDE.md`](../../CL
   — code, this doc, and `tests/integration/db/<type-id>-provider.test.ts` — must stay in sync in the
   same PR (the *provider tri-sync invariant*).
   **Agent leg:** a type-id whose `AGENT_STATEMENT_LANGUAGE` row is non-null also keeps, in the same PR: Code: `src/lib/agent/languages/<statement-language>/engines/<type-id>.ts` plus its client row in `languages/<statement-language>/engines/client.ts` · Docs: the `Agent language pack` subsection of its doc here · Tests: `tests/unit/lib/agent/engine-docs.test.ts`, plus the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`.
+- Each doc carries one unnumbered `Engine facets` subsection in its monitoring section, at the heading level the doc's own scheme gives it, which links the engine's `ENGINE_FACETS` row module and states each of the seven monitoring panels as offered or not, with what an unoffered panel's method answers, in one `Maintenance operations offered:` line the maintenance operations the row offers, or `none`, and in one `Agent readings offered:` line the curated `inspect_operations` readings the row offers agent mode, or `none`, held to the row by `tests/unit/db/engine-facets/docs.test.ts`.
+  `tests/unit/db/engine-facets/docs.test.ts` holds it to the row.
 - An agent-capable engine's doc carries an `Agent language pack` subsection in its agent or capabilities section, numbered in the doc's own scheme, naming its statement-language family and every member of its overlay.
 - Each doc follows the same ~15-section shape: Overview → Architecture → Design decisions →
   Connection → Query interface → Schema → Monitoring → Maintenance → Capabilities & labels → Error
@@ -215,12 +217,38 @@ PlanetScale, Azure Cosmos DB and Amazon DocumentDB. Their status is tracked in
 
 ## SSH tunnels: bastion host key verification
 
-Any connection but a Kafka, BigQuery, Firestore or Snowflake one may reach its database through an SSH tunnel (`sshTunnel` on the connection,
-[`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)). This is the only layer that can verify who
-terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the
-connection's own SSL settings say nothing about the bastion.
-A Kafka connection refuses a tunnel: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry, so the dialog offers no SSH panel for it and the provider refuses a tunnelled connection ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
-BigQuery, Firestore and Snowflake offer no SSH panel either: each reaches its vendor's own API hosts over TLS, and its provider doc says why a tunnel is not offered.
+A connection may reach its database through an SSH tunnel (`sshTunnel` on the connection, [`src/lib/ssh/tunnel.ts`](../../src/lib/ssh/tunnel.ts)).
+This is the only layer that can verify who terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the connection's own SSL settings say nothing about the bastion.
+
+**Which engines take a tunnel.**
+Studio refuses a connection whose SSH tunnel is on, before it dials anything, for each engine below; the reason is the engine's row of `SSH_TUNNEL_REFUSAL` in [`src/lib/db/compatibility.ts`](../../src/lib/db/compatibility.ts), and the refusal says it:
+- `kafka`: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
+- `cassandra`: the driver reaches every other node of the ring at the address that node advertises ([cassandra.md §4.4](./cassandra.md#44-no-ssh-tunnel)).
+- `couchbase`: queries go to the query service, on another port, at the address the cluster's node map advertises ([couchbase.md §4.6](./couchbase.md#46-no-ssh-tunnel)).
+- `rabbitmq`: the management API and AMQP use two ports, and one tunnel carries one ([rabbitmq.md](./rabbitmq.md)).
+- `bigquery`, `firestore`, `snowflake`: each reaches its vendor's own API hosts over TLS, several addresses where a tunnel forwards one.
+- `snmp`: SNMP reads travel as UDP datagrams, and the tunnel forwards TCP.
+- `sqlite`, `duckdb`, `libredb`: the engine opens a file on the Studio server, so there is no address to forward to; a stored connection that still carries a tunnel switched on is cleared by editing it and saving it again.
+
+The connection dialog reads the same row through `offersSshTunnel`: it offers the SSH panel, and writes `sshTunnel`, exactly where the row takes a tunnel, so a tunnel left switched on in the dialog's state is never saved on a connection of these engines.
+A route per node, which Apache Cassandra and Couchbase would need, is a later change; until then neither dials around the tunnel.
+
+**Who decides, and what a provider receives of the tunnel.**
+Studio, not the provider, decides and dials the tunnel: `decideTunnel` in [`src/lib/db/tunnel-decision.ts`](../../src/lib/db/tunnel-decision.ts) runs on every entry point of [`src/lib/db/factory.ts`](../../src/lib/db/factory.ts) before any cache lookup, bastion dial or provider build.
+It refuses, by name and never quoting a value, an `sshTunnel` that is not plain data, an `enabled` that is not true, false or absent, a `host` or `username` that is not text, and, on a tunnel that is on, an empty bastion host, a bastion port that is not a whole number from 1 to 65535, an `authMethod` other than `password` or `privateKey`, an engine the row above refuses, and a connection that names no `host` and `port` to forward to.
+A tunnel that is switched off is never refused for its engine or for a missing host and port.
+On the paths that connect through one, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel`, core opens a tunnel that is on before it builds the provider.
+A provider built on those paths receives the tunnel's outcome: the local endpoint in `host` and `port`, the far end under `TUNNEL_FAR_END`, and the tunnel's route under `TUNNEL_ROUTE`, and never `sshTunnel`.
+A provider built from a connection whose tunnel is switched off receives the route too, so its edit-plan seal matches the record's.
+The tunnel is one case of the general rule: a provider receives a copy of the connection holding only the fields its engine declares and core's markers (`providerFields` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts)).
+That is its connection fields, its seed-only fields, a connection string where the engine accepts one, the TLS settings where it takes them, `host` and `port` where it takes a tunnel, and Studio's own `id`, `name`, `type`, `queryTimeout`, `readOnly`, `managed` and `seedId`.
+A field the engine refuses by name (`REFUSED_CONNECTION_FIELDS`, such as a user on Qdrant) is refused by core with its declared sentence before any provider is built, so no provider receives one either.
+So no provider receives the agent credential, Studio's display fields or another engine's field; an execution-profile provider receives the agent credential as its own `user` and `password`.
+`createDatabaseProvider`, the function an embedder of the package calls, builds no provider from a connection whose tunnel is on unless core opened that tunnel (`TUNNEL_FAR_END` present), so no provider can reach the database's own address past a tunnel the connection asked for ([Direct Provider Creation](../DATABASE_PROVIDERS.md#direct-provider-creation)).
+Studio's own reads of a provider's capabilities and labels, which never connect, go through `readProviderDeclarations`, which builds the provider from such a connection without opening its tunnel and hands back data, never the provider.
+No provider reads `sshTunnel`, and a source scan holds it.
+On every path the provider receives no `sshTunnel`, so no tunnel credential: `createDatabaseProvider` builds every provider from `providerConnection` in [`src/lib/db/provider-connection.ts`](../../src/lib/db/provider-connection.ts), which leaves the field out ([SECURITY.md control 3.41](../SECURITY.md)).
+A provider that frames the route, as Databend's sign-in latch does, reads it through `requireTunnelRoute` in [`src/lib/db/utils/require-tunnel-route.ts`](../../src/lib/db/utils/require-tunnel-route.ts), which refuses a connection that carries a tunnel's far end without it.
 
 **The policy is trust-on-first-use (TOFU), pinned per connection.** Not "refuse anything unknown":
 requiring a pasted fingerprint before the first connection makes tunnelling unusable for someone
@@ -268,9 +296,14 @@ Three deliberate limits, so nobody reads more into this than it does:
 
 The fingerprint is stored and displayed **in the clear**, on purpose. It is public key material: it
 authenticates the bastion to Studio, grants no access, unlocks nothing, and it has to be readable for
-the comparison above to be possible at all. `src/lib/storage/secret-fields.ts` classifies it
-`public` alongside the certificates in `ssl`; the tunnel's password, private key and passphrase stay
-encrypted at rest.
+the comparison above to be possible at all.
+`src/lib/storage/secret-fields.ts` classifies it `identity` alongside the certificates in `ssl`.
+It stays readable, and it is bound into every sealed credential of the connection, the database password included, not only the tunnel's ([STORAGE.md](../STORAGE.md#where-a-sealed-value-opens)).
+The tunnel's password, private key and passphrase stay encrypted at rest.
+
+**One forward per connection, bastion, far end, credential and pin.** Studio pools each open tunnel forward and hands it to every provider of the same connection that asks for the same bastion route and far end, and a forward is shared only by calls that present the credential it was opened with and pin the same host key (or none).
+A changed credential (another auth method, password, private key or passphrase) or another pin opens its own forward.
+The forward opened with the old credential is not closed by the change: it stays open, shared by calls that present the old credential, until the connection's own teardown closes every forward under it, which is removing the connection's providers, or the idle sweep once no provider of the connection is left, or the end of its SSH session.
 
 ## Connecting to the container fixture
 

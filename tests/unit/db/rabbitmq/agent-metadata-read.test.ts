@@ -24,6 +24,7 @@ import {
 } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { parseReadRequest } from "@/lib/db/providers/stream/rabbitmq/request";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 262_144, statementTimeoutMs: 10_000 };
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -99,6 +100,8 @@ describe("the stops that refuse rather than cut", () => {
     expect(caught).toBeInstanceOf(QueryError);
     expect((caught as QueryError).message).toBe(sentence);
     expect((caught as QueryError).query).toBe("the statement");
+    // The deadline is the time budget's refusal; every other stop is Studio's own bound or the broker's end.
+    expect(errorKind(caught)).toBe(stop.kind === "deadline" ? "time-budget-refusal" : "query");
   });
 
   test("the sentences name the limits and say the answer was refused, never what a message held", () => {
@@ -126,6 +129,7 @@ describe("the failures", () => {
     expect(worded).toBeInstanceOf(QueryError);
     expect(worded?.message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
     expect(worded?.query).toBe("the statement");
+    expect(errorKind(worded)).toBe("time-budget-refusal");
   });
 
   test("errors.ts's own sentences and defects pass on unchanged", () => {

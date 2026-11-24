@@ -31,7 +31,10 @@ import { relationObjects, type DetailedObject } from "@/lib/db/detailed-object";
 import { pathKey } from "@/lib/db/object-path";
 import { offersSchemaDiagram, type ProviderCapabilities } from "@/lib/db/types";
 import { storage } from "@/lib/storage";
-import { getDBIcon } from "@/lib/db-ui-config";
+import { getDBIcon, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
+import { typeIdRefusal } from "@/lib/db/type-id";
+import { unavailableSavedQueryNotice } from "@/lib/connection-availability";
+import { useToast } from "@/hooks/use-toast";
 
 interface CommandPaletteProps {
   connections: DatabaseConnection[];
@@ -96,6 +99,7 @@ export function CommandPalette({
   onLogout,
 }: CommandPaletteProps) {
   const [open, setOpen] = useState(false);
+  const { toast } = useToast();
 
   // Relations only, by the kind's declared ROLE and never by its id: an item here runs a
   // generated query the moment it is selected (#789).
@@ -201,11 +205,19 @@ export function CommandPalette({
         {connections.length > 0 && (
           <CommandGroup heading="Connections">
             {connections.map((conn) => {
-              const Icon = getDBIcon(conn.type);
+              // A connection whose type names no provider (FND-1) is listed with no per-engine lookup, and a pick of
+              // it reaches onSelectConnection, which refuses it by name.
+              const refusal = typeIdRefusal(conn.type);
+              const Icon = refusal === null ? getDBIcon(conn.type) : UNAVAILABLE_CONNECTION_ICON;
               return (
                 <CommandItem key={conn.id} onSelect={() => runAction(() => onSelectConnection(conn))}>
                   <Icon className="w-3.5 h-3.5" />
                   <span>{conn.name}</span>
+                  {refusal !== null && (
+                    <span className="ml-auto text-xs text-fg-muted font-medium" title={refusal.sentence}>
+                      Unavailable
+                    </span>
+                  )}
                   {activeConnection?.id === conn.id && (
                     <span className="ml-auto text-xs text-success font-medium">Active</span>
                   )}
@@ -234,15 +246,35 @@ export function CommandPalette({
         {/* Saved Queries */}
         {savedQueries.length > 0 && (
           <CommandGroup heading="Saved Queries">
-            {savedQueries.map((sq: SavedQuery) => (
-              <CommandItem key={sq.id} onSelect={() => runAction(() => onLoadSavedQuery(sq.query))}>
-                <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
-                <span>{sq.name}</span>
-                <span className="ml-auto text-xs text-fg-subtle truncate max-w-[150px]">
-                  {sq.query.length > 40 ? sq.query.substring(0, 40) + "..." : sq.query}
-                </span>
-              </CommandItem>
-            ))}
+            {savedQueries.map((sq: SavedQuery) => {
+              // A saved query whose type names no provider (FND-1) is listed with the reason, and a pick of it is
+              // refused by name: nothing is loaded into the active tab, which may belong to another engine.
+              const refusal = typeIdRefusal(sq.connectionType);
+              return (
+                <CommandItem
+                  key={sq.id}
+                  onSelect={() =>
+                    runAction(() =>
+                      refusal === null
+                        ? onLoadSavedQuery(sq.query)
+                        : toast({ ...unavailableSavedQueryNotice(sq, refusal.sentence), variant: "destructive" }),
+                    )
+                  }
+                >
+                  <Bookmark strokeWidth={1.5} className="w-3.5 h-3.5 text-hue-purple" />
+                  <span>{sq.name}</span>
+                  {refusal === null ? (
+                    <span className="ml-auto text-xs text-fg-subtle truncate max-w-[150px]">
+                      {sq.query.length > 40 ? sq.query.substring(0, 40) + "..." : sq.query}
+                    </span>
+                  ) : (
+                    <span className="ml-auto text-xs text-fg-muted font-medium" title={refusal.sentence}>
+                      Unavailable
+                    </span>
+                  )}
+                </CommandItem>
+              );
+            })}
           </CommandGroup>
         )}
 

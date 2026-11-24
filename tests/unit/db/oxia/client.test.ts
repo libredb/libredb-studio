@@ -3,7 +3,8 @@
  *
  * `client.ts` is types and two RPC lists: these cases hold the lists to the allowlist of SB1-2.4, show at compile time
  * that `OxiaRpc` refuses a write RPC and that a literal with the six methods is an `OxiaClient`, and load the module.
- * `constants.ts` is pinned name by name and value by value, so a later edit of any number fails here by name.
+ * The provider's `constants.ts` and the command language's `src/lib/languages/oxiacli/constants.ts` are pinned name by
+ * name and value by value, so a later edit of any number, or a move between the two, fails here by name.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -16,6 +17,7 @@ import {
 } from "@/lib/db/providers/keyvalue/oxia/client";
 import * as constants from "@/lib/db/providers/keyvalue/oxia/constants";
 import { OXIA_TYPE } from "@/lib/db/providers/keyvalue/oxia/constants";
+import * as languageConstants from "@/lib/languages/oxiacli/constants";
 
 function endedStream<T>(): OxiaStream<T> {
   return {
@@ -62,10 +64,8 @@ describe("the provider's constants", () => {
   test("every number of the provider, by name", () => {
     expect({ ...constants } as Record<string, unknown>).toEqual({
       OXIA_TYPE: "oxia",
-      OXIA_DEFAULT_PORT: 6648,
       OXIA_ADMIN_PORT: 6651,
       OXIA_DEFAULT_NAMESPACE: "default",
-      OXIA_INTERNAL_PREFIX: "__oxia/",
       OXIA_IP_SERVER_NAME: "oxia.invalid",
       OXIA_RECEIVE_CAP_BYTES: 16_777_216,
       OXIA_RUN_BYTE_BUDGET: 8_388_608,
@@ -87,16 +87,23 @@ describe("the provider's constants", () => {
       OXIA_DISCOVERY_MAX_ROUNDS: 256,
       OXIA_DISCOVERY_MAX_CALLS: 2_048,
       OXIA_DISCOVERY_DEADLINE_MS: 3_000,
-      OXIA_LIST_DEFAULT_LIMIT: 500,
-      OXIA_SCAN_DEFAULT_LIMIT: 100,
-      OXIA_MAX_LIMIT: 500,
-      OXIA_MAX_TEXT_BYTES: 65_536,
-      OXIA_ECHO_WORD_CHARS: 40,
       OXIA_CELL_LIMIT: 65_536,
       OXIA_SOURCE_HEX_BYTES: 65_536,
       OXIA_SHOWN_KEY_CHARS: 120,
       OXIA_KEY_SCAN_DEFAULT_COUNT: 500,
       OXIA_KEY_SCAN_MAX_COUNT: 1_000,
+    });
+  });
+
+  test("every number of the oxia command language, by name", () => {
+    expect({ ...languageConstants } as Record<string, unknown>).toEqual({
+      OXIA_DEFAULT_PORT: 6648,
+      OXIA_ECHO_WORD_CHARS: 40,
+      OXIA_INTERNAL_PREFIX: "__oxia/",
+      OXIA_LIST_DEFAULT_LIMIT: 500,
+      OXIA_MAX_LIMIT: 500,
+      OXIA_MAX_TEXT_BYTES: 65_536,
+      OXIA_SCAN_DEFAULT_LIMIT: 100,
     });
   });
 });

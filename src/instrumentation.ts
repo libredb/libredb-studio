@@ -1,12 +1,42 @@
 /**
  * Next.js boot hook. register() runs once per server worker, ONLY when this app
  * boots its own Next.js server (never when @libredb/studio is imported by
- * libredb-platform). On standalone boot, bootstrap missing auth env (#109) and
- * seed the embedded samples if enabled. A failure here must never break boot.
+ * libredb-platform). On standalone boot, first install the uncaught-exception
+ * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
+ * handler (docs/DISTRIBUTION.md#stopping-the-server), then take Studio's
+ * storage location (src/lib/data-dir.ts), then bootstrap missing auth env
+ * (#109), run the boot preflights and the credential re-seal and check when
+ * STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 asks for them,
+ * then install the process's one provider host core
+ * (src/lib/provider-host/instance.ts), so a boot a check refuses installs
+ * none, and start copying the built-in samples (src/lib/seed/samples.ts), which
+ * boot never waits for: a sample whose copy fails is logged once and listed
+ * unavailable.
  */
 export async function register(): Promise<void> {
   // Node.js server runtime only (skip the edge runtime).
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+
+  // First, so that an exception thrown by any step below, or later in this process, ends it with a named code
+  // instead of leaving it running in an unknown state (docs/DISTRIBUTION.md#uncaught-errors-and-restarts).
+  const { installUncaughtExceptionExit } = await import("@/lib/uncaught-exception");
+  installUncaughtExceptionExit(process);
+
+  // Second, so that a signal at any later point of the boot or of the life of the process runs the shutdown hooks
+  // (docs/DISTRIBUTION.md#stopping-the-server). NEXT_MANUAL_SIG_HANDLE decides who ends the process on SIGTERM and
+  // SIGINT: Studio's handler for `true`, Next.js's own when unset or empty; any other value refuses the boot, and so
+  // does `true` on Bun, where the request drain sees no request.
+  const { exitOwnerAtBoot, installShutdownHandler } = await import("@/lib/shutdown-handler");
+  const exitOwner = exitOwnerAtBoot();
+  if (exitOwner === undefined) return;
+  installShutdownHandler(process, exitOwner);
+
+  // Third, Studio's storage location: STORAGE_SQLITE_PATH resolved against the working directory now, kept for the life
+  // of the process and logged once, so the files a connection may never open are the ones this boot writes, whatever
+  // the working directory is later (FND-2 slice 3, docs/SECURITY.md 3.45). Before the auth bootstrap, which writes its
+  // credentials file into that directory.
+  const { storageLocation } = await import("@/lib/data-dir");
+  storageLocation();
 
   // Zero-config first run (#109): fill missing auth env from the persisted
   // bootstrap file BEFORE anything reads process.env secrets. Fail-open inside.
@@ -22,9 +52,23 @@ export async function register(): Promise<void> {
 
   // Private CA preflight: Node only warns when NODE_EXTRA_CA_CERTS names a missing or
   // empty file, so refuse to boot instead; on OpenShift the cluster fills the chart's
-  // trusted-CA ConfigMap after start, and the restart picks the bundle up.
+  // trusted-CA ConfigMap after start, and the restart picks the bundle up. Its read is the
+  // one core keeps for the providers whose TLS does not read Node's store (Db2).
   const { verifyExtraCaCertsAtBoot } = await import("@/lib/config/ca-bundle-preflight");
   if (!verifyExtraCaCertsAtBoot()) return;
+
+  // Egress preflight: DB_HTTP_BLOCK_PRIVATE_HOSTS is read once per process, and
+  // this is the first read, so the decision is taken and logged at boot, and a
+  // value outside the accepted spellings refuses the boot by name instead of
+  // failing at the first guarded connection.
+  const { verifyEgressDecisionAtBoot } = await import("@/lib/config/egress-preflight");
+  if (!verifyEgressDecisionAtBoot()) return;
+
+  // Run confirmation preflight: LIBREDB_RUN_CONFIRMATION decides which runs the
+  // run routes refuse without a confirmation, and a value outside its spellings
+  // would refuse every such run by name, so it refuses the boot instead.
+  const { verifyRunConfirmationAtBoot } = await import("@/lib/config/run-confirmation-preflight");
+  if (!verifyRunConfirmationAtBoot()) return;
 
   // Governance preflight (docs/GOVERNANCE.md#boot-checks): with
   // GOVERNANCE_SOURCE set, refuse an environment that contradicts governance
@@ -40,6 +84,27 @@ export async function register(): Promise<void> {
   const { verifyAccessReviewEnvAtBoot } = await import("@/lib/kubernetes-access/preflight");
   if (!verifyAccessReviewEnvAtBoot()) return;
 
+  // Credential re-seal (docs/STORAGE.md, "Re-sealing the store"): with
+  // STORAGE_ENCRYPTION_REQUIRE_V2 set, check that the store records version 1
+  // as retired, before any re-seal step, and run no re-seal; without it, with
+  // STORAGE_ENCRYPTION_RESEAL set, back the server store up, re-seal every
+  // stored credential and retire version 1 before the server serves. A value
+  // of either variable it cannot read, local mode, a re-seal that does not
+  // complete, or a check that does not pass refuses the boot. It does nothing while both are unset. It runs after
+  // bootstrapAuth (the storage key may come from the JWT_SECRET that fills in)
+  // and after the preflights, so a boot they refuse never touches the store.
+  const { resealStoreAtBoot } = await import("@/lib/storage/reseal-at-boot");
+  if (!(await resealStoreAtBoot())) return;
+
+  // The provider host core (docs/providers/CONTRACT.md, clause C-52): this
+  // server's composition root installs it once, after the boot checks and the
+  // re-seal, so a boot they refuse installs none, and before any request is
+  // served, since register() completes before the server is ready. Every route
+  // bundle reads this one core; none creates its own.
+  const { createHostCore } = await import("@/lib/provider-host/core/host-core");
+  const { installHostCore } = await import("@/lib/provider-host/instance");
+  installHostCore(createHostCore(), "server");
+
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so
   // the server serves at once and data routes answer 503 until the first load
@@ -51,36 +116,9 @@ export async function register(): Promise<void> {
     startGovernance();
   }
 
-  const { logger } = await import("@/lib/logger");
-
-  // LibreDB sample: programmatic and fast — seeded synchronously as before.
-  const { isSampleEnabled, resolveSamplePath, seedSampleFile } = await import("@/lib/seed/libredb-sample");
-  if (isSampleEnabled()) {
-    let filePath: string | undefined;
-    try {
-      filePath = resolveSamplePath();
-      await seedSampleFile(filePath);
-    } catch (error) {
-      logger.warn("LibreDB embedded sample seeding skipped", {
-        route: "instrumentation",
-        path: filePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  // SQLite sample: a file copy — fire-and-forget so boot never waits on it.
-  // The seed state lets GET /api/connections/managed advertise the pending
-  // seed, and the client polls until the sample appears (no page refresh).
-  // The inner try/catch guarantees no unhandled rejection; on failure the
-  // server keeps running and the sample is silently absent.
-  const { isSqliteSampleEnabled, resolveSqliteSamplePath, seedSqliteSampleFile, setSqliteSampleSeedState } =
-    await import("@/lib/seed/sqlite-sample");
-
   // Boot banner: version, URL, and the invitation to star the repo. Printed
-  // before the early return below so a deployment with the sqlite sample
-  // disabled still gets it, and after the preflight above so a server that
-  // refuses to boot never prints a welcome. Never throws.
+  // after the preflight above so a server that refuses to boot never prints a
+  // welcome. Never throws.
   const { printStartupBanner } = await import("@/lib/startup-banner");
   printStartupBanner();
 
@@ -90,39 +128,18 @@ export async function register(): Promise<void> {
   const { startAgentResumeSweep } = await import("@/lib/agent/resume-sweep");
   startAgentResumeSweep();
 
-  if (!isSqliteSampleEnabled()) return;
-
-  // "seeding" is set BEFORE the IIFE so no request can observe "idle" while a
-  // first-boot copy is about to start; on fast-path boots (file already
-  // present) the window closes within the first fs call, before the HTTP
-  // server accepts its first request.
-  setSqliteSampleSeedState("seeding");
-  void (async () => {
-    const started = Date.now();
-    let filePath: string | undefined;
-    try {
-      filePath = resolveSqliteSamplePath();
-      const outcome = await seedSqliteSampleFile(filePath);
-      setSqliteSampleSeedState("done");
-      if (outcome === "skipped") {
-        // Every boot after the first takes this path — keep it to one quiet
-        // line instead of a started/completed info pair (PR #191 review).
-        logger.debug("SQLite embedded sample already present", { route: "instrumentation", path: filePath });
-      } else {
-        logger.info("SQLite embedded sample seed completed", {
-          route: "instrumentation",
-          path: filePath,
-          durationMs: Date.now() - started,
-        });
-      }
-    } catch (error) {
-      setSqliteSampleSeedState("failed");
-      logger.warn("SQLite embedded sample seeding skipped", {
-        route: "instrumentation",
-        path: filePath,
-        durationMs: Date.now() - started,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  })();
+  // Built-in samples: which samples are enabled and admitted is decided here,
+  // once, for the life of the process, and every enabled sample is marked
+  // seeding before this returns, so GET /api/connections/managed lists it in
+  // pendingSeeds and the client polls until it appears. The copies are not
+  // awaited: a failed copy is logged once and listed unavailable. Their promise
+  // rejects only for a defect, an error a copy throws that is not a
+  // SampleCopyError; that sample is listed unavailable as copy-defect, and the
+  // rejection, which nothing here catches, is the process's unhandled
+  // rejection: Next.js logs it and goes on serving, and under
+  // --unhandled-rejections=strict the uncaught-exception exit stops the server
+  // with code 70.
+  // The sample service loads no engine code (tests/unit/seed/no-engine-imports.test.ts).
+  const { startSampleSeeding } = await import("@/lib/seed/samples");
+  void startSampleSeeding();
 }

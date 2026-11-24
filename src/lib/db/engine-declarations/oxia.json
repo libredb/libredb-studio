@@ -1,0 +1,439 @@
+{
+  "id": "oxia",
+  "displayName": "Oxia",
+  "location": "external",
+  "connection": {
+    "fields": [
+      "host",
+      "port",
+      "password",
+      "database",
+      "dataServers",
+      "allowInsecureAuth"
+    ],
+    "defaults": {
+      "port": 6648
+    },
+    "seedOnly": null,
+    "refused": [
+      {
+        "field": "user",
+        "refusal": "Oxia has no user name: clear User. A bearer token goes under Token."
+      }
+    ],
+    "connectionString": {
+      "accepted": false,
+      "dialogOffersUri": false,
+      "scheme": null,
+      "urlTls": null,
+      "paste": null,
+      "seedCheck": null
+    },
+    "tls": "offered",
+    "readsTrustMaterial": false,
+    "sshTunnel": {
+      "offered": true
+    },
+    "hostPathFields": [],
+    "opensLocalFile": false,
+    "serverLevelWithoutDatabase": false,
+    "agentCredential": null,
+    "dialog": {
+      "order": null,
+      "labels": [
+        {
+          "field": "password",
+          "text": "Token"
+        },
+        {
+          "field": "database",
+          "text": "Namespace"
+        },
+        {
+          "field": "dataServers",
+          "text": "Data servers"
+        }
+      ],
+      "hints": [
+        {
+          "field": "host",
+          "text": "A name or address only. For Pulsar's oxia://host:6648/ns, type host here, 6648 in Port and ns in Namespace. If Studio runs in a container, localhost is that container: use host.docker.internal."
+        },
+        {
+          "field": "password",
+          "text": "An OIDC token, sent as a bearer token on every call; empty for a server without authentication. A token grants read and write on every namespace: Oxia has no authorization. A token needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection."
+        },
+        {
+          "field": "database",
+          "text": "Empty means default, the only namespace of oxia standalone. Names are case sensitive, and a cluster's namespaces are in its coordinator configuration."
+        },
+        {
+          "field": "dataServers",
+          "text": "Only for a cluster that advertises other addresses: every data server's public address (servers[].public in the coordinator configuration) as host:port, separated by commas or spaces, at most 64. List every server, not only today's leaders. Patterns are not accepted, because the token would follow any address a pattern matches. Leave empty for oxia standalone."
+        },
+        {
+          "field": "allowInsecureAuth",
+          "text": "Oxia receives the token on every call, so with no SSL mode it crosses the network in cleartext, to the host and to every data server. A token sent without TLS to a host that is not this machine is refused unless this is ticked. Choose an SSL mode under SSL / TLS instead wherever the server offers one."
+        }
+      ],
+      "placeholders": [
+        {
+          "field": "database",
+          "text": "default"
+        }
+      ],
+      "placement": [],
+      "options": [],
+      "shownWhen": [],
+      "absentValues": []
+    },
+    "hostUriSchemes": [],
+    "credentialWarnings": [
+      {
+        "kind": "jwt",
+        "noExp": true,
+        "access": [],
+        "message": "This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry."
+      }
+    ],
+    "fieldRules": [],
+    "hostHint": null,
+    "hostIdentity": null,
+    "import": null,
+    "connectBudgetMs": null
+  },
+  "facets": {
+    "monitoring": {
+      "overview": "not-offered",
+      "performance": "not-offered",
+      "slowQueries": "not-offered",
+      "activeSessions": "not-offered",
+      "tables": "not-offered",
+      "indexes": "not-offered",
+      "storage": "not-offered"
+    },
+    "maintenance": [],
+    "maintenanceSpecs": [],
+    "agentReadings": [
+      "health"
+    ]
+  },
+  "agent": {
+    "statementLanguage": "oxiacli",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
+  },
+  "editor": {
+    "commitKeyword": "COMMIT",
+    "consentDeadline": null,
+    "fenceAliases": [
+      "oxiacli"
+    ],
+    "explainFormat": null,
+    "dialect": {
+      "name": "oxia",
+      "offersColumnProfiling": false,
+      "offersCodeGeneration": false,
+      "offersCountQuery": false,
+      "offersSqlExport": false,
+      "historyMask": null
+    },
+    "language": {
+      "queryLanguage": "json",
+      "monacoId": "oxia",
+      "accent": "border-hue-purple-alt/40",
+      "console": false
+    }
+  },
+  "sqlText": {
+    "readsSqlText": false,
+    "grammar": {
+      "hash": "comment-unless-operator",
+      "bracket": "quoted-identifier",
+      "blockComment": "flat",
+      "alternateQuoting": false,
+      "doubleSlashComment": false,
+      "backslashAlwaysEscapes": false,
+      "tripleQuotedStrings": false,
+      "backtickBackslashEscapes": false,
+      "dollarTags": true,
+      "doubleQuoteBackslashEscapes": null,
+      "singleQuoteBackslashEscapes": null,
+      "rawStrings": false,
+      "hintsAreCode": false,
+      "lineCommentBackslashContinues": false,
+      "lineCommentEndsAtCarriageReturn": false,
+      "script": {
+        "blocks": "none",
+        "separatorLine": null,
+        "unit": "statement",
+        "terminatedStatements": []
+      },
+      "trailingLimitClauses": [],
+      "nonNumericRowBounds": [],
+      "confirmForms": [],
+      "confirmCodeForms": [],
+      "confirmFormsWhen": [],
+      "confirmExemptForms": [],
+      "formatterLanguage": "postgresql",
+      "completionWords": {
+        "keywords": [],
+        "functions": []
+      },
+      "confirmConfigKeys": null,
+      "explainExecutesWithAnalyze": false
+    },
+    "redaction": {
+      "kind": "none"
+    },
+    "updateTarget": {
+      "dashCommentNeedsSeparator": false,
+      "extraQueryOpeners": [],
+      "extraSetOperators": []
+    },
+    "completion": {
+      "formatSegment": null,
+      "readQuotedQualifier": null
+    }
+  },
+  "sqlWriting": {
+    "escapeLiteral": "escapeLiteral",
+    "unescapeLiteral": "unescapeLiteral",
+    "quoteIdentifier": "quoteIdentifier",
+    "placeholder": null,
+    "temporalLiteral": null,
+    "inlineEdit": {
+      "instantTypeNames": [
+        "date",
+        "date32",
+        "datetime",
+        "datetime2",
+        "datetime64",
+        "datetimeoffset",
+        "smalldatetime",
+        "timestamp",
+        "timestamptz"
+      ],
+      "exactDecimalTypeNames": [
+        "number",
+        "numeric",
+        "decimal",
+        "dec",
+        "money",
+        "smallmoney"
+      ],
+      "float64TypeNames": [
+        "double",
+        "float8",
+        "float64",
+        "binary_double"
+      ],
+      "boundEdit": null
+    },
+    "export": {
+      "ddlTypes": {
+        "text": "TEXT",
+        "integer": "BIGINT",
+        "numeric": "DOUBLE PRECISION",
+        "boolean": "BOOLEAN",
+        "timestamp": "TIMESTAMP",
+        "binary": "BLOB"
+      },
+      "standsAlone": [],
+      "bareSpelling": [],
+      "typeVocabulary": {
+        "bareTypeFamily": {
+          "text": [
+            "character varying",
+            "varchar",
+            "varchar2",
+            "nvarchar",
+            "nvarchar2",
+            "character",
+            "char",
+            "nchar",
+            "text",
+            "ntext",
+            "tinytext",
+            "mediumtext",
+            "longtext",
+            "clob",
+            "nclob",
+            "enum",
+            "set",
+            "uniqueidentifier",
+            "rowid"
+          ],
+          "integer": [
+            "year"
+          ],
+          "numeric": [
+            "numeric",
+            "decimal",
+            "number",
+            "binary_double",
+            "binary_float",
+            "money"
+          ],
+          "boolean": [],
+          "timestamp": [
+            "timestamp",
+            "timestamp without time zone",
+            "timestamp with time zone",
+            "datetime",
+            "datetime2",
+            "smalldatetime",
+            "datetimeoffset"
+          ],
+          "binary": [
+            "binary",
+            "varbinary",
+            "raw",
+            "blob",
+            "tinyblob",
+            "mediumblob",
+            "longblob",
+            "bytea",
+            "image"
+          ]
+        },
+        "floatType": {
+          "source": "^(double( precision)?|real|float\\d*|binary_(double|float))$",
+          "flags": "i"
+        },
+        "exactNumericType": {
+          "source": "^(numeric|decimal|number|decfloat)(\\s*\\(\\s*\\d+\\s*(,\\s*-?\\d+\\s*)?\\))?$",
+          "flags": "i"
+        },
+        "numericWrapper": {
+          "source": "^\\s*(?:Nullable|LowCardinality)\\((.*)\\)\\s*$",
+          "flags": ""
+        }
+      },
+      "binaryLiteral": "binaryLiteral",
+      "nonFinite": {
+        "NaN": "NULL",
+        "Infinity": "NULL",
+        "-Infinity": "NULL"
+      },
+      "insertForm": "values",
+      "rewriteDeclared": null,
+      "declareFromSample": null,
+      "typedLiteral": null,
+      "columnWriters": null,
+      "createTableKey": null
+    },
+    "insertDocuments": null
+  },
+  "migrationDdl": {
+    "tableDdl": "refused",
+    "refusal": "-- Oxia: Cannot generate table DDL. Oxia stores opaque values under string keys and has no schema, so there is no column definition to change.",
+    "transactionWrapper": null,
+    "reasons": [
+      "Oxia stores opaque values under string keys and has no schema, so there is no column definition to change."
+    ]
+  },
+  "sqlGenerators": null,
+  "policy": {
+    "writeReach": "none",
+    "readsFileAccessPosture": false,
+    "deniedFileAccessRefusal": null,
+    "singleWriterFile": false,
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
+  },
+  "mcp": {
+    "exposable": false,
+    "statementRead": false,
+    "metadataReadChangesState": false,
+    "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/keyvalue/oxia/grpc-client.ts",
+          "symbol": "allowlistedServices"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "shards",
+        "columns": [
+          {
+            "column": "namespace",
+            "kind": "name"
+          },
+          {
+            "column": "shards",
+            "kind": "count"
+          },
+          {
+            "column": "leaders",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "key metadata",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "version_id",
+            "kind": "count"
+          },
+          {
+            "column": "modifications",
+            "kind": "count"
+          },
+          {
+            "column": "created",
+            "kind": "name"
+          },
+          {
+            "column": "modified",
+            "kind": "name"
+          },
+          {
+            "column": "value_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "ephemeral",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "key count",
+        "columns": [
+          {
+            "column": "keys",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
+  }
+}

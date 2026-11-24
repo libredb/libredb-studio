@@ -24,6 +24,7 @@ import type { Socket } from "node:net";
 import { ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import { loadTlsFixtures } from "../../helpers/tls-fixtures";
 import type { DatabaseConnection, SSLConfig } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const TLS = loadTlsFixtures();
 const holding = (address: number): number => 7000 + 11 * address;
@@ -77,14 +78,18 @@ const mbapDevice = (): Promise<number> =>
   );
 
 const read = (port: number, ssl?: SSLConfig) =>
-  new ModbusProvider({
-    id: "m",
-    name: "device",
-    type: "modbus",
-    host: "127.0.0.1",
-    port,
-    ...(ssl === undefined ? {} : { ssl }),
-  } as DatabaseConnection).query('{"unit":1,"table":"holding_register","address":0,"count":5}');
+  new ModbusProvider(
+    {
+      id: "m",
+      name: "device",
+      type: "modbus",
+      host: "127.0.0.1",
+      port,
+      ...(ssl === undefined ? {} : { ssl }),
+    } as DatabaseConnection,
+    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
+  ).query('{"unit":1,"table":"holding_register","address":0,"count":5}');
 
 describe("mbaps, against a device that really speaks TLS", () => {
   test("the control: plain TCP with no panel answers five rows", async () => {

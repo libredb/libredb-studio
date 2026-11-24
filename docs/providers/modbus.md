@@ -13,6 +13,7 @@ were behaviour.
 | | |
 |---|---|
 | **Write reach** | none: the valve, `assertOutboundAllowed`, admits only the read function codes and device identification on every outbound frame; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider opens a connection of its own for each read (`dialModbus()`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 
@@ -201,11 +202,17 @@ ignoring it runs a different read from the one that was written. A name is check
 since a name means only what the map says it means. The protocol's bounds are not repeated in the
 parser - it calls `checkRead`, so a limit cannot pass in one file while it fails in another.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
+
 ### 5.1 The socket, and what this section used to say
 
 This section used to say that `query()` refused and `getHealth()` read only the map. Both now reach
 the device: the request is parsed, a socket is dialled for that read, the session serialises the
 exchanges, and the socket is destroyed in `finally`. Nothing is held between reads.
+A read of many blocks runs one exchange per block over that one socket.
+Each exchange removes its own `data`, `error` and `close` listeners when it settles, whether by an answer, an error, a close, its deadline or a frame the valve refuses, so a chunk reaches only the exchange that is waiting and the socket holds the dial's own `error` listener between exchanges.
 
 The order matters and is measured: a request the parser refuses costs NO connection, so a mistake
 in the console text never opens a socket. `tests/unit/db/modbus/wired.test.ts` runs the whole path
@@ -235,7 +242,7 @@ been run against one (§12a item 3 of the specification).
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/modbus/sql-grammar.ts`](../../src/lib/db/providers/industrial/modbus/sql-grammar.ts), the `modbus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request against a register map, so no span of it is SQL (#1723).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/industrial/modbus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/modbusread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -262,10 +269,11 @@ is a connection field, not an object. Editing the VALUE would be writing to a pl
 
 ## 7. Security
 
-The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form:
+The requirements are MB-S1 to MB-S13, in section 5 of [#1723](https://github.com/libredb/libredb-studio/issues/1723). The short form:
 
 - Read-only by construction, re-checked at the socket (MB-S1).
 - The shared egress rule applies, and a link-local address is refused by default (MB-S10).
+- With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused too, before any byte reaches the device: an IP literal before any socket opens and a name at the lookup the socket dials through, both with the shared sentence.
 - The identification walk is bounded (MB-S6).
 - A value is data, never markup (MB-S13).
 - `mbaps` checks the chain and the host name, and not revocation, and says so.
@@ -305,6 +313,7 @@ The admission also refuses a request longer than 4,096 characters.
 A points or block read answers a number of rows its request decides, so one past the row budget is refused before anything is sent, never cut (`Read-only execution exceeded the row budget: 5 rows > 4 allowed`); an identification answer's rows are the device's, so they are held to the row budget once read; every result is held to the byte budget.
 An identification walk the device was still continuing after 8 rounds is refused rather than answered in part, where the console answers what it has with a warning ([section 3.6](#36-bounds-are-ours-not-the-devices-word)).
 A failure is worded by its category and quotes nothing the device sent: the device's silence for one request's 3,000 ms, its exception by code with this provider's sentence for that code, an answer that cannot be read as an answer to this read, a value the map's declaration cannot decode, an address nothing answers, and settings the egress rule refuses.
+A provider built outside Studio's provider factory without the egress decision refuses the read with the sentence that names the missing decision, as its `connect()` does, and not with the settings sentence.
 
 ### 8.3 Pacing
 
@@ -349,10 +358,36 @@ The `modbusread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `modbusread` statement-language family's own.
 The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a device has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
-Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/modbusread/client.ts)): "the register map grounds it; opening the connection dials the device, and no request is sent to it", because the grounding reads the map and sends the device nothing, while the acquisition's `connect` dials the device's port and closes it again, so the shared strip's "nothing else reaches the database" would not be true here.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/modbusread/client.ts)) beside core's pill, *Executes nothing it drafts*: "the register map grounds it; opening the connection dials the device, and no request is sent to it", because the grounding reads the map and sends the device nothing, while the acquisition's `connect` dials the device's port and closes it again, so the shared strip's "nothing else reaches the database" would not be true here.
 The editor language id stays `modbus`, and the fence alias `modbusread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false ([B160](../BACKLOG.md#b160-modbuss-agent-reads-are-paced-per-device-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.modbus` is unchanged.
+
+## Monitoring
+
+No monitoring panel reads a Modbus device, so the monitoring dashboard draws none for this engine and says so.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `modbus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/modbus/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | No | `getOverview` answers constants and the size of the configured register map, never a figure the device reports |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## Migration DDL
 

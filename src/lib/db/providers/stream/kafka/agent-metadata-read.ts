@@ -1,7 +1,8 @@
 /**
- * What an agent's Kafka read sends and answers: each read of the closed table (`agent-statement.ts`) run over the
- * agent's client, which holds the Metadata and ListOffsets reads alone, and its answer projected to names, counts and
- * flags, with the wording of a failure without the broker's words.
+ * What an agent's Kafka read sends and answers: each read of the closed table
+ * (`src/lib/languages/kafkaread/agent-statement.ts`) run over the agent's client, which holds the Metadata and
+ * ListOffsets reads alone, and its answer projected to names, counts and flags, with the wording of a failure without
+ * the broker's words.
  *
  * Each operation has a typed projection here, and the capability `metadataOnly` states them. No column's name comes
  * from the broker, and no answer is passed on as it came: a broker is its node id, rack and the cluster id, never its
@@ -14,8 +15,8 @@
  * and the byte budget against the projected rows here. A limit the request wrote below the answer's size is the
  * request's own page, so the answer says that more follow, and how to read on, without naming what follows.
  */
-import { QueryError } from "@/lib/db/errors";
-import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ByteBudgetRefusal, QueryError, TimeBudgetRefusal } from "@/lib/db/errors";
+import { byteBudgetSentence, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import {
   declareMetadataOnly,
   type MetadataOnlyDeclaration,
@@ -24,7 +25,7 @@ import {
   projectMetadata,
 } from "@/lib/db/redaction/metadata-only";
 import type { ColumnSchema, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
-import type { KafkaAgentOperation, KafkaAgentPlan } from "./agent-statement";
+import type { KafkaAgentOperation, KafkaAgentPlan } from "@/lib/languages/kafkaread/agent-statement";
 import {
   type KafkaAgentReadClient,
   KafkaError,
@@ -250,7 +251,7 @@ export function kafkaAgentResult(
   const projected = project(answer);
   const bytes = measureResultBytes(projected.rows);
   if (bytes > budget.maxResultBytes) {
-    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), KAFKA_TYPE, statement);
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), KAFKA_TYPE, statement);
   }
   return {
     fields: projected.fields,
@@ -295,7 +296,12 @@ const FAILURES: Readonly<Record<KafkaErrorCategory, (deadlineMs: number) => stri
  */
 export function kafkaAgentFailure(error: unknown, deadlineMs: number, statement?: string): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, KAFKA_TYPE, statement);
-  if (error instanceof AgentDeadlineError) return new QueryError(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  if (error instanceof AgentDeadlineError) {
+    return new TimeBudgetRefusal(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  }
+  if (error instanceof KafkaError && error.category === "timeout") {
+    return new TimeBudgetRefusal(FAILURES.timeout(deadlineMs), KAFKA_TYPE, statement);
+  }
   if (error instanceof KafkaError) return new QueryError(FAILURES[error.category](deadlineMs), KAFKA_TYPE, statement);
   return undefined;
 }

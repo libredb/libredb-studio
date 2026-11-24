@@ -8,6 +8,7 @@ Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), 
 | | |
 |---|---|
 | **Write reach** | guarded: while read-only mode holds, a write command (`put`, `del`, a `txn` that writes, `lease grant`, `lease keep-alive`, `lease revoke`) is refused by `refuseBeforeSend`, and the value edit and compact, defragment and disarm by `refuseReadOnly`, both in `write-policy.ts` and before any request; there is no transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on a gRPC call of the client opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 
@@ -348,6 +349,7 @@ Bound `params` are refused with a `DatabaseConfigError` before any request, and 
 Cancelling a read or a watch stops it; a write already sent is not stopped and the cancel answers false, because aborting the call cannot undo a request etcd may have applied, so its outcome is unknown until the key is read again.
 The confirmation gate reads the provider's own parser, so what runs and what asks are one parse, and it never sends an etcd statement to the model provider.
 A prefix delete asks for the prefix typed exactly, `/app/` and `/App/` being different prefixes; a key holding a newline is typed in Go's quoted form.
+On a connection whose environment is `production`, the connection's name is asked instead, and the prefix, start key or lease id is shown as its target; the server checks the typed value either way ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)).
 
 ### 5.6 SQL grammar
 
@@ -447,6 +449,29 @@ Test Connection then reports the connection as connected but degraded, with that
 The overview gives the version, the exact key count and the member's size on disk; for a user who is not root the count covers the ranges it may read and the Tables card says so.
 Storage is one row for the answering member, its usage the size on disk over the quota the member runs under, a quota of 0 from 3.6 or later read as the 2 GiB default (3.6.0 to 3.6.5 send the flag's 0, and 3.6.6 and later answer the default themselves), and "-" when the quota is disabled (a negative `--quota-backend-bytes`) or not reported (a server before 3.6 sends none); the Tables tab counts each group's keys when it opens, "The key-prefix groups; a key in no group is counted in the Overview and not here".
 etcd keeps no query log and reports no client sessions, and its performance metrics are not read.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `etcd` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/keyvalue/etcd/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `compact`, `defragment`, `disarm`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `storage`, `health`.
+`table-stats` is not offered to agent mode although the panel is: the agent handle refuses it with `KEY_NAMES_WITHHELD`, since key names count as stored values.
 
 ## 8. Maintenance
 

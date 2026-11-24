@@ -1,35 +1,39 @@
+import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import type { DestructiveVocabulary } from "@/lib/db/destructive-vocabulary";
+import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/graph/cypher/destructive";
 import { FIRESTORE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/firestore/destructive";
-import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/document/mongodb/destructive";
-import { NEO4J_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/graph/neo4j/destructive";
-import { MODBUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/modbus/destructive";
-import { MTCONNECT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/mtconnect/destructive";
-import { OPCUA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/opcua/destructive";
-import { SPARKPLUG_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/industrial/sparkplug/destructive";
 import { ETCD_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/etcd/destructive";
-import { MQTT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/mqtt/destructive";
-import { OXIA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/oxia/destructive";
-import { REDIS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/keyvalue/redis-destructive";
-import { NETCONF_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/network/netconf/destructive";
-import { SNMP_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/network/snmp/destructive";
+import { OXIA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/oxiacli/destructive";
 import { S3_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/objectstore/s3/destructive";
-import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/platform/kubernetes/destructive";
-import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/stream/kafka/destructive";
-import { RABBITMQ_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/stream/rabbitmq/destructive";
-import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/timeseries/influxdb/influxdb-destructive";
-import { PROMETHEUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/timeseries/prometheus/destructive";
+import { KUBERNETES_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kubectl/destructive";
+import { INFLUXDB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/influxql/destructive";
 import { MILVUS_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/milvus/destructive";
 import { QDRANT_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/qdrant/destructive";
-import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/db/providers/vector/weaviate/destructive";
+import { WEAVIATE_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/weaviateapi/destructive";
+import { typeIdRow } from "@/lib/db/type-id";
 import type { TypedConfirmationAsk } from "@/lib/db/types";
+import { KAFKA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/kafkaread/destructive";
+import { MODBUS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/modbusread/destructive";
+import { MONGODB_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mongo/destructive";
+import { MQTT_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mqttread/destructive";
+import { MTCONNECT_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/mtconnectread/destructive";
+import { NETCONF_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/netconfrpc/destructive";
+import { OPCUA_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/opcuaread/destructive";
+import { PROMETHEUS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/promql/destructive";
+import { RABBITMQ_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rabbitread/destructive";
+import { REDIS_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/rediscli/destructive";
+import { SNMP_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/snmpget/destructive";
+import { SPARKPLUG_DESTRUCTIVE_VOCABULARY } from "@/lib/languages/sparkplugread/destructive";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * The confirmation gate's vocabulary for the engines whose query text is NOT SQL.
  *
- * Each engine's row is declared beside its provider, in its `destructive.ts` module, with the shape in
- * `./destructive-vocabulary.ts`; this module only collects the rows and answers the gate from them, so it names no
- * engine's commands, operations or readers of its own.
+ * Each engine's row is declared in its statement language's core family module, `destructive.ts` under
+ * `src/lib/languages/<language>/`, or under `src/lib/db/graph/cypher/` for Cypher, or, until the provider plugin
+ * program's slice for that language moves it, beside its provider in its `destructive.ts` module
+ * (docs/PROVIDER_IMPORTS.md), with the shape in `./destructive-vocabulary.ts`; this module only collects the rows and
+ * answers the gate from them, so it names no engine's commands, operations or readers of its own.
  *
  * `isDangerousQuery` reads a statement's SQL keywords, and for `mongodb` and `redis`
  * it had nothing to read: it returned false outright, so a `FLUSHALL`, a `DEL` and a
@@ -78,21 +82,31 @@ export const NON_SQL_DESTRUCTIVE_VOCABULARY: Readonly<Partial<Record<DatabaseTyp
  * Whether this type's row is the gate's whole answer, which `isDangerousQuery` asks
  * before it reads the text as SQL at all.
  *
+ * True only where the row declares `decidesAlone: true` and Studio's review record lists that claim
+ * (`CONFIRMATION_CLAIM_REVIEW` in `./confirmation-claim-review.ts`): a claim the record does not list is read as if
+ * the row had not made it, so the gate reads the text as SQL and reads the row beside it.
+ *
  * False for every type with no row, and for no type at all: the SQL half reads those.
+ * Any other value that is not a type id is refused by name (`typeIdRow`, FND-1), before the record is read.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularyDecidesAlone(databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
-  return facts?.decidesAlone === true;
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
+  return facts?.decidesAlone === true && isReviewedConfirmationClaim({ kind: "decides-alone", type: databaseType });
 }
 
 /**
  * Whether this query, on a type whose text is not SQL, asks for a confirmation.
  *
  * False for every type with no row - including no type at all, which is the reading a
- * caller without a connection gets and the one the SQL half already covers.
+ * caller without a connection gets and the one the SQL half already covers. Any other
+ * value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   if (facts === undefined) return false;
 
   const named = facts.read(query);
@@ -105,13 +119,16 @@ export function isDestructiveNonSqlQuery(query: string, databaseType?: DatabaseT
  * confirmation (#1089, section 5.5).
  *
  * Undefined for every type with no row, including no type at all, and for every row that declares no
- * `typedConfirmation`. The text reaches the row as it was written.
+ * `typedConfirmation`. Any other value that is not a type id is refused by name (`typeIdRow`, FND-1). The text
+ * reaches the row as it was written.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularyTypedConfirmation(
   databaseType: DatabaseType | undefined,
   text: string,
 ): TypedConfirmationAsk | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.typedConfirmation?.(text);
 }
 
@@ -119,10 +136,13 @@ export function vocabularyTypedConfirmation(
  * Whether the confirmation gate may post this type's statements to the AI safety analysis (#1089, E10).
  *
  * True for every type with no row, including no type at all, and for every row that does not declare
- * `safetyAnalysis: false`, which is what the gate did for every engine before the field existed.
+ * `safetyAnalysis: false`, which is what the gate did for every engine before the field existed. Any other value that
+ * is not a type id is refused by name (`typeIdRow`, FND-1), never answered true.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function vocabularySendsToModel(databaseType?: DatabaseType): boolean {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.safetyAnalysis !== false;
 }
 
@@ -151,10 +171,13 @@ function utf8Bytes(text: string): number {
 /**
  * The console text bound this connection type declares, in UTF-8 bytes, or undefined where it declares none.
  *
- * Undefined for every type with no row, including no type at all, and for every row that declares no bound.
+ * Undefined for every type with no row, including no type at all, and for every row that declares no bound. Any other
+ * value that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function consoleTextByteLimit(databaseType?: DatabaseType): number | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   return facts?.maxTextBytes;
 }
 
@@ -169,10 +192,13 @@ export function consoleTextOverLimit(text: string, limit: number): string | unde
  * Why this connection type's editor refuses this statement, or undefined to send it.
  *
  * The bound first, so a row's own verdict never reads an oversize text; then the row's `refuse`. Undefined for
- * every type with no row, including no type at all, and for every row that declares neither field.
+ * every type with no row, including no type at all, and for every row that declares neither field. Any other value
+ * that is not a type id is refused by name (`typeIdRow`, FND-1).
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 export function statementRefusal(query: string, databaseType?: DatabaseType): string | undefined {
-  const facts = databaseType === undefined ? undefined : NON_SQL_DESTRUCTIVE_VOCABULARY[databaseType];
+  const facts = databaseType === undefined ? undefined : typeIdRow(NON_SQL_DESTRUCTIVE_VOCABULARY, databaseType);
   if (facts === undefined) return undefined;
   if (facts.maxTextBytes !== undefined) {
     const over = consoleTextOverLimit(query, facts.maxTextBytes);

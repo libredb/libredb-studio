@@ -2,12 +2,14 @@
  * Google BigQuery over REST v2, no Google SDK.
  *
  * Connection fields: `database` = project id, `schema` = optional default dataset,
- * `password` = service-account key JSON or access token; an operator-seeded connection may omit it to use the server's ADC.
+ * `password` = service-account key JSON, authorized-user JSON or access token; an operator-seeded connection may omit
+ * it to use the server's ADC. Which credential a connection uses, and when, is `credential-policy.ts`.
  * EXPLAIN is a dry run: it reports the bytes the statement would scan and bills nothing.
  */
 
 import { BIGQUERY_DRY_RUN_MARKER } from "@/lib/explain/bigquery-dryrun";
 import { AuthenticationError, DatabaseConfigError, QueryError, TimeoutError } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertContainerPathShape,
@@ -36,6 +38,7 @@ import type {
   ObjectDetailBatch,
   ObjectKindSpec,
   PerformanceMetrics,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderOptions,
   QueryResult,
@@ -45,7 +48,7 @@ import type {
   TableStats,
 } from "@/lib/db/types";
 import { SQLBaseProvider } from "../sql-base";
-import { readCredentials } from "./auth";
+import { resolveBigQueryCredential } from "./credential-policy";
 import {
   BigQueryApiError,
   type BigQueryField,
@@ -56,7 +59,7 @@ import {
   createBigQueryTransport,
 } from "./transport";
 
-const CLIENT_GRACE_MS = 5_000;
+export const CLIENT_GRACE_MS = 5_000;
 const CATALOG_TIMEOUT_MS = 30_000;
 // The inventory lists each dataset once per kind and again per bulk read; one REST listing serves them all.
 const TABLE_LIST_TTL_MS = 30_000;
@@ -189,8 +192,12 @@ export class BigQueryProvider extends SQLBaseProvider {
   private readonly tableLists = new Map<string, { at: number; tables: Promise<BigQueryTableRef[]> }>();
   private catalogCache: { at: number; ttl: number; catalog: Promise<Catalog | null> } | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(config, options);
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -215,8 +222,8 @@ export class BigQueryProvider extends SQLBaseProvider {
       containerPathShapes: "exact",
       tablesNeedContainer: true,
       objectKinds: OBJECT_KINDS,
-      // The agent's identity is a service-account key of its own in `agentPassword`, from which `auth.ts` mints the
-      // token, so no token minted at a scope Studio cannot read is taken.
+      // The agent's identity is a service-account key of its own in `agentPassword`, from which the token source that
+      // `credential-policy.ts` configures mints the token, so no token minted at a scope Studio cannot read is taken.
       agentCredential: "service-account-key",
     };
   }
@@ -232,27 +239,18 @@ export class BigQueryProvider extends SQLBaseProvider {
     return `\`${identifier.replace(/\\/g, "\\\\").replace(/`/g, "\\`")}\``;
   }
 
-  /**
-   * Set only on a connection resolved from the operator's seed file: `resolveConnection` forces `managed: false` on a
-   * connection the caller supplied inline, so a client cannot claim it.
-   */
-  private operatorSeeded(): boolean {
-    return this.config.managed === true;
-  }
-
   private project(): string {
     // validate() guarantees it.
     return this.config.database!;
   }
 
   public async connect(): Promise<void> {
-    if (!this.config.password?.trim() && !this.operatorSeeded()) {
-      throw new DatabaseConfigError(
-        "BigQuery needs a service-account key or an access token in the password field: the server's own credentials are used only for operator-seeded connections",
-        this.type,
-      );
-    }
-    const transport = createBigQueryTransport(this.project(), readCredentials(this.config.password));
+    // An empty password on a connection that is not operator-seeded is refused here, by the policy's gate.
+    const transport = createBigQueryTransport(
+      this.project(),
+      resolveBigQueryCredential(this.config),
+      requireEgressDecision(this.egress),
+    );
     try {
       // Without datasets.list the job location is left to BigQuery to infer; bad credentials still fail here.
       this.location =

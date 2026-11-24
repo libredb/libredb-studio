@@ -667,6 +667,82 @@ describe("GET /api/auth/oidc/callback", () => {
     });
   });
 
+  // The setting is read from the environment, not from the mocked config, so these tests drive the real reader.
+  describe("allowed email domains (OIDC_ALLOWED_EMAIL_DOMAINS)", () => {
+    const callbackUrl = "http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state";
+
+    afterEach(() => {
+      delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+    });
+
+    test("admits an account by the hosted domain hd when the token carries one", async () => {
+      process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
+      // Google is recognised by the configured issuer, so the config says so here.
+      mockGetOIDCConfig.mockReturnValueOnce({
+        issuer: "https://accounts.google.com",
+        clientId: "test-client-id",
+        clientSecret: "test-client-secret",
+        scope: "openid profile email",
+        roleClaim: "email",
+        rolePrefix: undefined,
+        adminRoles: ["admin"],
+        userRoles: [],
+      });
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, iss: "https://accounts.google.com", email: "ada@gmail.com", hd: "topvisor.com" }),
+      );
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+      expect(await mintedSession()).toMatchObject({ username: "ada@gmail.com" });
+    });
+
+    test("admits every account while the setting is unset", async () => {
+      delete process.env.OIDC_ALLOWED_EMAIL_DOMAINS;
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/");
+    });
+
+    test("refuses an account outside the list, with no session and an audit record naming it", async () => {
+      process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
+      mockExchangeCode.mockImplementationOnce(async () =>
+        exchanged({ ...defaultClaims, email: "someone@gmail.com", email_verified: true }),
+      );
+      const spy = spyOn(console, "log").mockImplementation(() => {});
+      try {
+        const res = await GET(new Request(callbackUrl));
+
+        expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_domain_not_allowed");
+        // The refusal happens before any session, and before any role is read.
+        expect(setCookies.has("auth-token")).toBe(false);
+        expect(mockMapOIDCRole).not.toHaveBeenCalled();
+        // The exchange used the state up, so its cookie goes as it does after a sign-in.
+        expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/" });
+        expect(JSON.parse(spy.mock.calls[0]?.[0] as string)).toMatchObject({
+          event: "login_failure",
+          reason: "oidc_domain_not_allowed",
+          // The provider authenticated the account, so the refusal names it, as a sign-in would.
+          actor: "someone@gmail.com",
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    test("refuses a token that names no domain at all once a list is set", async () => {
+      process.env.OIDC_ALLOWED_EMAIL_DOMAINS = "topvisor.com";
+      mockExchangeCode.mockImplementationOnce(async () => exchanged({ iss: ISSUER, sub: "user-123" }));
+
+      const res = await GET(new Request(callbackUrl));
+
+      expect(res.headers.get("location")).toBe("http://localhost:3000/login?error=oidc_domain_not_allowed");
+      expect(setCookies.has("auth-token")).toBe(false);
+    });
+  });
+
   describe("claim roles (OIDC_ROLE_PREFIX)", () => {
     const callbackUrl = "http://localhost:3000/api/auth/oidc/callback?code=auth-code&state=test-state";
 

@@ -3,6 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { logger } from "@/lib/logger";
 import { derivedSigningKey } from "@/lib/config/auth-env";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { readTrustProxyHeaders } from "@/lib/security/config";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -377,18 +378,44 @@ export async function decryptState(token: string): Promise<OIDCState> {
 // ─── Public Origin (reverse proxy / PaaS) ──────────────────────────────────
 
 /**
- * Derive the public-facing origin from request headers.
- * On platforms like Render, Railway, Fly.io the app binds to 0.0.0.0:PORT
- * but the actual public URL comes from x-forwarded-host/x-forwarded-proto.
+ * Derive an HTTP(S) origin from trusted forwarded headers, then the Host header,
+ * falling back to the request URL when no usable authority is available.
+ *
+ * Forwarded headers are read only behind readTrustProxyHeaders(), the gate
+ * request-scheme.ts and origin-check.ts use for the identical headers, so an
+ * operator who sets TRUST_PROXY_HEADERS=false has that decision honoured here
+ * too. When no valid trusted forwarded protocol is available, a forwarded host
+ * keeps the https default the PaaS platforms need, while a Host fallback uses
+ * the request URL's scheme, so a direct http deployment is not rebranded
+ * https. Forwarded values are taken as the first comma-separated entry and
+ * validated as an authority; a malformed value must degrade to the next
+ * source, not poison every redirect and URL built from the origin (#2270).
  */
 export function getPublicOrigin(request: Request): string {
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
-  const host = forwardedHost || request.headers.get("host");
-  if (host) {
-    return `${forwardedProto}://${host}`;
+  const requestUrl = new URL(request.url);
+  const trusted = readTrustProxyHeaders();
+
+  const forwardedHost = trusted ? request.headers.get("x-forwarded-host")?.split(",")[0]?.trim() : undefined;
+  const forwardedProto = trusted
+    ? request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase()
+    : undefined;
+  const proto = forwardedProto === "http" || forwardedProto === "https" ? forwardedProto : null;
+
+  const candidates = [
+    [forwardedHost, "https"],
+    [request.headers.get("host")?.trim(), requestUrl.protocol === "https:" ? "https" : "http"],
+  ] as const;
+
+  for (const [host, fallbackProto] of candidates) {
+    if (!host || /[\s,@?#*]/.test(host) || host.includes("/") || host.includes("\\")) continue;
+    try {
+      return new URL(`${proto ?? fallbackProto}://${host}`).origin;
+    } catch {
+      // Try the next source; a malformed header must not poison error redirects.
+    }
   }
-  return new URL(request.url).origin;
+
+  return requestUrl.origin;
 }
 
 // ─── Logout URL ─────────────────────────────────────────────────────────────

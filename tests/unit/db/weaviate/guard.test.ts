@@ -9,9 +9,9 @@ import {
   readWeaviateOperations,
   WEAVIATE_DESTRUCTIVE_OPERATIONS,
   weaviateRefusal,
-} from "@/lib/db/providers/vector/weaviate/guard";
+} from "@/lib/languages/weaviateapi/guard";
 import { WEAVIATE_STATEMENT_EXAMPLE } from "@/lib/db/providers/vector/weaviate/labels";
-import { WEAVIATE_RUNS } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_RUNS } from "@/lib/languages/weaviateapi/routes";
 
 /** The examples of spec 5.4, as a user types them. */
 const EXAMPLES: readonly string[] = [

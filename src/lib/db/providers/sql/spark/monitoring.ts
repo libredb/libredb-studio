@@ -19,15 +19,9 @@ export interface SparkMonitoringDeps {
 
 /** The monitoring panels' own sentences. */
 export const SPARK_MONITORING_LABELS: Readonly<{
-  slowQueriesEmptyState: string;
-  sessionsEmptyState: string;
   tablesRefused: string;
   storageRefused: string;
 }> = {
-  slowQueriesEmptyState:
-    "Spark keeps finished statements in the driver's web UI, which Studio does not read in this version.",
-  sessionsEmptyState:
-    "Spark Connect sessions are listed in the driver's web UI, which Studio does not read in this version. Studio's own sessions last one request each, except the one for the tree and the panels, which Studio keeps while the connection is open.",
   tablesRefused:
     "Spark keeps table statistics only where its catalog stores them, and Studio does not read them in this version.",
   storageRefused: "Spark reports no storage figure Studio can read in this version.",

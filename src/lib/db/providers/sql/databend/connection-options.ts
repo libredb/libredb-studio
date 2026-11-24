@@ -16,13 +16,13 @@
  *
  * Through an SSH tunnel the origin dialled is the local forward, while the endpoint a sentence names, the host the
  * plaintext rule judges, the identity a certificate is checked against and the latch key are the tunnel's far end
- * (X03).
+ * (X03). The latch key also frames the bastion route, the one Studio hands the provider under `TUNNEL_ROUTE`
+ * (`requireTunnelRoute`); a connection with a far end and no route is refused, and `sshTunnel` is never read.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a
  * provider reads by the `config.<field>` pattern.
  */
 import { getAppVersion } from "@/lib/app-version";
-import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import {
   type HttpOrigin,
@@ -32,14 +32,10 @@ import {
   validatePort,
 } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
+import { requireTunnelRoute } from "@/lib/db/utils/require-tunnel-route";
 import { secretForms } from "@/lib/db/utils/server-text";
-import {
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd, type WithTunnelRoute } from "@/lib/types";
 import { authLatchKey } from "./auth-latch";
 
 export interface DatabendConnectionOptions {
@@ -69,6 +65,8 @@ export interface DatabendConnectionOptions {
   readonly latchKey: string;
   /** The transport's socket bound: two statements and a kill. */
   readonly maxSockets: number;
+  /** The egress decision the provider was built with, which the transport is built with. */
+  readonly egress: EgressDecision;
   /** The most bytes one answer may hold. */
   readonly responseCapBytes: number;
   /** The most bytes of answer text one statement may read across its pages. */
@@ -135,8 +133,6 @@ export const DATABEND_CONNECTION_SENTENCES = Object.freeze({
     "Warehouse must be 1 to 63 letters, digits, hyphens or underscores, as the warehouse is named in Databend Cloud. Nothing was sent.",
   plaintext:
     "This connection would send its password to Databend without TLS, to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS, connect through an SSH tunnel, or tick Send the password without TLS to accept that risk for this connection. Nothing was sent.",
-  tunnelNotOpened:
-    "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Databend was not dialled directly: the tunnel opens only when both Host and Port are set.",
   queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
   wrongType: (field: string, expected: string): string =>
     `The connection's ${field} must be ${expected}; nothing was sent.`,
@@ -144,12 +140,12 @@ export const DATABEND_CONNECTION_SENTENCES = Object.freeze({
 
 /** Throws DatabaseConfigError for every refusal of design 6.3; never echoes a value. */
 export function buildDatabendConnectionOptions(
-  config: DatabaseConnection & WithTunnelFarEnd,
-  context: { readonly queryTimeout: number; readonly appVersion?: string | null },
+  config: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,
+  context: { readonly queryTimeout: number; readonly appVersion?: string | null; readonly egress: EgressDecision },
 ): DatabendConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   // validateHost, validatePort and the egress policy's literal-address guard, on the host that is dialled.
-  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? DATABEND_DEFAULT_PORT));
+  const dialled = shared(() => httpOrigin("http", config.host, config.port ?? DATABEND_DEFAULT_PORT, context.egress));
   const endpoint =
     farEnd === undefined
       ? { host: unbracketed(dialled.host), port: dialled.port }
@@ -194,11 +190,12 @@ export function buildDatabendConnectionOptions(
       scheme,
       host: endpoint.host,
       port: endpoint.port,
-      route: tunnelRoute(farEnd === undefined ? undefined : config.sshTunnel),
+      route: farEnd === undefined ? "" : shared(() => requireTunnelRoute(config, "databend")),
       user,
       password,
     }),
     maxSockets: DATABEND_MAX_SOCKETS,
+    egress: context.egress,
     responseCapBytes: DATABEND_RESPONSE_CAP_BYTES,
     statementBytes: DATABEND_STATEMENT_BYTES,
     cellBudget: DATABEND_CELL_BUDGET,
@@ -232,14 +229,6 @@ function warehouseField(value: unknown): string | undefined {
   return warehouse;
 }
 
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw refuse(DATABEND_CONNECTION_SENTENCES.tunnelNotOpened);
-  return farEnd;
-}
-
 function unbracketed(host: string): string {
   return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
 }
@@ -260,21 +249,9 @@ function callTimeout(queryTimeout: number): number {
   return queryTimeout;
 }
 
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

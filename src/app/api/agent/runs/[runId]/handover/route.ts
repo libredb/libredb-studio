@@ -10,10 +10,13 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { providerTextScrub, withScrubbedWarnings } from "@/lib/db/operations/provider-text";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { logger } from "@/lib/logger";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
  * Replays the statement a run handed to the editor, under the engine's own read-only
@@ -49,6 +52,9 @@ import { resolveConnection } from "@/lib/seed/resolve-connection";
  *    another database approved.
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
+ *
+ * The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows and
+ * bytes are held to the hand-over budget again before the response is written, whatever the provider does.
  *
  * What it does NOT do is record a ledger event. The run may already have finished,
  * and a finished ledger does not accept appends; the replay is the editor's action on
@@ -93,6 +99,7 @@ export async function POST(req: Request, context?: HandoverParams) {
     );
   }
 
+  let connection: DatabaseConnection;
   try {
     const resolved = await resolveConnection(
       { connectionId: record.connectionId },
@@ -100,7 +107,16 @@ export async function POST(req: Request, context?: HandoverParams) {
     );
     // In the database the run read, on a server-level connection (#1530): the run drafted the
     // statement against that database's objects, so it runs there and nowhere else.
-    const connection = record.catalog === undefined ? resolved : catalogSessionConnection(resolved, record.catalog);
+    connection = record.catalog === undefined ? resolved : catalogSessionConnection(resolved, record.catalog);
+  } catch (error) {
+    return createErrorResponse(error, { route: ROUTE });
+  }
+
+  // From here a provider is built and asked, so its text, in a failure's response and log line and in a result's
+  // warnings, passes core's scrub of this connection's credential first; a failure whose text is withheld keeps its
+  // own status, code, kind and outcome (`createErrorResponse`).
+  const scrub = providerTextScrub(connection, "profiled");
+  try {
     // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
     // opens only for a trusted requester, on this profile as in the editor.
     const provider = await acquireExecutionProfileProvider(
@@ -118,9 +134,17 @@ export async function POST(req: Request, context?: HandoverParams) {
     }
 
     // A read allowance of this request's own: the run has ended, and the replay is the editor's read, not the run's.
-    const result = await provider.queryReadOnly(answer.sql, {
-      ...AGENT_HANDOVER_BUDGET,
-      readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
+    // Through the one core call of the read-only path, which holds the answer to the hand-over budget before any of
+    // it is written into the response, and stops waiting at the budget's timeout, the ceiling stated beside it.
+    const result = await runReadOnlyStatement(provider, {
+      type: connection.type,
+      scrub,
+      statement: answer.sql,
+      budget: {
+        ...AGENT_HANDOVER_BUDGET,
+        readAllowance: new RunReadAllowance(AGENT_HANDOVER_READ_ALLOWANCE, { scope: "call" }),
+      },
+      wait: "statement-timeout",
     });
     logger.info("Agent hand-over replayed in the editor", {
       route: ROUTE,
@@ -138,9 +162,9 @@ export async function POST(req: Request, context?: HandoverParams) {
       runId,
       ...(record.catalog === undefined ? {} : { catalog: record.catalog }),
       sql: answer.sql,
-      result: { ...result, rows: rowsWithNonFiniteWords(result.rows) },
+      result: { ...withScrubbedWarnings(scrub, result), rows: rowsWithNonFiniteWords(result.rows) },
     });
   } catch (error) {
-    return createErrorResponse(error, { route: ROUTE });
+    return createErrorResponse(error, { route: ROUTE, scrub });
   }
 }

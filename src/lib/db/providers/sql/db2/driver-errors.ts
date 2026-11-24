@@ -1,4 +1,4 @@
-import type { AccessRefusal, DriverErrorClassifier } from "@/lib/db/driver-errors/types";
+import type { AccessRefusal, DriverErrorClassifier } from "@libredb/provider-sdk/errors";
 
 /**
  * Db2 SQLCODEs of an access refusal whose SQLSTATE is a connection class: SQL1060N, a user without the CONNECT

@@ -39,12 +39,15 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -63,7 +66,8 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type EgressDecision,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -75,6 +79,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import {
   assertReadOnlyBudget,
@@ -82,7 +87,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   DRUID_UNREADABLE_PLAN_REFUSAL,
   druidAgentExplainStatement,
@@ -247,19 +252,26 @@ export class DruidProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport the open builds. */
+  private readonly egress: EgressDecision | undefined;
+
   /**
    * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a
-   * real connection always builds the HTTP one.
+   * real connection always builds the HTTP one, with the egress decision the provider was built with; built without
+   * one, the HTTP transport is refused by name (`requireEgressDecision`) before any request.
    */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
-    private readonly createTransport: (config: DatabaseConnection) => DruidTransport = (connection) =>
-      new DruidHttpTransport(connection),
+    execution: ProviderBuildContext = {},
+    private readonly createTransport: (
+      config: DatabaseConnection,
+      egress: EgressDecision | undefined,
+    ) => DruidTransport = (connection, egress) => new DruidHttpTransport(connection, requireEgressDecision(egress)),
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -339,9 +351,6 @@ export class DruidProvider extends SQLBaseProvider {
       ...super.getLabels(),
       entityName: "Datasource",
       entityNamePlural: "Datasources",
-      // `getSlowQueries()` is empty by design here (introspect.ts), so this panel is
-      // ALWAYS empty on Druid - and it used to name a PostgreSQL extension (#463).
-      slowQueriesEmptyState: "Druid keeps no query log: no system table and no endpoint holds finished queries.",
     };
   }
 
@@ -392,7 +401,7 @@ export class DruidProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = this.createTransport(this.config);
+    const transport = this.createTransport(this.config, this.egress);
 
     try {
       // The cheapest statement there is, sent here so a wrong port, a proxy in
@@ -559,7 +568,7 @@ export class DruidProvider extends SQLBaseProvider {
           if (error instanceof DruidAnswerTooLargeError) {
             // Closing the read does not stop the server's work, so the statement's own id is cancelled too.
             const cancel = await this.cancelAgentStatement(transport, queryId);
-            throw new QueryError(
+            throw new ByteBudgetRefusal(
               `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further; ${cancel}`,
               this.type,
               sql,
@@ -572,7 +581,7 @@ export class DruidProvider extends SQLBaseProvider {
             throw new QueryError(error.message, this.type, sql);
           }
           if (error instanceof DruidTransportError && error.is("TIMEOUT")) {
-            throw new QueryError(
+            throw new TimeBudgetRefusal(
               `${TIME_BUDGET_PREFIX}: the server stopped the statement at ${budget.statementTimeoutMs}ms`,
               this.type,
               sql,
@@ -660,7 +669,7 @@ export class DruidProvider extends SQLBaseProvider {
 
   private timeBudgetError(budget: ReadOnlyStatementBudget, sql: string, cancel: string | null): QueryError {
     const waited = `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`;
-    return new QueryError(cancel === null ? waited : `${waited}; ${cancel}`, this.type, sql);
+    return new TimeBudgetRefusal(cancel === null ? waited : `${waited}; ${cancel}`, this.type, sql);
   }
 
   /** The agent's result, or the shared refusal: held to both budgets, never cut. */
@@ -671,12 +680,12 @@ export class DruidProvider extends SQLBaseProvider {
     sql: string,
   ): QueryResult {
     if (result.rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
     }
     const answer = { ...toQueryResult(result), executionTime };
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

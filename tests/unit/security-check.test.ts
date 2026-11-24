@@ -68,9 +68,8 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, the OpenShift console plugin's server, a seed's agent credential, then an OPC UA seed's read roots", () => {
-    expect(PROGRAMME_CONTROL_IDS.slice(-11)).toEqual([
-      "3.29",
+  test("the programme ends with the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, the Kubernetes discovery controls, the operator's own namespace, the OpenShift console plugin's server, a seed's agent credential, an OPC UA seed's read roots, the shared Google sign-in, the provider built without the SSH tunnel's secret fields, the review record every agent and MCP statement gate reads, the one scrub of a provider's text on the agent, hand-over and MCP paths, the operator's CA certificates handed to the providers whose TLS does not read Node's store, the connection that never opens Studio's own storage files, core's decision about every SSH tunnel before it dials, the server's confirmation of a run, then the OPC UA fields only a seed file sets", () => {
+    expect(PROGRAMME_CONTROL_IDS.slice(-19)).toEqual([
       "3.30",
       "3.31",
       "3.32",
@@ -81,8 +80,17 @@ describe("parseTables and findControlTable", () => {
       "3.37",
       "3.38",
       "3.39",
+      "3.40",
+      "3.41",
+      "3.42",
+      "3.43",
+      "3.44",
+      "3.45",
+      "3.46",
+      "3.47",
+      "3.48",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(66);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(75);
   });
 
   test("ignores a table that is not the control table", () => {

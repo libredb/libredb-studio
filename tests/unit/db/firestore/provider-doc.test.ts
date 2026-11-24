@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { GOOGLE_TOKEN_URL } from "@/lib/db/auth/google/token-source";
 import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { QueryError } from "@/lib/db/errors";
 import { compileStatement } from "@/lib/db/providers/document/firestore/console/compile";
@@ -16,7 +17,6 @@ import {
   ENV,
   FIRESTORE_API_ORIGIN,
   FIRESTORE_SCOPE,
-  GOOGLE_TOKEN_URL,
   LIMITS,
   SENTENCES,
 } from "@/lib/db/providers/document/firestore/constants";
@@ -26,6 +26,8 @@ import { ERROR_SENTENCES, mapGoogleError } from "@/lib/db/providers/document/fir
 import { FIRESTORE_PROVIDER_SENTENCES, FirestoreProvider } from "@/lib/db/providers/document/firestore/index";
 import { FIRESTORE_KEY_SCAN_SENTENCES } from "@/lib/db/providers/document/firestore/key-scan";
 import { resolveSeams } from "@/lib/db/providers/document/firestore/seams";
+import { LITERAL_SEED_FILE } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { jsonAnswer, scriptedTransport, UNRECORDED_ANSWER } from "../../../helpers/firestore-replay";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -68,7 +70,7 @@ async function emulatorProvider(): Promise<FirestoreProvider> {
   const provider = new FirestoreProvider(
     { id: "doc", name: "doc", type: "firestore", database: "demo-libredb", createdAt: new Date(0) },
     { queryTimeout: 30_000 },
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { createTransport: script.createTransport, env: { [ENV.emulatorHost]: EMULATOR } },
   );
   await provider.connect();
@@ -79,10 +81,13 @@ const count = (value: number) => value.toLocaleString("en-US");
 const bytes = (value: number) => (value >= 1024 * 1024 ? `${value / (1024 * 1024)} MiB` : `${value / 1024} KiB`);
 
 describe("the sentences the doc quotes are the code's", () => {
-  test("the two empty-credential refusals", () => {
+  test("the three empty-credential refusals", () => {
     const seams = resolveSeams({ env: {} });
     expect(quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: false }, seams)))).toBe(true);
     expect(quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: true }, seams)))).toBe(true);
+    expect(
+      quoted(refusal(() => resolveFirestoreAuth({ password: "", managed: true, [LITERAL_SEED_FILE]: true }, seams))),
+    ).toBe(true);
   });
 
   test("the credential refusal on an emulator server, for the documented host", () => {
@@ -206,7 +211,9 @@ describe("the limits table is LIMITS", () => {
 
 describe("names, endpoints and declarations", () => {
   test("every environment variable the provider reads, and the fixed endpoints and scope", () => {
-    for (const name of Object.values(ENV)) expect(DOC).toContain(`\`${name}\``);
+    for (const name of [...Object.values(ENV), "GOOGLE_APPLICATION_CREDENTIALS", "GCE_METADATA_HOST"]) {
+      expect(DOC).toContain(`\`${name}\``);
+    }
     for (const value of [FIRESTORE_API_ORIGIN, GOOGLE_TOKEN_URL, FIRESTORE_SCOPE])
       expect(DOC).toContain(`\`${value}\``);
   });

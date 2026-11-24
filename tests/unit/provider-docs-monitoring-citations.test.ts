@@ -65,6 +65,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "getDatabasePath",
       "query",
+      "getHandle",
       "endOpenQueryTransaction",
       "queryReadOnly",
       "listContainers",
@@ -160,6 +161,7 @@ const NAMED_CITATIONS = [
       "getLabels",
       "validate",
       "connect",
+      "disconnect",
       "buildPoolConfig",
       "buildSSLConfig",
       "query",
@@ -202,6 +204,7 @@ const NAMED_CITATIONS = [
       "disconnect",
       "buildQueryResult",
       "query",
+      "queryReadOnly",
       "cancelQuery",
       "prepareQuery",
       "expireTransaction",
@@ -270,6 +273,7 @@ const NAMED_CITATIONS = [
       "prepareQuery",
       "validate",
       "buildTLSOptions",
+      "redisOptions",
       "openClient",
       "connect",
       "disconnect",
@@ -457,7 +461,16 @@ const NAMED_CITATIONS = [
   {
     doc: "docs/providers/db2.md",
     source: "src/lib/db/providers/sql/db2/index.ts",
-    methods: ["connect", "disconnect", "query", "beginTransaction", "countObjects", "describeObjects"],
+    methods: [
+      "connect",
+      "disconnect",
+      "query",
+      "beginTransaction",
+      "countObjects",
+      "describeObjects",
+      "getSlowQueries",
+      "getActiveSessions",
+    ],
   },
   // etcd: the key-value provider over gRPC (#1259).
   {
@@ -469,7 +482,7 @@ const NAMED_CITATIONS = [
   {
     doc: "docs/providers/neo4j.md",
     source: "src/lib/db/providers/graph/neo4j/index.ts",
-    methods: ["getLabels", "connect"],
+    methods: ["getLabels", "connect", "getSlowQueries"],
   },
   /**
    * The two search docs, whole, and the last two docs under `docs/providers/` that cited by line

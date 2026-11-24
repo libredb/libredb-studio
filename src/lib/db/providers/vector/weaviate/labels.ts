@@ -3,14 +3,15 @@
  *
  * `statementLanguage` is what plan mode states after "Write it in" (`src/lib/agent/investigation.ts`), the one fact
  * about how a request is written that its prompt carries for this engine. It is generated from the route table and
- * the dialect (`routes.ts`), so the two cannot drift: every route of class `read` as `METHOD /template` in table
- * order, the comment markers, how a body is written with one example, and what the console refuses.
+ * the dialect (`src/lib/languages/weaviateapi/routes.ts`), so the two cannot drift: every route of class `read` as
+ * `METHOD /template` in table order, the comment markers, how a body is written with one example, and what the
+ * console refuses.
  *
  * Pure and browser-safe: it imports the route table and the label type only.
  */
 import type { ConsoleDialectSpec, RouteSpec } from "@/lib/db/console/dialect";
 import type { ProviderLabels } from "@/lib/db/types";
-import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "./routes";
+import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 
 /** The classes of requests the console refuses, in the words and the order of the sentence's refusal clause. */
 export const WEAVIATE_REFUSED_CLASSES: readonly string[] = Object.freeze([
@@ -63,9 +64,6 @@ export const WEAVIATE_LABELS: ProviderLabels = {
   generateAction: "Generate Request",
   searchPlaceholder: "Search collections...",
   statementLanguage: weaviateStatementLanguage(WEAVIATE_CONSOLE, WEAVIATE_ROUTES, WEAVIATE_REFUSED_CLASSES),
-  slowQueriesEmptyState: "Weaviate reports no slow-query log over the routes Studio reads.",
-  sessionsEmptyState:
-    "Weaviate does not report client sessions over the routes Studio reads. For performance and storage, connect Studio to a Prometheus server that scrapes Weaviate's metrics.",
   tableStatsCaption:
     "The first 200 single-tenant collections, each with its exact object count (aggregate meta.count). A multi-tenant collection is counted per tenant: POST /v1/aggregate/{collection} with a tenant.",
   // Never rendered: Weaviate has no maintenance operation in this version (supportsMaintenance is false). Worded true anyway.

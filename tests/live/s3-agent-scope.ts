@@ -40,9 +40,10 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
-import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
+import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/auth/aws/sigv4";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -214,7 +215,7 @@ function studio(who: Who): S3Provider {
     region: REGION,
     createdAt: new Date(0),
   } as DatabaseConnection;
-  return new S3Provider(connection, {}, READ_ONLY);
+  return new S3Provider(connection, {}, { ...READ_ONLY, egress: egressDecision() });
 }
 
 interface AgentRecord {

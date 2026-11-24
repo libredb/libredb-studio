@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { storage } from "@/lib/storage";
 import { useAllConnections } from "@/hooks/use-all-connections";
-import { getDBIcon, getDBColor, getDBConfig } from "@/lib/db-ui-config";
+import { getDBIcon, getDBColor, getDBConfig, UNAVAILABLE_CONNECTION_ICON } from "@/lib/db-ui-config";
+import { isDatabaseType } from "@/lib/db/type-id";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import {
@@ -755,7 +756,12 @@ function FleetHealthSection({
         >
           {fleetHealth.map((item) => {
             const colors = getStatusColor(item.status);
-            const Icon = getDBIcon(item.type as DatabaseType);
+            // An item whose type names no provider (FND-1) draws the unavailable icon with no lookup, and the Unavailable
+            // marker in the latency slot, since nothing was dialled; its `error` is the server's refusal, which names
+            // the type, and is the marker's tooltip.
+            const type = item.type;
+            const known = isDatabaseType(type);
+            const Icon = known ? getDBIcon(type) : UNAVAILABLE_CONNECTION_ICON;
             const maxLatency = 500;
             const latencyPct = Math.min((item.latencyMs / maxLatency) * 100, 100);
 
@@ -793,7 +799,7 @@ function FleetHealthSection({
                       </Badge>
                     )}
                     <div className="p-1 rounded bg-fill">
-                      <Icon className={`w-3.5 h-3.5 ${getDBColor(item.type as DatabaseType)}`} />
+                      <Icon className={known ? `w-3.5 h-3.5 ${getDBColor(type)}` : "w-3.5 h-3.5 text-fg-muted"} />
                     </div>
                   </div>
                 </div>
@@ -812,13 +818,19 @@ function FleetHealthSection({
                 </div>
 
                 <div className="flex items-center gap-3 text-xs text-fg-muted">
-                  <span className="font-mono text-fg-tertiary">
-                    {item.status === "error"
-                      ? "timeout"
-                      : item.status === "not-checked"
-                        ? "not checked"
-                        : `${item.latencyMs}ms`}
-                  </span>
+                  {known ? (
+                    <span className="font-mono text-fg-tertiary">
+                      {item.status === "error"
+                        ? "timeout"
+                        : item.status === "not-checked"
+                          ? "not checked"
+                          : `${item.latencyMs}ms`}
+                    </span>
+                  ) : (
+                    <span className="font-medium text-fg-muted" title={item.error}>
+                      Unavailable
+                    </span>
+                  )}
                   {item.databaseSize && (
                     <>
                       <span className="text-fg-faint">&middot;</span>
@@ -833,7 +845,11 @@ function FleetHealthSection({
                   )}
                 </div>
 
-                {item.error && <div className="text-danger text-xs truncate mt-1.5">{item.error}</div>}
+                {item.error && (
+                  <div className="text-danger text-xs truncate mt-1.5" title={item.error}>
+                    {item.error}
+                  </div>
+                )}
                 {item.status === "not-checked" && (
                   <div className="text-fg-muted text-xs mt-1.5">
                     Not checked: this connection resumes billed compute, so Studio does not poll it.

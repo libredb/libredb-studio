@@ -18,29 +18,31 @@ import path from "node:path";
 import * as auth from "@/lib/auth";
 import * as actualDb from "@/lib/db";
 import * as actualFactory from "@/lib/db/factory";
-import type { DatabaseProvider } from "@/lib/db/types";
+import type { ProviderDeclarations } from "@/lib/db/factory";
 import * as actualResolve from "@/lib/seed/resolve-connection";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type { DatabaseType } from "@/lib/types";
 import { admittedConnection, grantedSnapshot } from "../../helpers/governance/granted-snapshot";
 
 // The real functions, kept before their modules are replaced, so a wrapper never calls itself.
-const realCreateDatabaseProvider = actualFactory.createDatabaseProvider;
+const realReadProviderDeclarations = actualFactory.readProviderDeclarations;
 const realResolveConnection = actualResolve.resolveConnection;
 
-/** Every provider the factory built for a route here: what the route handed it, and its connect. */
-const built: Array<{ args: unknown[]; connect: ReturnType<typeof spyOn> }> = [];
+/**
+ * Every declarations read the factory answered for a route here: what the route handed it. The read hands back data,
+ * never a provider, so nothing the route holds can connect (FND-2 slice 5).
+ */
+const built: Array<{ args: unknown[] }> = [];
 
-const createDatabaseProvider = mock(
-  async (...args: Parameters<typeof realCreateDatabaseProvider>): Promise<DatabaseProvider> => {
-    const provider = await realCreateDatabaseProvider(...args);
-    const connect = spyOn(provider, "connect").mockImplementation(async () => {
-      throw new Error("POST /api/db/statement/analyze must never connect");
-    });
-    built.push({ args, connect });
-    return provider;
+const readProviderDeclarations = mock(
+  async (...args: Parameters<typeof realReadProviderDeclarations>): Promise<ProviderDeclarations> => {
+    const declarations = await realReadProviderDeclarations(...args);
+    built.push({ args });
+    return declarations;
   },
 );
-mock.module("@/lib/db", () => ({ ...actualDb, createDatabaseProvider }));
+mock.module("@/lib/db", () => ({ ...actualDb, readProviderDeclarations }));
 
 const resolveConnection = mock(realResolveConnection);
 mock.module("@/lib/seed/resolve-connection", () => ({ ...actualResolve, resolveConnection }));
@@ -59,6 +61,7 @@ const { getServerAuditBuffer } = await import("@/lib/audit");
 const { logger } = await import("@/lib/logger");
 const { recordGovernanceSnapshot, resetGovernanceState } = await import("@/lib/governance/state");
 const seedIndex = await import("@/lib/seed");
+const { ABSENT_TYPE_SENTENCE, MALFORMED_TYPE_SENTENCE } = await import("@/lib/db/type-id");
 
 const ISSUER = "https://idp.example.com/realms/libredb";
 const ALICE: auth.UserPayload = {
@@ -68,8 +71,13 @@ const ALICE: auth.UserPayload = {
   idpIssuer: ISSUER,
 };
 
-/** A governed connection named after its id, so the etcd one is the `orders-etcd` of case C9. */
-const governed = (id: string, type: DatabaseType) => admittedConnection(id, { name: id, extra: { type } });
+/**
+ * A governed connection named after its id, so the etcd one is the `orders-etcd` of case C9. It is a development
+ * connection: the cases of #2204 predate the production escalation, which describe("the connection's environment")
+ * tests on its own.
+ */
+const governed = (id: string, type: DatabaseType) =>
+  admittedConnection(id, { name: id, extra: { type, environment: "development" } });
 const ORDERS_PG = governed("orders-pg", "postgres");
 const ORDERS_ORACLE = governed("orders-oracle", "oracle");
 const ORDERS_REDIS = governed("orders-redis", "redis");
@@ -152,7 +160,7 @@ beforeAll(() => {
 beforeEach(() => {
   clearRateLimitState();
   built.length = 0;
-  createDatabaseProvider.mockClear();
+  readProviderDeclarations.mockClear();
   resolveConnection.mockClear();
   admitQueryExecution.mockClear();
   recordQueryEvent.mockClear();
@@ -233,19 +241,17 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
   ])("%s answers 200 with exactly its decision, from a provider it never connects", async (_label, body, expected) => {
     expect(await analyze(body)).toEqual({ status: 200, body: expected, retryAfter: null });
     expect(built.map(({ args }) => [(args[0] as { id: string }).id, ...args.slice(1)])).toEqual([
-      [body.connectionId, {}, ALICE_EXECUTION],
+      [body.connectionId, ALICE_EXECUTION],
     ]);
-    expect(built[0].connect).not.toHaveBeenCalled();
   });
 
   test("builds the provider once, for the record it resolved, with editorExecutionContext's answer", async () => {
     expect((await analyze({ connectionId: "seed:orders-pg", text: TWO, ...at(19) })).status).toBe(200);
 
-    expect(createDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(readProviderDeclarations).toHaveBeenCalledTimes(1);
     expect(built).toHaveLength(1);
     expect(built[0].args[0]).toMatchObject({ id: "seed:orders-pg", type: "postgres", name: "orders-pg" });
-    expect(built[0].args.slice(1)).toEqual([{}, ALICE_EXECUTION]);
-    expect(built[0].connect).not.toHaveBeenCalled();
+    expect(built[0].args.slice(1)).toEqual([ALICE_EXECUTION]);
   });
 
   // The text is never trimmed: the range indexes into the text as it was sent, its leading blanks counted.
@@ -280,7 +286,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     "a seed id not granted to the caller answers 404 CONNECTION_NOT_FOUND %s, and builds nothing",
     async (_l, body) => {
       expect(await analyze(body)).toEqual({ status: 404, body: NOT_FOUND_BODY, retryAfter: null });
-      expect(createDatabaseProvider).not.toHaveBeenCalled();
+      expect(readProviderDeclarations).not.toHaveBeenCalled();
     },
   );
 
@@ -302,7 +308,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     const body = { connectionId: "seed:orders-pg", text: TWO, ...at(19), ...fields };
 
     expect(await analyze(body)).toEqual({ status: 400, body: { error: sentence }, retryAfter: null });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
   // H6: the bound is counted in UTF-16 code units, the unit of the offsets. This text is 1,000,001 units and 1,000,000
@@ -318,7 +324,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
       },
       retryAfter: null,
     });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
   // The field checks come before the bound, so a text over it with a field of the wrong type names the field.
@@ -328,7 +334,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     expect(
       await analyze({ connectionId: "seed:orders-pg", text, selection: { start: 0, end: 0 }, cursor: "3" }),
     ).toEqual({ status: 400, body: { error: "cursor must be an integer" }, retryAfter: null });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
   test("a text of exactly 1,000,000 UTF-16 code units is analysed", async () => {
@@ -361,7 +367,6 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
       retryAfter: null,
     });
     expect(built).toHaveLength(1);
-    expect(built[0].connect).not.toHaveBeenCalled();
   });
 
   // H8.
@@ -374,6 +379,8 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
         error: "The postgres provider is not available in this distribution of LibreDB Studio.",
         code: "CONFIG_ERROR",
         statusCode: 400,
+        kind: "config",
+        outcome: "not-sent",
       },
       retryAfter: null,
     });
@@ -382,14 +389,9 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
 
   // Only the run target's RangeError is the caller's: any other failure is the server's, answered by createErrorResponse.
   test("a provider that cannot answer its capabilities answers 500 INTERNAL_ERROR, not 400", async () => {
-    createDatabaseProvider.mockImplementationOnce(
-      async () =>
-        ({
-          getCapabilities: () => {
-            throw new TypeError("capabilities unreadable");
-          },
-        }) as unknown as DatabaseProvider,
-    );
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new TypeError("capabilities unreadable");
+    });
 
     expect(await analyze({ connectionId: "seed:orders-pg", text: TWO, ...at(19) })).toEqual({
       status: 500,
@@ -401,14 +403,9 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
   // A RangeError the run target did not raise is no offset of the caller's: a stack overflow inside an engine's reader
   // is one, and it is the server's, answered and logged as every other failure.
   test("a RangeError that is not the run target's answers 500 INTERNAL_ERROR, not 400", async () => {
-    createDatabaseProvider.mockImplementationOnce(
-      async () =>
-        ({
-          getCapabilities: () => {
-            throw new RangeError("Maximum call stack size exceeded.");
-          },
-        }) as unknown as DatabaseProvider,
-    );
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new RangeError("Maximum call stack size exceeded.");
+    });
     const errorSpy = spyOn(logger, "error");
     try {
       expect(await analyze({ connectionId: "seed:orders-pg", text: TWO, ...at(19) })).toEqual({
@@ -489,7 +486,7 @@ describe("POST /api/db/statement/analyze under governance, on the connections gr
     expect(spent.body).toMatchObject({ code: "RATE_LIMITED", statusCode: 429, retryable: true });
     expect(Number(spent.retryAfter)).toBeGreaterThan(0);
     expect(resolveConnection).toHaveBeenCalledTimes(3);
-    expect(createDatabaseProvider).toHaveBeenCalledTimes(3);
+    expect(readProviderDeclarations).toHaveBeenCalledTimes(3);
   });
 });
 
@@ -508,7 +505,7 @@ describe("POST /api/db/statement/analyze without governance", () => {
       retryAfter: null,
     });
     expect(resolveConnection).not.toHaveBeenCalled();
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
   // H2.
@@ -519,6 +516,25 @@ describe("POST /api/db/statement/analyze without governance", () => {
   ])("a body that is %s answers 400 Invalid request body, and resolves nothing", async (_label, body) => {
     expect(await analyze(body)).toEqual({ status: 400, body: { error: "Invalid request body" }, retryAfter: null });
     expect(resolveConnection).not.toHaveBeenCalled();
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { id: "inline-pg", name: "Inline", type: "postgres", host: "127.0.0.1", port: 1, password };
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new DatabaseConfigError(`the file ${password} is not a database`, "postgres");
+    });
+    const withheld = await analyze({ connection, text: TWO, ...at(19) });
+    expect(withheld.status).toBe(400);
+    expect(withheld.body).toMatchObject({ code: "CONFIG_ERROR", error: withheldErrorMessage("DatabaseConfigError") });
+    expect(JSON.stringify(withheld.body)).not.toContain(password);
+
+    readProviderDeclarations.mockImplementationOnce(async () => {
+      throw new DatabaseConfigError("the file is not a database", "postgres");
+    });
+    const clean = await analyze({ connection, text: TWO, ...at(19) });
+    expect(clean.status).toBe(400);
+    expect(clean.body).toMatchObject({ code: "CONFIG_ERROR", error: "the file is not a database" });
   });
 
   // H3: the connection alone, as the custom connections census sends it.
@@ -536,7 +552,7 @@ describe("POST /api/db/statement/analyze without governance", () => {
       },
       retryAfter: null,
     });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
   // A name that is present and not a string is refused when the connection resolves, as on every route that resolves
@@ -554,24 +570,34 @@ describe("POST /api/db/statement/analyze without governance", () => {
       body: { error: "Valid connection configuration is required", code: "CONFIG_ERROR", statusCode: 400 },
       retryAfter: null,
     });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
   });
 
-  // As every route that resolves a caller's connection answers it: a record with no type names no provider to read.
+  // As every route that resolves a caller's connection answers it: a record with no type names no provider to read,
+  // and is refused by naming that (FND-1).
   test.each([
-    ["no type", {}],
-    ["an empty type", { type: "" }],
-    ["a type that is not a string", { type: 5 }],
-  ])("an inline connection with %s answers 400 CONFIG_ERROR, and builds nothing", async (_label, type) => {
-    const connection = { id: "inline-x", name: "Inline", host: "127.0.0.1", port: 1, ...type };
+    ["no type", {}, ABSENT_TYPE_SENTENCE],
+    ["an empty type", { type: "" }, ABSENT_TYPE_SENTENCE],
+    ["a type that is not a string", { type: 5 }, MALFORMED_TYPE_SENTENCE],
+  ])(
+    "an inline connection with %s answers 400 PROVIDER_UNKNOWN, and builds nothing",
+    async (_label, type, sentence) => {
+      const connection = { id: "inline-x", name: "Inline", host: "127.0.0.1", port: 1, ...type };
 
-    expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
-      status: 400,
-      body: { error: "Valid connection configuration is required", code: "CONFIG_ERROR", statusCode: 400 },
-      retryAfter: null,
-    });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
-  });
+      expect(await analyze({ connection, text: TWO, ...at(19) })).toEqual({
+        status: 400,
+        body: {
+          error: sentence,
+          code: "PROVIDER_UNKNOWN",
+          statusCode: 400,
+          kind: "unknown-provider",
+          outcome: "unknown",
+        },
+        retryAfter: null,
+      });
+      expect(readProviderDeclarations).not.toHaveBeenCalled();
+    },
+  );
 
   // H4, under the Kubernetes access review: a seed the caller's role may not see is a miss like any other.
   test("under the Kubernetes access review, a seed the caller's role may not see answers 404 CONNECTION_NOT_FOUND", async () => {
@@ -590,7 +616,23 @@ describe("POST /api/db/statement/analyze without governance", () => {
       body: NOT_FOUND_BODY,
       retryAfter: null,
     });
-    expect(createDatabaseProvider).not.toHaveBeenCalled();
+    expect(readProviderDeclarations).not.toHaveBeenCalled();
+  });
+
+  test("answers a tunnelled record's declarations without opening its tunnel (FND-2 slice 5)", async () => {
+    const connection = {
+      id: "inline-tunnelled",
+      name: "tunnelled",
+      type: "postgres",
+      host: "db.internal",
+      port: 5432,
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    };
+
+    const answer = await analyze({ connection, text: TWO, ...at(19) });
+
+    expect(answer.status).toBe(200);
+    expect(built).toHaveLength(1);
   });
 
   // C14: the analysis reads the name of the connection the route resolved, here the caller's own inline record.
@@ -607,8 +649,7 @@ describe("POST /api/db/statement/analyze without governance", () => {
       },
       retryAfter: null,
     });
-    expect(built.map(({ args }) => args.slice(1))).toEqual([[{}, { allowExternalFileAccess: false }]]);
-    expect(built[0].connect).not.toHaveBeenCalled();
+    expect(built.map(({ args }) => args.slice(1))).toEqual([[{ allowExternalFileAccess: false }]]);
   });
 
   // The etcd lexer places one refusal per character of a line of ; or (, and once took them as the arguments of one
@@ -627,6 +668,53 @@ describe("POST /api/db/statement/analyze without governance", () => {
       statement: text,
       range: { start: 0, end: 1_000_000 },
       route: "query",
+    });
+  });
+});
+
+describe("the connection's environment", () => {
+  beforeEach(() => {
+    delete process.env.GOVERNANCE_SOURCE;
+  });
+
+  const inline = (name: string, environment: string) => ({
+    id: "inline-pg",
+    name,
+    type: "postgres",
+    host: "127.0.0.1",
+    port: 1,
+    environment,
+  });
+
+  test("a write on a production connection answers the name to type", async () => {
+    const name = crypto.randomUUID();
+    expect(await analyze({ connection: inline(name, "production"), text: "DELETE FROM t", ...at(0) })).toEqual({
+      status: 200,
+      body: {
+        decision: "confirm",
+        statement: "DELETE FROM t",
+        range: { start: 0, end: 13 },
+        route: "query",
+        unreadable: false,
+        typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+      },
+      retryAfter: null,
+    });
+  });
+
+  test("the same write on a development connection answers no typed confirmation", async () => {
+    const name = crypto.randomUUID();
+    expect(await analyze({ connection: inline(name, "development"), text: "DELETE FROM t", ...at(0) })).toEqual({
+      status: 200,
+      body: {
+        decision: "confirm",
+        statement: "DELETE FROM t",
+        range: { start: 0, end: 13 },
+        route: "query",
+        unreadable: false,
+        typedConfirmation: null,
+      },
+      retryAfter: null,
     });
   });
 });

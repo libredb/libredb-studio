@@ -7,14 +7,16 @@
  */
 // oxlint-disable no-await-in-loop -- each surface runs after the one before, so each request is one surface's.
 import { describe, expect, test } from "bun:test";
+import { errorKind } from "@/lib/db/error-record";
 import { QueryError, ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { FIRESTORE_PROVIDER_SENTENCES as S, FirestoreProvider } from "@/lib/db/providers/document/firestore";
 import { FIRESTORE_AGENT_FAILURE_SENTENCES as F } from "@/lib/db/providers/document/firestore/agent-metadata-read";
 import { FIRESTORE_AGENT_SENTENCES } from "@/lib/db/providers/document/firestore/agent-statement";
 import { FIRESTORE_AGENT_WITHHELD as W } from "@/lib/db/providers/document/firestore/agent-surface";
-import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, RunReadAllowance } from "@/lib/db/read-allowance";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type FakeFirestoreSeams, fakeSeams, jsonAnswer } from "../../../helpers/firestore-seams";
 import {
   firestoreConnection,
@@ -73,7 +75,12 @@ async function open(
 }> {
   const seams = fakeSeams({ env, answer: wire(handler) });
   const connection = firestoreConnection(env.FIRESTORE_EMULATOR_HOST === undefined ? {} : { password: undefined });
-  const provider = new FirestoreProvider(connection, { queryTimeout: 30_000 }, execution, seams);
+  const provider = new FirestoreProvider(
+    connection,
+    { queryTimeout: 30_000 },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+    seams,
+  );
   await provider.connect();
   const probes = requestsOf(seams).length;
   return { provider, seams, afterProbe: () => requestsOf(seams).slice(probes) };
@@ -258,7 +265,10 @@ describe("failures", () => {
     const index = seams.deadlines.map((deadline) => deadline.ms).lastIndexOf(4_000);
     expect(index).toBeGreaterThanOrEqual(0);
     seams.fireDeadline(index);
-    expect((await rejected(reading)).message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 4000ms`);
+    const error = await rejected(reading);
+    expect(error.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 4000ms`);
+    expect(errorKind(error)).toBe("time-budget-refusal");
+    expect((error as QueryError).query).toBe("db.listCollections()");
   });
 
   test("a probe refused by Google on an agent-mode handle is worded by category; Studio's own probe sentences pass", async () => {
@@ -268,13 +278,23 @@ describe("failures", () => {
         : jsonAnswer({});
     for (const execution of [READ_ONLY, OPERATIONS]) {
       const seams = fakeSeams({ answer: wire(refusedProbe) });
-      const provider = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, execution, seams);
+      const provider = new FirestoreProvider(
+        firestoreConnection(),
+        { queryTimeout: 30_000 },
+        { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+        seams,
+      );
       const error = await rejected(provider.connect());
       expect(error.message).toBe(F.denied);
     }
     const datastore: WireHandler = googleServer({ type: "DATASTORE_MODE" });
     const seams = fakeSeams({ answer: wire(datastore) });
-    const provider = new FirestoreProvider(firestoreConnection(), { queryTimeout: 30_000 }, READ_ONLY, seams);
+    const provider = new FirestoreProvider(
+      firestoreConnection(),
+      { queryTimeout: 30_000 },
+      { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS },
+      seams,
+    );
     expect((await rejected(provider.connect())).message).toContain("Datastore mode");
   });
 });

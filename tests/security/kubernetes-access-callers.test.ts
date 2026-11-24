@@ -58,6 +58,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/openshift-auth/http.ts": ["openShiftApiCall"],
   "src/lib/db/factory.ts": [
     "createDatabaseProvider",
+    "readProviderDeclarations",
     "getOrCreateProvider",
     "acquireExecutionProfileProvider",
     "withOneShotTunnel",
@@ -207,13 +208,15 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/kubernetes-access/gate.ts":
       "the gate's per-connection and sign-in decisions, the only reader of the decision cache",
   },
-  createDatabaseProvider: {
+  readProviderDeclarations: {
     "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/provider-meta/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+  },
+  createDatabaseProvider: {
     "src/lib/api/test-connection.ts":
       "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
   },
@@ -301,7 +304,7 @@ const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
       origin: "src/lib/db/factory.ts",
       form: "re-export",
       reason:
-        "the provider barrel re-exports getOrCreateProvider and createDatabaseProvider from the factory; the census gates the barrel for both, so every importer through it is a reviewed caller above",
+        "the provider barrel re-exports getOrCreateProvider, createDatabaseProvider and readProviderDeclarations from the factory; the census gates the barrel for all three, so every importer through it is a reviewed caller above",
     },
   ],
   "src/exports/providers.ts": [
@@ -1085,6 +1088,7 @@ describe("the census reads every import form", () => {
     expect([...(GATED.get("src/lib/db/index.ts") ?? [])].sort()).toEqual([
       ["createDatabaseProvider", ["createDatabaseProvider"]],
       ["getOrCreateProvider", ["getOrCreateProvider"]],
+      ["readProviderDeclarations", ["readProviderDeclarations"]],
     ]);
     for (const barrel of ["src/exports/providers.ts", "src/exports/index.ts", "src/exports/index.js"]) {
       expect([...(GATED.get(barrel)?.keys() ?? [])].sort()).toEqual([

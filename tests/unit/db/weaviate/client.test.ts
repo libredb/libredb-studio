@@ -9,9 +9,9 @@ import {
   type WeaviateClient,
   WeaviateError,
   type WeaviateSend,
-  WEAVIATE_OPS,
 } from "@/lib/db/providers/vector/weaviate/client";
-import { WEAVIATE_CLIENT_ROUTES, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_OPS } from "@/lib/languages/weaviateapi/ops";
+import { WEAVIATE_CLIENT_ROUTES, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 
 describe("the operations", () => {
   test("are the console's 17 routes in table order, then ready, graphql and own_info", () => {

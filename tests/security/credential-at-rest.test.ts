@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { resolveBootstrapPath } from "@/lib/auth-bootstrap";
 import { getDataDir } from "@/lib/data-dir";
 import { withCredentialEncryption } from "@/lib/storage/encrypting-provider";
 import { resetStorageEncryptionKey } from "@/lib/storage/encryption";
-import type { ServerStorageProvider, StorageCollection, StorageData } from "@/lib/storage/types";
+import type {
+  CredentialEnvelopeState,
+  ServerStorageProvider,
+  StorageCollection,
+  StorageData,
+} from "@/lib/storage/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -118,6 +124,13 @@ class CaptureProvider implements ServerStorageProvider {
     return false;
   }
   async deletePasskey() {}
+  /** A store a previous version wrote, which still accepts version 1 envelopes and unsealed values. */
+  async readEnvelopeState(): Promise<CredentialEnvelopeState> {
+    return "v1-accepted";
+  }
+  async rewriteStoredCredentials(): Promise<never> {
+    throw new Error("CaptureProvider does not model the re-seal; tests/unit/lib/storage/reseal.test.ts does");
+  }
 
   /** Everything this store holds, as the bytes a dump would contain. */
   persisted(): string {
@@ -127,19 +140,29 @@ class CaptureProvider implements ServerStorageProvider {
 
 const snapshot: Record<string, string | undefined> = {};
 
+// The envelope settings are cleared too: these stores were written before the re-seal, and a checkout's .env, which
+// bun loads in test runs, may set either.
+const SAVED = [
+  "JWT_SECRET",
+  "STORAGE_ENCRYPTION_KEY",
+  "STORAGE_ENCRYPTION_REQUIRE_V2",
+  "STORAGE_ENCRYPTION_RESEAL",
+] as const;
+
 beforeEach(() => {
-  snapshot.JWT_SECRET = process.env.JWT_SECRET;
-  snapshot.STORAGE_ENCRYPTION_KEY = process.env.STORAGE_ENCRYPTION_KEY;
+  for (const key of SAVED) snapshot[key] = process.env[key];
   process.env.JWT_SECRET = "credential-at-rest-test-jwt-secret-32";
   delete process.env.STORAGE_ENCRYPTION_KEY;
+  delete process.env.STORAGE_ENCRYPTION_REQUIRE_V2;
+  delete process.env.STORAGE_ENCRYPTION_RESEAL;
   resetStorageEncryptionKey();
 });
 
 afterEach(() => {
-  if (snapshot.JWT_SECRET === undefined) delete process.env.JWT_SECRET;
-  else process.env.JWT_SECRET = snapshot.JWT_SECRET;
-  if (snapshot.STORAGE_ENCRYPTION_KEY === undefined) delete process.env.STORAGE_ENCRYPTION_KEY;
-  else process.env.STORAGE_ENCRYPTION_KEY = snapshot.STORAGE_ENCRYPTION_KEY;
+  for (const key of SAVED) {
+    if (snapshot[key] === undefined) delete process.env[key];
+    else process.env[key] = snapshot[key];
+  }
   resetStorageEncryptionKey();
 });
 
@@ -168,6 +191,7 @@ describe("no plaintext credential reaches the server store", () => {
   test("the record is still there, still identifiable, and still usable after a round trip", async () => {
     const inner = new CaptureProvider();
     const provider = withCredentialEncryption(inner);
+    await provider.initialize();
     const original = connectionWithEverySecret();
     await provider.setCollection("u@example.org", "connections", [original]);
 
@@ -182,7 +206,9 @@ describe("no plaintext credential reaches the server store", () => {
     // Seed the INNER provider directly: this is a row that predates the decorator.
     await inner.setCollection("u@example.org", "connections", [connectionWithEverySecret()]);
 
-    const data = await withCredentialEncryption(inner).getAllData("u@example.org");
+    const provider = withCredentialEncryption(inner);
+    await provider.initialize();
+    const data = await provider.getAllData("u@example.org");
 
     expect(data.connections?.[0].password).toBe("CANARY-DB-PASSWORD");
   });
@@ -211,15 +237,17 @@ describe("a key the store cannot be opened with", () => {
     const inner = new CaptureProvider();
     await withCredentialEncryption(inner).setCollection("u@example.org", "connections", [connectionWithEverySecret()]);
 
-    process.env.JWT_SECRET = "an-entirely-different-secret-value-32c";
+    process.env.JWT_SECRET = randomBytes(32).toString("base64url");
     resetStorageEncryptionKey();
-    const data = await withCredentialEncryption(inner).getAllData("u@example.org");
+    const provider = withCredentialEncryption(inner);
+    await provider.initialize();
+    const data = await provider.getAllData("u@example.org");
 
     expect(data.connections).toHaveLength(1);
     expect(data.connections?.[0].name).toBe("Prod");
     expect(data.connections?.[0].password).toBeUndefined();
-    // Never the envelope itself: "v1:..." reaching a driver as a password is undiagnosable.
-    expect(JSON.stringify(data.connections)).not.toContain("v1:");
+    // Never the envelope itself: "v2:..." reaching a driver as a password is undiagnosable.
+    expect(JSON.stringify(data.connections)).not.toContain("v2:");
   });
 });
 

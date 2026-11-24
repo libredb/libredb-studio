@@ -7,15 +7,10 @@
  * the server who is asking.
  */
 import { DatabaseConfigError } from "@/lib/db/errors";
-import {
-  TUNNEL_FAR_END,
-  type DatabaseConnection,
-  type SSHTunnelConfig,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { requireAdmittedHostPath } from "@/lib/db/utils/admitted-file";
+import { TUNNEL_FAR_END, type DatabaseConnection, type TunnelFarEnd, type WithTunnelFarEnd } from "@/lib/types";
 import { OPCUA_SCHEME, OPCUA_TYPE } from "./constants";
-import { clientIdentitySource, pkiRoot } from "./pki";
+import { clientIdentitySource } from "./pki";
 import { normaliseThumbprint, readEndpointUrl, type OpcuaIdentityKind, type OpcuaSecurityMode } from "./security";
 
 /** What the session is built from, with nothing left to be decided later. */
@@ -42,12 +37,20 @@ export interface OpcuaConnectionOptions {
   readonly password?: string;
   /** The pinned server certificate's SHA-256 thumbprint, 64 lowercase hex (O-S2). */
   readonly pinnedThumbprint?: string;
-  /** Where the client's own key pair and trust store live (O-S4). */
-  readonly pkiRoot: string;
+  /**
+   * Where the client's own key pair and trust store live (O-S4): the root Studio's provider factory decided
+   * (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`) and handed the provider. Absent on a provider built without the
+   * factory, whose session is refused by name (`openReadOnlySession`).
+   */
+  readonly pkiRoot?: string;
+  /** The client certificate and private key Studio's provider factory admitted: absolute paths on Studio's host. */
   readonly clientCertificatePath?: string;
   readonly clientPrivateKeyPath?: string;
   readonly tunnelled: boolean;
 }
+
+/** The options a session is opened with: a connection's, with the PKI root it needs. */
+export type OpcuaSessionOptions = OpcuaConnectionOptions & { readonly pkiRoot: string };
 
 const MODES: ReadonlySet<string> = new Set(["None", "Sign", "SignAndEncrypt"]);
 
@@ -74,29 +77,27 @@ function readMode(raw: unknown): OpcuaSecurityMode {
 /**
  * A connection, or the refusal.
  *
- * `environment` is passed rather than read from `process.env` so a test states it, and so both PKI
- * root answers - the default inside the data directory, and the refusal for a RELATIVE override - are
- * reachable without changing the process.
+ * `pkiRoot` is the root the provider was built with, which Studio's provider factory decided; it is carried into the
+ * options as it is, so nothing here reads the process's environment or resolves a path.
  */
 export function readConnection(
   config: DatabaseConnection & { readonly [key: string]: unknown },
-  environment: Readonly<Record<string, string | undefined>>,
+  pkiRoot: string | undefined,
 ): OpcuaConnectionOptions {
   // The endpoint is the whole address: host and port are read FROM it rather than beside it, so
   // there is one place a reader can be wrong and one place to correct.
   const typed = typeof config.host === "string" && config.host.trim() !== "" ? config.host.trim() : "";
-  const tunnel = config.sshTunnel as SSHTunnelConfig | undefined;
-  const tunnelled = tunnel?.enabled === true;
+  // Whether a tunnel carries the connection is its far end alone, which core sets only when it opened the tunnel; core
+  // refuses a tunnel that is on and was not opened before any provider is built (FND-2 slice 5).
   const farEnd = (config as WithTunnelFarEnd)[TUNNEL_FAR_END];
+  const tunnelled = farEnd !== undefined;
   /**
-   * The URL a tunnelled connection dials, and the refusal when the tunnel is not open yet.
+   * The URL a tunnelled connection dials.
    *
    * The far end holds the address the READER typed, because the rewrite already happened; the URL's
-   * own path and scheme are kept, and only the authority moves to the local end. A tunnel declared
-   * and not opened is a refusal rather than a silent dial of `127.0.0.1`, which is the rule S3's
-   * connection reader states and every tunnelled provider follows.
+   * own path and scheme are kept, and only the authority moves to the local end.
    */
-  const endpointUrl = tunnelled ? tunnelledEndpointUrl(config, farEnd) : typed;
+  const endpointUrl = farEnd === undefined ? typed : tunnelledEndpointUrl(config, farEnd);
   const endpoint = readEndpointUrl(endpointUrl);
 
   /**
@@ -162,6 +163,11 @@ export function readConnection(
     ...(certificatePath === undefined ? {} : { certificatePath }),
     ...(privateKeyPath === undefined ? {} : { privateKeyPath }),
   });
+  // The files the library reads are the ones Studio's provider factory admitted (`admittedHostPathConnection` in
+  // `src/lib/db/provider-files.ts`): absolute, and never one of Studio's own storage files. A path the factory did not
+  // admit is refused by name, so a provider built without the factory reads none.
+  const admittedCertificate = requireAdmittedHostPath(config, "clientCertificatePath", OPCUA_TYPE);
+  const admittedKey = requireAdmittedHostPath(config, "clientPrivateKeyPath", OPCUA_TYPE);
 
   return {
     endpointUrl,
@@ -175,9 +181,9 @@ export function readConnection(
     ...(user === undefined ? {} : { user }),
     ...(password === undefined ? {} : { password }),
     ...(pinnedThumbprint === undefined ? {} : { pinnedThumbprint }),
-    pkiRoot: pkiRoot(environment),
-    ...(certificatePath === undefined ? {} : { clientCertificatePath: certificatePath }),
-    ...(privateKeyPath === undefined ? {} : { clientPrivateKeyPath: privateKeyPath }),
+    ...(pkiRoot === undefined ? {} : { pkiRoot }),
+    ...(admittedCertificate === undefined ? {} : { clientCertificatePath: admittedCertificate }),
+    ...(admittedKey === undefined ? {} : { clientPrivateKeyPath: admittedKey }),
     tunnelled,
   };
 }
@@ -196,21 +202,11 @@ export function readConnection(
  * So the URL is parsed from the FAR END, which is where the reader's text now lives, and dialled at
  * the local pair. Parsing the rewritten `host` instead reads a bare `127.0.0.1` as a URL and
  * refuses every tunnelled connection, which is exactly what the first attempt at this did.
- *
- * The far end is required: a tunnel the dialog declared and the factory has not opened would
- * otherwise dial the local port of nothing.
  */
 function tunnelledEndpointUrl(
   config: DatabaseConnection & { readonly [key: string]: unknown },
-  farEnd: TunnelFarEnd | undefined,
+  farEnd: TunnelFarEnd,
 ): string {
-  if (farEnd === undefined) {
-    throw new DatabaseConfigError(
-      "This connection goes through an SSH tunnel that is not open yet, so there is no local address to " +
-        "dial. Open the tunnel, or clear it to connect to the endpoint directly.",
-      OPCUA_TYPE,
-    );
-  }
   // The reader's own URL, validated as theirs: a mistyped scheme is heard as that rather than as a
   // sentence about the tunnel. The path is theirs too - OPC PLC answers on `/`, a Milo demo on `/milo`.
   const endpoint = readEndpointUrl(farEnd.host);

@@ -15,9 +15,12 @@
  * own objects.
  */
 import { describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { markersReachableFrom } from "../../helpers/reachable-markers";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type {
   OpcuaBrowseResult,
@@ -27,7 +30,9 @@ import type {
   OpcuaReadOnlyClient,
   OpcuaServerLimits,
 } from "@/lib/db/providers/industrial/opcua/client";
+import { OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
+import { ADMITTED_HOST_PATH_MISSING } from "@/lib/db/utils/admitted-file";
 import type { DatabaseConnection } from "@/lib/types";
 
 const CAPTURES = join(import.meta.dir, "..", "..", "fixtures", "opcua");
@@ -136,9 +141,13 @@ function connection(over: Partial<DatabaseConnection> = {}): DatabaseConnection 
 
 /** A provider over the recording, with the PKI root the connection reader requires. */
 async function connected(calls: Calls, over: Partial<DatabaseConnection> = {}): Promise<OpcuaProvider> {
-  const provider = new OpcuaProvider(connection(over), {}, {}, async () => recordedClient(calls), {
-    LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
-  });
+  const provider = new OpcuaProvider(
+    connection(over),
+    {},
+    {},
+    async () => recordedClient(calls),
+    "/tmp/libredb-opcua-pki",
+  );
   await provider.connect();
   return provider;
 }
@@ -410,31 +419,90 @@ describe("the connection's refusals happen before a socket exists", () => {
       {},
       {},
       async () => recordedClient(fresh()),
-      {
-        LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
-      },
+      "/tmp/libredb-opcua-pki",
     );
     await expect(provider.connect()).rejects.toThrow(/password with no username/);
   });
 
   /**
-   * NO VARIABLE IS STUDIO'S OWN DATA DIRECTORY, not a refusal. The LIBRARY's default still cannot be
-   * used - the image's home is `/nonexistent` - but refusing meant the engine could not be connected
-   * at all in a default install, which a browser run measured: Test Connection answered "An OPC UA
-   * connection needs a PKI directory" and the reader had no way to know what to set. A RELATIVE
-   * variable is still refused, because it resolves against whatever directory the server started in.
+   * NO VARIABLE IS STUDIO'S OWN DATA DIRECTORY, not a refusal, and a RELATIVE variable is refused: both are core's
+   * answers since FND-2 slice 3 (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`, held by
+   * `tests/unit/lib/db/provider-files.test.ts` and by the factory test below). The provider's half stays here: the root
+   * it was built with is all it carries, and an opener that needs no directory, as this recording does, connects
+   * without one.
    */
-  test("no PKI variable connects on Studio's own data directory, and a relative one is refused", async () => {
+  test("a provider built without a PKI root connects through an opener that needs none", async () => {
     const record = fresh();
-    const provider = new OpcuaProvider(connection(), {}, {}, async () => recordedClient(record), {});
+    const provider = new OpcuaProvider(connection(), {}, {}, async () => recordedClient(record));
     await provider.connect();
     expect(provider.isConnected()).toBe(true);
     await provider.disconnect();
+  });
 
-    const relative = new OpcuaProvider(connection(), {}, {}, async () => recordedClient(fresh()), {
-      LIBREDB_OPCUA_PKI_ROOT: "pki",
-    });
-    await expect(relative.connect()).rejects.toThrow(/absolute path/);
+  test("createDatabaseProvider builds OPC UA with the PKI root core decided, and refuses a relative LIBREDB_OPCUA_PKI_ROOT before the provider is built", async () => {
+    const original = process.env.LIBREDB_OPCUA_PKI_ROOT;
+    // A root no other part of the provider could hold, so finding it on the provider means core handed it over.
+    const root = join(tmpdir(), `libredb-opcua-root-${randomUUID()}`);
+    try {
+      process.env.LIBREDB_OPCUA_PKI_ROOT = root;
+      const provider = await createDatabaseProvider(connection());
+      // Changed before the walk, so the root is found on what the provider holds and not on the process's environment.
+      process.env.LIBREDB_OPCUA_PKI_ROOT = "pki";
+      expect(markersReachableFrom(provider, [root])).not.toEqual([]);
+      const refused = await createDatabaseProvider(connection()).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(DatabaseConfigError);
+      expect((refused as Error).message).toStartWith(
+        "LIBREDB_OPCUA_PKI_ROOT is an absolute path, and this one is relative: pki.",
+      );
+    } finally {
+      if (original === undefined) delete process.env.LIBREDB_OPCUA_PKI_ROOT;
+      else process.env.LIBREDB_OPCUA_PKI_ROOT = original;
+    }
+  });
+
+  /**
+   * The client certificate and key are files on Studio's own host, admitted by the factory before the provider is built
+   * (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`, held by `tests/unit/lib/db/provider-files.test.ts`).
+   * The factory's provider has no seam for an opener, so its config, which carries what core admitted, is handed to a
+   * provider over the recording, and the opener sees the options the session would be opened with.
+   */
+  test("a provider built by the factory reads the certificate and key paths core admitted", async () => {
+    const dir = join(tmpdir(), `libredb-opcua-identity-${randomUUID()}`);
+    // Spelled with a `..` the factory resolves, so the admitted path differs from the record's spelling.
+    const spelled = { clientCertificatePath: `${dir}/pki/../c.pem`, clientPrivateKeyPath: `${dir}/pki/../k.pem` };
+    const built = await createDatabaseProvider(connection(spelled));
+    const seen: { clientCertificatePath?: string; clientPrivateKeyPath?: string }[] = [];
+    const provider = new OpcuaProvider(
+      built.config,
+      {},
+      {},
+      async (options) => {
+        seen.push({
+          clientCertificatePath: options.clientCertificatePath,
+          clientPrivateKeyPath: options.clientPrivateKeyPath,
+        });
+        return recordedClient(fresh());
+      },
+      "/tmp/libredb-opcua-pki",
+    );
+    await provider.connect();
+    await provider.disconnect();
+    expect(seen[0]).toEqual({ clientCertificatePath: join(dir, "c.pem"), clientPrivateKeyPath: join(dir, "k.pem") });
+    expect(built.config.clientCertificatePath).toBe(spelled.clientCertificatePath);
+  });
+
+  test("a provider built without the factory refuses a certificate and key core never admitted, before a socket exists", async () => {
+    const provider = new OpcuaProvider(
+      connection({ clientCertificatePath: "/run/secrets/c.pem", clientPrivateKeyPath: "/run/secrets/k.pem" }),
+      {},
+      {},
+      async () => recordedClient(fresh()),
+      "/tmp/libredb-opcua-pki",
+    );
+    await expect(provider.connect()).rejects.toThrow(`clientCertificatePath: ${ADMITTED_HOST_PATH_MISSING}`);
   });
 
   test("an endpoint in another scheme is refused", async () => {
@@ -443,15 +511,62 @@ describe("the connection's refusals happen before a socket exists", () => {
       {},
       {},
       async () => recordedClient(fresh()),
-      { LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki" },
+      "/tmp/libredb-opcua-pki",
     );
     await expect(provider.connect()).rejects.toThrow(/opc.tcp:\/\/ only/);
   });
 
   test("a build with no transport says so rather than failing obscurely", async () => {
-    const provider = new OpcuaProvider(connection(), {}, {}, undefined, {
-      LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
-    });
+    const provider = new OpcuaProvider(connection(), {}, {}, undefined, "/tmp/libredb-opcua-pki");
     await expect(provider.connect()).rejects.toBeInstanceOf(QueryError);
+  });
+});
+
+/**
+ * A SESSION WHOSE CHANNEL BROKE IS REPLACED, and the request that found out says so by name.
+ *
+ * The replay stands in for the library at the seam, so the first session here fails its read the way `session.ts`
+ * reports a request that got no answer; the in-process server suite drives a broken channel through the real
+ * library.
+ */
+describe("a session whose channel broke", () => {
+  test("is replaced: the unanswered read is reported by name, and the next read is answered on a new session", async () => {
+    const calls = fresh();
+    let opened = 0;
+    const provider = new OpcuaProvider(
+      connection(),
+      {},
+      {},
+      async () => {
+        opened += 1;
+        const client = recordedClient(calls);
+        if (opened > 1) return client;
+        return {
+          ...client,
+          read: async () => {
+            throw new OpcuaUnansweredError(
+              "A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest).",
+            );
+          },
+        };
+      },
+      "/tmp/libredb-opcua-pki",
+    );
+    await provider.connect();
+    const failure = await provider.query('{ "read": ["ns=3;s=FastUInt1"] }').then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(String((failure as Error).message)).toMatch(/^A read got no answer from the server/);
+    // The connection stays open, on a new session, with the old one closed.
+    expect(provider.isConnected()).toBe(true);
+    expect(opened).toBe(2);
+    expect(calls.closed).toBe(1);
+    const result = await provider.query('{ "read": ["ns=3;s=FastUInt1"] }');
+    expect(result.rows[0]?.statusCode).toBe("Good");
+    expect(opened).toBe(2);
+    await provider.disconnect();
+    expect(calls.closed).toBe(2);
   });
 });

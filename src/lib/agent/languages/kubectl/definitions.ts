@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import { clusterUsageReadInput, clusterWorkloadsReadInput } from "@/lib/db/operations/descriptors";
-import { parseQuantity } from "@/lib/db/providers/platform/kubernetes/console/top";
+import { parseQuantity } from "@/lib/languages/kubectl/quantity";
 import { AGENT_EVIDENCE_CONTRACT, evidenceSchema } from "../../tool-contracts";
 import type { AgentToolDefinition, AgentToolName } from "../../tools";
 import type { AgentEvidenceReference } from "../../types";

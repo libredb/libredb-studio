@@ -14,6 +14,9 @@
  * `BigDecimal`, `Duration` and `Vector` instances - so the mapping under test is the
  * one a cluster feeds. `mock.module()` is not used: it is process-wide in bun and
  * poisons sibling files.
+ * The one exception is the last block, "a frame the driver cannot parse fails the
+ * connection by name": there the real driver runs against a fake node on a real
+ * socket (tests/helpers/cassandra-fake-peer.ts), so the node is the stand-in.
  *
  * Six measured behaviours drive what is asserted:
  *
@@ -38,7 +41,7 @@
  *    come back alphabetically, so declaration order is not recoverable - the tree
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { policies, types } from "cassandra-driver";
 import {
   AuthenticationError,
@@ -51,13 +54,15 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { errorKind } from "@/lib/db/error-record";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra/agent-boundary";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
 import type { DatabaseProvider } from "@/lib/db/types";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { asBytes, binaryText } from "@/lib/export/binary";
 import {
@@ -95,13 +100,24 @@ import {
 } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import type { ManagedConnection } from "@/lib/seed";
 import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { comparePaths } from "@/lib/db/object-path";
+import {
+  CASSANDRA_FRAME_CASES,
+  type CassandraFrameOutcome,
+  FAKE_PEER_READ_TIMEOUT_MS,
+  runCassandraFrameCases,
+} from "../../helpers/cassandra-fake-peer";
+import { fakeTextScrub } from "../../helpers/mcp-fixtures";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
+
+/** The notice an answer carrying database content opens with on this file's cassandra connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("cassandra"));
 
 const KEYSPACE = "probe";
 
@@ -573,13 +589,10 @@ describe("labels", () => {
     expect(labels.vacuumGlobalDesc).toContain("nodetool");
   });
 
-  test("the empty slow-query panel says Cassandra keeps no such aggregate", () => {
-    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
-    // until #U12 it told the reader to enable a PostgreSQL extension (#427's defect in
-    // another panel). The log file is the fact, so it is what the sentence names.
-    expect(labels.slowQueriesEmptyState).toContain("no aggregate of finished statements");
-    expect(labels.slowQueriesEmptyState).toContain("log file");
-    expect(labels.slowQueriesEmptyState).not.toContain("pg_stat_statements");
+  test("declares no slow-query sentence, because Cassandra offers no Queries panel to draw it", () => {
+    // Cassandra keeps no aggregate of finished statements, so its `ENGINE_FACETS` row does
+    // not offer the panel, and nothing would render a sentence explaining why it is empty.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
   });
 
   test("the statement language is named, because CQL is not SQL", () => {
@@ -1278,9 +1291,10 @@ describe("a server with no system_views keyspace", () => {
     expect(data.activeSessions).toBeUndefined();
     expect(data.errors?.performance).toContain("system_views.caches");
     expect(data.errors?.activeSessions).toContain("system_views.queries");
-    // The panel that is empty by convention on every build keeps its empty array: an
-    // absent slow-query panel would hide the label the tab already renders.
-    expect(data.slowQueries).toEqual([]);
+    // The slow-query panel has no source on any build, so it is not offered: never read,
+    // and listed rather than answered empty.
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.notOffered).toContain("slowQueries");
   });
 
   test("a typo in a TABLE name inside system_views still fails loudly", async () => {
@@ -1550,15 +1564,11 @@ describe("the panels that report nothing rather than something wrong", () => {
     await expect(provider.getStorageStats()).rejects.toThrow(CASSANDRA_STORAGE_STATS_REFUSAL);
   });
 
-  test("the slow-query panel stays EMPTY, because its sentence already reaches the user", async () => {
-    // The one always-empty panel that is not converted: `QueriesTab` renders
-    // `ProviderLabels.slowQueriesEmptyState` in place of the empty table, and this
-    // provider declares one. Converting it would move the same sentence from a label
-    // the panel already shows to an error entry, and buy nothing.
+  test("the slow-query read stays EMPTY, and the Queries panel is not offered, so nothing draws it", async () => {
     const { provider } = await connectedProvider();
 
     expect(await provider.getSlowQueries()).toEqual([]);
-    expect(provider.getLabels().slowQueriesEmptyState).toContain("no aggregate of finished statements");
+    expect(provider.getLabels().slowQueriesEmptyState).toBeUndefined();
   });
 });
 
@@ -1618,12 +1628,11 @@ describe("getMonitoringData", () => {
 
     expect(data.overview?.version).toBe("Apache Cassandra 5.0.9");
     expect(data.performance?.cacheHitRatio).toBe(83.05);
-    // The three panels this engine refuses on every build are absent WITH their reason,
-    // and one failing read no longer costs the panels that answered (#477).
+    // The three panels this engine refuses on every build, and the slow-query panel it has
+    // no source for, are not offered: never read, listed, and with no errors entry.
     expect(data.tables).toBeUndefined();
-    expect(data.errors?.tables).toBe(CASSANDRA_TABLE_STATS_REFUSAL);
-    expect(data.errors?.indexes).toBe(CASSANDRA_INDEX_STATS_REFUSAL);
-    expect(data.errors?.storage).toBe(CASSANDRA_STORAGE_STATS_REFUSAL);
+    expect(data.notOffered).toEqual(["slowQueries", "tables", "indexes", "storage"]);
+    expect(data.errors).toBeUndefined();
   });
 });
 
@@ -4139,9 +4148,9 @@ describe("the agent read-only profile", () => {
     const { provider } = await agentProvider(() => ({ [STATEMENT]: three }));
     await provider.connect();
 
-    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
-    );
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect((error as Error).message).toBe("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("an answer the server split across pages is refused, since the agent reads one page only", async () => {
@@ -4159,9 +4168,11 @@ describe("the agent read-only profile", () => {
     const { provider } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
     await provider.connect();
 
-    await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, maxResultBytes: 10 })).rejects.toThrow(
-      "Read-only execution exceeded the byte budget: 47 bytes > 10 allowed",
-    );
+    const error = await provider
+      .queryReadOnly(STATEMENT, { ...BUDGET, maxResultBytes: 10 })
+      .catch((failure: unknown) => failure);
+    expect((error as Error).message).toBe("Read-only execution exceeded the byte budget: 47 bytes > 10 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("the client deadline is the shared time refusal, and the session that waited is closed", async () => {
@@ -4173,6 +4184,7 @@ describe("the agent read-only profile", () => {
     const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(calls[0].state.shutdown).toBe(1);
   });
 
@@ -4280,6 +4292,7 @@ describe("the agent read-only profile", () => {
       caller: { username: "alice", role: "admin" },
       visibleConnections: async () => [SEED],
       resolve: async () => SEED,
+      textScrub: fakeTextScrub,
       acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
         acquired.push(profile);
         const config = makeConnection({ user: "agent_ro", password: "not-a-real-password" });
@@ -4347,7 +4360,7 @@ describe("the agent read-only profile", () => {
         pagination: { offset: 0, limit: 1, hasMore: true, nextOffset: null, wasLimited: true },
         hint: `More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ${PAGING}.`,
       });
-      expect(textOf(answer)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(textOf(answer)[0]).toBe(DATABASE_CONTENT_NOTICE);
       expect(sessions).toHaveLength(1);
       expect(sessions[0].asked.slice(0, 5)).toEqual([
         "SELECT release_version FROM system.local",
@@ -4413,14 +4426,16 @@ describe("the agent read-only profile", () => {
 
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `The statement was refused before it reached the database: ${cassandraAgentStatementRefusal(sql, KEYSPACE)}`,
           },
         ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
         isError: true,
       });
-      expect(textOf(answer)[0]).toContain("this statement does not begin with SELECT, so it was not sent.");
+      expect(textOf(answer)[1]).toContain("this statement does not begin with SELECT, so it was not sent.");
       expect(acquired).toEqual(["agent-read-only"]);
       expect(sessions).toHaveLength(0);
     });
@@ -4436,11 +4451,13 @@ describe("the agent read-only profile", () => {
 
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `The statement was refused before it reached the database: The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ${table}, so it was not sent. Name a table of the keyspace probe, or of system_schema for the schema.`,
           },
         ],
+        structuredContent: { error: { kind: "refused-before-send", code: "QUERY_ERROR", outcome: "not-sent" } },
         isError: true,
       });
       expect(sessions).toHaveLength(0);
@@ -4459,7 +4476,7 @@ describe("the agent read-only profile", () => {
 
       expect(answer.isError).toBe(true);
       expect(textOf(answer)).toEqual([
-        MCP_UNTRUSTED_NOTICE,
+        DATABASE_CONTENT_NOTICE,
         `${MCP_ENGINE_ERROR_PREFIX}User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents`,
       ]);
       expect(sent().at(-1)).toBe(statement);
@@ -4474,11 +4491,15 @@ describe("the agent read-only profile", () => {
       expect(sessions).toHaveLength(0);
       expect(answer).toEqual({
         content: [
+          { type: "text", text: providerTextNotice(providerAuthor("cassandra")) },
           {
             type: "text",
             text: `run_read_query cannot run on this connection: The agent read-only execution profile refuses the Cassandra role agent_ro: it is a superuser (agent_ro), whom no grant restricts. Connect as a role that is no superuser, holds no superuser role, and holds only SELECT on the keyspace probe or on its tables. It runs on ${RUN_READ_QUERY_ENGINES}.`,
           },
         ],
+        structuredContent: {
+          error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+        },
         isError: true,
       });
     });
@@ -4511,6 +4532,7 @@ describe("the agent read-only profile", () => {
             text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${PAGING}.`,
           },
         ],
+        structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -4531,6 +4553,7 @@ describe("the agent read-only profile", () => {
             text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
           },
         ],
+        structuredContent: { error: { kind: "byte-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
     });
@@ -4549,6 +4572,7 @@ describe("the agent read-only profile", () => {
             text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
           },
         ],
+        structuredContent: { error: { kind: "time-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
         isError: true,
       });
       expect(timeouts).toHaveLength(1);
@@ -4556,5 +4580,270 @@ describe("the agent read-only profile", () => {
       expect(timeouts[0]).toBeLessThanOrEqual(1_000);
       expect(sessions[0].state.shutdown).toBe(1);
     });
+  });
+});
+
+// ============================================================================
+// A frame the driver cannot parse, from a fake node on 127.0.0.1
+// ============================================================================
+
+/**
+ * cassandra-driver reads each connection through three streams (frame splitting, body parsing, result dispatch),
+ * and a stream that fails to read a frame reports it as an `error` event. Unpatched, nothing listens for that event,
+ * so it is thrown out of the stream's handler, the connection stays open but reads nothing more, and the caller waits
+ * for its read timeout. `patches/cassandra-driver@4.10.0.patch` gives the three streams a listener that fails the
+ * connection the way a socket error does, so the connect or the request in flight fails at once, by name, the
+ * connection is closed, and the driver's pool dials a replacement. docs/TOOLCHAIN.md, "Patched dependencies".
+ *
+ * The `lost-connection` cases hold the patch's other changes, to the control connection's reconnection after a lost
+ * connection: it shuts down the host it replaces, registers one set of listeners on its new connection, closes a
+ * connection whose reconnection failed, and closes its new connection when the client is shutting down. Each case
+ * checks that `disconnect()` leaves no connection open.
+ *
+ * Studio's real provider and the real (patched) driver run each case of tests/helpers/cassandra-fake-peer.ts under
+ * Bun in this process and under every Node binary in NODE_TRANSPORT_NODES (or the node on PATH), from a bundle,
+ * because the two runtimes report an error thrown in a stream handler differently.
+ */
+describe("a frame the driver cannot parse fails the connection by name", () => {
+  const HELPER = join(import.meta.dir, "..", "..", "helpers", "cassandra-fake-peer.ts");
+  // Every case settles well inside the read timeout, which is what an unread frame used to cost.
+  const SETTLE_BOUND_MS = FAKE_PEER_READ_TIMEOUT_MS / 2;
+  const runs: { runtime: string; outcomes: CassandraFrameOutcome[] }[] = [];
+
+  function nodeBinaries(): string[] {
+    const listed = process.env.NODE_TRANSPORT_NODES;
+    if (listed !== undefined) {
+      const binaries = listed.split(delimiter).filter((entry) => entry !== "");
+      if (binaries.length === 0) throw new Error("NODE_TRANSPORT_NODES is set and lists no Node binary");
+      return binaries;
+    }
+    const onPath = Bun.which("node");
+    if (onPath === null) throw new Error("No node on PATH: these cases run under Node too; install Node 24 or later");
+    return [onPath];
+  }
+
+  beforeAll(async () => {
+    runs.push({ runtime: `bun ${Bun.version}`, outcomes: await runCassandraFrameCases() });
+
+    const work = mkdtempSync(join(tmpdir(), "cassandra-frames-"));
+    try {
+      writeFileSync(
+        join(work, "child.ts"),
+        [
+          `import { runCassandraFrameCases } from ${JSON.stringify(HELPER)};`,
+          "const outcomes = await runCassandraFrameCases();",
+          'process.stdout.write(JSON.stringify(outcomes) + "\\n");',
+          "process.exit(0);",
+          "",
+        ].join("\n"),
+      );
+      const build = await Bun.build({
+        entrypoints: [join(work, "child.ts")],
+        target: "node",
+        format: "esm",
+        outdir: work,
+      });
+      expect({ success: build.success, logs: build.logs.map(String) }).toMatchObject({ success: true });
+      for (const binary of nodeBinaries()) {
+        const child = Bun.spawn([binary, join(work, "child.js")], { stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+          child.exited,
+        ]);
+        expect({ binary, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ binary, exitCode: 0, stderr: "" });
+        const outcomes = JSON.parse(stdout.trim().split("\n").at(-1) as string) as CassandraFrameOutcome[];
+        runs.push({ runtime: `node ${binary}`, outcomes });
+      }
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  }, 180_000);
+
+  function outcomesOf(
+    name: (typeof CASSANDRA_FRAME_CASES)[number],
+  ): { runtime: string; outcome: CassandraFrameOutcome }[] {
+    expect(runs.length).toBeGreaterThanOrEqual(2);
+    return runs.map(({ runtime, outcomes }) => ({
+      runtime,
+      outcome: outcomes.find((candidate) => candidate.name === name) as CassandraFrameOutcome,
+    }));
+  }
+
+  const connectFailure = (errorClass: string) =>
+    new RegExp(
+      `^ConnectionError: Failed to connect to Apache Cassandra: The connection to 127\\.0\\.0\\.1:\\d+ failed while reading a response: ${errorClass}\\b`,
+    );
+
+  test.each([
+    ["truncated-error", "an ERROR frame whose body cannot hold its code", "RangeError"],
+    ["truncated-auth", "an AUTHENTICATE frame whose string runs past its body", "RangeError"],
+    ["header-mismatch", "a v1 header followed by a v4 header cut short", "RangeError"],
+    ["negotiation-cut", "the version refusal followed by an ERROR frame whose body cannot hold its code", "RangeError"],
+    ["unknown-stream", "a READY on a stream id the driver never allocated", "TypeError"],
+  ] as const)(
+    "%s: %s answering STARTUP fails the connect by name and closes the connection",
+    (name, _frame, errorClass) => {
+      for (const { runtime, outcome } of outcomesOf(name)) {
+        expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+        expect({ runtime, connect: outcome.connect }).toEqual({
+          runtime,
+          connect: expect.stringMatching(connectFailure(errorClass)),
+        });
+        expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
+          runtime,
+          fast: true,
+        });
+        // Every connection the node accepted was closed by the client before Studio disconnected, and the failed
+        // connect left no connection behind: none was dialled after it, so none is open once Studio has disconnected.
+        expect({ runtime, closed: outcome.closedBeforeDisconnect }).toEqual({ runtime, closed: outcome.accepted });
+        expect({
+          runtime,
+          accepted: outcome.acceptedAfterDisconnect,
+          closed: outcome.closedAfterDisconnect,
+        }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+      }
+    },
+  );
+
+  test("malformed-answer: a malformed answer to a query fails that query by name, and the next query is served on a new connection", () => {
+    for (const { runtime, outcome } of outcomesOf("malformed-answer")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      // The request in flight gets the driver's own error for a lost connection, as it would for a reset.
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, fast: outcome.settledMs < SETTLE_BOUND_MS, ms: outcome.settledMs }).toMatchObject({
+        runtime,
+        fast: true,
+      });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      // The failed connection was closed, the driver dialled another for the next query, and that one is open.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({
+        runtime,
+        closedSince: true,
+        dialledSince: true,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+    }
+  });
+
+  test("malformed-event: an event the driver cannot read on an idle connection closes that connection, and the next query is served on a new one", () => {
+    for (const { runtime, outcome } of outcomesOf("malformed-event")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      // No request was pending, so the close of the connection is the failure's only trace, and it comes at once.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        fast: outcome.settledMs < SETTLE_BOUND_MS,
+        ms: outcome.settledMs,
+      }).toMatchObject({ runtime, closedSince: true, fast: true });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      expect({
+        runtime,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({ runtime, dialledSince: true, open: outcome.acceptedBefore - outcome.closedBefore });
+    }
+  });
+
+  test("lost-connection: the connection the driver opens again after a lost one is the only one left, and disconnect() closes it", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      // The lost connection was the cluster's only one, so the control connection opened a new one, which also serves
+      // queries. With the reconnection delay of the host it replaced passed, that is still the only open connection:
+      // nothing scheduled for the replaced host dialled the peer.
+      expect({
+        runtime,
+        closedSince: outcome.closedBeforeDisconnect > outcome.closedBefore,
+        dialledSince: outcome.accepted > outcome.acceptedBefore,
+        open: outcome.accepted - outcome.closedBeforeDisconnect,
+      }).toEqual({
+        runtime,
+        closedSince: true,
+        dialledSince: true,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      // disconnect() closed it, and nothing was dialled once it had returned.
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+    }
+  });
+
+  test("lost-connection-repeated: after each of three lost connections the next query is answered, one connection is open, and disconnect() closes it", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-repeated")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      const round = { lost: "QueryError: Socket was closed", next: "resolved" };
+      expect({ runtime, losses: outcome.losses }).toEqual({ runtime, losses: [round, round, round] });
+      // Each reconnection registered one set of listeners on its connection, so the next loss started one
+      // reconnection, not one per earlier loss: the connection open before the first loss has one successor.
+      expect({ runtime, open: outcome.accepted - outcome.closedBeforeDisconnect }).toEqual({
+        runtime,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+    }
+  });
+
+  test("lost-connection-disconnect: disconnect() while the driver is still reconnecting leaves no connection open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-disconnect")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      // The reconnection's connection may be dialled after disconnect() returned, while the driver negotiates its
+      // protocol version, but it is closed as soon as it is open instead of joining a pool nothing shuts down.
+      expect({ runtime, closed: outcome.closedAfterDisconnect }).toEqual({
+        runtime,
+        closed: outcome.acceptedAfterDisconnect,
+      });
+    }
+  });
+
+  test("lost-connection-in-connect: a connection lost during connect() fails it by name and leaves no connection open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-in-connect")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "QueryError: Socket was closed" });
+      // connect() closed the driver while its control connection was reconnecting. The reconnection's connection may
+      // be dialled after that, while the driver negotiates its protocol version, but it is closed as soon as it is
+      // open.
+      expect({ runtime, closed: outcome.closedAfterDisconnect }).toEqual({
+        runtime,
+        closed: outcome.acceptedAfterDisconnect,
+      });
+    }
+  });
+
+  test("lost-connection-reinit-error: a reconnection that fails on a server error closes its connection, and the retry's is the only one open", () => {
+    for (const { runtime, outcome } of outcomesOf("lost-connection-reinit-error")) {
+      expect({ runtime, uncaught: outcome.uncaught }).toEqual({ runtime, uncaught: [] });
+      expect({ runtime, connect: outcome.connect }).toEqual({ runtime, connect: "resolved" });
+      expect({ runtime, query: outcome.malformedQuery }).toEqual({ runtime, query: "QueryError: Socket was closed" });
+      expect({ runtime, next: outcome.nextQuery }).toEqual({ runtime, next: "resolved" });
+      expect({ runtime, open: outcome.accepted - outcome.closedBeforeDisconnect }).toEqual({
+        runtime,
+        open: outcome.acceptedBefore - outcome.closedBefore,
+      });
+      expect({
+        runtime,
+        accepted: outcome.acceptedAfterDisconnect,
+        closed: outcome.closedAfterDisconnect,
+      }).toEqual({ runtime, accepted: outcome.accepted, closed: outcome.accepted });
+    }
   });
 });

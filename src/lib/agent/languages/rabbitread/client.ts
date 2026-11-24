@@ -3,21 +3,18 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on RabbitMQ: the boundary is the provider's structural closed table, since a read permission also grants
  * a take and a purge, so no credential can be one. Its answers carry each message's offset and body size only.
  */
-function rabbitreadReadsPosture(bounds: StatementBudgets): AgentPosture {
+function rabbitreadReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per read, over a client that cannot take a message`,
     title: "Agent mode reads RabbitMQ streams' offsets and sizes, over a client that cannot take a message",
     body: `Agent mode runs RabbitMQ stream reads it wrote itself, each one read request naming a virtual host, a stream, where to start and how many messages, and answers each message's offset and body size, never its body, headers, properties or routing key, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut; a read that stops before its limit for any reason but the stream's end is refused rather than answered in part. The tree's virtual host, stream, queue and exchange names reach it as names. A read permission in RabbitMQ also lets an account take and purge messages, so no account can be the boundary: Studio's read client has no way to take, publish, purge or declare, a read asks the management API for the object's type and refuses a classic or quorum queue before any frame, and its consume carries a stream offset the broker refuses on any queue. Nothing reaches your editor.`,
@@ -65,7 +62,6 @@ export const RABBITREAD_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: rabbitreadReadsPosture,
-    widened: rabbitreadReadsPosture,
     handoverTerms: () =>
       "A RabbitMQ answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

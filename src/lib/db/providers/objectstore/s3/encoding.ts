@@ -8,17 +8,11 @@
  *
  * Not browser-safe: it imports endpoint.ts, which imports `node:net`.
  */
+import { compareEncodedPairs } from "@/lib/db/auth/aws/sigv4";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { rfc3986Encode, rfc3986Path } from "@/lib/db/http/endpoint";
 import { S3_TYPE } from "./constants";
 import { bucketAddressRefusal, dotSegmentsLeaveBucket, sourceAddressSentence } from "./names";
-
-/** Plain code-unit order on the encoded name, then the encoded value; the strings are ASCII, so this is byte order. */
-export function compareEncodedPairs(a: readonly [string, string], b: readonly [string, string]): number {
-  if (a[0] !== b[0]) return a[0] < b[0] ? -1 : 1;
-  if (a[1] !== b[1]) return a[1] < b[1] ? -1 : 1;
-  return 0;
-}
 
 /**
  * "/" + bucket, or "/" + bucket + "/" + the key's "/"-separated segments, each rfc3986Encode-d.

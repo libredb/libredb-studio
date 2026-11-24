@@ -24,6 +24,7 @@
 | **Source** | [`src/lib/db/providers/document/mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts) |
 | **Tests** | [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts) |
 | **Write reach** | open: the editor's write operations, Import, Generate Test Data and maintenance (`vacuum`, `analyze`, `check`, `kill`) send writes |
+| **Failed statement outcome** | unknown: the driver takes its pooled connection inside each operation call, the call that sends the command, so no failure can be shown to come before the send |
 
 ---
 
@@ -67,7 +68,7 @@ Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/
 ```ts
 case 'mongodb': {
   const { MongoDBProvider } = await import('./providers/document/mongodb');
-  return new MongoDBProvider(connection, options, execution);
+  return new MongoDBProvider(connection, options, context);
 }
 ```
 
@@ -143,7 +144,7 @@ Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `inse
 [`CLAUDE.md`](../../CLAUDE.md) for the request shape.
 
 Since S8 the **execution confirmation gate reads this same shape**:
-`src/lib/db/providers/document/mongodb/destructive.ts` names `deleteOne`, `deleteMany`, `updateOne`, `updateMany` and
+`src/lib/languages/mongo/destructive.ts` names `deleteOne`, `deleteMany`, `updateOne`, `updateMany` and
 the top-level `$out` / `$merge` aggregate stages as the destructive operations here - so each of
 them asks before it runs, exactly as a `DELETE FROM` does on a SQL engine, and a payload the reader
 cannot read as a document with a string `operation` (mongosh syntax such as
@@ -166,6 +167,11 @@ expression as `{}` and a UUID as `<Binary: 16 bytes>`. A class is recognised by 
 prototype carries, so a document's own field of that name stays data. A bigint or a `Double`
 is reached only by a write echoing a typed `_id` the statement sent, and renders as a number (a
 bigint past 2^53 as its digits) ([§3.1](#extended-json-in-the-query)).
+
+A BSON undefined (the deprecated type 6) inside an array is `null`, as JSON writes it, so the editor's answer is unchanged and MCP's answer carries the row.
+Before, the driver's `undefined` reached the row, and MCP's value codec, which takes no `undefined`, refused the whole answer: `The value codec cannot encode undefined, at "/0/list/1".`
+A field whose value is undefined stays as it is in the row, and both the editor's JSON and MCP's answer leave it out.
+Measured with the bson 7.3.2 parser on hand-built bytes; the Node driver itself writes an array's undefined as null, so only a document another writer stored carries one.
 
 ### 3.3 Sampling-based schema inference, nested to three levels
 
@@ -496,7 +502,7 @@ fallback: the caller shape-checks for the method and this provider does not answ
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/document/mongodb/sql-grammar.ts`](../../src/lib/db/providers/document/mongodb/sql-grammar.ts), the `mongodb` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: MongoDB takes a JSON document, which never reaches the SQL readers on the query path, since the provider extends `BaseDatabaseProvider` and never calls `prepareQuery`; it reaches the confirmation gate because both execution paths ask about whatever is in the editor before running it (#297).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/document/mongodb/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/mongo/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `command`, read by the module's own reader: a redacted statement keeps the document's keys and its top-level `collection`, `operation` and `database` names as SQL keeps table names, replaces every other value with `?` as compact JSON, and keeps nothing (`?`) of text that is not one JSON document, since the provider does not run it either.
 The document is walked with a stack of its own rather than by recursion, because `JSON.parse` reads a document nested far deeper than a recursive walk can follow.
@@ -1113,6 +1119,28 @@ something was measured:
   value the type leaves for a path that counted nothing. They are the one place this object still
   states more than it read ([§13](#13-known-limitations--future-work)).
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `mongodb` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/document/mongodb/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `vacuum`, `analyze`, `check`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
@@ -1394,6 +1422,7 @@ Over the API: `POST /api/db/query` (JSON MQL in the `sql` field) and `POST /api/
 ### The agent read-only execution profile (issue #1614)
 
 Agent mode executes on MongoDB through `queryReadOnly()`, and reads the catalog for `inspect_schema` through `readCatalogReadOnly()`, both on [`mongodb/index.ts`](../../src/lib/db/providers/document/mongodb/index.ts).
+Studio holds the rows the catalog read serves to the run's row and byte budget again, each row's UTF-8 JSON bytes summed, and stops waiting at the statement timeout (`runReadOnlyReading` in [`read-only-statement.ts`](../../src/lib/db/operations/read-only-statement.ts), [`tests/unit/lib/agent/mongo-tools.test.ts`](../../tests/unit/lib/agent/mongo-tools.test.ts)), so a description whose field names fit the BSON sample and outgrow the budget as JSON is refused with the shared byte sentence.
 MongoDB has no read-only session or transaction, so the boundary is the connection's user, proven at open by the server's own answers ([`agent-boundary.ts`](../../src/lib/db/providers/document/mongodb/agent-boundary.ts)), and each read is bounded once it is sent ([`agent-read.ts`](../../src/lib/db/providers/document/mongodb/agent-read.ts)).
 The command a model writes is read by [`envelope.ts`](../../src/lib/db/providers/document/mongodb/envelope.ts), which both the run's tool path ([`mongo-admission.ts`](../../src/lib/db/operations/mongo-admission.ts)) and the provider use, so the two refuse the same commands with the same sentences.
 The checks run only on a connection opened to send statements (`sendsStatements` beside `readOnly` on the execution context).
@@ -1493,7 +1522,7 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
 4. **The command is a read** (`readMongoCommand` in `envelope.ts`).
    It admits the five reads of the editor's envelope (`find`, `findOne`, `aggregate`, `count`, `distinct`), each with only the keys that read honours, and refuses with a sentence naming what to send instead: a write, a write's payload, a key the read would drop, a `limit` or `skip` a cursor would misread, a pipeline stage outside the read stages (`$out` and `$merge`, the diagnostic and session stages, `$changeStream`, `$search`), `$where`, `$function` and `$accumulator` wherever they sit, every internal (`$_`) operator, and a model's command past 4,096 characters.
    It is defence in depth: a user holding only read can still run the JavaScript operators and the diagnostic stages the read role grants, and the reader is the one refusal of those.
-   `queryReadOnly` reads the statement again with it, and its refusal there, like a value the Extended JSON reviver cannot read, is a `RefusedBeforeSendError`, so the rail and MCP say the statement was refused before it was sent, in Studio's words.
+   `queryReadOnly` reads the statement again with it, and its refusal there, like a value the Extended JSON reviver cannot read, is a `RefusedBeforeSendError`, so the rail and MCP say the statement was refused before it was sent: the rail in Studio's words, MCP with the provider's sentence after a notice naming the provider that wrote it, "MongoDB provider, bundled with Studio".
 5. **The server's deadline, and Studio's.**
    Every command carries `maxTimeMS`, the budget's own deadline; an explain carries it at the top of the explain command, because 8.3.11 and 7.0.43 ignore the one inside the explained command (measured: given only that one, their explains ran 1,520 ms and 715 ms against a 300 ms budget).
    Each read runs in a session the provider starts, and a timer one second past the deadline (`AGENT_DEADLINE_BACKSTOP_MS`) kills that session with `killSessions` and closes the cursor; a user holding only read may kill its own session (measured on 9.0.4, 8.3.11 and 7.0.43: the read ends with code 11601 and no operation is left).
@@ -1510,6 +1539,8 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
    A `distinct` answers one reply, which the server holds to 16 MiB, and the driver decodes it whole before either budget is read, because it decodes a command's reply even when asked for it raw: `raw` keeps only embedded documents as bytes, and the reply and its `values` list are decoded (driver 7.7.0, measured against 9.0.4, 8.3.11 and 7.0.43).
    Decoded, a reply of many small values near that cap costs about ten times its size, well past the 64 MiB ceiling: on 9.0.4 under the same limit, a 14.8 MiB reply of 780,000 small documents grew resident memory by about 145 MiB, and a 14.4 MiB reply of 900,000 short strings by about 175 MiB, before the row refusal.
    It is refused past the row budget before any row is built, then on the row whose BSON size carries the total past the byte budget.
+   After the BSON budget on the wire, Studio checks the served rows' UTF-8 JSON bytes against the same budget on the agent, hand-over and MCP paths (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so a read whose decoded rows outgrow the budget is refused with the shared byte sentence, although its BSON fitted.
+   So on those paths a read is held to both measures: the BSON the server sends, then the UTF-8 JSON of the rows as served, each row's bytes summed (`tests/unit/db/mongodb/agent-read.test.ts`).
 8. **The bound database**, as issue #1614 settled.
    A run reads the database its connection is bound to (`getDatabaseName()`: the connection's database, or a connection string's path).
    A command whose `database` names another is refused before anything is sent, naming the bound one; one naming the bound database is read there.
@@ -1615,6 +1646,9 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
   why `endOpenQueryTransaction()` is absent ([§5](#endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
 - **No `cancelQuery`.** A running operation can only be terminated via maintenance `killOp` (needs the
   opid and privileges), which the Sessions panel's Terminate button sends (#1424).
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+  This provider cannot cancel a run, so Studio sends no cancel, and the operation runs on in the server until it ends or is killed.
 - **No column modification in a generated migration.** Since
   [#269](https://github.com/libredb/libredb-studio/issues/269) the schema-diff migration generator
   answers a modified column per dialect; collections are schemaless, so it emits

@@ -8,6 +8,7 @@ Tracking issue: [#1566](https://github.com/libredb/libredb-studio/issues/1566), 
 | | |
 |---|---|
 | **Write reach** | none: every route of the closed console route table, `WEAVIATE_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -39,19 +40,21 @@ Tenants and aliases follow the precedent of Milvus's partitions and Qdrant's ali
 `rest-client.ts` is the one file that builds a path, from the route table, over the shared `node:http(s)` transport (`src/lib/db/http/node-transport.ts`), so the client can build the console's read routes, the readiness probe and the GraphQL read, and nothing else.
 `graphql.ts` is the one producer of GraphQL text.
 `routes.ts`, the phase 0 half of `request.ts`, `guard.ts`, `generators.ts` and `labels.ts` are pure and shipped to the browser, because the editor, the confirmation gate and the generators read them; everything else runs on the server only.
+The request language's modules (`routes.ts`, `request.ts`, `guard.ts`, the confirmation gate's row `destructive.ts`, the agent's reader `metadata-request.ts`, and the declarations `ops.ts` and `collection-facts.ts`) live in the weaviateapi statement language's core family module, `src/lib/languages/weaviateapi/`, which the provider imports, because core reads them too ([PROVIDER_IMPORTS.md](../PROVIDER_IMPORTS.md)); `generators.ts` and `labels.ts` stay in the provider directory, and the table below names the family's modules by repository path.
 
 ### 2.2 Modules
 
 | File | What it owns |
 |---|---|
-| `client.ts` | The seam: `WeaviateClient`, its operations, its request and answer types, and `WeaviateError` |
+| `client.ts` | The seam: `WeaviateClient`, its request and answer types, and `WeaviateError`; the operation names are the family's `ops.ts` |
+| `src/lib/languages/weaviateapi/ops.ts`, `src/lib/languages/weaviateapi/collection-facts.ts` | The operation names the client sends, the console's seventeen and the three the provider writes itself, and the facts a request reads from the collection it names |
 | `rest-client.ts` | The only builder of paths, from the route table; the `Authorization` header; the shared transport |
 | `connection-options.ts` | The endpoint, the token, the plaintext rule, the TLS material, the tunnel's far end and the seed stage |
-| `routes.ts` | The console's dialect and its seventeen routes, their query keys and closed body schemas, the refused keys and the refusal sentences |
-| `request.ts`, `guard.ts` | A parsed request to a typed one (names, the where filter, the inference rule, bounds), the search model, and the browser's verdict |
+| `src/lib/languages/weaviateapi/routes.ts` | The console's dialect and its seventeen routes, their query keys and closed body schemas, the refused keys and the refusal sentences |
+| `src/lib/languages/weaviateapi/request.ts`, `src/lib/languages/weaviateapi/guard.ts` | A parsed request to a typed one (names, the where filter, the inference rule, bounds), the search model, and the browser's verdict |
 | `versions.ts` | The version `GET /v1/meta` reports and the table that picks REST or GraphQL |
 | `graphql.ts` | The REST and GraphQL encoders of one search model, and the GraphQL builder |
-| `schema.ts` | A class definition to columns, vectors, the GraphQL selection and the facts a request reads |
+| `schema.ts` | A class definition to columns, vectors, the GraphQL selection and the facts a request reads, whose types are the family's `collection-facts.ts` |
 | `results.ts`, `execute.ts`, `errors.ts` | Answers to results, one request within its bounds, deadline and permit, the tenant guard, and the one error table |
 | `source.ts`, `objects.ts`, `generators.ts`, `labels.ts` | The Source, the object surface, the generated requests and the labels |
 | `monitoring.ts`, `monitoring-reads.ts`, `index.ts` | The monitoring panels and the composition root |
@@ -129,7 +132,11 @@ GraphQL answers null for every int outside the 32-bit range, 2^53 - 1 included, 
 | API key or token | An API key or an OIDC access token, sent as `Authorization: Bearer`; empty for anonymous access |
 | SSL / TLS | Off, or the mode, CA and client certificate of the shared panel |
 
-There is no User field and no Database box: Weaviate takes a bearer token alone and has no container level, and a non-empty user from a seed or the API is refused naming the field.
+There is no User field and no Database box: Weaviate takes a bearer token alone and has no container level.
+A user from a seed or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
+
+> Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.
+
 
 ### 4.2 Authentication
 
@@ -169,6 +176,10 @@ A later release takes REST by the table, and REST search is still a preview upst
 ### 4.9 Hosted services
 
 Weaviate Cloud and DigitalOcean Managed Weaviate are claimed nowhere until a test cluster passes the live check.
+
+### 4.10 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
 
 ### Connection string
 
@@ -252,7 +263,7 @@ Every route is a read, so nothing asks for confirmation; the browser runs the sa
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/vector/weaviate/sql-grammar.ts`](../../src/lib/db/providers/vector/weaviate/sql-grammar.ts), the `weaviate` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `weaviate` takes one Weaviate console request, a `METHOD /v1/path` line and one JSON body, whose strings escape with a backslash and where `//` opens a comment outside a string; the provider parses it with the shared console parser.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/vector/weaviate/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/weaviateapi/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -291,6 +302,28 @@ Where no object has shown the vector's length, as in the tree's one-read schema 
 | Tables | One exact count per single-tenant collection of the first 200 by name; a multi-tenant collection is counted per tenant in the console |
 | Indexes | One row per vector: index type, distance and compression |
 | Slow queries, sessions, storage | Empty: Weaviate reports none over the routes Studio reads |
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `weaviate` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/weaviate/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `health`.
 
 ## 8. Maintenance
 
@@ -387,12 +420,12 @@ The refusal reason it prints, verbatim:
 ## 15. Agent mode
 
 Agent mode reads Weaviate's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/vector/weaviate/index.ts).
-The request reader is [`metadata-request.ts`](../../src/lib/db/providers/vector/weaviate/metadata-request.ts), and the viewer proof, the metadata-only projection and the wording of a failure are [`metadata-read.ts`](../../src/lib/db/providers/vector/weaviate/metadata-read.ts).
+The request reader is [`src/lib/languages/weaviateapi/metadata-request.ts`](../../src/lib/languages/weaviateapi/metadata-request.ts), and the viewer proof, the metadata-only projection and the wording of a failure are [`metadata-read.ts`](../../src/lib/db/providers/vector/weaviate/metadata-read.ts).
 Every claim below cites a capture under [`tests/fixtures/weaviate/1.40.2/agent-boundary/`](../../tests/fixtures/weaviate/1.40.2/agent-boundary/), recorded by its `run.sh` against digest-pinned 1.40.2 servers with every request sent raw, past every Studio check.
 
 ### 15.1 The boundary
 
-The boundary is a structural closed table: the client's 20 GET and POST operations (`WEAVIATE_OPS` in `client.ts`, the routes in `routes.ts`) name no write, and the REST client builds no other path.
+The boundary is a structural closed table: the client's 20 GET and POST operations (`WEAVIATE_OPS` in `src/lib/languages/weaviateapi/ops.ts`, the routes in `src/lib/languages/weaviateapi/routes.ts`) name no write, and the REST client builds no other path.
 On top of it the key is proved a viewer, so the server's own RBAC refuses what the table could ever let through.
 A viewer's object write, tenant status change and collection drop are each answered 403 naming `create_data`, `update_tenants` or `delete_collections`, with the count, the tenant and the collection unchanged after (`write-object-viewer`, `write-tenant-viewer`, `write-schema-viewer` and their `-after` captures), while the root user's same object write is answered and moves the count from 3 to 4 (`write-object-root`, `write-count-after-root`).
 

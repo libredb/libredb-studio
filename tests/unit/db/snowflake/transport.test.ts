@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { httpOrigin } from "@/lib/db/http/endpoint";
 import { TransportError } from "@/lib/db/http/node-transport";
+import { patTokenSource, readAccessToken, SNOWFLAKE_TOKEN_MAX_CHARS } from "@/lib/db/providers/sql/snowflake/auth";
 import {
   createSnowflakeTransport,
   SNOWFLAKE_CONTROL_ANSWER_MAX_BYTES,
@@ -20,9 +21,12 @@ import {
   snowflakeTestUuid,
   testDeps,
 } from "../../../helpers/snowflake-node-transport";
+import { closeAll, rawAnswer, rawHttpListener } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import type { EgressDecision } from "@/lib/db/types";
 
 const HOST = "acme-x1.snowflakecomputing.com";
-const ORIGIN = httpOrigin("https", HOST, 443);
+const ORIGIN = httpOrigin("https", HOST, 443, ALLOWS_PRIVATE_HOSTS);
 const TLS = { rejectUnauthorized: true, identity: HOST } as const;
 const STATEMENTS = "/api/v2/statements";
 const HANDLE = "019c06a4-0000-df4f-0000-00100006589e";
@@ -32,11 +36,12 @@ const MAX = SNOWFLAKE_CONTROL_ANSWER_MAX_BYTES;
 function setup(
   tokens = scriptedTokens(["t1", "t2", "t3"]),
   tls: { readonly rejectUnauthorized: boolean; readonly identity: string } | null = TLS,
+  egress: EgressDecision = ALLOWS_PRIVATE_HOSTS,
 ) {
   const transports = scriptedTransports();
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
-  const transport = createSnowflakeTransport({ origin: ORIGIN, tls, tokens }, deps);
+  const transport = createSnowflakeTransport({ origin: ORIGIN, tls, tokens, egress }, deps);
   return { transports, clock, deps, tokens, transport };
 }
 
@@ -143,6 +148,18 @@ describe("headers and transport options", () => {
     expect(transports.requests[0].headers.authorization).toBe("Bearer tok");
   });
 
+  test("both transports are built with the egress decision handed in the transport options", async () => {
+    // A decision of this test's own, so each transport's is the handed one by identity, not merely an equal one.
+    const egress: EgressDecision = { blocksPrivateHosts: true, source: "set" };
+    const { transports, transport } = setup(undefined, TLS, egress);
+    transports.answer({ path: /./ }, ok());
+    await transport.status(STATUS, signal(), MAX);
+    transports.answer({ method: "GET", path: /./ }, bytesOk());
+    await transport.partition(STATUS, "partition=1", signal(), 100, 90);
+    expect(transports.textOptions[0].egress).toBe(egress);
+    expect(transports.byteOptions[0].egress).toBe(egress);
+  });
+
   test("a null TLS is passed as given, for a loopback origin", async () => {
     const { transports, transport } = setup(undefined, null);
     transports.answer({ path: /./ }, ok());
@@ -231,7 +248,7 @@ describe("submit", () => {
     const controller = new AbortController();
     const reason = new Error("stopped by the user");
     const other = createSnowflakeTransport(
-      { origin: ORIGIN, tls: TLS, tokens: scriptedTokens(["t1"]) },
+      { origin: ORIGIN, tls: TLS, tokens: scriptedTokens(["t1"]), egress: ALLOWS_PRIVATE_HOSTS },
       {
         ...deps,
         sleep: (ms, during) => {
@@ -356,6 +373,29 @@ describe("partition", () => {
       "Bearer t2",
     ]);
     expect(transport.recentTokens()).toEqual(["t1", "t2"]);
+  });
+
+  test("a programmatic access token of the longest length read reaches the wire on a partition read", async () => {
+    // The byte transport holds a signer's values to 8192 bytes, so a bearer longer than 1024 bytes is sent whole.
+    const listener = await rawHttpListener(() => rawAnswer("200 OK", ["content-length: 2"], "[]"));
+    const pat = readAccessToken("A".repeat(SNOWFLAKE_TOKEN_MAX_CHARS));
+    const transport = createSnowflakeTransport(
+      {
+        origin: httpOrigin("http", "127.0.0.1", listener.port, ALLOWS_PRIVATE_HOSTS),
+        tls: null,
+        tokens: patTokenSource(pat),
+        egress: ALLOWS_PRIVATE_HOSTS,
+      },
+      snowflakeProductionDeps(),
+    );
+    try {
+      const answer = await transport.partition(STATUS, "partition=1", AbortSignal.timeout(5000), 100, 100);
+      expect(answer.status).toBe(200);
+      expect(listener.heads[0].toString("latin1").split("\r\n")).toContain(`authorization: Bearer ${pat}`);
+    } finally {
+      transport.close();
+      await closeAll();
+    }
   });
 });
 

@@ -24,6 +24,7 @@
 | **Source** | [`src/lib/db/providers/sql/sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts) |
 | **Tests** | [`tests/integration/db/sqlite-provider.test.ts`](../../tests/integration/db/sqlite-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`vacuum`, `analyze`, `reindex`, `check`) all write the file |
+| **Failed statement outcome** | unknown: the provider takes its worker's handle (`getHandle()`), starting a new worker when the last one stopped, before it sends the statement, and that failure answers `unknown` like every other |
 
 ---
 
@@ -116,8 +117,8 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → SQ
 `SQLiteProvider` inherits the shared SQL helpers (see
 [PostgreSQL doc §2.2](./postgres.md#22-what-sqlbaseprovider-provides)). It does **not** override
 `prepareQuery()`: SQLite uses standard `LIMIT`, so the base's `LIMIT` injection works. `getLabels()`
-is overridden for **two** things only — the slow-query empty state and the global reindex wording
-([§9](#9-capabilities--labels)) — because the rest of the default SQL wording fits (*Vacuum Table* /
+is overridden for **one** thing only, the global reindex wording
+([§9](#9-capabilities--labels)), because the rest of the default SQL wording fits (*Vacuum Table* /
 *Analyze Table*, since SQLite has real `VACUUM`/`ANALYZE`).
 
 ### Dynamic driver load
@@ -135,12 +136,12 @@ The driver is imported lazily via `loadSQLiteDriver()`
 // factory.ts
 case "sqlite": {
   const { SQLiteProvider } = await import("./providers/sql/sqlite");
-  return new SQLiteProvider(connection, options, execution);
+  return new SQLiteProvider(connection, options, context);
 }
 ```
 
-`execution` is the server-injected [`ProviderExecutionContext`](../../src/lib/db/types.ts).
-Every cached path passes the server-derived `allowExternalFileAccess` posture, and SQLite refuses to open when it is `false` (the last section of this page).
+`context` is the build context (`ProviderBuildContext` in [`types.ts`](../../src/lib/db/types.ts)): the server-injected `ProviderExecutionContext` plus the egress decision core took, which SQLite does not read.
+Every cached path passes the server-derived `allowExternalFileAccess` posture, and a SQLite connection is refused when it is `false` (the last section of this page): by the factory before the provider is built, and by the provider's own `connect()` for one built without it.
 `acquireExecutionProfileProvider` adds the read-only flag when it builds an agent provider ([§12](#12-agent-read-only-execution-profile-328)).
 
 ---
@@ -149,9 +150,15 @@ Every cached path passes the server-derived `allowExternalFileAccess` posture, a
 
 ### 3.1 File path resolution & the admin-trusted path model
 
-`getDatabasePath()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) resolves the target:
-`connectionString` (stripping a `file:` prefix) → else `database` → else `:memory:`. Non-`:memory:`
-paths are `path.resolve()`-d to an absolute path and **rejected if they contain a NUL byte**.
+Studio's provider factory decides the target before the provider is built (`admittedFileConnection` in [`provider-files.ts`](../../src/lib/db/provider-files.ts)): `connectionString` with a leading `file:` removed, else `database`; a connection that names neither is refused by `validate()`.
+A connection whose file-access posture is denied is refused before this, so Studio reads nothing the connection names (the last section of this page).
+A connection string that is `file:` and nothing after it names no file, and the factory refuses it by name ("Invalid database path: the connection string names no file after its scheme"), whatever `database` holds.
+Exactly `:memory:` is kept as it is; any other name is resolved with `path.resolve()` against the working directory when the provider is built.
+A name holding a NUL byte, or naming one of Studio's own storage files, is **refused there with a `DatabaseConfigError`**, so no provider exists to connect.
+So is a path the reserved check cannot read, where the filesystem answers anything but "no such file" (a path through a regular file, a symbolic link loop, a directory the server cannot search): the refusal names the filesystem's reason.
+On Windows a path through a regular file reads as absent, so the check admits it and the open fails on connect instead.
+An error reading Studio's own storage files, such as a `STORAGE_SQLITE_PATH` under a regular file, is the server's own fault, not the connection's, and is raised as it is.
+The provider opens the absolute path it is handed (`getDatabasePath()` in [`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) and resolves nothing itself, so a later change of the working directory does not move the file a built provider opens; a provider built without the factory holds no admitted file, and its connect is refused by name.
 
 A missing parent folder is created on connect, one level at a time, by `createMissingDirectories` ([`create-directory.ts`](../../src/lib/db/utils/create-directory.ts)), shared with the DuckDB provider.
 It walks up to the nearest existing folder and makes each missing one in order, never with a recursive mkdir: Node's recursive mkdir never returns for a path under `/proc`, because procfs answers ENOENT for a parent that exists and Node retries it forever (measured on Node v24.14.0), so one Test Connection hung the whole server.
@@ -166,13 +173,11 @@ The header read that explains a refused WAL-mode file (`isWalModeFile`) opens wi
 The answer is the open failure in [§10](#10-error-handling), for example `Failed to open SQLite database: /data/app.db is a named pipe (FIFO), not a regular file`, or `a socket`, `a character device`, `a block device` or `a directory` in place of the FIFO.
 A regular file and a symlink to one open as before, and a missing path is left to the open as before: the editor creates the file, and the agent profile refuses it.
 
-> **NUL rejection and reserved server files are checked on connect.** `../` segments are legal and simply
-> resolve into the absolute path. This follows the feature's trust model: a connection's
-> `database`/`connectionString` path is set by whoever configures the connection (an
-> authenticated user of this Studio instance) — pointing Studio at an arbitrary server-side file is
-> the intended capability, not attacker-controlled input from an untrusted client. There is
-> currently **no** option to sandbox resolvable paths to a base directory. See
-> [Known limitations](#14-known-limitations--future-work).
+> **NUL rejection and reserved server files are checked by the provider factory before the provider is built.**
+> `../` segments are legal and simply resolve into the absolute path.
+> This follows the feature's trust model: a connection's `database`/`connectionString` path is set by whoever configures the connection (an authenticated user of this Studio instance), and pointing Studio at an arbitrary server-side file is the intended capability, not attacker-controlled input from an untrusted client.
+> There is currently **no** option to sandbox resolvable paths to a base directory.
+> See [Known limitations](#14-known-limitations--future-work).
 
 ### 3.2 PRAGMAs on connect
 
@@ -184,6 +189,19 @@ concurrency, NORMAL sync for a speed/durability balance. The agent read-only pro
 different open sequence entirely — `journal_mode = WAL` is itself a write and fails on a read-only
 handle ([§12.1](#121-where-the-boundary-is)). So does an existing file this process cannot write
 ([§3.7](#37-a-database-file-this-process-cannot-write)).
+
+The open sets `PRAGMA busy_timeout = 2000` before these pragmas and `PRAGMA busy_timeout = 0` after them, on the worker and on the in-process path alike (`SQLITE_OPEN_BUSY_TIMEOUT_MS` in [`sqlite-worker.ts`](../../src/lib/db/providers/sql/sqlite-worker.ts)).
+So the open waits up to two seconds for another connection's lock, and a statement after it still fails at once on another writer's lock instead of waiting.
+Without that bound the open failed at once with `Failed to open SQLite database: database is locked` whenever it met another connection's lock: the WAL-index recovery that the first open of a WAL-mode file with no `-shm` runs, the checkpoint a last close runs, or a reader of a file still under a rollback journal, where the switch to WAL needs every reader gone.
+Measured 2026-11-21 on `node:sqlite`: eight processes running this open sequence at once on a fresh WAL-mode copy of the sample with no sidecar lost 4 of 1,200 opens at `journal_mode` under CPU load, and none with `busy_timeout = 5000`; eight processes each opening and at once closing a WAL-mode copy lost 15 of 1,200, and none with it.
+Beside a reader of a rollback-journal file the switch with a busy timeout waited for the reader and then succeeded (a reader held 300 ms, then 1,000 ms).
+A lock held past the bound still fails the open with that error, once the bound is spent.
+
+One case no busy timeout covers: several connections switching the same rollback-journal file to WAL at once.
+Each holds a read lock when it asks for the write lock the switch needs, and SQLite refuses that upgrade at once instead of waiting, since neither could go on.
+Four processes running this open sequence at once on a fresh rollback-journal copy lost at least one open in every trial, and with `busy_timeout = 5000` set first, 29 of 60 opens on `node:sqlite` and 35 of 60 on `bun:sqlite` still failed, each within 5 ms of its start.
+So the first opens of a rollback-journal file, made by several requests at once, can fail; a file already in WAL mode has no switch to make, and the embedded sample is published in WAL mode for that reason ([§4.1](#41-embedded-sample-database-standalone-mode)).
+`tests/integration/db/sqlite-provider.test.ts` pins the bound in "the open's busy bound": an open waits for a reader of a rollback-journal file and for an exclusive lock on a WAL-mode file, each let go within the bound, fails once a reader holds past it, and leaves `busy_timeout` at 0.
 
 `disconnect()` closes with `close(true)`, and the argument is load-bearing. Bare `close()` on
 `bun:sqlite` is `sqlite3_close_v2`: with any statement still unfinalized the connection becomes a
@@ -276,6 +294,26 @@ child, and the read-only deadline is preemptive. Measured on 2026-10-03, before 
 300M-row recursive CTE kept running after Cancel, and `/api/health` answered after 69.7 s instead of
 the usual 6 ms.
 
+**Stopping a statement that is still being written to the child.**
+A request reaches the child as one line on its stdin, and a statement larger than the 64 KiB pipe buffer is still being written when a cancel, the query timeout, the agent read-only deadline or a disconnect kills the child.
+Which reaches the client first, the failed write or the child's exit, depends on the platform.
+On Linux and macOS the rest of that write fails first, with `EPIPE` on the worker's stdin.
+On Windows the exit can arrive first: the runtime then closes the worker's stdin, drops the rest of the write without an error and logs nothing for it.
+The client listens for `error` on the child's stdin, stdout and stderr, so such a failure is reported as `SQLiteWorkerError` instead of being thrown out of the stream's event handler.
+After the provider's own kill the request has already been rejected (`SQLite worker was terminated`, `SQLite worker timed out after <n>ms (query)` for the query timeout, or `TimeBudgetRefusal` "Read-only execution exceeded the time budget" for the read-only deadline), and the failed write is logged at debug level as `[sqlite-worker] stdin failed after terminate(): ...`: it is the expected end of that write, not a new failure.
+That line shows by default outside production, and with `LOG_LEVEL=debug` in production.
+Any other stream failure, for example a child that died on its own before the next request was written, rejects every request with `SQLite worker <stream> failed: <reason>`, is logged as a warning, and stops the child, so the next statement starts a fresh one.
+A request still in flight when the exit arrives first is rejected with `SQLite worker exited (code <n>, signal <name>)`.
+A child that exits without the client stopping it is logged as a warning with its exit code and signal (`[sqlite-worker] child exited (code null, signal SIGKILL)`), so the cause stays visible when a failed write reached the request first.
+A worker that cannot be spawned at all (its executable missing or not runnable, or no file descriptor left for its pipes) fails the connect or the restart with `SQLite worker failed: <reason>`, and the next statement tries a fresh spawn.
+Nothing is retried.
+
+**Values cross the worker's line in Studio's value codec** ([`@libredb/provider-sdk/values`](../../packages/provider-sdk/src/values/codec.ts), [ARCHITECTURE.md 4.13](../ARCHITECTURE.md#413-value-codec-libredbprovider-sdkvalues)).
+The parent encodes every bound parameter and decodes every answer with it, then hands back the in-process driver's shapes: a 64-bit integer through `normalizeSQLiteBigInt` ([§3.6](#36-a-64-bit-integer-survives-the-round-trip-in-both-directions)) and a `BLOB` as a `Buffer`.
+The child runs from `node -e` and cannot import the module, so its bootstrap carries a copy restricted to what it binds and reads: 64-bit integers, `BLOB`s, the infinities, and the escape that keeps a row whose columns are named `$` and `v` a row.
+A value the child cannot bind is refused by name and the worker serves the next statement: a `Date` parameter answers `The SQLite worker cannot bind a timestamp (ts) value, at "/0".`, and an `undefined` parameter is refused by the parent's encoder with a `ValueCodecError` naming its place (`/0`).
+Before the codec an infinite `REAL` crossed the line as `null`, a bound infinity was stored as NULL, and a row with a column named `__libredb_sqlite_bigint` was read back as a number.
+
 **The escape hatch `LIBREDB_SQLITE_WORKER=0`** restores the old synchronous behaviour — the test
 suite sets it because Bun 1.4.x hangs a SQLite child process a `bun test` run spawned. With the
 worker off, on-disk statements run on the server thread again, `supportsQueryCancel` reads `false`,
@@ -296,7 +334,7 @@ Measured 2026-09-13 through `POST /api/db/multi-query`: after `BEGIN; INSERT INT
 The question is answered without a round trip, because SQLite answers it itself: `sqlite3_get_autocommit` is published by both drivers, as `inTransaction` on bun:sqlite and `isTransaction` on node:sqlite, bridged to one name in [`sqlite-driver.ts`](../../src/lib/db/providers/sql/sqlite-driver.ts).
 Asking matters: measured on bun:sqlite 1.4.2, a `ROLLBACK` with no transaction active raises "cannot rollback - no transaction is active", so a caller that rolled back unconditionally would report an error on every script that ended cleanly.
 Rolled back and not committed: a script that never said COMMIT did not ask for its work to be kept.
-Both query routes call this in a `finally` and report the outcome, `POST /api/db/multi-query` and `POST /api/db/query`, each under a call scope of its own (D74, D87), so the person who wrote the `BEGIN` is told what became of it wherever they typed it.
+Both query routes end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60) and report the outcome, `POST /api/db/multi-query` and `POST /api/db/query`, each under a call scope of its own (D74, D87), so the person who wrote the `BEGIN` is told what became of it wherever they typed it.
 
 **WHAT IS NOT CLOSED: the ender cannot tell whose transaction it is ending.**
 The `scope` parameter is declared on the interface and ignored here, because this provider holds ONE handle and there is no other client to name, and that is not the same as the transaction being the caller's own.
@@ -411,7 +449,8 @@ A write is refused by SQLite itself, and `query()` raises it as a `QueryError` t
 `query_only` is not set: this is the editor, and the file's permissions are the boundary, not the agent profile of [§12](#12-agent-read-only-execution-profile-328).
 
 A file already in WAL journal mode, with no `-shm` file beside it, still cannot be opened when its directory is unwritable: SQLite reads one only with a `-shm` file beside it, and has nowhere to make one (measured on `bun:sqlite` and `node:sqlite`, 2026-09-26).
-That includes any file this editor has written, because §3.2 leaves the file in WAL mode.
+That includes any file this editor has written, because §3.2 leaves the file in WAL mode, and the embedded sample, which the seed publishes in WAL mode with no `-shm` ([§4.1](#41-embedded-sample-database-standalone-mode)).
+Apple's libsqlite3, which `bun:sqlite` uses on macOS, refuses a read-only handle on such a file even in a writable directory, with "unable to open database file" (the seed tests on the macos-latest runner, 2026-11-21); a writable handle opens it there.
 `connect()` then fails with a `ConnectionError` that says so and names the two ways out: run `PRAGMA journal_mode = DELETE` on the file where it is writable, or make its directory writable.
 SQLite's own words for that refusal differ by build: the library bundled on Linux answers the file alone with "attempt to write a readonly database", Apple's libsqlite3 on macOS answers "unable to open database file", and so does Linux when a `-wal` is left beside the file with no `-shm` (measured on the macos-latest runner and on Linux, 2026-09-26).
 So the reason is not read from those words but from the file's header, where bytes 18 and 19 are 2 in WAL mode, and SQLite's words follow it.
@@ -438,11 +477,11 @@ const c = { id: 'lite-3', name: 'App', type: 'sqlite',
   connectionString: 'file:/data/app.db', createdAt: new Date() };
 ```
 
-`validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database`
-or `connectionString` (else "Database file path is required … or `:memory:`"). Note
-`getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* honoured as a
-path by `getDatabasePath()` — the flag reflects that there is no network DSN, not that the field is
-ignored.
+SQLite takes no SSH tunnel: it opens a file on the Studio server, so there is no address to forward to, and the dialog offers no SSH panel for it.
+A stored connection that still carries a tunnel switched on, left by the dialog's state before it stopped writing one, is refused before anything is opened; edit the connection and save it again to clear it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+
+`validate()` ([`sqlite.ts`](../../src/lib/db/providers/sql/sqlite.ts)) requires either `database` or `connectionString` (else "Database file path is required … or `:memory:`").
+Note `getCapabilities().supportsConnectionString` is `false`, yet `connectionString` *is* read as the file path by the provider factory: the flag reflects that there is no network DSN, not that the field is ignored.
 
 **From the UI.** SQLite is offered in the connection modal's type picker
 ([`src/hooks/use-connection-form.ts`](../../src/hooks/use-connection-form.ts)). Because its
@@ -451,10 +490,9 @@ ignored.
 **"Database File Path"** input — no host, port, user, or password. Two things to be clear about with
 users:
 
-- **The path is resolved on the server, not in the browser.** It is passed through to
-  `getDatabasePath()` in the Studio process, so `/data/app.db` means that path on the machine
-  running Studio. A remote user of a hosted deployment cannot reach a file on their own laptop —
-  see [Deployment constraint](#deployment-constraint-the-strategic-bit).
+- **The path is resolved on the server, not in the browser.**
+  Studio's provider factory resolves it in the Studio process, so `/data/app.db` means that path on the machine running Studio.
+  A remote user of a hosted deployment cannot reach a file on their own laptop: see [Deployment constraint](#deployment-constraint-the-strategic-bit).
 - **`:memory:` is accepted here too**, which makes the modal a zero-setup way to get a scratch
   database for trying out the editor.
 
@@ -474,8 +512,8 @@ An optional in-app base-dir allowlist is tracked in
 
 ### 4.1 Embedded sample database (standalone mode)
 
-On standalone startup (never when embedded in libredb-platform),
-[`src/lib/seed/sqlite-sample.ts`](../../src/lib/seed/sqlite-sample.ts) copies the vendored
+On standalone startup (never when embedded in libredb-platform), the sample service
+([`src/lib/seed/samples.ts`](../../src/lib/seed/samples.ts)) copies the vendored
 employees database ([`seed-assets/sqlite/employee.db`](../../seed-assets/sqlite/employee.db),
 from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database)
 `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) — see
@@ -483,19 +521,23 @@ from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sa
 `<data dir>/sample-employees.db` and `getManagedConnections()` advertises it as an editable,
 dismissable "Sample (Employees)" connection (`type: "sqlite"`, `managed: false`, `roles: ["admin"]`).
 
-Unlike the LibreDB sample, the copy runs **asynchronously and fail-open**: `register()`
-fires-and-forgets the seed (start/completion/duration are logged), boot never waits on it, and a
-failure only logs a warning — the sample is then silently absent. While the copy is in flight the
-managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30
-attempts) so the connection appears in the sidebar without a page refresh.
+The template is committed in WAL journal mode: [`scripts/generate-sqlite-sample.mjs`](../../scripts/generate-sqlite-sample.mjs) set its header bytes 18 and 19 to 2, which the SQLite file format defines, and changed no page.
+So the published sample needs no switch to WAL on its first opens ([§3.2](#32-pragmas-on-connect)), and the first page load, which opens it from several routes at once, has no switch to race.
+The seed copies bytes and opens nothing: [`src/lib/seed/sample-copy.ts`](../../src/lib/seed/sample-copy.ts) checks the copy against the size and SHA-256 digest the sample table pins, flushes it, and renames it into place, never over an existing file.
+
+The sample is neither seeded nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name `sqlite`, because the factory refuses every open of a type that list leaves out.
+The server reads that list, the variables below and the sample's path once, at boot; a change takes effect at the next restart.
+
+The copy runs asynchronously, like the LibreDB sample's: boot never waits on it, and while it is in flight the managed-connections API reports the seed id in `pendingSeeds` and the client polls (1s, up to 30 attempts) so the connection appears in the sidebar without a page refresh.
+A copy that fails is logged once and listed unavailable with its reason, such as `asset-missing` or `copy-failed` ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
 
 Env vars:
 
 | Variable | Default | Notes |
 |----------|---------|-------|
-| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables |
+| `SQLITE_EMBEDDED_SAMPLE` | `true` | Only the literal `false` disables; off as well under governance, and when `LIBREDB_ENABLED_PROVIDERS` leaves out `sqlite` |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Runtime copy location |
-| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Vendored template location (packaging overrides) |
+| `SEED_ASSETS_DIR` | None: set by every launcher, and by `bun dev` and `bun start` ([`docs/DISTRIBUTION.md`](../DISTRIBUTION.md#built-in-sample-assets)) | The directory the template is copied from; unset or blank, the sample is listed unavailable as `asset-directory-unset` unless its file is already in place, and the working directory is never used instead; replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read |
 
 The template ships as a top-level `seed-assets/` directory in every distribution payload
 (Docker image, standalone tarball, and everything derived from it: npx, deb/rpm, snap,
@@ -652,6 +694,11 @@ string the CSV does, through `binaryCellsAsHex` in [`json.ts`](../../src/lib/exp
 than the `Buffer` form the response carries (#1381); that is the same for every engine whose driver
 hands back bytes.
 
+### Infinite REAL values
+
+An infinite `REAL` reads back as `Infinity` and `-Infinity` on both paths, the worker and the in-process handle (measured 2026-11-22 on Node 24.22.1 and Bun 1.4.4: `1e999` and `-1e999` in a `REAL` column of an on-disk file and of `:memory:`).
+SQLite stores no NaN: a bound NaN is stored as NULL.
+
 ---
 
 ### SQL grammar
@@ -663,6 +710,9 @@ Its grammar is `SQLITE_GRAMMAR`, the one reading the statement splitter, the row
 Block comments are flat: `case CC_SLASH` scans for the first `*/` with no depth count.
 `//` is code, probed 2026-08-25 through the bundled driver: `SELECT 1 AS a // note` and `SELECT 1 // 2` are both 'near "/": syntax error'.
 `CREATE TRIGGER ... BEGIN ... END` is the one statement with a body: measured through node:sqlite 3.50.4, the trigger cut at its inner `;` was `incomplete input`.
+The confirmation gate asks before `REPLACE INTO` and `INSERT OR REPLACE` (`confirmForms`), as it asks before `UPDATE` and `DELETE`: both delete the row a new one collides with on a primary or unique key.
+Measured through bun:sqlite on SQLite 3.53.4, `INSERT OR ROLLBACK`, `INSERT OR ABORT` and `INSERT OR FAIL` refuse the new row with an error and `INSERT OR IGNORE` skips it, so none of them changes a row already there and none asks; nor does a plain `INSERT` or `INSERT ... SELECT`.
+The gate reads the statement, not the table, so an `INSERT` that a constraint declared `ON CONFLICT REPLACE` turns into a replace does not ask either: measured on the same SQLite, a plain `INSERT` into a table whose `INTEGER PRIMARY KEY` carries that clause turned `(1, 'a', 'keep-me')` into `(1, 'new', NULL)`, and one into a `UNIQUE ... ON CONFLICT REPLACE` column deleted the other row holding the value.
 `readsSqlText` is `true`: the editor text is SQL.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -1053,9 +1103,9 @@ Minimal by nature — SQLite keeps almost no server-style runtime statistics.
 |--------|--------|-------|
 | `getHealth()` | `fs.statSync` / page PRAGMAs, `PRAGMA integrity_check`, `PRAGMA journal_mode` | reports integrity + journal mode as info rows; `activeConnections: 1`, cache-hit `N/A`; `databaseSize` reads `"N/A"`, never a formatted `0`, when the size read fails — [§7.3](#73-when-the-database-size-is-not-measurable) |
 | `getOverview()` | `sqlite_version()`, file size, `sqlite_master` counts | `uptime: N/A`, `maxConnections: 1`; `databaseSizeBytes` is **omitted** and `databaseSize` stays `N/A`, never a `0`, when the size read fails — [§7.3](#73-when-the-database-size-is-not-measurable) |
-| `getPerformanceMetrics()` | — | **no cache-hit ratio, no QPS, no buffer-pool usage** — all three are omitted, so both monitoring tabs show "N/A / Not measured" for them ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine |
-| `getSlowQueries()` | — | always `[]` (SQLite has no query stats) |
-| `getActiveSessions()` | — | the single current process session; `state` and `activity` are both `active` |
+| `getPerformanceMetrics()` | none | **no cache-hit ratio, no QPS, no buffer-pool usage**: all three are omitted ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); only `deadlocks: 0` is reported, which is a fact about the engine rather than a reading, so the panel is not offered: never read and not drawn |
+| `getSlowQueries()` | none | always `[]` (SQLite has no query stats), so the panel is not offered |
+| `getActiveSessions()` | none | the single current process session, carrying Studio's own process id; `state` and `activity` are both `active`. It is a constant rather than a reading, so the panel is not offered |
 | `getTableStats()` | `COUNT(*)` per table, `dbstat` for the bytes | size is **measured page bytes wherever `dbstat` is compiled in, and absent where it is not** — see [§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver) |
 | `getIndexStats()` | `PRAGMA index_list`/`index_info` | `scans` always `0` (no usage counter); `indexSize` is `N/A` and `indexSizeBytes` is **omitted** — SQLite publishes no per-index size, and a `0` was summed by the Storage tab as an empty index |
 | `getStorageStats()` | `fs.statSync` on the DB / `-wal` / `-shm` files | per-file sizes (on disk only); the main row's `size` reads `"N/A"`, never a formatted `0`, when its size read fails, see [§7.3](#73-when-the-database-size-is-not-measurable) |
@@ -1238,6 +1288,28 @@ and before one, the `-wal` can hold older copies of a page beside the current on
 **WAL** row, which is what the Storage tab's WAL tile reads. Those rows are the bytes on disk, so
 their sum can be larger than the database size.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `sqlite` offers is its row in `ENGINE_FACETS`, declared in [`sqlite-engine-facets.ts`](../../src/lib/db/providers/sql/sqlite-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers the constant `{ deadlocks: 0 }` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers one synthetic session carrying Studio's own process id without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `vacuum`, `analyze`, `reindex`, `check`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Maintenance
@@ -1345,12 +1417,10 @@ narrower than the statement: `VACUUM` is not per-table, which is what
 `vacuum: { perEntity: false, label: 'Vacuum Database' }` says, and the per-row surfaces take
 their wording from that `label` rather than from this field.
 
-One field is overridden: `slowQueriesEmptyState` → *"SQLite keeps no statistics about finished
-statements, so there is nothing to enable."* `getSlowQueries()` answers `[]` unconditionally
-([§7](#7-monitoring--health)), so the monitoring Queries panel is always empty here, and its sentence
-was hardcoded to PostgreSQL's `pg_stat_statements` advice (#463).
+No slow-query sentence is declared.
+`getSlowQueries()` answers `[]` unconditionally ([§7](#7-monitoring--health)), so the slow-query panel is not offered and the dashboard draws no Queries tab here, and a sentence explaining an empty one would have no reader.
 
-Two overrides in total. The second is the Operations tab's global Reindex card, hardcoded to
+One override in total: the Operations tab's global Reindex card, hardcoded to
 PostgreSQL's *"Reconstructs all indexes in the database."* until #464. The global card
 sends no target, so `runMaintenance('reindex')` here runs a bare `REINDEX`
 ([§8](#8-maintenance)), which rebuilds every index in the database **file**:
@@ -1399,7 +1469,10 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Situation | Error |
 |-----------|-------|
 | Missing `database` and `connectionString` | `DatabaseConfigError` |
-| NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed") |
+| File-access posture denied (`allowExternalFileAccess: false`) | `DatabaseConfigError` ("SQLite connections require an administrator because this driver cannot confine statement-level file access"), raised by the provider factory before the provider is built, before any other check of the file, and by `connect()` for a provider built without the factory |
+| NUL byte in path | `DatabaseConfigError` ("Invalid database path: NUL bytes are not allowed"), raised by the provider factory before the provider is built |
+| A connection string that is `file:` and nothing after it | `DatabaseConfigError` ("Invalid database path: the connection string names no file after its scheme"), raised by the provider factory before the provider is built |
+| A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search) | `DatabaseConfigError` ("This connection's file could not be checked against the server's own storage files: " and the filesystem's message), raised by the provider factory before the provider is built |
 | Selected driver unavailable (no `bun:sqlite` / `node:sqlite` on this runtime) | `DatabaseConfigError` ("SQLite driver … is not available…") |
 | Open failure, a missing folder the filesystem refuses to create and a path or a file beside it that is not a regular file included, on connect and on a worker restart | `ConnectionError` |
 | Write check on an existing file fails with anything but `EACCES` / `EPERM` / `EROFS` | `ConnectionError` with the filesystem's message |
@@ -1407,6 +1480,8 @@ the result codes of a refused statement from the `sqlite` row of `DRIVER_ERROR_C
 | Write statement on a file opened read-only because it is not writable | `QueryError` ("SQLite database `<path>` is open read-only because …") |
 | Statement errors whose message matches a heuristic (e.g. *syntax error*, *no such column*) | `QueryError` |
 | Other engine errors | generic `QueryError` / `DatabaseError` with the original message |
+| A pipe to the worker child fails (a cancel, a deadline or a disconnect while a large statement is still being written, or a child that died on its own) | `SQLiteWorkerError` from the worker, surfaced as `DatabaseError` (`TimeoutError` for the query timeout, `TimeBudgetRefusal` for the agent read-only deadline) ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
+| The worker child cannot be spawned (executable missing or not runnable, no file descriptor left) | `SQLiteWorkerError` "SQLite worker failed: ...", surfaced as `ConnectionError` from `connect()` and `DatabaseError` from a statement that restarts the worker ([§3.4](#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)) |
 
 ---
 
@@ -1442,23 +1517,10 @@ SQL execution, schema PRAGMAs, maintenance, and monitoring end-to-end.
 
 ### 11.2 Coverage
 
-Validation, connect/disconnect, path handling (NUL rejection, `..` acceptance), query (read +
-write), 64-bit integers past 2^53 (both ids read whole, the `UPDATE` landing on the row that was
-read, no `BigInt` on any public path, ordinary integers and PRAGMA columns unchanged, and the same
-on the agent read-only path), declared column types (the computed column that declares nothing, the
-empty result, the write, two columns of one name, the storage-class trap, and what the SQL export and
-the row editor read off them), capabilities, health, maintenance
-(vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries,
-table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels. For the object surface
-([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root
-rows, the `table_list` vocabulary guard, shadow and virtual tables, reserved names, `temp` and
-ATTACH exclusion, count-versus-listing agreement, trigger nesting, ordering, the detail reads, and
-the refusals. For the agent profile
-([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create,
-`query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail
-suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle — each
-asserted behaviorally (did the write land? does the file exist?) rather than by driver error code,
-since bun and node report read-only violations differently.
+Validation, connect/disconnect, path handling (`..` acceptance, and the refusal of a provider built without the file the factory admits), query (read + write), 64-bit integers past 2^53 (both ids read whole, the `UPDATE` landing on the row that was read, no `BigInt` on any public path, ordinary integers and PRAGMA columns unchanged, and the same on the agent read-only path), declared column types (the computed column that declares nothing, the empty result, the write, two columns of one name, the storage-class trap, and what the SQL export and the row editor read off them), capabilities, health, maintenance (vacuum/analyze/reindex/check), overview, performance, active sessions, slow queries, table/index/storage stats, `getMonitoringData`, `prepareQuery`, and labels.
+NUL rejection and Studio's own storage files are the provider factory's, held by [`tests/unit/lib/db/provider-files.test.ts`](../../tests/unit/lib/db/provider-files.test.ts) and [`tests/integration/db/reserved-storage-paths.test.ts`](../../tests/integration/db/reserved-storage-paths.test.ts).
+For the object surface ([§6.1](#61-the-object-surface-789)): the declared kinds, the conformance contract, the tree's root rows, the `table_list` vocabulary guard, shadow and virtual tables, reserved names, `temp` and ATTACH exclusion, count-versus-listing agreement, trigger nesting, ordering, the detail reads, and the refusals.
+For the agent profile ([§12](#12-agent-read-only-execution-profile-328)): rejected write / schema change / file create, `query_only` read-back, the pragma-bypass case, row/byte/time budgets, multi-statement tail suppression, `:memory:` refusal, and the refusal to run `queryReadOnly` on a writable handle, each asserted behaviorally (did the write land? does the file exist?) rather than by driver error code, since bun and node report read-only violations differently.
 
 ### 11.3 Run it
 
@@ -1673,9 +1735,9 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
 - **No EXPLAIN plan metrics.** `EXPLAIN QUERY PLAN` returns step descriptions only — SQLite does not
   report per-node cost, row estimates, or timing data.
 - **Absent monitoring:** there is **no cache-hit ratio, no queries-per-second and no buffer-pool
-  usage** — the drivers expose no counters for them, so the panels say "Not measured"
+  usage**: the drivers expose no counters for them, so the performance panel is not offered
   ([§7.1](#71-there-is-no-cache-hit-ratio-and-there-cannot-be)); index `scans` is always `0` and
-  `getIndexStats()`'s per-index size is `N/A`; slow queries are unavailable.
+  `getIndexStats()`'s per-index size is `N/A`; slow queries and sessions are not offered either.
 - **Per-table size only under `node:sqlite`.** `dbstat` is compiled into that driver and out of
   `bun:sqlite`, so under Bun the byte fields are omitted rather than estimated
   ([§7.2](#72-per-table-size-depends-on-the-sqlite-build-behind-the-driver)). `getIndexStats()` still reports
@@ -1689,18 +1751,12 @@ not apply to SQLite ([§3.4](#34-no-transactions-api-no-cancellation-no-pool)).
   repairs the INTEGER case only).
 - **`:memory:` is ephemeral** — data is lost on disconnect; intended for trials/tests.
 - **Single schema (`main`)** — `ATTACH`ed databases are not surfaced.
-- **No path sandboxing (by design).** `getDatabasePath()` rejects NUL bytes and reserved server files; the resolved absolute path — `..` segments included — is used as-is. This grants an
-  *unauthenticated* client no access: the path comes from an authenticated user's connection config,
-  and reading arbitrary server-side files by path is the feature. The distinction that matters for
-  multi-user installs is the next one down: **authenticated does not imply trusted with the host
-  filesystem.** Since the type became selectable in the connection modal (#127), that path field is
-  directly discoverable by every logged-in user — the reachable set of files did not grow, but the
-  effort needed to reach it dropped from an API call to typing in a form. On a single-operator
-  install this is the intended feature; on a shared instance it is a deployment decision, and until
-  #125 lands the controls are OS-level (process user, container mounts). *Future:* an optional
-  base-dir allowlist restricting resolvable paths (proposed in
-  [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of
-  this honesty fix — new security-configuration surface needs its own issue.
+- **No path sandboxing (by design).** The provider factory rejects NUL bytes and reserved server files; the resolved absolute path, `..` segments included, is used as-is.
+  This grants an *unauthenticated* client no access: the path comes from an authenticated user's connection config, and reading arbitrary server-side files by path is the feature.
+  The distinction that matters for multi-user installs is the next one down: **authenticated does not imply trusted with the host filesystem.**
+  Since the type became selectable in the connection modal (#127), that path field is directly discoverable by every logged-in user: the reachable set of files did not grow, but the effort needed to reach it dropped from an API call to typing in a form.
+  On a single-operator install this is the intended feature; on a shared instance it is a deployment decision, and until #125 lands the controls are OS-level (process user, container mounts).
+  *Future:* an optional base-dir allowlist restricting resolvable paths (proposed in [issue #125](https://github.com/libredb/libredb-studio/issues/125)) was deliberately left out of this honesty fix, since new security-configuration surface needs its own issue.
 
 ---
 
@@ -1739,10 +1795,13 @@ Every refusal reason it can print, verbatim:
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [Trino](./trino.md) · [Redis](./redis.md)
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
+Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
+macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.
 
 SQLite connections are refused when the server-derived file-access posture is denied,
 including agent handles. HTTP and MCP derive that posture from the verified role and
@@ -1750,5 +1809,6 @@ managed connection: non-admin callers and seeds shared with non-admin roles are 
 Where it is denied, MCP's `list_connections` lists the seed with `read_tool: null` and an `unavailable` sentence that says what an operator changes, and `inspect_schema` and every statement tool refuse it with that sentence before anything is acquired ([MCP.md](../MCP.md#opting-connections-in)).
 SQLite's adapters cannot confine statement-level file access, so a denied connection
 cannot be opened safely. Administrators retain SQLite access on private connections.
+The provider factory refuses a denied connection before it reads the path the connection names, so every path gets the same refusal (`REFUSES_DENIED_FILE_ACCESS` in [`compatibility.ts`](../../src/lib/db/compatibility.ts) holds the sentence).
 Embedded callers using the cached factory must explicitly pass `{ allowExternalFileAccess: true }`
 for trusted SQLite access. Direct providers without an execution context retain trusted behavior.

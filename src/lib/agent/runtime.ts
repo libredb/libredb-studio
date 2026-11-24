@@ -26,7 +26,7 @@
  *    drive of that run sees.
  */
 
-import { createDatabaseProvider } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -34,11 +34,12 @@ import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operati
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "@/lib/db/operations/provider-text";
 import { LLMAuthError, LLMError, LLMRateLimitError } from "@/lib/llm/types";
-import { type ExecutionProfileDenyCode, ExecutionProfileError } from "@/lib/db/errors";
+import { type ExecutionProfileDenyCode, ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
 import { logger } from "@/lib/logger";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseConnection, QueryResult } from "@/lib/types";
 import { AgentRunDeadline } from "./deadline";
 import { deriveDriveCeilings } from "./drive-budget";
 import { AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
@@ -135,8 +136,31 @@ export async function getAgentRunService(): Promise<AgentRunService> {
 }
 
 /**
+ * How a drive ended for a caller that answers a body: the run's result, or the failure that ended it after the run's
+ * connection resolved, as it was raised, beside the scrub of that connection. The outcome holds the scrub's forms, so
+ * it is never logged or spread into a log context; the failure is answered or logged only through the scrub.
+ */
+export type AgentDriveOutcome =
+  | { readonly kind: "finished"; readonly result: AgentInvestigationResult }
+  | { readonly kind: "failed"; readonly error: unknown; readonly scrub: ProviderTextScrub };
+
+/**
+ * Drives one run to its conclusion, for the callers that only log a failure (the start, unpause and resume paths):
+ * the result of `driveAgentRunOutcome`, or its failure withheld with the run's scrub, so a log line never holds a
+ * credential of the run's connection.
+ *
+ * @throws what `driveAgentRunOutcome` throws, and a failure it answers, withheld (`withholdProviderError`).
+ */
+export async function driveAgentRun(runId: string): Promise<AgentInvestigationResult> {
+  const outcome = await driveAgentRunOutcome(runId);
+  if (outcome.kind === "finished") return outcome.result;
+  throw withholdProviderError(outcome.scrub, outcome.error);
+}
+
+/**
  * Drives one run to its conclusion: start it if it is queued, resume it if a
- * previous process left it running.
+ * previous process left it running. For the drive route, which answers a failure with its own class: a failure after
+ * the run's connection resolved is answered as the `failed` outcome, recorded on the run first.
  *
  * Called two ways, and both must behave identically — in-process right after the
  * run is opened, and from the authenticated drive callback when the durable
@@ -144,10 +168,13 @@ export async function getAgentRunService(): Promise<AgentRunService> {
  * something the run may observe: everything it needs is re-derived from the ledger.
  *
  * @throws AgentRunServiceError when the run does not exist or has already ended.
+ * @throws AgentRunUnavailableError when the run's ledger names a statement language
+ *         or goal rule this build does not have, before anything is resolved or
+ *         recorded: the store refuses the read, which is this function's first step.
  * @throws SeedConnectionError when the run's connection is no longer resolvable —
  *         it was removed, or the actor's role no longer reaches it.
  */
-export async function driveAgentRun(runId: string): Promise<AgentInvestigationResult> {
+export async function driveAgentRunOutcome(runId: string): Promise<AgentDriveOutcome> {
   const service = await getAgentRunService();
   const report = await service.status(runId);
   if (report === null) {
@@ -157,32 +184,48 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     throw new AgentRunServiceError("RUN_NOT_FOUND", `agent run "${runId}" does not exist`);
   }
 
+  const { actor, connectionId, catalog } = report.record;
+  let connection: DatabaseConnection;
   try {
-    const { actor, connectionId, catalog } = report.record;
     // The persisted actor is the sole authority: the role that decides which managed
     // connections are visible is the one recorded when the run was opened.
     const resolved = await resolveConnection({ connectionId }, { role: actor.role, username: actor.sessionId });
     // On a server-level connection the run reads the one database it opened on (#1530). A session
     // in that database IS the connection naming it, so from here on this is a single-database run.
-    const connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
+    connection = catalog === undefined ? resolved : catalogSessionConnection(resolved, catalog);
+  } catch (error) {
+    await recordUnlessDrivenElsewhere(service, runId, error);
+    throw error;
+  }
 
+  // From here a provider may be built, so a failure leaves the drive beside core's scrub of the run's connection, for
+  // the callers' log lines and error responses, which do not hold the connection. The ledger still records the
+  // failure from the original error, by its class and code. The scrub covers every provider of the
+  // connection ("any"): the capability read below is built from the connection's own credential, the statement
+  // providers from the agent's.
+  const scrub = providerTextScrub(connection, "any");
+  try {
     // Capabilities and labels are type-driven and read without connecting, the way
     // /api/db/provider-meta reads them. The live, read-only provider a statement
     // actually runs on is acquired per call through the execution-profile seam.
     // One provider for both, so a run's declared behaviour and its declared
     // vocabulary can never come from two different readings.
     //
-    // So no `withOneShotTunnel` wrapper here (#457): this provider is never connected.
+    // So no `withOneShotTunnel` wrapper here (#457): `readProviderDeclarations` builds the provider
+    // without connecting it or opening its tunnel, and hands back data (FND-2 slice 5).
     // The one that runs statements comes from `acquireExecutionProfileProvider`, which
     // opens the connection's pooled tunnel itself.
     //
     // Built under the agent-mode context and never as an editor handle: every profile a run acquires opens read-only,
     // and a provider may declare less on such a handle (Sparkplug declares no tree, since every level of it is a
     // withheld id), so the grounding walk lists only what the handle it acquires will answer. The operations context
-    // sends no statement, so no provider proves a statement boundary for a provider that is never connected.
-    const provider = await createDatabaseProvider(connection, {}, executionContextFor("agent-operations"));
-    const capabilities = provider.getCapabilities();
-    const labels = provider.getLabels();
+    // sends no statement, so no provider proves a statement boundary for a provider that is never connected. It carries
+    // the editor posture of the run's persisted actor, as the acquirer below does, so a connection that posture denies
+    // file access is refused here, before Studio reads the path it names, and one it grants is built.
+    const { capabilities, labels } = await readProviderDeclarations(
+      connection,
+      executionContextFor("agent-operations", editorExecutionContext(actor, connection)),
+    );
 
     // The ceilings a drive begins with are folded from the run's ledger, so a
     // resumed drive inherits the spend its earlier drives recorded rather than
@@ -194,7 +237,7 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     });
     runResources().artifacts.setRunAllowance(runId, ceilings.artifactAllowance);
 
-    return await runInvestigation(runId, {
+    const result = await runInvestigation(runId, {
       service,
       model: await createAgentModel(),
       resources: {
@@ -217,15 +260,22 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
           acquireExecutionProfileProvider(target, profile, {}, editorExecutionContext(actor, target)),
       },
     });
+    return { kind: "finished", result };
   } catch (error) {
-    // A drive refused because another already owns the run is not a failure OF the
-    // run: it is healthy and in flight. Recording `failed` here would end the very
-    // run the first drive is still carrying, so the refusal is left to the caller
-    // (the drive route answers 409) and nothing is written to the ledger.
-    if (!(error instanceof AgentRunServiceError && error.reasonCode === "RUN_ALREADY_DRIVEN")) {
-      await recordDriveFailure(service, runId, error);
-    }
-    throw error;
+    await recordUnlessDrivenElsewhere(service, runId, error);
+    return { kind: "failed", error, scrub };
+  }
+}
+
+/**
+ * Records a drive's failure on the run, unless the drive was refused because another already owns the run. That is
+ * not a failure OF the run: it is healthy and in flight. Recording `failed` here would end the very run the first
+ * drive is still carrying, so the refusal is left to the caller (the drive route answers 409) and nothing is written
+ * to the ledger.
+ */
+async function recordUnlessDrivenElsewhere(service: AgentRunService, runId: string, error: unknown): Promise<void> {
+  if (!(error instanceof AgentRunServiceError && error.reasonCode === "RUN_ALREADY_DRIVEN")) {
+    await recordDriveFailure(service, runId, error);
   }
 }
 
@@ -240,8 +290,8 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
  * and with no drive producer yet (`docs/BACKLOG.md` B9), nothing would return to it.
  *
  * Every failure of the recording itself is swallowed, on purpose. The run may have
- * ended between the throw and this call, or have an execution still in flight; both
- * make `finish` throw, and neither is what the caller asked about. Losing the
+ * ended between the throw and this call, which makes `finish` throw, and that is not
+ * what the caller asked about; an execution still in flight is waited for first. Losing the
  * original error to a bookkeeping error would trade a diagnosable failure for a
  * confusing one.
  */
@@ -262,11 +312,14 @@ async function recordDriveFailure(service: AgentRunService, runId: string, error
  * Total over `ExecutionProfileDenyCode`, so a code added there does not compile until it
  * is given the reason whose sentence names its repair. Two codes share a reason only
  * where their repair is the same: the two credential faults are both the credential
- * field, and the two engine refusals are both the engine.
+ * field, and the three engine refusals are both the engine. An engine off Studio's
+ * review record is one of them: until an operator grant exists, its repair is the same
+ * as for an engine with no read-only statement path.
  */
 const PROFILE_REFUSAL_REASON: Readonly<Record<ExecutionProfileDenyCode, AgentRunFailureReason>> = Object.freeze({
   UNSUPPORTED_PROFILE: "engine-unsupported",
   PROFILE_UNSUPPORTED_BY_PROVIDER: "engine-unsupported",
+  PROFILE_ENGINE_NOT_REVIEWED: "engine-unsupported",
   PROFILE_UNSUPPORTED_TARGET: "profile-target-unsupported",
   PROFILE_PRIVILEGES_TOO_BROAD: "agent-principal-refused",
   PROFILE_PRIVILEGES_TOO_NARROW: "agent-principal-underprivileged",
@@ -294,6 +347,10 @@ function classifyDriveFailure(error: unknown): AgentRunFailureReason {
   // these are this repository's own classes, so there is one copy of each in the
   // bundle. The SDK's errors are the ones that arrive in duplicate.
   if (error instanceof SeedConnectionError) return "connection-unresolvable";
+
+  // A connection whose type names no provider (FND-1) is the seed entry's fault, not the
+  // server's, so it is named rather than left to the `internal` branch below.
+  if (error instanceof UnknownProviderError) return "provider-unknown";
 
   // An engine with no read-only profile is not a server fault, and calling it
   // `internal` sent a user to a log that could only tell them what their own

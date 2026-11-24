@@ -80,20 +80,14 @@ describe("C2", () => {
   });
 
   describe("through a tunnel", () => {
-    const bastion = {
-      enabled: true,
-      host: "bastion.test",
-      port: 22,
-      username: "jump",
-      authMethod: "password",
-      password: "tunnel-password",
-    };
+    // The bastion route, as Studio's provider factory hands it to a tunnelled provider beside the far end.
+    const route = "4:true12:bastion.test2:224:jump";
 
     test("the certificate is checked against the far end's name", async () => {
       const listener = await listen();
       const options = testOptions(
-        { port: listener.port, sshTunnel: bastion, ssl: { mode: "verify-full", caCert: tls.ca } },
-        { farEnd: { host: "localhost", port: 8000 } },
+        { port: listener.port, ssl: { mode: "verify-full", caCert: tls.ca } },
+        { tunnel: { farEnd: { host: "localhost", port: 8000 }, route } },
       );
       expect((await run(options)).rows).toEqual([["1"]]);
     });
@@ -101,8 +95,8 @@ describe("C2", () => {
     test("never the local forward's: a far end the certificate does not name is tls, though 127.0.0.1 is on it", async () => {
       const listener = await listen();
       const options = testOptions(
-        { port: listener.port, sshTunnel: bastion, ssl: { mode: "verify-full", caCert: tls.ca } },
-        { farEnd: { host: "databend.internal", port: 8000 } },
+        { port: listener.port, ssl: { mode: "verify-full", caCert: tls.ca } },
+        { tunnel: { farEnd: { host: "databend.internal", port: 8000 }, route } },
       );
       expect((await failure(options)).category).toBe("tls");
       expect(listener.seen).toHaveLength(0);

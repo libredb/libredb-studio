@@ -215,11 +215,12 @@ The MongoDB and Redis rows name the destructive operations the provider can actu
 Text it cannot read as a command at all is not treated as safe: mongosh syntax, a half-typed document or a broken JSON command body **asks**.
 Before that table existed the answer for both types was a bare `false`, so a `FLUSHALL` and a `deleteMany` ran with no confirmation while a `DELETE FROM` on every SQL engine asked.
 The Prometheus and Kafka rows name no operation, the etcd row names what `guard.ts` classifies, the Neo4j row is a fourth that names no operation and decides alone, and each of the four is the gate's whole answer, the rows the keyword test does not read in front of: PromQL has no statement that writes, its editor text only ever reaches `POST /api/v1/query`, and a metric may legally be named `update`, `delete` or `drop`, which the keyword test read as a write; a Kafka read request only reads, and a topic may be named any of those too; etcd's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword; and Neo4j's provider refuses every write before it is sent - its read policy denies every word that writes and its statement gate classifies the statement through `EXPLAIN`, failing closed - so there is no write left that an operation name would have to catch.
-The InfluxDB (InfluxQL) row is read by the InfluxQL policy the provider runs (`src/lib/db/providers/timeseries/influxdb/influxql-policy.ts`), so what asks and what runs are one reading: an allowed statement only reads, so nothing asks, and what the policy refuses the editor refuses before anything is sent.
+The InfluxDB (InfluxQL) row is read by the InfluxQL policy the provider runs (`src/lib/languages/influxql/policy.ts`), so what asks and what runs are one reading: an allowed statement only reads, so nothing asks, and what the policy refuses the editor refuses before anything is sent.
 InfluxDB 3 (SQL) is not in that set: its text is SQL, read under `DATAFUSION_GRAMMAR`, the grammar of its module in the registry.
 The Oxia row names no operation and, like the etcd row, is the gate's whole answer: Oxia's text is read by `guard.ts` over `commands.ts`, the provider's own parser, so a key named `update` or `drop` is data and never a SQL keyword.
 The S3 row names no operation and, like the Oxia row, is the gate's whole answer: S3's text is read by `console/guard.ts` over `console/commands.ts`, the provider's own parser, so a key named `delete` or `drop` is data and never a SQL keyword, and a command is never posted for an AI safety analysis, because it names buckets and keys.
 The Kubernetes row names no operation and, like the S3 row, is the gate's whole answer: kubectl text is read by `console/guard.ts` over `console/commands.ts`, the provider's own parser, so an object named `delete` or `drop` is data and never a SQL keyword, and a statement is never posted for an AI safety analysis, because it names namespaces and objects.
+A row is the gate's whole answer, a dialect's form exempt and a type's text not SQL only where Studio's review record of the claims that loosen the gate lists that claim (`CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`); any other such claim is read as if the row had not made it, so the gate reads the text as SQL and reads the row beside it.
 The embedded LibreDB is not in that set: its text is read as SQL, and its undecided grammar facts are rows in the table below.
 
 | Fact | Undecided, so left at the default | Established, and it happens to equal the default |
@@ -512,8 +513,9 @@ the two were separate requests. The exception is a batch that is a module defini
 statement is `CREATE`, `ALTER` or `CREATE OR ALTER` of a procedure, function, trigger or view, which
 T-SQL requires first in its batch, and everything after it is the body the server stores, where a
 `TOP` would change the procedure rather than the result; that batch is sent as written. SQL Server's
-provider carries every result set of a batch, and the route shows the last one with rows, the same rule
-it applies across a script's statements. A batch's earlier result sets are not sent back one by one,
+provider carries every result set of a batch, and the route shows the batch's last set, empty or
+not (#2286) - the same rule the script's statements follow (the last successful statement is the
+main result, empty or not). A batch's earlier result sets are not sent back one by one,
 which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
 batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
 connection, which nothing guarantees (`docs/BACKLOG.md` D92).
@@ -538,9 +540,9 @@ not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
-That is also what the grid displays whenever the final statement returns no rows of its own
-(`SELECT * FROM huge; INSERT INTO t VALUES (1)`), since the response picks the last result that *has*
-rows. Noted here rather than claimed closed.
+The grid itself now shows the last successful statement's own result, empty or not, so the earlier
+`SELECT`'s rows are no longer displayed in its place; they remain available in `statements[i].rows`
+for anything that reads the per-statement outcomes.
 
 Two indicators do not follow the bound onto this route, because it returns no pagination metadata at
 all: the **AUTO-LIMITED badge does not appear** for a multi-statement run, and **Load More is not
@@ -591,6 +593,13 @@ Which statements reach it is decided by `isDangerousQuery` (`src/lib/sql/dangero
 | Statement | Confirmation |
 |-----------|--------------|
 | `DELETE` / `DROP` / `TRUNCATE` / `ALTER` / `GRANT` / `REVOKE` / `UPDATE` / `MERGE` | Yes |
+| MySQL's `REPLACE` and `INSERT ... ON DUPLICATE KEY UPDATE`, and SQLite's and libSQL's `REPLACE INTO` and `INSERT OR REPLACE`, which overwrite or delete the row a new one collides with | Yes |
+| `INSERT OVERWRITE` on a `mysql` connection (StarRocks' and Apache Doris' statement, `INSERT OVERWRITE TABLE` in Doris), which replaces every row of a table or of the partitions it names | Yes |
+| MySQL's and MariaDB's `LOAD DATA ... REPLACE INTO TABLE` and `LOAD XML ... REPLACE INTO TABLE`, which delete the row a loaded one collides with | Yes |
+| MariaDB's `CREATE OR REPLACE TABLE` and `CREATE OR REPLACE TEMPORARY TABLE` on a `mysql` connection, which drop the table, or the session's temporary table, and its rows (MySQL refuses both) | Yes |
+| Databend's `REPLACE [INTO] t ON (...)` and DuckDB's `INSERT OR REPLACE`, which overwrite the row a new one collides with | Yes |
+| A plain `INSERT`, `INSERT ... SELECT`, on SQLite `INSERT OR IGNORE`, `OR ABORT`, `OR FAIL` and `OR ROLLBACK`, on DuckDB `INSERT OR IGNORE`, `ON CONFLICT DO NOTHING` and `INSERT ... BY NAME`, and a `LOAD DATA` with `IGNORE` or neither word. The gate reads the statement, not the table, so an `INSERT` that the table's own definition turns into a replace (a SQLite constraint declared `ON CONFLICT REPLACE`, a StarRocks Primary Key table, an Apache Doris Unique Key table) does not ask either | No |
+| `CREATE OR REPLACE VIEW`, `PROCEDURE` and `FUNCTION` on a `mysql` connection, outside a script led by `BEGIN`: none of them replaces a table's rows | No |
 | A PostgreSQL `DO` block (`DO $$ … $$`, `DO '…'`, `DO LANGUAGE …`), whatever its body does, since the gate does not read the body | Yes |
 | The `DO` of `ON CONFLICT DO NOTHING` or `CREATE RULE … DO INSTEAD`, which a word follows | No |
 | Any of those behind a comment (`-- note`, `/* note */`, MySQL's `# note`, several stacked) | Yes |
@@ -763,6 +772,17 @@ result the user already has, a playground run (rolled back rather than committed
 `UPDATE` comes from a grid edit the user has already confirmed. The embedded adapter
 (`src/workspace/hooks/use-query-adapter.ts`) has only the force-execute bypass, so every other
 query a host application runs through it reaches the gate.
+
+### On a production connection
+
+On a connection whose environment is `production`, every statement the gate asks about is confirmed by typing the connection's name, and none of the four bypasses above skips it.
+The dialog draws the name field, and where the connection type asks a value of its own (an etcd prefix, start key or lease id), that value is shown as the target of the name.
+A read the gate does not ask about runs as anywhere else.
+The server checks the name: it asks for it in its 428 answer and compares what the person typed before it runs the statement ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)).
+Where a run reaches the server without the name, as a page, a SANDBOX run or an inline edit does, the dialog opens with the server's ask and the run waits for it, so inline edits ask row by row, each row's request sent only once the row before was answered.
+Closing that dialog ends the run as not run, and a SANDBOX run rolls back the transaction it opened.
+Nothing is remembered: every run asks again.
+The embedded workspace does not ask for the name yet (backlog U217).
 
 ---
 

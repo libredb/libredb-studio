@@ -4,7 +4,8 @@
  * `egress.test.ts` holds the same rule under Bun with mocked modules; this file holds it on Node too, where a socket
  * treats an error from its lookup differently.
  *
- * Each child runs a bundle of `session.ts`'s `readTopics`, with no transport injected, so the product's own dial runs.
+ * Each child runs a bundle of `session.ts`'s `readTopics`, with no transport injected, so the product's own dial runs,
+ * handed the egress decision each case names, as a provider built by the factory hands it (FND-2 slice 2b-2).
  * It starts from an unbundled entry.mjs that answers two names itself: metadata.test with 169.254.169.254, and
  * pinned.test with 127.0.0.1, a name no resolver knows, so a dial that reaches the listener by it proves the address
  * dialled is the checked lookup's answer. The listener closes every connection it accepts, and counts them.
@@ -17,9 +18,11 @@ import { delimiter, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import type { readTopics } from "@/lib/db/providers/keyvalue/mqtt/session";
+import type { EgressDecision } from "@/lib/db/types";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const SESSION = join(ROOT, "src", "lib", "db", "providers", "keyvalue", "mqtt", "session.ts");
+const EGRESS_DECISIONS = join(ROOT, "tests", "helpers", "egress-decisions.ts");
 
 interface Outcome {
   readonly ok: boolean;
@@ -33,28 +36,26 @@ interface Outcome {
  */
 async function runCases(
   read: typeof readTopics,
+  decisions: { readonly blocks: EgressDecision; readonly allows: EgressDecision },
   port: number,
 ): Promise<{ runtime: string; outcomes: Record<string, Outcome> }> {
   const outcomes: Record<string, Outcome> = {};
-  const record = async (name: string, host: string, tls: boolean) => {
+  const record = async (name: string, host: string, tls: boolean, egress: EgressDecision) => {
     try {
-      await read({ host, port, tls, dialTimeoutMs: 2_000 });
+      await read({ host, port, tls, dialTimeoutMs: 2_000, egress });
       outcomes[name] = { ok: true };
     } catch (error) {
       const failure = error as Error;
       outcomes[name] = { ok: false, errorName: failure.name, message: failure.message };
     }
   };
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
-  await record("link-local literal, flag off", "169.254.169.254", false);
-  await record("link-local answer, flag off", "metadata.test", false);
-  await record("link-local answer over tls, flag off", "metadata.test", true);
-  await record("name answered by the checked lookup, flag off", "pinned.test", false);
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
-  await record("private literal, flag on", "127.0.0.1", false);
-  await record("private answer, flag on", "pinned.test", false);
-  await record("private answer over tls, flag on", "pinned.test", true);
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  await record("link-local literal, allowing decision", "169.254.169.254", false, decisions.allows);
+  await record("link-local answer, allowing decision", "metadata.test", false, decisions.allows);
+  await record("link-local answer over tls, allowing decision", "metadata.test", true, decisions.allows);
+  await record("name answered by the checked lookup, allowing decision", "pinned.test", false, decisions.allows);
+  await record("private literal, blocking decision", "127.0.0.1", false, decisions.blocks);
+  await record("private answer, blocking decision", "pinned.test", false, decisions.blocks);
+  await record("private answer over tls, blocking decision", "pinned.test", true, decisions.blocks);
   return { runtime: typeof Bun === "undefined" ? process.version : `bun ${Bun.version}`, outcomes };
 }
 
@@ -93,8 +94,10 @@ beforeAll(async () => {
     at("child.ts"),
     [
       `import { readTopics } from ${JSON.stringify(SESSION)};`,
+      `import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from ${JSON.stringify(EGRESS_DECISIONS)};`,
       `const runCases = ${runCases.toString()};`,
-      "const report = await runCases(readTopics, Number(process.argv[2]));",
+      "const decisions = { blocks: BLOCKS_PRIVATE_HOSTS, allows: ALLOWS_PRIVATE_HOSTS };",
+      "const report = await runCases(readTopics, decisions, Number(process.argv[2]));",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -150,38 +153,40 @@ describe("the MQTT dial's address rule on Bun and every listed Node", () => {
     for (const run of runs.slice(1)) expect(["24", "26"]).toContain(run.runtime.slice(1).split(".")[0]);
   });
 
-  test("a link-local literal or answer is refused with the flag off, over TCP and TLS, with the shared sentence", () => {
+  test("a link-local literal or answer is refused with an allowing decision, over TCP and TLS, with the shared sentence", () => {
     // A function, not one shared object: Bun's toMatchObject checks a repeated reference only where it first appears.
     const refused = () => ({ ok: false, errorName: "DatabaseConfigError", message: LINK_LOCAL_HOST });
     for (const { runtime, outcomes } of runs) {
       expect({ runtime, outcomes }).toMatchObject({
         runtime,
         outcomes: {
-          "link-local literal, flag off": refused(),
-          "link-local answer, flag off": refused(),
-          "link-local answer over tls, flag off": refused(),
+          "link-local literal, allowing decision": refused(),
+          "link-local answer, allowing decision": refused(),
+          "link-local answer over tls, allowing decision": refused(),
         },
       });
     }
   });
 
-  test("with the flag on a private literal or answer is refused, over TCP and TLS, with the shared sentence", () => {
+  test("with a blocking decision a private literal or answer is refused, over TCP and TLS, with the shared sentence", () => {
     const refused = () => ({ ok: false, errorName: "DatabaseConfigError", message: BLOCKED_HOST });
     for (const { runtime, outcomes } of runs) {
       expect({ runtime, outcomes }).toMatchObject({
         runtime,
         outcomes: {
-          "private literal, flag on": refused(),
-          "private answer, flag on": refused(),
-          "private answer over tls, flag on": refused(),
+          "private literal, blocking decision": refused(),
+          "private answer, blocking decision": refused(),
+          "private answer over tls, blocking decision": refused(),
         },
       });
     }
   });
 
-  test("a name the checked lookup answers is dialled at that answer, once, and only with the flag off", () => {
+  test("a name the checked lookup answers is dialled at that answer, once, and only with an allowing decision", () => {
     for (const { runtime, outcomes, accepted } of runs) {
-      expect(outcomes["name answered by the checked lookup, flag off"]?.errorName).not.toBe("DatabaseConfigError");
+      expect(outcomes["name answered by the checked lookup, allowing decision"]?.errorName).not.toBe(
+        "DatabaseConfigError",
+      );
       expect({ runtime, accepted }).toEqual({ runtime, accepted: 1 });
     }
   });

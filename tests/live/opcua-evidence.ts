@@ -21,13 +21,13 @@ import { join } from "node:path";
 import { OPCUA_LIBRARY_BRIDGE } from "@/lib/db/providers/industrial/opcua/library";
 import { openReadOnlySession } from "@/lib/db/providers/industrial/opcua/session";
 import { OPCUA_OBJECTS_FOLDER } from "@/lib/db/providers/industrial/opcua/constants";
-import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
+import type { OpcuaSessionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 
 const ENDPOINT = process.env.LIBREDB_OPCUA_EVIDENCE_URL ?? "opc.tcp://127.0.0.1:54840/";
 const OUT = join(import.meta.dir, "..", "fixtures", "opcua");
 
 /** The connection the capture is taken over: None, anonymous, loopback. */
-function options(): OpcuaConnectionOptions {
+function options(): OpcuaSessionOptions {
   const url = new URL(ENDPOINT);
   return {
     endpointUrl: ENDPOINT,

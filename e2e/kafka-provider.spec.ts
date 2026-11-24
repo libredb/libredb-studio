@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { test, expect } from "@playwright/test";
 import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * Gate 2 and gate 5 for the Apache Kafka provider (#1088).
@@ -11,7 +13,7 @@ import { READ_ONLY_FIXED_HINT } from "../src/lib/db-ui-config";
  *
  * The assertions specific to this engine are the absent Database box and SSH Tunnel panel, and the
  * SASL mechanism select: Kafka is the first engine whose dialog renders a select from
- * `DatabaseUIConfig.fieldOptions` and hides the tunnel through `showSshTunnel: false`. The refusal a
+ * `DatabaseUIConfig.fieldOptions` and hides the tunnel through Kafka's row of `SSH_TUNNEL_REFUSAL`. The refusal a
  * mechanism without TLS gets is checked through Test Connection, which the server answers before any
  * socket opens, so no broker is needed; it is asserted by its own text, because the refusal of a user
  * with no mechanism would also appear if the select's value never reached the connection.
@@ -25,8 +27,7 @@ test.describe("Apache Kafka in the connection dialog", () => {
     await page.waitForURL("/");
     await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10000 });
 
-    const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-    await sidebarButtons.last().click();
+    await openConnectionDialog(page);
     await expect(page.locator('[role="dialog"]')).toBeVisible({ timeout: 5000 });
   });
 
@@ -76,7 +77,8 @@ test.describe("Apache Kafka in the connection dialog", () => {
     await dialog.getByRole("button", { name: "Apache Kafka", exact: true }).click();
     await dialog.locator("select#saslMechanism").selectOption("SCRAM-SHA-512");
     await dialog.locator("#user").fill("reader");
-    await dialog.locator("#password").fill("x");
+    // A generated password: a one-character secret's forms occur in almost any sentence, and Studio withholds such text.
+    await dialog.locator("#password").fill(randomUUID());
     await dialog.getByRole("button", { name: "Test Connection", exact: true }).click();
 
     const result = dialog.getByTestId("connection-test-result");
@@ -90,7 +92,8 @@ test.describe("Apache Kafka in the connection dialog", () => {
     const dialog = page.locator('[role="dialog"]');
     await dialog.getByRole("button", { name: "Apache Kafka", exact: true }).click();
     await dialog.locator("#user").fill("reader");
-    await dialog.locator("#password").fill("x");
+    // A generated password: a one-character secret's forms occur in almost any sentence, and Studio withholds such text.
+    await dialog.locator("#password").fill(randomUUID());
     await dialog.getByRole("button", { name: "Test Connection", exact: true }).click();
 
     const result = dialog.getByTestId("connection-test-result");

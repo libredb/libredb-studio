@@ -5,7 +5,9 @@
  * order the dialog draws them unless the type's form entry declares a `dialogOrder`; `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here by
  * reference, so the list exists once, and the reason a list holds what it does stays beside that type's entry there.
  * `SEED_ONLY_FIELDS` names, per type, the fields a seed of any other type is refused for, with the sentence it is
- * refused with.
+ * refused with; with `CONNECTION_FIELDS` it declares what a provider is built from (`providerFields` in
+ * src/lib/db/provider-connection.ts). `REFUSED_CONNECTION_FIELDS` maps, per type, each field its engine refuses by name
+ * to the sentence core refuses it with before any provider is built; no provider receives one.
  *
  * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
@@ -14,6 +16,7 @@
  * is a module of its own.
  */
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import type { AgentCredentialForm } from "./types";
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
 export type ConnectionField =
@@ -80,8 +83,20 @@ export type ConnectionField =
   // are checked by different code, and one box for both would carry a label that is wrong half
   // the time.
   | "hostKeyFingerprint";
-/** A field a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI, or an OPC UA seed's read roots. */
-export type SeedOnlyField = "securityPolicyUri" | "clientCertificatePath" | "clientPrivateKeyPath" | "agentReadRoots";
+/**
+ * The fields a seed file may carry that no connection dialog draws: a deployment fact, named by a file path or a URI,
+ * or an OPC UA seed's read roots. Only the operator's seed file or an embedder's own code sets one: `resolveConnection`
+ * (src/lib/seed/resolve-connection.ts) refuses by name a connection a browser or a client supplies inline that sets
+ * one, and the managed connection list (src/app/api/connections/managed/route.ts) never sends one to the browser.
+ */
+export const SEED_ONLY_FIELD_NAMES = Object.freeze([
+  "securityPolicyUri",
+  "clientCertificatePath",
+  "clientPrivateKeyPath",
+  "agentReadRoots",
+] as const);
+/** A field a seed file may carry that no connection dialog draws (`SEED_ONLY_FIELD_NAMES`). */
+export type SeedOnlyField = (typeof SEED_ONLY_FIELD_NAMES)[number];
 
 /**
  * The fields the connection dialog draws either in the open or behind its Advanced accordion, as the engine's
@@ -638,12 +653,100 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   libredb: null,
 });
 
+/** The sentence one refused field is refused with, keyed by the field. */
+export type RefusedFieldRow = Readonly<Partial<Record<ConnectionField, string>>>;
+
+const NONE: RefusedFieldRow = Object.freeze({});
+
+/** OpenSearch's one sentence for either half of the API key pair, which only Elasticsearch takes. */
+const OPENSEARCH_API_KEY_REFUSAL =
+  "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.";
+
+/**
+ * The fields each type's engine does not take and refuses by name, each mapped to the sentence it is refused with:
+ * fields its dialog never draws, which a seed, a stored record or an embedder could still set (FND-2 slice 6c).
+ * `createDatabaseProvider` refuses a connection that sets one (any value but `undefined`, `null` and `""`) with that
+ * sentence, before any provider is built (`refusedFieldRefusal` in src/lib/db/provider-connection.ts), while
+ * `readProviderDeclarations`, which never connects, drops it; no provider receives one (`providerFields`). Each sentence
+ * is quoted in its engine's provider doc. A field is listed in the order it is checked.
+ */
+export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> = Object.freeze({
+  postgres: NONE,
+  mysql: NONE,
+  sqlite: NONE,
+  duckdb: NONE,
+  libsql: NONE,
+  mongodb: NONE,
+  redis: NONE,
+  oracle: NONE,
+  db2: NONE,
+  mssql: NONE,
+  couchbase: NONE,
+  clickhouse: NONE,
+  druid: NONE,
+  elasticsearch: NONE,
+  // The API key pair is Elasticsearch's alone: the transport both types share sends it only there, and OpenSearch is
+  // refused it rather than fall back to user and password with no error.
+  opensearch: Object.freeze({ apiKeyId: OPENSEARCH_API_KEY_REFUSAL, apiKeySecret: OPENSEARCH_API_KEY_REFUSAL }),
+  trino: NONE,
+  cassandra: NONE,
+  prometheus: NONE,
+  kafka: NONE,
+  etcd: NONE,
+  neo4j: NONE,
+  milvus: NONE,
+  // No user name: an API key is the password.
+  qdrant: Object.freeze({
+    user: "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.",
+  }),
+  // No user name: an API key or an OIDC access token is the password.
+  weaviate: Object.freeze({
+    user: "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
+  }),
+  influxdb: NONE,
+  // No user name: the token is the password.
+  influxdb3: Object.freeze({ user: "InfluxDB 3 has no user name: clear User and put the token in Token." }),
+  // No user name: a bearer token is the password.
+  oxia: Object.freeze({ user: "Oxia has no user name: clear User. A bearer token goes under Token." }),
+  databend: NONE,
+  bigquery: NONE,
+  snowflake: NONE,
+  // No user name: every request uses one fixed Spark Connect user id.
+  spark: Object.freeze({
+    user: "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
+  }),
+  s3: NONE,
+  // No user name: basic authentication is refused, a bearer token is the password.
+  kubernetes: Object.freeze({
+    user: "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
+  }),
+  mqtt: NONE,
+  firestore: NONE,
+  // No database (virtual hosts are discovered), and the namespaces and TLS server name are Kubernetes's boxes.
+  rabbitmq: Object.freeze({
+    database:
+      "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+    namespaces:
+      "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
+    tlsServerName:
+      "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
+  }),
+  opcua: NONE,
+  mtconnect: NONE,
+  modbus: NONE,
+  netconf: NONE,
+  snmp: NONE,
+  sparkplug: NONE,
+  libredb: NONE,
+});
+
 /**
  * What an agent credential on a seed of one engine is: `agentUser` and `agentPassword`, the principal every agent
- * execution profile and every MCP call on that seed signs in as. It mirrors the provider's `AgentCredentialForm`
- * (src/lib/db/types.ts), which the factory checks again at open: "pair" is a user and a password together, the form a
- * provider that declares none takes; "dedicated-pair" is the same with a user other than the connection's own; and
- * "secret" is `agentPassword` alone, a bearer token or a service-account key. A null row takes none.
+ * execution profile and every MCP call on that seed signs in as. It is a coarser view of the engine's
+ * `AGENT_CREDENTIAL_FORM` row (below), which the factory checks again at open: "pair" is a user and a password
+ * together, the form a null `AGENT_CREDENTIAL_FORM` row takes; "dedicated-pair" is the same with a user other than the
+ * connection's own; and "secret" is `agentPassword` alone, a bearer token or a service-account key. A null row takes
+ * none.
  */
 export interface SeedAgentCredential {
   readonly form: "pair" | "dedicated-pair" | "secret";
@@ -661,10 +764,14 @@ const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pai
  * `tests/unit/db/agent-credential-capability.test.ts` holds each row to its provider's declared form and to the
  * engine's `CONNECTION_FIELDS` row, so a provider that changes its form fails there until its row here follows.
  *
- * A null row where the provider declares no form is a row the factory would ask for a user and a password, on an
- * engine that has no field to put one in (no password: SQLite, DuckDB, MTConnect, Modbus, Sparkplug B), signs in with
- * a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one (Snowflake, whose key-pair
- * sign-in ignores the password and whose statements all run as the connection's role).
+ * A null row where the engine's `AGENT_CREDENTIAL_FORM` row is null too is a row the factory would ask for a user and
+ * a password, on an engine that has no field to put one in (SQLite, DuckDB, MTConnect, Modbus and Sparkplug B have no
+ * password field), signs in with a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one
+ * (Snowflake, whose key-pair sign-in ignores the password and whose statements all run as the connection's role).
+ *
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.agentCredential`, and
+ * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
+ * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
  */
 export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> = Object.freeze({
   postgres: PAIR,
@@ -713,4 +820,75 @@ export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCrede
   snmp: null,
   sparkplug: null,
   libredb: null,
+});
+
+/**
+ * The form each engine takes the agent's own credential in, one of the `AgentCredentialForm` forms (src/lib/db/types.ts).
+ * A null row is the user-and-password pair: reading it, the factory asks the engine for `agentUser` and
+ * `agentPassword` together. It is the row of an engine whose provider declares no form.
+ *
+ * Every agent acquisition reads its row (`assertAgentCredentialForm` in src/lib/db/factory.ts) before the provider it
+ * built connects, and no gate reads the provider's own `agentCredential`. A hand-written literal and never computed
+ * from the providers, because this module imports none; `tests/unit/db/agent-credential-capability.test.ts` holds each
+ * row equal to its provider's declaration, so a provider that changes its form fails there until its row here follows.
+ *
+ * It is not `SEED_AGENT_CREDENTIAL`, which is coarser: its "secret" covers both secret-only forms, and its null covers
+ * both `"none"` and engines that take the pair at open but no agent credential on a seed.
+ *
+ * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.agentCredential`
+ * (docs/providers/CONTRACT.md, clause M-57), and that an engine declaration requests at `policy.agentCredentialForm`,
+ * which the generator writes from this row, `pair` for a null row (clause M-58).
+ */
+export const AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> = Object.freeze({
+  postgres: null,
+  mysql: null,
+  sqlite: null,
+  duckdb: null,
+  // The agent's bearer token for the database, sent instead of the connection's own.
+  libsql: "token",
+  mongodb: null,
+  redis: null,
+  oracle: null,
+  db2: null,
+  mssql: null,
+  couchbase: null,
+  clickhouse: null,
+  druid: null,
+  elasticsearch: null,
+  opensearch: null,
+  trino: null,
+  cassandra: null,
+  prometheus: null,
+  kafka: null,
+  etcd: null,
+  neo4j: null,
+  milvus: null,
+  // The agent's API key or JWT, sent instead of the connection's own.
+  qdrant: "token",
+  // The agent's API key, sent instead of the connection's own.
+  weaviate: "token",
+  influxdb: null,
+  // The agent's token, sent as the bearer credential instead of the connection's own.
+  influxdb3: "token",
+  oxia: null,
+  databend: null,
+  // A service-account key JSON, from which the provider mints its own token at the scope it asks for.
+  bigquery: "service-account-key",
+  snowflake: null,
+  spark: null,
+  // An access key ID and secret of its own: an agent key ID equal to the connection's names the same key.
+  s3: "dedicated-user",
+  // The agent's bearer token, whose RBAC bounds what the agent reads.
+  kubernetes: "token",
+  mqtt: null,
+  firestore: null,
+  rabbitmq: null,
+  opcua: null,
+  mtconnect: null,
+  modbus: null,
+  netconf: null,
+  snmp: null,
+  sparkplug: null,
+  // An embedded store has no principal to sign an agent in as.
+  libredb: "none",
 });

@@ -8,6 +8,7 @@ import {
   requireString,
   resolveKinds,
 } from "@/lib/api/object-route";
+import { objectTree } from "@/lib/api/object-tree";
 import { enumerateContainers, kindsByContainer } from "@/lib/db/container-walk";
 import { assertNotWholeServer } from "@/lib/db/catalog-scope";
 import { applicableKinds } from "@/lib/db/object-kinds";
@@ -41,14 +42,19 @@ export const dynamic = "force-dynamic";
  * Matching is on `name`, the display label, and not on the path's last segment. Those differ
  * exactly where the segment carries a disambiguated form the user never typed and never sees: an
  * overloaded PostgreSQL routine is named `order_total` and addressed `order_total(integer)`.
+ *
+ * Every read of the walk, each container listing and each object listing, is a host core tree call
+ * (`objectTree`, src/lib/api/object-tree.ts) under a deadline of its own, and the request's signal
+ * ends the walk at its next read.
  */
 export async function POST(req: NextRequest) {
-  return handleObjectRequest(req, "api/db/objects/search", async (provider, body) => {
+  return handleObjectRequest(req, "api/db/objects/search", async (provider, body, context) => {
     const term = requireString(body, "term").toLowerCase();
     const kinds = resolveKinds(provider, optionalStringArray(body, "kinds"));
 
     assertNotWholeServer(provider);
-    const enumerated = await enumerateContainers(provider);
+    const tree = objectTree(provider, req.signal, context.route);
+    const enumerated = await enumerateContainers(tree);
     const kindsOf = kindsByContainer(enumerated);
     const pairs = enumerated.containers.flatMap((container) =>
       applicableKinds(kinds, kindsOf.get(JSON.stringify(container))).map((kind) => ({ container, kind: kind.id })),
@@ -62,7 +68,7 @@ export async function POST(req: NextRequest) {
         { limit: INVENTORY_PAIR_LIMIT, pairs: pairs.length },
       );
     }
-    const listObjects = provider.listObjects.bind(provider);
+    const { listObjects } = tree;
 
     // Sequential on purpose, and the `no-await-in-loop` warning is accepted here. Every listing
     // takes a client from one pool, so a `Promise.all` over containers times kinds would open as

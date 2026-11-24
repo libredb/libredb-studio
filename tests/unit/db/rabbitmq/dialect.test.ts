@@ -65,8 +65,12 @@ describe("the rabbitmq dialect's records", () => {
   });
 
   test("a tree click and Generate Read Request reach the provider's generators through the registry", () => {
-    expect(generateTableQuery(["billing", "audit"], RABBITMQ)).toBe(rabbitmqTableQuery(["billing", "audit"]));
-    expect(generateSelectQuery(["billing", "audit"], [], RABBITMQ)).toBe(rabbitmqSelectQuery(["billing", "audit"]));
+    expect(generateTableQuery(["billing", "audit"], "rabbitmq", RABBITMQ)).toBe(
+      rabbitmqTableQuery(["billing", "audit"]),
+    );
+    expect(generateSelectQuery(["billing", "audit"], [], "rabbitmq", RABBITMQ)).toBe(
+      rabbitmqSelectQuery(["billing", "audit"]),
+    );
   });
 
   test("the safety dialog reads no destructive verb and posts nothing for an AI analysis", () => {

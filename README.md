@@ -56,6 +56,7 @@
   <a href="https://etcd.io/docs/v3.7/integrations/#:~:text=LibreDB%20Studio">etcd</a>,
   <a href="https://prometheus.io/docs/operating/integrations/#:~:text=LibreDB%20Studio">Prometheus</a>,
   <a href="https://docs.influxdata.com/influxdb/v2/tools/libredb-studio/">InfluxDB</a>,
+  <a href="https://www.rabbitmq.com/client-libraries/devtools#:~:text=LibreDB%20Studio">RabbitMQ</a>,
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
@@ -190,7 +191,7 @@ And nothing is held back. Single sign-on, ER diagrams, the AI features and the N
 - **Smart Autocomplete**: Schema-aware suggestions for tables, columns, and SQL keywords.
 - **Command Palette**: Quick access to tables, connections, saved queries, and actions with `Cmd/Ctrl+K`.
 - **Multi-Tab Workspace**: Handle parallel tasks with independent execution states.
-- **Saved Query Backups**: Export the complete saved-query library as JSON. Import validates the file, preserves query metadata and merges new entries, reporting duplicate IDs while keeping existing queries intact.
+- **Saved Query Backups**: Export the complete saved-query library as JSON. Import validates the file, preserves query metadata and merges new entries, reporting duplicate IDs while keeping existing queries intact; an entry whose connection type names no provider in this Studio is left out by name while the rest import ([details](docs/STORAGE.md#saved-queries-whose-type-this-studio-has-no-provider-for)).
 - **Duplicate Connections**: Open an independent `(copy)` of an editable saved connection in the connection editor, adjust its settings and save. Cancelling leaves the saved connections unchanged; administrator-managed connections cannot be duplicated.
 - **Visual EXPLAIN**: Graphical execution plans to identify performance bottlenecks.
 - **Interactive ER Diagrams**: Visual schema graph with real foreign key edges, cardinality labels, MiniMap navigation, table search/filter, compact mode, and PNG/SVG export. Automatic hierarchical layout powered by ELK.js.
@@ -318,7 +319,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 - **Launch sign-in**: A platform that hosts Studio can sign its users in with a short-lived signed link and open a seeded connection, once `LAUNCH_TOKEN_SECRET`, `LAUNCH_TOKEN_AUDIENCE` and `LAUNCH_TOKEN_ISSUER` are set ([guide](docs/LAUNCH.md)).
 
 ### DBA Maintenance Toolkit (Admin Only)
-- **Live Monitoring Dashboard**: 7-tab monitoring with Overview, Performance, Queries, Sessions, Tables, Storage, and Connection Pool views.
+- **Live Monitoring Dashboard**: Overview, Performance, Queries, Sessions, Tables and Storage tabs for the panels each engine offers, plus the Connection Pool view wherever the engine offers a panel; a panel an engine has no way to read is named and not drawn.
 - **Time-Series Trend Charts**: Real-time metric trends (connections, cache hit ratio, buffer pool, deadlocks) with auto-refreshing ring buffer history.
 - **Configurable Auto-Refresh**: Polling intervals from 5s to 60s with play/pause control.
 - **Threshold Alerting**: Color-coded health indicators (healthy/warning/critical) for cache hit ratio, connection usage, deadlocks, and buffer pool utilization.
@@ -339,7 +340,7 @@ Standalone application only: the embedded `@libredb/studio` package carries no a
 | **SQL Server** | `mssql` (tedious) | Full SQL IDE, `TOP N` / `OFFSET FETCH` pagination, `sys.dm_*` DMVs, `UPDATE STATISTICS`, `DBCC CHECKDB`, transactions, Azure SQL auto-detect |
 | **SQLite** | `bun:sqlite` / `node:sqlite` (runtime-selected) | Full SQL IDE, file-based or in-memory databases (server-local file) |
 | **libSQL** | none — HTTP (the Hrana protocol, `POST /v2/pipeline`, port 8080) | Full SQL IDE against a libSQL server or Turso Cloud — the same SQLite dialect as the row above, reached across a network instead of on disk. `EXPLAIN QUERY PLAN`, `sqlite_master` and `pragma_*` introspection, and real per-table bytes from `dbstat`, which the file-based driver above cannot read. The credential is an auth token rather than a password. Two maintenance operations only, `REINDEX` and `PRAGMA integrity_check`: the server refuses `VACUUM`, `ANALYZE`, `PRAGMA optimize` and `PRAGMA wal_checkpoint` outright, so no control is offered for them |
-| **DuckDB** | `@duckdb/node-api` (a native N-API addon, ~68 MB of platform bindings) | Full SQL IDE against a local DuckDB file or `:memory:`, on the server the app runs on. `EXPLAIN (FORMAT JSON)` physical plan trees, `duckdb_*` catalog introspection, real per-table bytes from `pragma_storage_info` block allocation, and query cancellation through the driver's own `interrupt()`. Three maintenance operations, `VACUUM`, `ANALYZE` and `CHECKPOINT`: `REINDEX` is a parser error here and neither `PRAGMA integrity_check` nor `PRAGMA optimize` exists, so no control is offered for them. No slow-query log and no session list — DuckDB publishes neither, so those panels say so rather than showing a zero. The file admits exactly ONE operating-system process, refused in read-only mode too, so a second Studio instance cannot open a database this one holds |
+| **DuckDB** | `@duckdb/node-api` (a native N-API addon, ~68 MB of platform bindings) | Full SQL IDE against a local DuckDB file or `:memory:`, on the server the app runs on. `EXPLAIN (FORMAT JSON)` physical plan trees, `duckdb_*` catalog introspection, real per-table bytes from `pragma_storage_info` block allocation, and query cancellation through the driver's own `interrupt()`. Three maintenance operations, `VACUUM`, `ANALYZE` and `CHECKPOINT`: `REINDEX` is a parser error here and neither `PRAGMA integrity_check` nor `PRAGMA optimize` exists, so no control is offered for them. No slow-query log and no session list: DuckDB publishes neither, so the dashboard draws no Queries or Sessions tab rather than showing a zero. The file admits exactly ONE operating-system process, refused in read-only mode too, so a second Studio instance cannot open a database this one holds |
 | **MongoDB** | `mongodb` | JSON query editor, collection operations (find, aggregate, insert, update, delete) |
 | **Couchbase** | none — HTTP (Query + management REST) | Full SQL++ IDE, EXPLAIN plans, bucket/scope/collection explorer, `INFER` column inference, read-your-writes consistency, `UPDATE STATISTICS` / `BUILD INDEX` / request kill |
 | **Firestore** | none, REST (the Firestore REST API v1) | Read-only: top-level collections in the tree, documents and subcollections at any depth in the Keys panel, a document's data in the Source tab, and the Admin SDK query chain parsed by Studio and never run as JavaScript, with `count()`, `sum()`, `average()`, `findNearest` and Query Explain |
@@ -536,6 +537,11 @@ journalctl -u libredb-studio
   ```bash
   npm i @libredb/studio
   ```
+
+  **Install the database drivers yourself, and apply Studio's driver patches.**
+  The package keeps every driver external, so your application installs them, and your install does not carry the patches Studio applies to some of them.
+  Which packages are patched, why, and when each patch goes away are in [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md#patched-dependencies), "Patched dependencies".
+  Take the patch files from the repository's `patches/` directory at the release's tag and apply them with your package manager.
 
   **Adopt Studio's security headers from your own Next.js config.** The `@libredb/studio/security`
   subpath publishes the header policy as pure data — `securityHeaders()` returns a plain

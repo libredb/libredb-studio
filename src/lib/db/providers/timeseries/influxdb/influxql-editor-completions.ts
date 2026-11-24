@@ -23,7 +23,7 @@ import {
   type InfluxqlToken,
   lexInfluxql,
   normaliseInfluxqlNewlines,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+} from "@/lib/languages/influxql/lexer";
 import {
   InfluxqlQuoteError,
   influxqlSource,

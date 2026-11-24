@@ -13,18 +13,18 @@
  * is bounded by its limit, its budgets and its timeout, with no server-side evaluation to stop.
  * `prepareQuery` is the base pass-through: the read request carries its own limit (spec 5.1).
  *
- * `queryReadOnly` is the agent's: one read of a closed table of metadata reads (`agent-statement.ts`), sent through
- * the agent's client, which holds the Metadata and ListOffsets reads alone, and answered through a metadata-only
- * projection (`agent-metadata-read.ts`): topic names, partitions, broker node ids and racks, the cluster id and each
- * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
- * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
- * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
- * needs a withheld read answers its reason, and a platform's own topics are withheld. MCP's `run_kafka_read` reads
- * through the same `queryReadOnly`.
+ * `queryReadOnly` is the agent's: one read of a closed table of metadata reads
+ * (`src/lib/languages/kafkaread/agent-statement.ts`), sent through the agent's client, which holds the Metadata and
+ * ListOffsets reads alone, and answered through a metadata-only projection (`agent-metadata-read.ts`): topic names,
+ * partitions, broker node ids and racks, the cluster id and each partition's earliest and end offsets, never a record's
+ * key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group. On a
+ * handle opened for any agent-mode profile every other surface goes through that client too (`agent-surface.ts`): the
+ * editor's read and an object's source are refused, and what needs a withheld read answers its reason, and a platform's
+ * own topics are withheld. MCP's `run_kafka_read` reads through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -60,7 +60,11 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import { isWithheldKafkaTopic, KAFKA_AGENT_SENTENCES, readKafkaAgentStatement } from "./agent-statement";
+import {
+  isWithheldKafkaTopic,
+  KAFKA_AGENT_SENTENCES,
+  readKafkaAgentStatement,
+} from "@/lib/languages/kafkaread/agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,
@@ -290,8 +294,6 @@ export class KafkaProvider extends BaseDatabaseProvider {
       // carries the schema and says that the inventory's columns are not keys (spec 6.3). The
       // integration test parses each example in it with that parser.
       statementLanguage: `the JSON read request this editor executes - one object, {"topic": "<topic name>", "partition": <n>, "from": "earliest" | "latest" | {"offset": <n>} | {"timestamp": "<ISO-8601 with a zone>"}, "limit": <1 to ${DEFAULT_QUERY_LIMIT}>}, of which only "topic" is required: "from" defaults to "latest", "limit" to 50, and "partition" is required with an offset; for example {"topic": "orders", "from": "latest", "limit": 50} or {"topic": "orders", "partition": 0, "from": {"offset": "120"}} - and no other key: "offset" and "timestamp" go inside "from", never at the top level, the inventory's other columns (key, value, headers and their encodings) are fields each message comes back with, not keys of the request, and a read request reads one topic's messages, never a consumer group's lag`,
-      slowQueriesEmptyState: "Kafka exposes no query log",
-      sessionsEmptyState: "Kafka does not report client sessions over its protocol",
       // Never rendered: maintenanceControl() gates every placement on supportsMaintenance first
       // (src/lib/db/types.ts). Worded true for Kafka anyway.
       analyzeAction: "Analyze Topic",
@@ -531,7 +533,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: Kafka keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: Kafka keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.slowQueries);
@@ -539,7 +541,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  /** Empty: the protocol reports no client sessions. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: the protocol reports no client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
     if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.sessions);

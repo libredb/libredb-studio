@@ -8,6 +8,7 @@ Tracking issue: [#424](https://github.com/libredb/libredb-studio/issues/424), wi
 | | |
 |---|---|
 | **Write reach** | none: every route of the closed console route table, `QDRANT_ROUTES`, is a read, and any other route is refused before any request; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -123,7 +124,10 @@ A range bound above 2^53 is sent with a warning that Qdrant compares range bound
 | API key or JWT | Qdrant receives the API key or JWT on every request, so a key needs an SSL mode other than disable, unless the host is this machine or an SSH tunnel carries the connection. A read-only or collection-scoped key with an expiry is the safest choice. |
 
 There is no User field and no Database box: Qdrant has no user name and no container level.
-A non-empty user from a seed file or the API is refused when the connection opens, naming the field.
+A user from a seed file or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
+
+> Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.
+
 A collection or alias name in a request is refused before it reaches a path when it is empty, `.` or `..`, holds `/` or NUL, as written or once percent-decoded (so `%2e%2e` and `a%2fb` are refused too), or is longer than 255 characters; a vector name is refused when it holds one of `<`, `>`, `:`, `"`, `/`, `\`, `|`, `?`, `*`, NUL or U+001F, or is longer than 200 bytes.
 
 ### 4.2 Authentication
@@ -399,15 +403,34 @@ Generate Command writes, without running it, a query over the collection's first
 Health is `GET /`, reachability only.
 The overview gives the version, the number of collections visible to this credential and the number of payload and vector indexes; the Tables tab carries this caption:
 The first 200 collections. Point counts are Qdrant's approximate points_count; POST /collections/{collection_name}/points/count with "exact": true is exact.
-Slow queries are not read:
-
-> Qdrant keeps slow requests behind a manage-only route that returns other clients' request bodies, which Studio does not read.
-
-Sessions, performance and storage are not read either:
-
-> Qdrant does not report client sessions over the routes Studio reads. For sessions, performance and storage, connect Studio to a Prometheus server that scrapes Qdrant's /metrics.
+Slow queries are not read: Qdrant keeps slow requests behind a manage-only route that returns other clients' request bodies, which Studio does not read.
+Sessions, performance and storage are not read either: Qdrant does not report client sessions over the routes Studio reads.
+For sessions, performance and storage, connect Studio to a Prometheus server that scrapes Qdrant's /metrics.
+None of those panels is offered, so the dashboard draws none of them, and the labels declare no empty-state sentence for the Queries or Sessions panel.
 
 Studio never reads `/telemetry`, `/metrics`, `/profiler`, `/debugger`, `/stacktrace`, `/logger`, `/issues`, `/audit/logs` or a snapshot download.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `qdrant` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/vector/qdrant/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `health`.
 
 ## 8. Maintenance
 
@@ -491,7 +514,7 @@ Set `telemetry_disabled` if the server should not report to the vendor, and note
 - TLS mode `require` sends the API key to an unverified peer.
 - An empty tree is what a scoped token, an alias-only token and an empty server all produce.
 - A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.
-- A hostile or impersonated endpoint holds the key it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it sends.
+- A hostile or impersonated endpoint holds the key it receives and can return it in an encoding Studio does not list, so Studio withholds only the forms it lists.
 
 ## Migration DDL
 

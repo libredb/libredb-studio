@@ -45,14 +45,21 @@ import {
 // The BSON parser, reached through a namespace import for the reason `index.ts` gives: bun does not see `BSON` as a
 // named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
-import { ConnectionError, QueryError, RefusedBeforeSendError } from "../../../errors";
+import {
+  ByteBudgetRefusal,
+  ConnectionError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
   MAX_STATEMENT_TIMEOUT_MS,
   rowBudgetSentence,
-} from "../../sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "../../../types";
 import { unionFields, uniquelyKeyedRows } from "../../../utils/result-fields";
 import type { RevivedMongoReadEnvelope } from "./extended-json";
@@ -149,8 +156,9 @@ function rowBound(budget: ReadOnlyStatementBudget): number {
  *
  * `stoppedAtBound` is a cursor read, which the server ends one row past the budget: its count is that bound, not the
  * number of documents that match, and the sentence says so. Without it a live run on 2026-10-17 read "201 rows > 200
- * allowed", retried with a limit of 200 and reported that the collection held 200 orders, of 8000. The opening is
- * unchanged, so `rowBudgetIn` and MCP's limit reader still read it.
+ * allowed", retried with a limit of 200 and reported that the collection held 200 orders, of 8000. It is a
+ * `RowBudgetRefusal`, which every reader decides by its class, and its opening is unchanged, so `rowBudgetIn` still
+ * reads the two numbers from it.
  */
 export function rowBudgetRefusal(
   rows: number,
@@ -161,16 +169,16 @@ export function rowBudgetRefusal(
   const total = stoppedAtBound
     ? `; the read stops one row past the budget, so at least ${rows} documents match and the total is not known (count it with "operation": "count", or narrow the read)`
     : "";
-  return new QueryError(`${rowBudgetSentence(rows, budget.maxResultRows)}${total}`, "mongodb", statement);
+  return new RowBudgetRefusal(`${rowBudgetSentence(rows, budget.maxResultRows)}${total}`, "mongodb", statement);
 }
 
 /** The byte-budget refusal, same sentence, counted in BSON bytes. */
 function byteBudgetRefusal(bytes: number, budget: ReadOnlyStatementBudget, statement: string): QueryError {
-  return new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "mongodb", statement);
+  return new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "mongodb", statement);
 }
 
 function killedAtDeadline(budget: ReadOnlyStatementBudget, statement: string): QueryError {
-  return new QueryError(
+  return new TimeBudgetRefusal(
     `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and was killed server-side`,
     "mongodb",
     statement,
@@ -267,7 +275,7 @@ export async function runUnderAgentDeadline<T>(
     const outcome = await Promise.race([read, abandoned]);
     if (outcome.settled === "abandoned") {
       if (isTransportFailure(killFailure)) throw connectionLost(killFailure);
-      throw new QueryError(
+      throw new TimeBudgetRefusal(
         `Read-only execution exceeded the statement deadline of ${budget.statementTimeoutMs}ms and the server did not end it, so the client stopped waiting`,
         "mongodb",
         statement,

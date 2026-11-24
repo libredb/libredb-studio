@@ -81,6 +81,7 @@ import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptor
 import { createTargetScope } from "@/lib/db/operations/policy";
 import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const ORIGIN = new URL(process.env.LIBREDB_ES_ORIGIN ?? "http://127.0.0.1:9200");
 const ADMIN_USER = process.env.LIBREDB_ES_ADMIN_USER;
@@ -387,7 +388,7 @@ async function checkHiddenTargets(): Promise<void> {
       );
     }
     // The server's two resolutions alone, with no reader in front of them.
-    const transport = new SearchHttpTransport("elasticsearch", connection());
+    const transport = new SearchHttpTransport("elasticsearch", connection(), egressDecision());
     for (const reference of [`probe_orders,${SCRATCH}_al*,-${alias}`, `*,-${alias}`]) {
       const sql = `SELECT COUNT(*) AS n FROM "${reference}"`;
       const raw = await send("POST", "/_sql?format=json", { query: sql });

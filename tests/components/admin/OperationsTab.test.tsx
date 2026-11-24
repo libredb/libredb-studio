@@ -135,6 +135,8 @@ import { render, act, cleanup, fireEvent, waitFor, within } from "@testing-libra
 import React from "react";
 
 import { OperationsTab } from "@/components/admin/tabs/OperationsTab";
+import { SNOWFLAKE_MONITORING_LABELS } from "@/lib/db/providers/sql/snowflake/monitoring";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
   SYNTHETIC_ENTITY_CAPABILITIES,
   SYNTHETIC_PREVIEW,
@@ -1951,14 +1953,14 @@ describe("OperationsTab", () => {
     expect(getByTestId("operations-sessions-empty").textContent).toBe("No active sessions found.");
   });
 
-  // #D48. The default sentence reads as "nothing is running right now", which is false
-  // on an engine whose session list does not exist. Both branches are pinned so the
-  // fallback cannot quietly become the only path again.
+  // #D48. The default sentence reads as "no session is open right now", which misleads
+  // on an engine whose offered list is something else: Snowflake lists running statements.
+  // Both branches are pinned so the fallback cannot quietly become the only path again.
   test("an engine declaring sessionsEmptyState replaces the empty-state copy", async () => {
-    const duckdb = "DuckDB publishes no session list - there is no duckdb_connections() table function.";
+    const snowflake = SNOWFLAKE_MONITORING_LABELS.sessionsEmptyState;
     mockMetadata = {
       capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
-      labels: { sessionsEmptyState: duckdb },
+      labels: { sessionsEmptyState: snowflake },
     };
     monitoringOverride = { data: { activeSessions: [], tables: defaultTables } };
     let renderResult: ReturnType<typeof render>;
@@ -1966,13 +1968,13 @@ describe("OperationsTab", () => {
       renderResult = render(<OperationsTab />);
     });
 
-    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe(duckdb);
+    expect(renderResult!.getByTestId("operations-sessions-empty").textContent).toBe(snowflake);
   });
 
   test("a refused read outranks the label, because a refusal is not an absence", async () => {
     mockMetadata = {
       capabilities: { supportsMaintenance: true, maintenanceOperations: ["analyze"] },
-      labels: { sessionsEmptyState: "DuckDB publishes no session list." },
+      labels: { sessionsEmptyState: SNOWFLAKE_MONITORING_LABELS.sessionsEmptyState },
     };
     monitoringOverride = {
       data: { tables: defaultTables, errors: { activeSessions: "permission denied" } },
@@ -3287,6 +3289,11 @@ describe("OperationsTab", () => {
     cleanup();
 
     mockCatalogs = { catalogs: ["analytics", "shop"], catalog: "analytics" };
+    // Listed beside it, a connection whose type names no provider, whose pick is refused below (FND-1).
+    mockConnectionsList = [
+      ...mockConnectionsList,
+      { ...mockConnectionsList[0], id: "u", name: "Acme", type: "acmefoo" },
+    ];
     setMockSearchParams(
       new URLSearchParams([
         ["path", "shop"],
@@ -3306,6 +3313,15 @@ describe("OperationsTab", () => {
       fireEvent.keyDown(view!.getByRole("option", { name: "analytics" }), { key: "Enter" });
     });
     expect(mockSetCatalog).toHaveBeenCalledWith("analytics");
+    expect(lastMonitored?.catalog).toBe("analytics");
+
+    // A refused pick changes nothing: the picked database stays, rather than the linked one coming back.
+    await act(async () => {
+      fireEvent.keyDown(view!.getAllByRole("combobox")[0], { key: "ArrowDown" });
+    });
+    await act(async () => {
+      fireEvent.keyDown(view!.getByRole("option", { name: /^Acme/ }), { key: "Enter" });
+    });
     expect(lastMonitored?.catalog).toBe("analytics");
   });
 
@@ -3376,5 +3392,178 @@ describe("OperationsTab", () => {
     } finally {
       restoreGlobalFetch();
     }
+  });
+
+  // =========================================================================
+  // Monitoring panels the engine does not offer (FND-4)
+  // =========================================================================
+
+  const connectionOfType = (type: string) => ({
+    id: "c-facets",
+    name: `${type} facets`,
+    type,
+    host: "localhost",
+    port: 1,
+    database: "dev",
+    createdAt: new Date(),
+  });
+
+  test("draws no Sessions card where the engine does not offer sessions", async () => {
+    expect(ENGINE_FACETS.elasticsearch.monitoring.activeSessions).toBe("not-offered");
+    expect(ENGINE_FACETS.elasticsearch.monitoring.tables).toBe("offered");
+    mockConnectionsList = [connectionOfType("elasticsearch")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+    expect(view!.queryByText("1234")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("draws no Tables card where the engine does not offer table statistics", async () => {
+    expect(ENGINE_FACETS.cassandra.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.cassandra.monitoring.activeSessions).toBe("offered");
+    mockConnectionsList = [connectionOfType("cassandra")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Sessions (1)")).not.toBeNull();
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText("users")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("says in one sentence that an engine with no maintenance and neither panel has nothing to operate on", async () => {
+    expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.kafka.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = { capabilities: { supportsMaintenance: false, maintenanceOperations: [] } };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-nothing-offered").textContent).toBe(
+      "This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.",
+    );
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText("Global Operations")).toBeNull();
+  });
+
+  test("says the same of SNMP, whose rows are derived groupings and which offers no table statistics", async () => {
+    expect(ENGINE_FACETS.snmp.monitoring.tables).toBe("not-offered");
+    expect(ENGINE_FACETS.snmp.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("snmp")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: true },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-nothing-offered").textContent).toBe(
+      "This engine offers no maintenance, no session list and no table statistics in LibreDB Studio.",
+    );
+  });
+
+  test("never says an engine whose rows are derived groupings offers no table statistics", async () => {
+    expect(ENGINE_FACETS.libredb.monitoring.tables).toBe("offered");
+    expect(ENGINE_FACETS.libredb.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("libredb")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: true },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+    expect(view!.queryByText(/no table statistics/)).toBeNull();
+    expect(view!.getByTestId("operations-derived-tables-only").textContent).toBe(
+      "This engine offers no maintenance and no session list in LibreDB Studio. Its table statistics group keys rather than name tables, so they are drawn on the Monitoring dashboard's Tables tab and not here.",
+    );
+    expect(view!.queryByText(/^Tables/)).toBeNull();
+    expect(view!.queryByText(/^Sessions/)).toBeNull();
+  });
+
+  test("claims nothing while the engine's capabilities are unknown", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+    expect(view!.queryByTestId("operations-derived-tables-only")).toBeNull();
+  });
+
+  test("draws the Tables card and no sentence for an engine that offers table statistics on addressable rows", async () => {
+    expect(ENGINE_FACETS.elasticsearch.monitoring.tables).toBe("offered");
+    expect(ENGINE_FACETS.elasticsearch.monitoring.activeSessions).toBe("not-offered");
+    mockConnectionsList = [connectionOfType("elasticsearch")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = {
+      capabilities: { supportsMaintenance: false, maintenanceOperations: [], tablesAreDerivedGroupings: false },
+    };
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+    expect(view!.queryByTestId("operations-derived-tables-only")).toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("names a failed capabilities read, and what the engine's row says it does not offer", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    mockMetadataError = "provider-meta refused";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-capabilities-unavailable").textContent).toBe(
+      "Maintenance is withheld because this engine's capabilities could not be read.provider-meta refused",
+    );
+    expect(view!.getByTestId("operations-capabilities-unavailable-message").textContent).toBe("provider-meta refused");
+    expect(view!.getByTestId("operations-no-panels-offered").textContent).toBe(
+      "This engine offers no session list and no table statistics in LibreDB Studio.",
+    );
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
+  });
+
+  test("names a failed capabilities read beside the panels an engine offers, and claims no absent panel", async () => {
+    mockConnectionsList = [connectionOfType("postgres")];
+    mockActiveConnectionId = "c-facets";
+    mockMetadata = null;
+    mockMetadataError = "provider-meta refused";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.getByTestId("operations-capabilities-unavailable-message").textContent).toBe("provider-meta refused");
+    expect(view!.queryByTestId("operations-no-panels-offered")).toBeNull();
+    expect(view!.queryByText("Tables (1)")).not.toBeNull();
+  });
+
+  test("draws no nothing-offered sentence where the engine offers maintenance", async () => {
+    mockConnectionsList = [connectionOfType("kafka")];
+    mockActiveConnectionId = "c-facets";
+    let view: ReturnType<typeof render>;
+    await act(async () => {
+      view = render(<OperationsTab />);
+    });
+    expect(view!.queryByText("Global Operations")).not.toBeNull();
+    expect(view!.queryByTestId("operations-nothing-offered")).toBeNull();
   });
 });

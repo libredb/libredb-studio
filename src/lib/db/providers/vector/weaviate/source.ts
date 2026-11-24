@@ -10,7 +10,7 @@
  */
 import { applySourceBound } from "@/lib/db/object-kinds";
 import type { ObjectSourcePart } from "@/lib/db/types";
-import { WEAVIATE_BOUNDS } from "./routes";
+import { WEAVIATE_BOUNDS } from "@/lib/languages/weaviateapi/routes";
 import type { WeaviateClass } from "./schema";
 
 type JsonObject = Readonly<Record<string, unknown>>;

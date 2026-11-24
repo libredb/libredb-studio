@@ -14,7 +14,7 @@ import {
   mqttAgentResult,
   runMqttAgentRead,
 } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
-import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
+import { measureResultBytes } from "@/lib/db/read-only-budget";
 import { MQTT_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/mqtt/agent-statement";
 import { MQTT_AGENT_WITHHELD } from "@/lib/db/providers/keyvalue/mqtt/agent-surface";
 import {
@@ -29,6 +29,7 @@ import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import type { ProviderExecutionContext, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { type FakeBrokerScript, fakeBroker, packet, publishPacket, subscribeFilters } from "./fake-broker";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 10_000, maxResultRows: 100, maxResultBytes: 100_000 };
 const PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -192,6 +193,8 @@ describe("the closed table, refused before the network", () => {
     expect((error as Error).message).toBe(
       "Read-only execution exceeded the time budget: an MQTT agent read listens for a 3,000 ms window and needs at least 4,000 ms with the dial, and this read was given 3,999 ms. A window is never shortened, so nothing was sent.",
     );
+    // Refused before anything was sent, so it keeps that class rather than the time budget's.
+    expect(errorKind(error)).toBe("refused-before-send");
     expect(broker.connections).toHaveLength(1);
     const admitted = await provider.queryReadOnly('{"read": "window"}', {
       ...BUDGET,
@@ -541,9 +544,16 @@ describe("the budgets", () => {
     const full = mqttAgentResult(answer, BUDGET, "s", 1);
     const exact = measureResultBytes(full.rows);
     expect(mqttAgentResult(answer, { ...BUDGET, maxResultBytes: exact }, "s", 1).rowCount).toBe(1);
-    expect(() => mqttAgentResult(answer, { ...BUDGET, maxResultBytes: exact - 1 }, "s", 1)).toThrow(
+    let refused: unknown;
+    try {
+      mqttAgentResult(answer, { ...BUDGET, maxResultBytes: exact - 1 }, "s", 1);
+    } catch (error) {
+      refused = error;
+    }
+    expect((refused as Error).message).toBe(
       `Read-only execution exceeded the byte budget: ${exact} bytes > ${exact - 1} allowed`,
     );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a window Studio's message budget ended is answered as that window, with its own counts", async () => {
@@ -707,6 +717,7 @@ describe("failures by kind, never in the broker's or the transport's words", () 
     expect(mqttAgentFailure(error, 30)?.message).toBe(
       "Read-only execution exceeded the time budget: no answer within 30ms",
     );
+    expect(errorKind(mqttAgentFailure(error, 30))).toBe("time-budget-refusal");
   });
 });
 

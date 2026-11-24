@@ -11,9 +11,8 @@ import { describe, expect, mock, test } from "bun:test";
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 import { QDRANT_DEFAULT_PORT } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { type QdrantClientFactory, QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
@@ -28,6 +27,7 @@ import {
 import { QDRANT_SAMPLE_POINTS } from "@/lib/db/providers/vector/qdrant/sample";
 import { QDRANT_TESTED_VERSION } from "@/lib/db/providers/vector/qdrant/versions";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const TEST_PASSWORD = "password";
@@ -115,7 +115,7 @@ async function plaintextRefusal(): Promise<string> {
   const provider = new QdrantProvider(
     { ...QDRANT, host: "qdrant.example.com", password: TEST_PASSWORD },
     {},
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     createClient as unknown as QdrantClientFactory,
   );
   try {
@@ -142,7 +142,7 @@ const LIMIT_FRAGMENTS: readonly string[] = [
   "TLS mode `require` sends the API key to an unverified peer.",
   "An empty tree is what a scoped token, an alias-only token and an empty server all produce.",
   "A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.",
-  "Studio withholds only the forms it sends.",
+  "Studio withholds only the forms it lists.",
 ];
 
 describe("docs/providers/qdrant.md quotes what the code says", () => {
@@ -249,8 +249,9 @@ describe("docs/providers/qdrant.md quotes what the code says", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
     expect(monitoring).toContain(`\n${labels.tableStatsCaption}\n`);
     expect(labels.tableStatsCaption).toContain(`The first ${QDRANT_BOUNDS.tablesPanelCollections} collections.`);
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("machine access and the read-only mode are what the records say", () => {

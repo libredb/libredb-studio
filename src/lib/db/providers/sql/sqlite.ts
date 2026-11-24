@@ -38,7 +38,15 @@ import {
   type IndexStats,
   type StorageStats,
 } from "../../types";
-import { DatabaseConfigError, ConnectionError, ExecutionProfileError, QueryError } from "../../errors";
+import {
+  ByteBudgetRefusal,
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import {
   assertReadOnlyBudget,
@@ -46,7 +54,7 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "./read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { formatBytes } from "../../utils/pool-manager";
 import {
   loadSQLiteDriver,
@@ -54,7 +62,13 @@ import {
   type SQLiteDeclaredColumn,
   type SQLiteStatement,
 } from "./sqlite-driver";
-import { SQLiteWorkerClient, type SQLiteHandle, type SQLiteRawRead, type SQLiteWorkerOpen } from "./sqlite-worker";
+import {
+  SQLITE_OPEN_BUSY_TIMEOUT_MS,
+  SQLiteWorkerClient,
+  type SQLiteHandle,
+  type SQLiteRawRead,
+  type SQLiteWorkerOpen,
+} from "./sqlite-worker";
 import { declaredColumnTypes } from "./column-types";
 import { SQLITE_CREATE_TABLE } from "./sqlite-create-table";
 import {
@@ -79,7 +93,8 @@ import { assertRegularFilesOrMissing, readRegularFileStart } from "@/lib/db/util
 import { isUnwritableExistingFile } from "@/lib/db/utils/unwritable-file";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
+import { ADMITTED_FILE, type WithAdmittedFile } from "@/lib/types";
 
 /**
  * SQLite's identity for the shared container-path renderer.
@@ -1249,17 +1264,14 @@ export class SQLiteProvider extends SQLBaseProvider {
   }
 
   /**
-   * The slow-query empty state and the global reindex wording; every other label is
-   * the SQL default and right.
+   * The global reindex wording; every other label is the SQL default and right.
    *
-   * `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries panel
-   * is ALWAYS empty here - and it used to tell the reader to install a PostgreSQL
-   * extension (#463).
+   * No slow-query sentence: SQLite does not offer the monitoring Queries panel, so
+   * nothing would draw one.
    */
   public override getLabels(): ProviderLabels {
     return {
       ...super.getLabels(),
-      slowQueriesEmptyState: "SQLite keeps no statistics about finished statements, so there is nothing to enable.",
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs bare REINDEX, rebuilding every index in the database file.",
@@ -1298,7 +1310,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     }
 
     try {
-      const dbPath = this.getDatabasePath(true);
+      const dbPath = this.getDatabasePath();
 
       // Before any of the three opens below: a read-only open of a FIFO waits for a writer that
       // never comes, and SQLite reported a connection to a character device. Its sidecars too:
@@ -1339,9 +1351,12 @@ export class SQLiteProvider extends SQLBaseProvider {
         // exercise every on-disk behaviour without Bun's worker-process hang.
         const SQLiteDB = await loadSQLiteDriver();
         this.db = new SQLiteDB(dbPath, { create: true, readwrite: true });
+        // The open waits for another connection's lock for a bound, and only the open (§3.2).
+        this.db.exec(`PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}`);
         this.db.exec("PRAGMA foreign_keys = ON");
         this.db.exec("PRAGMA journal_mode = WAL");
         this.db.exec("PRAGMA synchronous = NORMAL");
+        this.db.exec("PRAGMA busy_timeout = 0");
       }
       this.setConnected(true);
     } catch (error) {
@@ -1415,9 +1430,11 @@ export class SQLiteProvider extends SQLBaseProvider {
     } else {
       const SQLiteDB = await loadSQLiteDriver();
       this.db = new SQLiteDB(dbPath, { readonly: true });
+      this.db.exec(`PRAGMA busy_timeout = ${SQLITE_OPEN_BUSY_TIMEOUT_MS}`);
       this.db.exec("PRAGMA foreign_keys = ON");
       // A file in WAL mode fails here rather than at the open: SQLite opens its files lazily.
       this.db.prepare("PRAGMA journal_mode").get();
+      this.db.exec("PRAGMA busy_timeout = 0");
     }
     this.setConnected(true);
   }
@@ -1512,7 +1529,7 @@ export class SQLiteProvider extends SQLBaseProvider {
 
   /** Whether this connection targets an in-memory database, which a child process cannot share. */
   private isMemoryDatabase(): boolean {
-    return this.getDatabasePath() === ":memory:";
+    return (this.config as WithAdmittedFile)[ADMITTED_FILE] === ":memory:";
   }
 
   /**
@@ -1532,40 +1549,17 @@ export class SQLiteProvider extends SQLBaseProvider {
     return true;
   }
 
-  private getDatabasePath(checkReserved = false): string {
-    let dbPath: string;
-    if (this.config.connectionString) {
-      dbPath = this.config.connectionString.startsWith("file:")
-        ? this.config.connectionString.replace("file:", "")
-        : this.config.connectionString;
-    } else {
-      dbPath = this.config.database || ":memory:";
-    }
-
-    // Allow :memory: without path validation
-    if (dbPath === ":memory:") return dbPath;
-
-    // Reject NUL bytes (never valid in a filesystem path), then resolve to an
-    // absolute path. ".." segments are accepted by design: sqlite paths are
-    // trusted server-side paths (docs/providers/sqlite.md).
-    if (dbPath.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: NUL bytes are not allowed", "sqlite");
-    }
-
-    const resolved = path.resolve(dbPath);
-
-    // The server's own storage database is reserved: it is Studio's to manage, not a
-    // target a connection may open. A connection whose path resolves to it is refused
-    // here on connect, before any handle is opened. Metadata reads reuse the
-    // resolved path without repeating filesystem identity checks.
-    if (checkReserved && isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "sqlite",
-      );
-    }
-
-    return resolved;
+  /**
+   * The file this connection opens: `:memory:` or an absolute path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`), which read the connection string with a leading
+   * `file:` removed, otherwise `database`, resolved it against the working directory when the provider was built, and
+   * refused there a connection string that names no file after `file:`, a NUL byte, Studio's own storage files and a
+   * path the reserved check cannot read. `..` segments are accepted by design: sqlite paths are trusted server-side
+   * paths (docs/providers/sqlite.md). A provider built without the factory holds no admitted file and is refused by
+   * name.
+   */
+  private getDatabasePath(): string {
+    return requireAdmittedFile(this.config, "sqlite");
   }
 
   // ============================================================================
@@ -1683,7 +1677,7 @@ export class SQLiteProvider extends SQLBaseProvider {
     return await new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.worker?.terminate();
-        reject(new QueryError(`${TIME_BUDGET_PREFIX}: ${timeoutMs}ms allowed`, "sqlite", sql));
+        reject(new TimeBudgetRefusal(`${TIME_BUDGET_PREFIX}: ${timeoutMs}ms allowed`, "sqlite", sql));
       }, timeoutMs);
       fn().then(
         (value) => {
@@ -1802,11 +1796,11 @@ export class SQLiteProvider extends SQLBaseProvider {
       });
 
       if (rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "sqlite", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(rows.length, budget.maxResultRows), "sqlite", sql);
       }
       const resultBytes = measureResultBytes(rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "sqlite", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "sqlite", sql);
       }
       // With the child-process worker the deadline above is preemptive: an overrunning
       // statement is killed and its promise rejects before this check. Under the
@@ -1815,7 +1809,7 @@ export class SQLiteProvider extends SQLBaseProvider {
       // statement is not preempted, but its result is refused rather than returned as
       // if it had been within budget.
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "sqlite",
           sql,

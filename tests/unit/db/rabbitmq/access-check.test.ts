@@ -24,6 +24,7 @@ import {
   manualDeadlines,
   type StubAnswer,
 } from "../../../helpers/rabbitmq-management-stub";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ALARM = "The broker reports an active resource alarm, so publishers are blocked; reads still work.";
 const NO_VHOSTS =
@@ -37,11 +38,12 @@ function harness() {
   const stub = createManagementStub();
   const deadlines = manualDeadlines();
   const client = createManagementClient({
-    endpoint: readConnectionOptions(rabbitmqConnection()).management,
+    endpoint: readConnectionOptions(rabbitmqConnection(), ALLOWS_PRIVATE_HOSTS).management,
     transport: stub.factory,
     deadlineSignal: deadlines.factory,
     queryTimeoutMs: 10_000,
     lifetime: new AbortController().signal,
+    egress: ALLOWS_PRIVATE_HOSTS,
     limiters: { management: rabbitmqManagementLimiter(), bindings: rabbitmqBindingsLimiter() },
   });
   const run = () => testConnectionCautions(client, createTrackingProbe(client), deadlines.factory);

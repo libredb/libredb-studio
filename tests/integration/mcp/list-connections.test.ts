@@ -11,11 +11,10 @@ import { getServerAuditBuffer } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_RESULT_CAP_BYTES, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { MCP_RESULT_CAP_BYTES } from "@/lib/mcp/output";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
@@ -108,7 +107,8 @@ describe("the answer", () => {
         next_offset: null,
       });
       expect(result.content).toEqual([{ type: "text", text: JSON.stringify(result.structuredContent) }]);
-      expect(JSON.stringify(result)).not.toContain(MCP_UNTRUSTED_NOTICE);
+      // No notice of any kind: every notice opens with these words, so the check cannot pass on a reworded one.
+      expect(result.content.some((block) => block.text.startsWith("The next content block"))).toBe(false);
     },
   );
 

@@ -40,6 +40,8 @@ function stub(overrides: Partial<ServerStorageProvider>): ServerStorageProvider 
     recordPasskeySignIn: async () => {},
     renamePasskey: async () => false,
     deletePasskey: async () => {},
+    readEnvelopeState: async () => "v1-retired",
+    rewriteStoredCredentials: async () => ({ kind: "already-retired" }),
     ...overrides,
   };
 }

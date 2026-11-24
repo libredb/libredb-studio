@@ -3,10 +3,9 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on etcd: the boundary is the provider's closed table of metadata reads, which holds no write and no read
@@ -14,12 +13,10 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
  * connection's user holds no root role and only READ permissions, on no range that holds every key or a key under a
  * Kubernetes storage prefix. Its answers carry names, counts and sizes only.
  */
-function etcdctlReadsPosture(bounds: StatementBudgets): AgentPosture {
+function etcdctlReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per command, as an etcd user whose roles grant READ only`,
     title: "Agent mode reads etcd's metadata, as an etcd user whose roles grant READ only",
     body: `Agent mode runs etcd reads it wrote itself, the cluster's status, members, alarms and leases and, for one key a command names, its existence, revisions, version, lease and value size, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys, reads a value or watches. Before every command the server must answer that authentication is on and that the connection's user is not root, holds no root role, and holds READ permissions only, on no range that holds every key or a key under a Kubernetes storage prefix such as /registry/, read from its own roles, so a user that may write even one key range, or could tell which Kubernetes Secrets exist, is refused, and the count of every key is refused by the server; a call the roles do not govern, such as granting a lease, is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor.`,
@@ -66,7 +63,6 @@ export const ETCDCTL_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: etcdctlReadsPosture,
-    widened: etcdctlReadsPosture,
     handoverTerms: () =>
       "An etcd answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

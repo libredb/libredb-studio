@@ -36,9 +36,15 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createSocket, type Socket } from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { INVALID_EGRESS_SETTING } from "@/lib/db/egress-decision";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
+import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import { SnmpProvider } from "@/lib/db/providers/network/snmp/index";
 import type { DatabaseConnection } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../../fixtures/snmp/identity";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { setEgressFlag } from "../../helpers/egress-flag";
 import { keyOf, readRequest, withRequestId } from "../../helpers/snmp-capture";
 
 const CAPTURES = JSON.parse(
@@ -60,8 +66,8 @@ afterEach(async () => {
 });
 
 /** The replaying agent, and the list of requests it had no recording for. */
-async function recordedAgent(missed: string[]): Promise<number> {
-  agent = createSocket("udp4");
+async function recordedAgent(missed: string[], address: "127.0.0.1" | "::1" = "127.0.0.1"): Promise<number> {
+  agent = createSocket(address === "::1" ? "udp6" : "udp4");
   agent.on("message", (datagram, from) => {
     received += 1;
     const bytes = Uint8Array.from(datagram);
@@ -79,16 +85,16 @@ async function recordedAgent(missed: string[]): Promise<number> {
       from.address,
     );
   });
-  await new Promise<void>((resolve) => agent?.bind(0, "127.0.0.1", () => resolve()));
+  await new Promise<void>((resolve) => agent?.bind(0, address, () => resolve()));
   return (agent.address() as { port: number }).port;
 }
 
-function connectionTo(port: number): DatabaseConnection {
+function connectionTo(port: number, host = "127.0.0.1"): DatabaseConnection {
   return {
     id: "snmp-integration",
     name: "snmp integration",
     type: "snmp",
-    host: "127.0.0.1",
+    host,
     port,
     password: FIXTURE_COMMUNITY,
     createdAt: new Date().toISOString(),
@@ -134,7 +140,7 @@ const CASE_BUDGET_MS = 20_000;
 
 async function open(missed: string[]): Promise<SnmpProvider> {
   const port = await recordedAgent(missed);
-  opened = new SnmpProvider(connectionTo(port), { queryTimeout: DEADLINE_MS });
+  opened = new SnmpProvider(connectionTo(port), { queryTimeout: DEADLINE_MS }, { egress: ALLOWS_PRIVATE_HOSTS });
   await opened.connect();
   return opened;
 }
@@ -154,6 +160,24 @@ describe("the provider reads what a real agent answered", () => {
       const missed: string[] = [];
       const provider = await open(missed);
       const result = await provider.query("get 1.3.6.1.2.1.1.5.0");
+      expect(missed).toEqual([]);
+      expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.5.0", value: "live-test-agent", type: "text" }]);
+    },
+    CASE_BUDGET_MS,
+  );
+
+  test(
+    "an agent on IPv6 loopback is read the same way",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed, "::1");
+      opened = new SnmpProvider(
+        connectionTo(port, "::1"),
+        { queryTimeout: DEADLINE_MS },
+        { egress: ALLOWS_PRIVATE_HOSTS },
+      );
+      await opened.connect();
+      const result = await opened.query("get 1.3.6.1.2.1.1.5.0");
       expect(missed).toEqual([]);
       expect(result.rows).toEqual([{ object: "1.3.6.1.2.1.1.5.0", value: "live-test-agent", type: "text" }]);
     },
@@ -249,7 +273,7 @@ describe("the provider reads what a real agent answered", () => {
        */
       const missed: string[] = [];
       const port = await recordedAgent(missed);
-      const impatient = new SnmpProvider(connectionTo(port), { queryTimeout: 1000 });
+      const impatient = new SnmpProvider(connectionTo(port), { queryTimeout: 1000 }, { egress: ALLOWS_PRIVATE_HOSTS });
       await impatient.connect();
       opened = impatient;
       const started = Date.now();
@@ -298,6 +322,67 @@ describe("the provider reads what a real agent answered", () => {
       expect(groups.map((object) => object.name)).toContain("system");
       expect(detail.columns.map((column) => column.name)).toContain("sysDescr");
       expect(batch.details).toHaveLength(tables.length);
+    },
+    CASE_BUDGET_MS,
+  );
+});
+
+describe("the private-destination setting", () => {
+  const original = process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  afterEach(() => {
+    setEgressFlag(original);
+  });
+
+  test(
+    "a provider handed a blocking decision refuses an agent at 127.0.0.1 by the guard's sentence while DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, and the agent receives nothing",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed);
+      setEgressFlag(undefined);
+      const before = received;
+      opened = new SnmpProvider(connectionTo(port), { queryTimeout: DEADLINE_MS }, { egress: BLOCKS_PRIVATE_HOSTS });
+      const failure = await opened.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toBe(BLOCKED_HOST);
+      expect(received).toBe(before);
+      expect(missed).toEqual([]);
+    },
+    CASE_BUDGET_MS,
+  );
+
+  test(
+    "a provider handed an allowing decision reaches the agent while DB_HTTP_BLOCK_PRIVATE_HOSTS is true",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed);
+      setEgressFlag("true");
+      const before = received;
+      opened = new SnmpProvider(connectionTo(port), { queryTimeout: DEADLINE_MS }, { egress: ALLOWS_PRIVATE_HOSTS });
+      await opened.connect();
+      expect(received).toBeGreaterThan(before);
+      expect(missed).toEqual([]);
+    },
+    CASE_BUDGET_MS,
+  );
+
+  test(
+    "a connection to an agent reached by name with DB_HTTP_BLOCK_PRIVATE_HOSTS set to yes is refused by createDatabaseProvider by name and sends the agent nothing",
+    async () => {
+      const missed: string[] = [];
+      const port = await recordedAgent(missed);
+      setEgressFlag("yes");
+      const before = received;
+      const failure = await createDatabaseProvider(connectionTo(port, "localhost"), { queryTimeout: DEADLINE_MS }).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failure).toBeInstanceOf(DatabaseConfigError);
+      expect((failure as Error).message).toContain(INVALID_EGRESS_SETTING);
+      expect(received).toBe(before);
+      expect(missed).toEqual([]);
     },
     CASE_BUDGET_MS,
   );

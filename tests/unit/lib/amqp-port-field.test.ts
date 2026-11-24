@@ -103,8 +103,8 @@ describe("the seed layer keeps the AMQP port", () => {
 });
 
 describe("classification and identity of the AMQP port", () => {
-  test("it is public: a port is an address, never a credential", () => {
-    expect(CONNECTION_FIELDS.amqpPort).toBe("public");
+  test("it is identity: a port is an address, never a credential, and it is bound into the sealed credentials", () => {
+    expect(CONNECTION_FIELDS.amqpPort).toBe("identity");
   });
 
   test("a copy differing only in the port does not resolve to the same connection", () => {

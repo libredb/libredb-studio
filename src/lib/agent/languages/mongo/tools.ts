@@ -12,7 +12,8 @@
  *
  * - `mongoInspectSchemaTool`: a SCOPED catalog read through the provider's catalog read for the agent
  *   (`readCatalogReadOnly`) - a collection listing, or one collection's fields and indexes - on the profiled
- *   connection, under the run's own budget, audited as `mongo.schema.read`. A collection the run's captured inventory
+ *   connection, under the run's own budget, which core holds the rows it serves to (`runReadOnlyReading`), audited as
+ *   `mongo.schema.read`. A collection the run's captured inventory
  *   holds is read where the inventory read it; any other name is passed whole. The `relations` kind is refused rather
  *   than answered empty, because MongoDB declares no foreign keys and an empty block would read as an absence the
  *   engine never stated. The `indexes` kind is answered from the same description the columns kind reads - one
@@ -29,6 +30,8 @@
  *   one-statement-per-table contract is not something to trade silently.
  */
 import type { z } from "zod";
+import { providerAuthor, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import type { ReadOnlyCatalogReading, ReadOnlyCatalogSelector } from "@/lib/db/types";
 import type { ColumnSchema } from "@/lib/types";
 import { AGENT_EXECUTION_PROFILE } from "../../execution-policy";
@@ -53,7 +56,7 @@ import {
   unavailable,
 } from "../../tool-contracts";
 import type { AgentArtifactReference, AgentContextSnapshot, AgentInventoryObject, AgentRunRecord } from "../../types";
-import { fenceUntrustedContent } from "../../untrusted-content";
+import { fenceUntrustedContent, nameForPrompt } from "../../untrusted-content";
 
 /** One schema's problems on one line, the rendering this layer's refusals carry elsewhere. */
 function issueText(error: z.ZodError): string {
@@ -103,8 +106,8 @@ export async function mongoInspectSchemaTool(
     table === undefined
       ? schema === undefined
         ? "the database this connection is bound to"
-        : `the database ${schema}`
-      : `the collection ${table}`;
+        : `the database ${nameForPrompt(schema)}`
+      : `the collection ${nameForPrompt(table)}`;
   // The provider's answer, kept beside the rows the pipeline stores: whether the object exists, and whether its
   // sample held anything, is read off it below, the way `inspectSchemaTool` reads a composed read's row count.
   let reading: ReadOnlyCatalogReading | undefined;
@@ -116,9 +119,10 @@ export async function mongoInspectSchemaTool(
     fingerprintSource: `mongo-objects:${JSON.stringify(selector)}`,
     input: selector,
     label: `catalog read of ${scope}`,
-    invoke: async (_validatedInput, budget, phase) => {
+    invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_EXECUTION_PROFILE);
-      if (typeof provider.readCatalogReadOnly !== "function") {
+      const readCatalogReadOnly = provider.readCatalogReadOnly;
+      if (typeof readCatalogReadOnly !== "function") {
         // A server fault, never a model-visible outcome and never a fallback to the editor's object surface, which
         // carries no deadline of the agent's: the acquisition refuses a provider without the read-only path, so
         // reaching here means the acquirer is not the profile seam.
@@ -131,10 +135,22 @@ export async function mongoInspectSchemaTool(
       // pipeline settles as a refusal the model can act on (a database the principal cannot read, a collection
       // name the engine refuses) rather than an error that ends the run.
       phase.statementSent = true;
-      reading = await provider.readCatalogReadOnly(
-        catalogTarget(snapshot, schema, table),
-        readOnlyBudgetFor(context, budget),
-      );
+      // Through core's hold of a budgeted read, which refuses the rows this arm serves past the run's row or byte budget
+      // in the providers' sentences, and stops waiting at the statement timeout in the time sentence; the provider's
+      // call counts against the run's concurrency until it settles.
+      const target = catalogTarget(snapshot, schema, table);
+      const handed = readOnlyBudgetFor(context, budget);
+      reading = await runReadOnlyReading({
+        type: context.connection.type,
+        scrub: providerTextScrub(context.connection, "profiled"),
+        statement: JSON.stringify(target),
+        budget: handed,
+        wait: "statement-timeout",
+        holdUntilSettled,
+        read: () => readCatalogReadOnly.call(provider, target, handed),
+        servedRows: (answer) => catalogRows(answer, kind).rows,
+        maxRows: handed.maxResultRows,
+      });
       return { ...catalogRows(reading, kind), executionTime: (context.clock?.() ?? Date.now()) - startedAtMs };
     },
   });
@@ -285,12 +301,17 @@ export function mongoProfileTablePlan(
   if (!parsed.success) return unavailable("INVALID_TOOL_INPUT", issueText(parsed.error));
   const { schema, table, depth, fromColumn } = parsed.data;
   const resolution = resolveProfileTarget(objects, schema, table, defaultContainer);
-  // The candidates are this inventory's own addresses, so a model can copy one back verbatim.
+  // The candidates are this inventory's own addresses, quoted where they are not plain names, and
+  // `resolveProfileTarget` reads that quoting back, so a model can copy one back verbatim, except where one candidate's
+  // raw name is another's quoted form (see `resolveProfileTarget`).
   if (resolution.kind === "ambiguous") {
-    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+    return unavailable(
+      "TABLE_SPELLING_AMBIGUOUS",
+      resolution.candidates.map((entry) => nameForPrompt(entry.name)).join(", "),
+    );
   }
   if (resolution.kind === "absent") {
-    const offer = objects.slice(0, 6).map((entry) => entry.name);
+    const offer = objects.slice(0, 6).map((entry) => nameForPrompt(entry.name));
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
   const { entry, segments } = resolution.target;
@@ -372,7 +393,7 @@ export async function runMongoProfile(
     operationId: "mongo.table.profile",
     sql: plan.statement,
     argument: "command",
-    label: `profile of ${plan.target.table}`,
+    label: `profile of ${nameForPrompt(plan.target.table)}`,
   });
   if (outcome.kind !== "completed") return outcome;
   const stored = context.artifacts.get(outcome.artifact.correlationId, (context.clock ?? Date.now)());
@@ -391,7 +412,7 @@ export async function runMongoProfile(
     kind: "profiled",
     artifact: outcome.artifact,
     profile,
-    modelText: mongoProfileModelText(profile, outcome.artifact, plan),
+    modelText: mongoProfileModelText(profile, outcome.artifact, plan, providerAuthor(context.connection.type)),
   };
 }
 
@@ -407,11 +428,15 @@ function fieldCoverage(plan: MongoProfilePlan): string {
   return `${plan.remaining} further field(s) are NOT covered by this profile; call profile_table again with fromColumn=${plan.from + plan.columns.length} to reach them.`;
 }
 
-/** The model-facing text of one profiled collection, mirroring the SQL arm's sentence for sentence. */
+/**
+ * The model-facing text of one profiled collection, mirroring the SQL arm's sentence for sentence; the collection's
+ * name and the findings are fenced naming `relayedBy`, the provider that relayed them.
+ */
 function mongoProfileModelText(
   profile: AgentTableProfile,
   artifact: AgentArtifactReference,
   plan: MongoProfilePlan,
+  relayedBy: string,
 ): string {
   const fields = plan.columns.length === 0 ? "no field" : `fields ${plan.from + 1}-${plan.from + plan.columns.length}`;
   return [
@@ -422,7 +447,8 @@ function mongoProfileModelText(
       label: "profiled collection name",
       operationId: "mongo.table.profile",
       reference: artifact.correlationId,
+      relayedBy,
     }),
-    describeFindings(profile.findings, "mongo.table.profile"),
+    describeFindings(profile.findings, "mongo.table.profile", relayedBy),
   ].join(" ");
 }

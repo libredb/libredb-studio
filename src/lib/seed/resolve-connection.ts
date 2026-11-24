@@ -3,6 +3,8 @@ import { getSeedConnectionByIdUnfiltered } from "./index";
 import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "@/lib/api/error-codes";
+import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
 import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
@@ -35,7 +37,7 @@ export class SeedConnectionError extends Error {
  */
 const CONNECTION_NOT_FOUND_MESSAGE = "Connection not found: it does not exist or is not granted to you";
 
-/** The refusal of a connection record the caller supplied that names no provider, or a name that is not text. */
+/** The refusal of a connection the caller supplied that is not an object, or whose name is not text. */
 const INVALID_CONNECTION_MESSAGE = "Valid connection configuration is required";
 
 /** Where a uniform miss is recorded: a phase of the request, as the MCP audit names its phases, never a URL. */
@@ -81,6 +83,18 @@ function auditUniformMiss(seedId: string, username: string, target: string): voi
   }
 }
 
+/**
+ * The connection a request names, resolved under `session`: an inline record of the caller's own, or the operator's
+ * `seed:` entry, after the access decision and with its Vault references read. What it returns carries a type id,
+ * since both branches refuse a type that is not one (FND-1), so a caller reads per-engine tables by it without a check
+ * of its own.
+ *
+ * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
+ * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's
+ * fails the whole seed file before this resolves.
+ * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
+ * record that is not one.
+ */
 export async function resolveConnection(
   body: { connection?: DatabaseConnection; connectionId?: string },
   session: Principal,
@@ -154,17 +168,37 @@ export async function resolveConnection(
       );
     }
     /*
-     * A record whose `type` is missing, empty or not a string names no provider, and one whose `name` is present and
-     * not a string, `null` included, names nothing a person can read; a connection that is not an object names no type
-     * either. The factory logs both fields with a string method and the cache key frames the type, so a route that
-     * handed such a record on answered 500 with the runtime's own TypeError, or built a `null` name as an empty one.
-     * Refused here instead, in the sentence `POST /api/db/provider-meta` refused a missing type with, so every route
-     * that resolves a caller's connection answers it with one 400 before any provider is built. A seed's record never
-     * reaches this check: the seed schema requires both fields as text, and a claimed seed id is resolved below.
+     * The other seed-only fields (`SEED_ONLY_FIELD_NAMES`), OPC UA's policy URI and its client certificate and private
+     * key paths, are deployment facts the operator's seed file names: the paths name files on Studio's own host. A
+     * connection a browser or a client supplies is refused by name when it sets one, `null` and an empty string
+     * included, the first in that list order. A `seed:` id below is resolved from the file, the caller's copy discarded.
      */
-    const type: unknown = connection.type;
+    const seedOnly = SEED_ONLY_FIELD_NAMES.find(
+      (field) => field !== "agentReadRoots" && connection[field] !== undefined,
+    );
+    if (seedOnly !== undefined) {
+      throw new SeedConnectionError(
+        `${seedOnly} is set only on a seed connection, by the operator's seed file: a connection a browser or a client supplies cannot set it. Remove ${seedOnly} from this connection.`,
+        400,
+      );
+    }
+    /*
+     * A connection that is not an object names nothing; a record whose `type` is missing, empty, not a string, or a
+     * string that is not exactly a type id names no provider; and one whose `name` is present and not a string, `null`
+     * included, names nothing a person can read. The factory logs both fields with a string method and the cache key
+     * frames the type, so a route that handed such a record on answered 500 with the runtime's own TypeError, built a
+     * `null` name as an empty one, or read the default grammar for a type no provider has. Refused here instead, so
+     * every route that resolves a caller's connection answers it with one 400 before any registry is read or any
+     * provider built: the type with `UnknownProviderError`, which names it (FND-1), the rest in the sentence
+     * `POST /api/db/provider-meta` refused a missing type with. A claimed seed id is resolved below, and the seed branch
+     * refuses a seed whose type names no provider itself, after its access decision.
+     */
+    if (typeof connection !== "object" || Array.isArray(connection)) {
+      throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
+    }
+    assertDatabaseType(connection.type);
     const name: unknown = connection.name;
-    if (typeof type !== "string" || type === "" || (name !== undefined && typeof name !== "string")) {
+    if (name !== undefined && typeof name !== "string") {
       throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
     }
     // `managed` is the operator's grant (BigQuery and Firestore read it to use server credentials).
@@ -212,6 +246,12 @@ export async function resolveConnection(
       }
       throw new SeedConnectionError(`Seed connection "${seedId}" not found`, 404);
     }
+
+    // After the access decision, so a caller who may not see the entry gets the same 403 or 404 as for any seed and
+    // never learns its type; before the literal check and Vault, so nothing of an entry whose type names no provider
+    // this Studio has (FND-1) is resolved or handed on. The seed file lists such an entry, and it is refused here by
+    // the sentence that names its type, on every route that opens a connection.
+    assertDatabaseType(seedConn.type);
 
     logger.debug("Resolved seed connection", {
       route: "seed/resolve-connection",

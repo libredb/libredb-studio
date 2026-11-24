@@ -9,6 +9,7 @@ Source: [`src/lib/db/providers/industrial/opcua/`](../../src/lib/db/providers/in
 | | |
 |---|---|
 | **Write reach** | none: the editor's request, read by `readRequest`, is a value or history read, and the client seam names eight read services only; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider takes a session from its session pool (`withSession`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 
@@ -78,7 +79,7 @@ does not install. Three errors, and no others.
 | `session-pool.ts` | One session per connection, opened once, closed on every path out |
 | `connection.ts` | The dialog's fields read into options, every refusal before the dial |
 | `security.ts` | Endpoint, identity policy, certificate pin |
-| `pki.ts` | Where the client's own key pair and trust store live |
+| `pki.ts` | Whether the client's own certificate is supplied or generated; the PKI root is core's |
 | `node-id.ts` | Node-id grammar; the escaped browse path the Keys panel walks |
 | `limits.ts` | Chunk sizes: ours first, the server's only when smaller and real |
 | `key-scan.ts` | One level is one Browse; the capability the panel reads |
@@ -93,11 +94,9 @@ does not install. Three errors, and no others.
 
 ### 2.3 Registration & lifecycle
 
-`connect()` reads the connection first and opens the session second, so every refusal the dialog
-can earn happens **before a socket exists**: a wrong scheme, a password with no username, a pin
-that is not a thumbprint, a relative PKI root, a security mode the provider does not know. One
-configuration refusal arrives later and says so: a PKI root that cannot be written, because the
-certificate manager creates its directories lazily ([4.4](#44-the-pki-directory)).
+`connect()` reads the connection first and opens the session second, so every refusal the dialog can earn happens **before a socket exists**: a wrong scheme, a password with no username, a pin that is not a thumbprint, a security mode the provider does not know.
+A relative PKI root is refused earlier still, when the provider factory builds the provider ([4.4](#44-the-pki-directory)).
+One configuration refusal arrives later and says so: a PKI root that cannot be written, because the certificate manager creates its directories lazily ([4.4](#44-the-pki-directory)).
 `disconnect()` closes the session and never throws. `isConnected()` answers from the pool.
 
 ### 2.4 The client, and why
@@ -233,8 +232,8 @@ written refuses the connection in its own words rather than blaming the endpoint
 | `securityMode` | Security mode | `None`, `Sign` or `SignAndEncrypt`, chosen with three buttons. Default `SignAndEncrypt`. Studio's own `sslMode` and the shared SSL panel are **not** read: their vocabulary (`require`, `verify-full`) names nothing a server offers, so this entry declares `showSslPanel: false`. |
 | `securityPolicyUri` | — (seed file only) | Optional. An endpoint is a **mode and a policy**, so the policy of the endpoint chosen for the mode is what the session dials with; naming one here narrows the choice to that pair and is refused when the server offers no such pair. |
 | `serverCertificateThumbprint` | Server certificate | SHA-256, 64 hex characters; colons and spaces ignored. Refused together with `securityMode: None`, because a pin cannot be enforced there ([4.5](#45-the-certificate-pin)). |
-| `clientCertificatePath` / `clientPrivateKeyPath` | — (seed file only) | Supplied together or not at all. |
-| `sshTunnel` | SSH Tunnel | Standard Studio tunnel. The address is rebuilt rather than replaced: the tunnel rewrites `host` to the local end, which for this engine is the whole URL, so the dialled URL keeps the scheme and path the reader typed and takes the local authority. A tunnel the factory has not opened is refused rather than dialled. |
+| `clientCertificatePath` / `clientPrivateKeyPath` | — (seed file only) | Supplied together or not at all. Each is resolved against the working directory when the provider is built, refused by name when it names one of Studio's own storage files or cannot be checked against them ([SECURITY.md control 3.45](../SECURITY.md)), and handed to the library as that absolute path. Refused on a connection supplied inline. |
+| `sshTunnel` | SSH Tunnel | Standard Studio tunnel. The address is rebuilt rather than replaced: the tunnel rewrites `host` to the local end, which for this engine is the whole URL, so the dialled URL keeps the scheme and path the reader typed and takes the local authority. Studio refuses a tunnel that is on and was not opened before the provider is built, so the endpoint is never dialled past it. |
 
 **The three rows with no label are seed-file fields, and that is deliberate.** A policy URI is a
 string nobody types correctly from memory, and a certificate and a key are files on the host Studio
@@ -299,15 +298,11 @@ Exempt when the host is loopback or the connection is tunnelled, which is the ru
 
 ### 4.4 The PKI directory
 
-`LIBREDB_OPCUA_PKI_ROOT` defaults to `<data directory>/opcua-pki` — the directory Studio already
-owns and writes to, which holds the storage database — and the variable overrides it. It used to be
-REQUIRED, with no default, because the LIBRARY's default cannot work in the image (`os.homedir()` is
-`/nonexistent` there). That reasoning was right about the library and wrong about the remedy:
-measured end to end in a browser, a reader who installed Studio, picked OPC UA and pressed Test
-Connection was told the engine needs a directory nobody had mentioned, so the engine could not be
-used at all until they found an environment variable. A deployment that mounts its data directory
-(the chart's PVC, a Docker volume) gets what this section asks for without setting anything; a
-deployment that shares ONE client identity between replicas still sets the variable.
+`LIBREDB_OPCUA_PKI_ROOT` defaults to `<data directory>/opcua-pki`, the directory Studio already owns and writes to, which holds the storage database, and the variable overrides it.
+Studio's provider factory decides the root when it builds an OPC UA provider (`opcuaPkiRoot` in [`src/lib/db/provider-files.ts`](../../src/lib/db/provider-files.ts)) and hands it to the provider, which reads no environment of its own: a relative `LIBREDB_OPCUA_PKI_ROOT` is refused when the provider is built, before anything is opened, and the default lies under the data directory Studio took once per process, so a later change of the working directory does not move it.
+It used to be REQUIRED, with no default, because the LIBRARY's default cannot work in the image (`os.homedir()` is `/nonexistent` there).
+That reasoning was right about the library and wrong about the remedy: measured end to end in a browser, a reader who installed Studio, picked OPC UA and pressed Test Connection was told the engine needs a directory nobody had mentioned, so the engine could not be used at all until they found an environment variable.
+A deployment that mounts its data directory (the chart's PVC, a Docker volume) gets what this section asks for without setting anything; a deployment that shares ONE client identity between replicas still sets the variable.
 
 The client generates its own key pair
 and self-signed certificate on a first connect — even in `None` mode — and keeps `trusted`,
@@ -331,6 +326,12 @@ and this variable — measured with the data directory made read-only, where the
 the endpoint of a server that was listening. A connection may also supply its own certificate and
 key, which is what a mounted secret is for: two replicas sharing one key present **one** identity
 for a server administrator to trust once.
+
+**Each dial releases its certificate store.**
+Every dial (the GetEndpoints dial, each session, and each agent read's own session) builds a certificate manager over this root, and the manager watches the `trusted`, `rejected` and `issuers` folders.
+The library's client counts itself as a holder of the manager and its disconnect only gives that count back, so Studio disposes the manager itself.
+`library.ts` disposes each manager once its client is disconnected, or once a client that could not connect or could not be built is given up, on every path out of the dial.
+[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) holds each of those paths to the library's own registry of live managers.
 
 ### 4.5 The certificate pin
 
@@ -415,7 +416,9 @@ far end's `host` IS the endpoint URL, since the factory opens the forward with
 far end and dialled at the local pair: `opc.tcp://plc.example.net:4840/milo` through a forward on
 57321 is dialled as `opc.tcp://127.0.0.1:57321/milo`. Read the other way round, it dialled the local
 address at the REMOTE port, and the unit test agreed with it because its fixture inverted the pair
-too. A tunnel the factory has not opened is refused rather than dialled.
+too. The provider reads whether a tunnel carries the connection from `TUNNEL_FAR_END` alone: Studio
+refuses a tunnel that is on and was not opened before the provider is built
+([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)), so the endpoint is never dialled past it.
 
 ### Connection string
 
@@ -424,6 +427,7 @@ Its `validateSeed` holds a seed's `agentReadRoots` to the read roots grammar (`r
 `securityMode`, `serverCertificateThumbprint`, `securityPolicyUri`, `clientCertificatePath`, `clientPrivateKeyPath` and `agentReadRoots` are its seed-only fields, declared in `SEED_ONLY_FIELDS` in `src/lib/db/connection-fields.ts` (#1677): on any other engine the provider never reads them, so a seed of another engine that carries one would be listed as pinned or as encrypted and be neither, and is refused by name.
 The last three are the fields the dialog has no box for, because they are deployment facts: the policy to insist on, and the client certificate and key to present.
 A server with a trust list of its own has to be given a stable client certificate before it will accept a secured channel, and a file path is how a deployment names one, which is the seed file's job and not a text box's.
+A connection a browser or a client supplies inline that carries any of the three is refused with 400 naming the field, and `GET /api/connections/managed` never lists them, so a Duplicate of an unmanaged seed never carries them ([SECURITY.md control 3.48](../SECURITY.md)).
 
 ### Execution UI
 
@@ -625,11 +629,15 @@ request is at most 200 nodes or 500 values, and a history read stops at its cap,
 server's continuation point back at that point — every earlier page's point is consumed by the
 request that follows it, which is the other way a slot is not left held.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
+
 ### 5.7 SQL grammar
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/opcua/sql-grammar.ts`](../../src/lib/db/providers/industrial/opcua/sql-grammar.ts), the `opcua` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request naming node ids, so no span of it is SQL (#1677).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/industrial/opcua/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/opcuaread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -891,8 +899,8 @@ facts** — so what cannot be read is refused or named, and nothing is filled in
 | `getOverview()` | the product name with its software version, and the uptime, both read from `Server/ServerStatus` ([below](#71-what-the-overview-card-really-reads)); size `"unknown"`; `tableCount` and `indexCount` **0**, because the shape takes a number and a server has neither |
 | `getHealth()` | size and cache ratio `"unknown"`, no sessions, no slow queries |
 | `getStorageStats()` / `getTableStats()` / `getIndexStats()` | **refused**, with this provider's own sentence ([below](#72-a-panel-that-cannot-be-read-refuses-rather-than-reporting-zero)) |
-| `getSlowQueries()` | `[]`, and `getLabels().slowQueriesEmptyState` says why in the panel |
-| `getActiveSessions()` | `[]`, and `getLabels().sessionsEmptyState` says why in the panel |
+| `getSlowQueries()` | `[]`: a server answers services rather than queries and keeps no query log; the panel is not offered, so it is never read and not drawn, and no label explains it |
+| `getActiveSessions()` | `[]`: a server publishes a session count rather than a session list; the panel is not offered, so it is never read and not drawn, and no label explains it |
 | `getPerformanceMetrics()` | `{}` |
 
 `CurrentSessionCount` (`i=2277`) is a number, not a session list, and it is not portable either:
@@ -930,15 +938,37 @@ passed, because each was right that the list is empty.
 
 They now reject with one sentence, `An OPC UA server holds an address space of nodes rather than
 tables, and publishes no table, index or size statistics: there is nothing here to measure. The nodes
-themselves are in the Keys panel.` `base-provider.ts` settles each panel separately and records a
-rejected one under `errors[panel]`, which the dashboard draws in the engine's own words.
+themselves are in the Keys panel.`
 
-**The two CORE panels keep their empty arrays**, because four rejections are read as a dead
-connection: slow queries and sessions say why through `getLabels()` instead, the member ten other
-providers use for exactly this. Their defaults are written for a SQL server, and that is not a
-theoretical mismatch — the Queries panel told an OPC UA reader to install `pg_stat_statements`, a
-PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that
-was holding this very session.
+**`getSlowQueries()` and `getActiveSessions()` keep their empty arrays**, and say why through `getLabels()`, the member ten other providers use for exactly this.
+The defaults are written for a SQL server, and that was not a theoretical mismatch: the Queries panel told an OPC UA reader to install `pg_stat_statements`, a PostgreSQL extension, and the Sessions panel said "No active sessions found." against a server that was holding this very session.
+
+Only the overview panel is offered in OPC UA's `ENGINE_FACETS` row ([Engine facets](#engine-facets)).
+`getMonitoringData` reads none of the six other panels and lists them in `notOffered`, so the dashboard draws the Overview tab and the pool view only, and none of the refusals or labels above is drawn.
+The refusals and empty arrays above are what each method answers when called directly.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `opcua` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/opcua/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: none.
+`health` is not offered to agent mode: the agent handle refuses it with `OPCUA_AGENT_WITHHELD.health`.
 
 ## 8. Maintenance
 
@@ -1026,6 +1056,16 @@ stale answer is reported rather than retried. `BadSessionClosed`, `BadServerNotC
 `BadConnectionClosed` count as the same fact; `BadTimeout` does not, because a server that was slow
 once is still the same session.
 
+**A session whose channel broke is replaced, and the request that found out says so.**
+A secure channel can fail in a way the library does not report, and the only sign that reaches Studio is a request with no answer within the library's 15 s transaction timeout.
+That carries no status code, so it is reported in its own words: _A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms , request = ReadRequest). The session it was sent on is closed without waiting for the server any longer, and a new session is opened for the next request._
+That is what happens: the pool sends CloseSession for that session without waiting for its answer, closes the channel, opens a new session before reporting, and the connection stays open throughout.
+The request itself is not run again, since it has already waited out a timeout; the next request is answered on the new session.
+A new session that cannot be opened is reported in its own words instead, and the connection then reads as closed.
+An answer slower than the transaction timeout looks the same from the client, so it is treated as no answer and costs one session replacement; the old session is still closed on the server.
+A second request already waiting on the same session fails when its channel is closed, with `A read failed: Transaction has been canceled because client channel  is being closed` (the library's words, the channel's empty name included).
+A disconnect made while the unanswered request is still waiting waits out the rest of the transaction timeout, and a request after it is refused as a closed connection.
+
 **A closed connection is a typed refusal, and a provider can be connected again.** Pressing a key
 after Disconnect used to answer HTTP 500 `INTERNAL_ERROR`; it is now a 400 that says to connect
 again — and connecting again works, which it did not: the pool latches closed on purpose, so
@@ -1059,7 +1099,7 @@ dropped on the seeded path — are in sections 6.4 and 4.1.
 ### 11.2 The integration suite
 
 [`tests/integration/db/opcua-provider.test.ts`](../../tests/integration/db/opcua-provider.test.ts) —
-22 tests over a **recorded server**. Every answer replayed there was captured from OPC PLC 2.15.10,
+24 tests over a **recorded server**. Every answer replayed there was captured from OPC PLC 2.15.10,
 pinned by digest, by [`tests/live/opcua-evidence.ts`](../../tests/live/opcua-evidence.ts), which
 drives this provider's own library bridge against it;
 [`tests/fixtures/opcua/README.md`](../../tests/fixtures/opcua/README.md) lists each file and the
@@ -1073,12 +1113,17 @@ that handed out the point answers `BadContinuationPointInvalid`.
 
 ### 11.3 The in-process server, and the dialog
 
-[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 20
+[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 26
 tests against a **real server in this process**: `node-opcua-server` 2.187.18, a devDependency, is
 started on a loopback port in `beforeAll` with a two-node address space of its own. It needs no
 container, and it is where the library really runs: GetEndpoints, the secure channel, CreateSession,
 the encoder and the status codes are all the library's. It adds a third stack to the
 operational-limits measurement, publishing **0** for both continuation-point counts.
+
+Two of its describes hold the dial's own lifecycle to the library.
+`each dial releases its certificate store` reads the library's registry of live certificate managers before and after each path out of a dial: a connect, read and disconnect, a closed port, a failed session connect, a session the server refuses, and a client the library refuses to build.
+`a session whose channel broke` puts a proxy in front of the server that rewrites one answer, and lowers the library's transaction timeout statics (`ClientSecureChannelLayer.minTransactionTimeout` and `defaultTransactionTimeout`) to 2 s for that describe only, restoring them after.
+It asserts that the unanswered request is reported by name, that the next request is answered at once on a new session, that the server ends the old session, and that disconnect does not wait.
 
 [`tests/components/ConnectionModal-opcua.test.tsx`](../../tests/components/ConnectionModal-opcua.test.tsx)
 — 9 tests that render the real dialog. They read each hint from the declaration it is drawn from
@@ -1305,7 +1350,7 @@ A failure is worded by its category and the status code's name, with this provid
 ### 14.3 What agent mode reads: the read roots
 
 Agent mode reads only beneath read roots, the node ids an operator declares on the seed connection as `agentReadRoots` ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md#an-opc-ua-connections-read-roots)).
-A statement-sending agent profile (`agent-read-only` and `agent-handover`) on a connection that declares none is refused when it opens, before any socket, with `READ_ROOTS_REQUIRED`, and the runs route refuses such a Start with `read-roots-required` before a run exists; plan mode and the operations workflow read nothing beneath roots and are not refused.
+A statement-sending agent profile (`agent-read-only` and `agent-handover`) on a connection that declares none is refused when it opens, before any socket, with `READ_ROOTS_REQUIRED`, and the runs route refuses such a Start with `read-roots-required` before a run exists; plan mode reads nothing beneath roots and is not refused, and the operations workflow, which reads nothing beneath roots either, does not open in agent mode on OPC UA at all, because the engine offers agent mode no curated reading.
 A connection a browser or a client supplies cannot carry roots, and a governed connection carries none.
 The editor (the console, the Keys panel, the overview) never consults the roots.
 
@@ -1393,9 +1438,10 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `opcuaread` family pack itself.
 The `opcuaread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `opcuaread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a server has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one request, and holds an operations variant; it offers no query optimization or database assessment, since a server has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on OPC UA: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The tool description, the investigation rule and the grounding notes tell the model to report the unit beside every value and never to assume one, and that agent mode reads only beneath the connection's read roots, which `{"browse": "i=85"}` lists, every other node id answering as one the server does not hold.
-Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/opcuaread/client.ts)): "nothing is read from the server to ground it, and the request it drafts is never sent", because no kind is listed and the shared strip's "one schema read grounds it" would not be true here; plan mode follows the provider's `statementLanguage` label, which names the console's two reads and not the read roots, since the roots bound agent mode's reads and not what plan mode drafts for the editor.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/opcuaread/client.ts)) beside core's pill, *Executes nothing it drafts*: "nothing is read from the server to ground it, and the request it drafts is never sent", because no kind is listed and the shared strip's "one schema read grounds it" would not be true here; plan mode follows the provider's `statementLanguage` label, which names the console's two reads and not the read roots, since the roots bound agent mode's reads and not what plan mode drafts for the editor.
 Since no inventory ever grounds it, the family declares `ungroundedPlanning` in [`server.ts`](../../src/lib/agent/languages/opcuaread/server.ts): an ungrounded plan is given the statement contract with the node ids its question names as its only names, in place of the no-inventory refusal, and drafts `NO STATEMENT:` when the question names none (measured: asked for the values of two named nodes, it drafted `{"read": [...]}` of both, which the editor ran).
 The editor language id stays `opcua`, and the fence alias `opcuaread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.

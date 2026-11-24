@@ -22,6 +22,7 @@ import {
   offersSslPanel,
 } from "@/lib/db/connection-form";
 import type { DatabaseType } from "@/lib/types";
+import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const MODULE = join(ROOT, "src/lib/db/connection-form.ts");
@@ -272,6 +273,10 @@ describe("src/lib/db/connection-form.ts", () => {
         offered: CONNECTION_FORM[type].showSslPanel !== false,
       });
     }
+  });
+
+  test.each(OUTSIDE_THE_UNION)("offersSslPanel refuses %s by name", (_label, value) => {
+    expect(refusalThrownBy(() => offersSslPanel(value as DatabaseType))).toEqual(refusalOf(value));
   });
 
   test("the four v0 rows hold the values part 2's table derives", () => {

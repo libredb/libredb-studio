@@ -1,10 +1,6 @@
 import type * as Monaco from "monaco-editor";
 import { type ShellLineState, shellLineStatesEqual } from "@/lib/db/console/shell-words";
-import {
-  INITIAL_KUBECTL_LEX_STATE,
-  type KubectlTokenRole,
-  tokenizeKubectlLine,
-} from "@/lib/db/providers/platform/kubernetes/console/lexer";
+import { INITIAL_KUBECTL_LEX_STATE, type KubectlTokenRole, tokenizeKubectlLine } from "@/lib/languages/kubectl/lexer";
 
 /**
  * Monaco language for the Kubernetes console text, one kubectl read command, in Oxia's shape (`keyvalue/oxia/editor-syntax.ts`).

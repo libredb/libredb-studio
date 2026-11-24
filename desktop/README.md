@@ -36,7 +36,8 @@ desktop/
    `node server.js` from the bundled payload with `STORAGE_PROVIDER=sqlite` and
    `STORAGE_SQLITE_PATH` inside the per-user data directory
    (`$XDG_DATA_HOME/org.libredb.Studio` on Linux, `~/.var/app/org.libredb.Studio/data/...`
-   inside Flatpak).
+   inside Flatpak), and `SEED_ASSETS_DIR` at the payload's `seed-assets` directory, which holds
+   the built-in samples' assets ([DISTRIBUTION.md](../docs/DISTRIBUTION.md#built-in-sample-assets)).
 3. It polls `GET /api/db/health` until it answers 200 (30 s budget).
 4. It reads the admin password the server's zero-config first run (#109) wrote to
    `auth-bootstrap.json` in that data directory and navigates the webview to `/`.
@@ -63,6 +64,7 @@ Notes on the choices, since they are easy to get wrong later:
 - **The sidecar cannot outlive the shell.** Window close and app exit both run a
   SIGTERM-then-SIGKILL shutdown, `Drop` repeats it, and on Linux the child gets
   `PR_SET_PDEATHSIG` so even a killed shell takes the server with it.
+  The shell starts the server with `NEXT_MANUAL_SIG_HANDLE=true` and gives it 30 s between SIGTERM and SIGKILL, over the 25 s Studio's shutdown handler may take (docs/DISTRIBUTION.md, "Stopping the server").
 - **No shell plugin, no IPC surface.** The child process is spawned from Rust
   with `std::process`, so the webview has no command it could invoke.
 - **`productName` stays space-free.** It names the bundled resource directory

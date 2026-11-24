@@ -54,8 +54,8 @@ if it only lists the good news.
 
 | Surface | What it sends | Fenced? |
 | --- | --- | --- |
-| `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the five workflows. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No — it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
-| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other forty-one by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents**: no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken (a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it), nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt |
+| `POST /api/agent/classify`, **before any run exists** | Your objective, and nothing else. One short completion that asks the model to name one of the workflows that open on the connection in the run's mode. It fires when you press **Start** with the workflow left on **Automatic**, which is the default; naming a workflow yourself under **Advanced** skips it entirely. See [the classification, before any run](#the-classification-before-any-run) | No: it carries no database content to fence. Your objective is sent as the user message, and the server's instructions tell the model to treat that text as data to classify and never as instructions to it |
+| Any **run**, in either mode, on **any** engine | Your objective, and a schema inventory (table, column, index identifiers and column types) with its relations graph (identifiers only). **Since #414 that inventory leaves on every engine**, where before it left on PostgreSQL and SQLite alone: those two are read with catalog statements the server composes, and the other forty-one by asking the connection's own provider to describe its schema. On **MongoDB and Couchbase** the provider works out a collection's fields from a **sample of your own documents**: no value from them is in the message, but the **existence** of a field there is derived from your data rather than read from a catalog, which is a weaker claim than a catalog reading's and is why that reading has its own operation id (`db.schema.read`) an operator can deny alone. When the reading cannot be taken (a refusal, a provider that cannot describe its own schema, a description that overran the time the run granted it), nothing of the schema leaves and a server sentence saying which of those happened goes in its place. See [the schema inventory](#3-the-schema-inventory--identifiers-and-types-fenced) | Everything derived from the database is wrapped in an untrusted-content fence before it reaches a prompt, except an inventory name the server's own sentence carries, which is quoted instead (see [the fence](#the-fence-and-what-it-does-not-do)) |
 | An **agent run** | The above, plus the rows of each read the model performed, up to 200 per read; engine error text; server-written refusals; server-minted ids | Same fence |
 | Any **run that continues a conversation**, in either mode, on any engine | **In addition to everything above**: the earlier steps' objectives — *your own earlier questions*, capped at 200 characters each — and the most recent step's report, which is a model's claims about your data. No row of any result, and no earlier step's report but the newest. Sent only when the rail attaches a previous run's id, which it does for a follow-up on the same connection; a run that starts its own conversation sends no such message. Bounded to 4000 characters by default and switchable off with `LIBREDB_AGENT_THREAD_CONTEXT=false`. See [the conversation](#2a-the-conversation-when-a-run-continues-one--fenced) | Same fence, identified as `operation agent/thread`: it is prose a user and a model wrote, and none of it is the server's voice |
 | An **agent run opened as Operate** | Your objective; a **schema inventory reduced to its own names and index names** (no column names, no column types, no relations graph), read whichever of the two ways that engine is read and named with whichever noun that engine's provider declares — tables, collections, datasources, key patterns; in Plan mode the engine's **row-count estimates** for those same tables where the engine holds any — PostgreSQL and SQLite — and nothing per column; and the rows of each curated reading — which, for the `sessions` and `slow-queries` kinds, include **other database users' in-flight statement text and their database usernames**. See [the operations workflow](#5a-the-operations-workflow-what-a-curated-reading-sends) | Same fence: the inventory and every reading's rows are database content and are fenced |
@@ -162,7 +162,7 @@ carries nothing of yours:
 
 **Your objective can leave this machine before a run exists.** Pressing **Start** with the
 workflow left on **Automatic** — the rail's default — posts it to `POST /api/agent/classify`, and
-that route asks the configured model to name one of the five workflows
+that route asks the configured model to name one of the workflows that open on the connection in the run's mode
 (`src/app/api/agent/classify/route.ts`, `classifyAgentWorkflow` in
 `src/lib/agent/workflow-classifier.ts`). It goes to the same provider as everything else on this
 page, through the same `createAgentModel` seam, so nothing about *where* it goes is new.
@@ -171,12 +171,12 @@ What it sends, exactly:
 
 | Part | Content |
 | --- | --- |
-| System | A fixed server-written string: what the five workflows are, one line each, and the instruction to answer with one identifier. It ends by telling the model that the text it is given is the user's task, to be treated as data to classify and never as instructions to it (`CLASSIFY_SYSTEM`, `workflow-classifier.ts`) |
+| System | A fixed server-written string: the workflows that open on the connection in the run's mode, one line each, and the instruction to answer with one identifier. It ends by telling the model that the text it is given is the user's task, to be treated as data to classify and never as instructions to it (`classifySystem`, `workflow-classifier.ts`) |
 | User | **Your objective, verbatim** — the same text the run's first user message would carry, bounded by the same `AGENT_MAX_OBJECTIVE_LENGTH` the route enforces |
 
-**Nothing of your database is in it.** No catalog is read, no statement is run, no connection is
-touched: there is no run yet, and this call reaches nothing but the model provider. That is also
-why it is not fenced — the fence marks database-derived content, and there is none here.
+**Nothing of your database is in it.**
+No catalog is read, no statement is run and no database connection is opened: there is no run yet, the route reads only the connection's record to pick the language and the workflows it offers, and this call reaches nothing but the model provider.
+That is also why it is not fenced: the fence marks database-derived content, and there is none here.
 
 Four bounds, all of them properties of the code rather than of intent:
 
@@ -374,18 +374,17 @@ declare, so there is nothing here a reading could have missed (#414, driven from
 `ProviderCapabilities.declaresForeignKeys` rather than from the connection's type). It is one server
 sentence and no database content, which makes it the one form of this block that discloses nothing.
 
-Every identifier is quoted with its delimiter doubled as SQL does it, and every control character is
-escaped, so a table named `orders -> secrets` renders as one quoted name rather than as a relation
-nobody has (`quote`/`escapeInIdentifier`, `er-diagram.ts`). The block is bounded at 2000
-rendered characters — a bound in characters, because a count of edges is not a bound on a prompt
-(`MAX_ER_CHARS`, `er-diagram.ts`).
+Every identifier is quoted with its delimiter doubled as SQL does it, every control character and every Unicode line or paragraph separator is escaped, and any fence marker inside it is neutralised, so a table named `orders -> secrets` renders as one quoted name rather than as a relation nobody has (`quoteIdentifierForPrompt` in `untrusted-content.ts`, which `er-diagram.ts` calls `quote`).
+The block is bounded at 2000 rendered characters, a bound in characters because a count of edges is not a bound on a prompt (`MAX_ER_CHARS`, `er-diagram.ts`).
 
 ### 5. Each tool result
 
 | Outcome | What is sent back to the model | Call site |
 | --- | --- | --- |
-| A completed read | A server sentence naming the artifact id, then the **rows**: one `JSON.stringify` per row, newline separated, inside a fence labelled `<what it was>, N row(s)` | `runAuditedAgentCall` (`tools.ts`), rendering by `renderRows` (`tools.ts`) |
-| A statement that failed at the database | The **engine's own message**, fenced, referenced by the statement's fingerprint | `runAuditedAgentCall` (`tools.ts`) |
+| A completed read | A server sentence naming the artifact id, then the **rows**: one `JSON.stringify` per row, newline separated, inside a fence labelled `<what it was>, N row(s)` whose header names the provider that relayed them | `runAuditedAgentCall` (`tools.ts`), rendering by `renderRows` (`tools.ts`) |
+| A statement that failed at the database | The **engine's own message**, fenced under a header naming the provider that relayed it, referenced by the statement's fingerprint. A message that holds a credential of the run's connection, or any form of one, is withheld whole and the fence carries Studio's sentence saying so. A provider's own row or byte budget refusal is in this row too: it is the provider's answer, relayed as database content | `runAuditedAgentCall` (`tools.ts`) |
+| A statement whose answer Studio's own budget refused | Studio's own sentence, **unfenced**: the answer was past the run's row or byte budget, or did not arrive within the time Studio granted, so Studio's core refused it (`runReadOnlyStatement` in `read-only-statement.ts`), and the advice after it is Studio's too. The statistics read outlasting its time is refused the same way. The ledger records the refusal as Studio's (`refusedBy: "studio"`) | `runAuditedAgentCall` (`tools.ts`), `isStudioRefusal` (`provider-text.ts`) |
+| A statement the provider refused before sending it | The **provider's own sentence**, inside a fence of its own whose header names the provider that wrote it ("PostgreSQL provider, bundled with Studio"), referenced by the statement's fingerprint, then Studio's advice outside the fence. The database was not asked. The run's read allowance is Studio's own refusal and stays unfenced, in Studio's words. Either text is withheld whole when it holds a credential of the connection | `runAuditedAgentCall` (`tools.ts`), `fenceProviderText` (`untrusted-content.ts`) |
 | A policy denial | Server text only: the deny code, the policy version, and advice that a boundary decided this. There is no engine text because a denial produced none | `denialText` (`tools.ts`) |
 | An approval requirement | Server text naming the operation id | `approvalText` (`tools.ts`) |
 | A table profile (Assess) | Counts, the number of findings, the covered column range, plus the **table name** and the **finding lines** (each the column name, the finding code and its detail, as `describeFindings` writes them), both fenced. No value from any column | `profileTableTool` (`tools.ts`) and, on MongoDB, `runMongoProfile` (`languages/mongo/tools.ts`); `describeFindings` (`tool-contracts.ts`) |
@@ -425,6 +424,12 @@ the model drafted and their stated rationales**, the artifact ids and row counts
 (**not the rows** — "The rows themselves are not delivered again"), a recorded recommendation's
 statement, a recorded comparison's two statements and access kinds, and a profile's depth, row count
 and artifact id with the table name fenced.
+A recorded refusal's message is scrubbed of the connection's credential again, since a ledger written before the scrub existed holds the raw text.
+So are a recorded inventory snapshot's provider sentences (a count or an index read refused, a parent the walk could not list, a sampled count, a bounded description) before a prompt carries the snapshot.
+The ledger itself keeps what it recorded: a run recorded before the scrub existed still shows its raw text on its own page and stream.
+A statement refused before sending is restated in Studio's words when the ledger says Studio refused it, and fenced as the provider's text naming the provider otherwise, a refusal recorded before the ledger said who refused included.
+A sent statement whose answer Studio's own budget refused is restated in Studio's words, as one inert line.
+Any other failure of a sent statement is restated fenced as the database's text, under a header naming the provider that relayed it, a failure recorded before the ledger said who refused included.
 
 ---
 
@@ -502,10 +507,10 @@ statement rather than as an opaque token.
 
 ## The fence, and what it does not do
 
-Everything derived from the database is wrapped by `fenceUntrustedContent`
-(`fenceUntrustedContent` in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, which operation
-produced it and which id it joins to; a fixed instruction that the lines are data and must never be
-followed as instructions; and a pair of markers bounding the region.
+Everything derived from the database is wrapped by `fenceUntrustedContent` (in `src/lib/agent/untrusted-content.ts`): a header naming what the block is, the provider that relayed it, which operation produced it and which id it joins to; a fixed instruction that the lines are data and must never be followed as instructions; and a pair of markers bounding the region.
+The header names the relaying provider as "relayed by the PostgreSQL provider, bundled with Studio", for example.
+Two fences name no provider, because no provider relayed their content to the server: a conversation's earlier steps, which a user and a model wrote, and the standalone AI routes' context, which the browser sent.
+The one exception is an inventory name the server's own sentence carries, which is quoted as described below.
 
 The load-bearing property is **not the wording — it is that the envelope survives the content.** A
 row value carrying the closing marker would otherwise end the region, and everything after it would
@@ -517,6 +522,20 @@ result would make what the model reads disagree with the rows the artifact store
 `tests/evals/injection.test.ts` is what proves it, and it proves it **by counting rather than by
 sampling**: a transcript holds exactly as many closing markers as the server opened, whatever the
 database returned.
+
+A sentence a provider wrote refusing a statement before the database was asked is neither database content nor this server's words, so it has a fence of its own (`fenceProviderText` in `untrusted-content.ts`).
+Its header names the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and its markers say provider text rather than database content.
+The neutraliser defangs all four markers, both fences' pairs, everywhere it is applied, so neither fence can be closed from inside either.
+
+Where this server's own sentence names an object from the inventory, no name can end a line or a fence: a quoted name has its quotes doubled, every control character and line or paragraph separator escaped, and any marker in it neutralised (`nameForPrompt` and `quoteIdentifierForPrompt` in `untrusted-content.ts`).
+The column advice after a failed statement, the tables or collections a profile refusal offers, and the collection or database a MongoDB catalog read names in its fence header write a plain name bare and quote any other name.
+A plain name is one made of letters, combining marks, numbers, `_`, `$`, `.` and `-`.
+The table the column advice says lacks the column, the table a held report is asked to profile, and every name in the MongoDB inventory checks are quoted whether plain or not, as those sentences always quoted them.
+The MongoDB inventory checks quote the command's own collection name and the value it compared in the same way.
+A profile refusal's offer copied back with its quotes names the object it quoted (`resolveProfileTarget` in `inventory-address.ts`), and so does the same spelling given to a MongoDB catalog read or a document-index card.
+Where one inventory name is, character for character, another's quoted form, that spelling is refused as ambiguous, and the refusal's offer for the unquoted one is that same spelling, so only its raw name selects it: a refusal, never the wrong object.
+A not-sent refusal the ledger holds is restated, on a resume or a replay, as one line with any marker in it neutralised (`oneLineForPrompt`), so a detail an earlier Studio recorded with a raw name cannot end a line or a fence.
+A fence header is one line whatever its label holds: every control character and line or paragraph separator in it is escaped.
 
 Two limits stated as plainly as the property:
 
@@ -576,6 +595,8 @@ The frozen execution policies are the ceiling on one run's egress, one row per w
 An oversized read is **refused, not truncated**, so a result that reached the model is a complete
 one. Note the honest edge: the comparison happens after the driver has materialised the rows, so an
 oversized read is refused but still paid for at the database.
+The comparison is made by the provider and again by Studio on the rows it receives, each row's UTF-8 JSON bytes summed (`runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), so 256 KiB of served rows is the most one statement read can send on every engine, MongoDB included, whose own budget counts BSON bytes on the wire.
+The MongoDB catalog read and the two Kubernetes cluster readings are checked the same way on the rows the run keeps (`runReadOnlyReading` in the same module).
 
 **Some of these bound the run and some bound one drive.** `maxStatementsPerRun` and the
 database-time figure bound the run: since #999 a drive is seeded with what the run's ledger says
@@ -598,6 +619,16 @@ output cap, and what it sends is one objective — see
   (`src/lib/agent/state-guard.ts`). No message assembled in `investigation.ts` carries a host, a
   port, a user or a password — the message array is built only from the sources listed above
   (`runInvestigation` in `investigation.ts`).
+
+  A provider's own text is the one place a credential could still slip in, for example a driver error that echoes the password it was given.
+  So Studio withholds whole any provider error, warning or notice text that holds a credential of the run's own connection, or any form of one, before it reaches a prompt, the run's ledger, a response or a log line (`src/lib/db/operations/provider-text.ts`).
+  The forms are its base64, including at each byte offset as inside an HTTP Basic header, its URL-encoded form and each segment of a token, and any of those written with JSON string escapes or with the control characters the logger drops between its characters.
+  The credentials it looks for are the ones the connection's providers receive: on a statement path the agent credential in place of the connection's own password where one is set, and never the SSH tunnel's secrets, which no provider receives.
+  A failure that leaves a drive or a route whose text held one is answered by a sentence that names the failure's class and says its text was withheld.
+  The agent runs, hand-over and drive routes answer such a failure with its own status, code, kind and outcome, and only its text replaced by that sentence.
+  A drive's failure reaches the start, unpause and resume log lines withheld, and the drive route answers it from the original failure with the run's scrub.
+  The same pass runs on the hand-over and on MCP.
+  What it does not catch: a secret that is only part of a field's value (a password inside a connection string, a key inside a credentials document), an echo in a different case, and database rows, which are never scrubbed; each provider scrubs its own server's text at its entry as well.
 
   **One credential does leave, necessarily: your `LLM_API_KEY`.** It is not in a prompt — it is in
   the request's authentication metadata, because that is how the provider authenticates you. The
@@ -651,6 +682,7 @@ output cap, and what it sends is one objective — see
 - **Not into the browser as provider text.** A drive failure crosses to the rail as a *label*; the
   provider's or driver's own message stays in the server log, because none of them promises to keep
   a credential or a host name out of it (`docs/AGENT.md`, "A drive that dies before the loop").
+  That log line is withheld the same way: once the run's connection is resolved, a failure leaving the drive whose text holds a credential of that connection is replaced by Studio's withheld sentence, which names the failure's class (`driveAgentRun` in `runtime.ts`); the drive route answers it from the original failure with the run's scrub (`driveAgentRunOutcome`).
 
 ---
 
@@ -665,7 +697,7 @@ server's own instruction:
 | Feature | Route | What the browser sends | Call site |
 | --- | --- | --- | --- |
 | Visual EXPLAIN's AI explanation | `POST /api/ai/explain` | `query`, `explainPlan`, `schemaContext`, `databaseType` | `src/components/VisualExplain.tsx` |
-| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`) | `src/components/QuerySafetyDialog.tsx` |
+| Query safety dialog | `POST /api/ai/query-safety` | `query`, a filtered `schemaContext`, `databaseType`; nothing at all for an etcd, Milvus, Qdrant, Weaviate, InfluxDB (InfluxQL), Oxia, S3-compatible object storage or Kubernetes statement (`vocabularySendsToModel`, `src/lib/db/destructive-commands.ts`), or for a `databaseType` that names no provider, which the dialog refuses in place of the analysis | `src/components/QuerySafetyDialog.tsx` |
 | Database documentation | `POST /api/ai/describe-schema` | A schema string built from table names, row counts and column definitions | `generateAiDocs` in `src/components/DatabaseDocs.tsx` |
 | Data Profiler's AI summary | `POST /api/ai/describe-schema` | Per column: null percent, distinct count, **`min=` and `max=`**, masked where the grid would mask the column | `DataProfiler` in `src/components/DataProfiler.tsx` |
 
@@ -700,6 +732,9 @@ grep -n "messages.push\|toolResultMessage" src/lib/agent/investigation.ts
 
 # Every place database-derived text is wrapped before it can reach a prompt
 grep -rn "fenceUntrustedContent(" src/lib/agent/ src/lib/ai/
+
+# Every place a provider's text passes the scrub of the connection's credential
+grep -rn "scrubProviderText(\|withScrubbedWarnings(\|withholdProviderError(\|engineMessage(\|engineError(\|providerTextError(\|scrubSnapshotSentences(" src/lib/agent/ src/lib/mcp/ src/app/api/agent/ src/lib/db/operations/
 
 # Every request that leaves for a model provider
 grep -rn "streamText(" src/lib/agent/

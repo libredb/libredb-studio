@@ -39,6 +39,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { flattenTree } from "@/components/object-tree/flatten";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -78,6 +79,9 @@ import {
 import { KEY_SPACE_HEADER, keySpaceRange, permissionDenied } from "../../helpers/etcd-key-space";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { howItFailed } from "../../helpers/spawn-outcome";
+
+/** The provider that relays every inventory this file packs. */
+const RELAYED_BY = providerAuthor("etcd");
 
 // ============================================================================
 // The recorded cluster
@@ -976,7 +980,7 @@ describe("plan mode as a user who is not root, over a fake client (spec 4.7)", (
     for (const [kind, sentence] of Object.entries(sentences)) {
       expect(snapshot.kinds?.find((entry) => entry.id === kind)?.unavailable).toBe(sentence);
     }
-    const packed = packContextForTask(snapshot, "which key prefixes may the reader read?");
+    const packed = packContextForTask(snapshot, "which key prefixes may the reader read?", RELAYED_BY);
     for (const [plural, sentence] of [
       ["Users", sentences.user],
       ["Roles", sentences.role],

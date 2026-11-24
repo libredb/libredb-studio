@@ -3,22 +3,19 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Qdrant: the boundary is the provider's closed table of read requests, which can name no write, and
  * before every request the server proves the key reads only, by refusing two writes that would change nothing. Its
  * answers carry metadata only: names, counts and flags, never a stored payload or vector.
  */
-function qdrantapiReadsPosture(bounds: StatementBudgets): AgentPosture {
+function qdrantapiReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per request, from a key the server proves read-only`,
     title: "Agent mode reads Qdrant's metadata, as a key the server proves read-only",
     body: `Agent mode runs Qdrant reads it wrote itself, the version, collection, alias, count and cluster reads, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Its answers carry names, counts and flags only, never a stored payload or vector. Before every request Studio has the server refuse an empty alias update and an empty point delete on every collection the key lists, so the API key, a JWT that writes any collection, a server with no key configured and a connection with no key are refused. Studio's reader refuses point reads, scrolls, facets, every query and every write before anything is sent, so no inference call is made. Nothing reaches your editor.`,
@@ -65,7 +62,6 @@ export const QDRANTAPI_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: qdrantapiReadsPosture,
-    widened: qdrantapiReadsPosture,
     handoverTerms: () =>
       "A Qdrant answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

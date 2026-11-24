@@ -69,20 +69,31 @@ interface AdminLike {
   findCoordinator(o: object): Promise<Array<{ key: string; nodeId: number; host: string; port: number }>>;
   listApis(): Promise<Array<{ apiKey: number; name: string; minVersion: number; maxVersion: number }>>;
   close(): Promise<void>;
+  /** The pool the client opens its connections from (`Base.connections` in dist/clients/base/base.js). */
+  readonly connections: ConnectionPoolLike;
 }
 interface ConsumerLike {
   listOffsets(o: object): Promise<Map<string, bigint[]>>;
   listOffsetsWithTimestamps(o: object): Promise<Map<string, Map<number, { offset: bigint; timestamp: bigint }>>>;
   close(): Promise<void>;
+  readonly connections: ConnectionPoolLike;
 }
 interface ConnectionLike {
   connect(host: string, port: number): Promise<void>;
   close(): Promise<void>;
+  /**
+   * A connection reports its failure as an error event (dist/network/connection.js), which is thrown
+   * when no listener hears it, and a close of its open socket as a close event, which a graceful close
+   * is reported by alone.
+   */
+  on(event: "error" | "close", listener: (error?: unknown) => void): void;
 }
 /** One connection per broker address, opened on first use and dropped once closed (dist/network/connection-pool.js). */
 interface ConnectionPoolLike {
   get(broker: { host: string; port: number }): Promise<ConnectionLike>;
   close(): Promise<void>;
+  /** Emitted with each connection the pool builds, before it connects (dist/network/connection-pool.js). */
+  on(event: "connecting", listener: (opening: { connection: ConnectionLike }) => void): void;
 }
 /** One topic of a Fetch request and its partitions (dist/apis/consumer/fetch-v13.d.ts, FetchRequestTopic). */
 interface LibFetchRequestTopic {
@@ -325,6 +336,7 @@ export function createPlatformaticClient(options: KafkaConnectionOptions, lib: P
   });
   // The connections a read's fetches go out on, one per broker address, with the clients' transport.
   const fetchPool = new lib.ConnectionPool(options.clientId, transport);
+  for (const pool of [admin.connections, consumer.connections, fetchPool]) keepErrorListeners(pool);
 
   const guard = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {
@@ -975,24 +987,40 @@ async function describeConsumerProtocol(
     throw new KafkaError("protocol", `The broker named no coordinator for group ${JSON.stringify(listing.groupId)}`);
   // The clients' transport, server name included: the library leaves an IP literal unnamed itself.
   const connection = new lib.Connection(options.clientId, transport);
-  let response: LibGroupDescribeResponse;
-  let refused: unknown;
-  try {
+  const exchange = async (): Promise<{ response: LibGroupDescribeResponse; refused?: unknown }> => {
     await connection.connect(coordinator.host, coordinator.port);
     try {
-      response = (await lib.consumerGroupDescribeV0.api.async(
-        connection,
-        [listing.groupId],
-        false,
-      )) as LibGroupDescribeResponse;
+      return {
+        response: (await lib.consumerGroupDescribeV0.api.async(
+          connection,
+          [listing.groupId],
+          false,
+        )) as LibGroupDescribeResponse,
+      };
     } catch (error) {
       // The client throws on any per-group error code but keeps the whole response (M-F), with one
       // protocol error per errored entry, on that entry's path.
       const carried = (error as { response?: LibGroupDescribeResponse }).response;
       if (carried === undefined) throw error;
-      response = carried;
-      refused = error;
+      return { response: carried, refused: error };
     }
+  };
+  let response: LibGroupDescribeResponse;
+  let refused: unknown;
+  try {
+    // The connection reports a failure as an error event, which is thrown out of its socket handler
+    // when no listener hears it, so one listens from the connection's creation for its whole life, and
+    // the description fails with the first failure it reports (coordinatorFailure). A graceful close
+    // of its open socket raises no error event, only a close event, so that one is heard too
+    // (coordinatorLost). The request in flight would reject only later, with a bare "Connection
+    // closed", and a SASL exchange in progress with an error that reads as a refused credential. A
+    // failure or a close reported after the answer arrived finds the description settled, and the
+    // connection is closed next.
+    ({ response, refused } = await new Promise<Awaited<ReturnType<typeof exchange>>>((resolve, reject) => {
+      connection.on("error", (error) => reject(coordinatorFailure(error, coordinator, listing.groupId)));
+      connection.on("close", () => reject(coordinatorLost(coordinator, listing.groupId)));
+      exchange().then(resolve, reject);
+    }));
   } finally {
     await connection.close();
   }
@@ -1020,6 +1048,67 @@ async function describeConsumerProtocol(
     })),
   };
 }
+
+/**
+ * A failure the coordinator's connection reported, as the description fails with it. The client
+ * reports a failure to connect, authenticate included, as "Connection to <host>:<port> failed." or
+ * "... timed out.", the same error connect() rejects with, which is read as any connection failure is.
+ * Every other report is its socket failing once open, during the SASL exchange or after it: reset, or
+ * sent an answer to no request it had made, which the client closes the connection on (`#onError` in
+ * dist/network/connection.js). That one is named by the coordinator's address, as the broker named it,
+ * and by the runtime's error code, or else by the client's code under its "Connection error", never by
+ * the client's text.
+ */
+function coordinatorFailure(error: unknown, coordinator: { host: string; port: number }, groupId: string): unknown {
+  const chain = [...walk(error)];
+  if (CONNECTION_TARGET.test(String(chain[0]?.message ?? ""))) return error;
+  const codes = chain.map((e) => e.code);
+  const nodeCode = codes.find(isNodeCode);
+  const reason =
+    nodeCode ??
+    String(codes.find((code) => typeof code === "string" && code !== "PLT_KFK_NETWORK") ?? "PLT_KFK_NETWORK");
+  return coordinatorConnectionFailed(coordinator, groupId, reason, nodeCode);
+}
+
+/**
+ * The coordinator's open connection closed before the answer arrived, which the client reports by a
+ * close event alone (`#onClose` in dist/network/connection.js): a lost connection, as at the bootstrap,
+ * named by the coordinator's address.
+ */
+function coordinatorLost(coordinator: { host: string; port: number }, groupId: string): KafkaError {
+  return coordinatorConnectionFailed(coordinator, groupId, "connection-lost", "connection-lost");
+}
+
+function coordinatorConnectionFailed(
+  { host, port }: { host: string; port: number },
+  groupId: string,
+  reason: string,
+  nodeCode: string | undefined,
+): KafkaError {
+  return new KafkaError(
+    "advertised-unreachable",
+    `The connection to ${host}:${port}, the coordinator the broker named for group ${JSON.stringify(groupId)}, failed once it was open (${reason})`,
+    { host, port, ...(nodeCode === undefined ? {} : { nodeCode }) },
+  );
+}
+
+/**
+ * Keeps an error listener on every connection the pool builds, for the connection's whole life: a
+ * connection reports its failure as an error event, which is thrown out of its socket handler when no
+ * listener hears it. The library delivers the failure itself: the pool drops the connection on its
+ * first report, and a request waiting on the connection fails, with that error while it connects and
+ * with "Connection closed" once it is open (dist/network/connection-pool.js, dist/network/connection.js).
+ * But the pool listens once, and a connection whose socket fails during its SASL exchange reports the
+ * failure a second time, as its SASL step reads the closed connection (`#onError`, then
+ * `#onConnectionError`), after its request has already failed with the first. So this listener only
+ * hears: each report it receives is one the library delivered, or a repeat of one.
+ */
+function keepErrorListeners(pool: ConnectionPoolLike): void {
+  pool.on("connecting", ({ connection }) => connection.on("error", deliveredByTheLibrary));
+}
+
+/** A pooled connection's failure report, which the library delivers itself (see keepErrorListeners). */
+const deliveredByTheLibrary = (): void => undefined;
 
 /**
  * An API 69 entry's error, classified by its protocol error name through the error table (spec 5.6),

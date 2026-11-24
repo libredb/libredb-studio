@@ -8,6 +8,7 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { type HttpOrigin, httpOrigin } from "@/lib/db/http/endpoint";
 import { type NodeTlsMaterial, nodeTlsMaterial } from "@/lib/db/http/node-transport";
+import type { EgressDecision } from "@/lib/db/types";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { MTCONNECT_DEFAULT_PORT } from "./capabilities";
 
@@ -46,9 +47,13 @@ export function readPathPrefix(value: unknown): string {
   return prefix;
 }
 
-export function mtconnectEndpoint(config: DatabaseConnection & WithTunnelFarEnd): MtcEndpoint {
+/**
+ * The agent's endpoint; `egress` is the decision the provider was built with, which the origin's address literal is
+ * checked against.
+ */
+export function mtconnectEndpoint(config: DatabaseConnection & WithTunnelFarEnd, egress: EgressDecision): MtcEndpoint {
   const pathPrefix = readPathPrefix(config.apiPath);
-  const dialled = httpOrigin("http", config.host, config.port ?? MTCONNECT_DEFAULT_PORT);
+  const dialled = httpOrigin("http", config.host, config.port ?? MTCONNECT_DEFAULT_PORT, egress);
   const tls = nodeTlsMaterial(config.ssl, config[TUNNEL_FAR_END]?.host ?? dialled.host);
   return { origin: { ...dialled, scheme: tls === null ? "http" : "https" }, tls, pathPrefix };
 }

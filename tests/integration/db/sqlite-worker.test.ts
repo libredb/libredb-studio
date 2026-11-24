@@ -9,14 +9,20 @@
  * (Bun 1.4.x), which is exactly why the worker does not run under Bun.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { EventEmitter, once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET as apiHealth } from "@/app/api/health/route";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
 import { SQLiteWorkerClient } from "@/lib/db/providers/sql/sqlite-worker";
+import { ValueCodecError } from "@libredb/provider-sdk/values";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
+import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
 
 /** A statement that cannot finish before it is killed: one billion recursive steps. */
@@ -29,8 +35,79 @@ const BUDGET: ReadOnlyStatementBudget = {
   maxResultBytes: 64 * 1024,
 };
 
+/**
+ * A statement far larger than the 64 KiB pipe buffer, so most of its write is still
+ * queued on the child's stdin when the child is killed, and that write then fails
+ * (EPIPE on Linux and macOS) or, when the exit reaches the client first, is dropped
+ * by the runtime.
+ */
+const LARGE = `SELECT '${"x".repeat(8 * 1024 * 1024)}' AS v`;
+
+/**
+ * Resolve when the worker's stdin, the stream a request is written to, has closed:
+ * by then a failed write has already been reported. Not `events.once`, which would
+ * reject on that very `error` event.
+ */
+function stdinClosed(client: SQLiteWorkerClient): Promise<void> {
+  const stdin = (client as unknown as { child: ChildProcessWithoutNullStreams }).child.stdin;
+  return new Promise((resolve) => stdin.once("close", () => resolve()));
+}
+
+/** What the runtime delivered on the worker's pipes and child, in its order. */
+type WorkerEvent =
+  | { readonly event: "stream-error"; readonly stream: "stdin" | "stdout" | "stderr"; readonly error: Error }
+  | { readonly event: "stdin-close" }
+  | { readonly event: "exit" };
+
+/**
+ * Record the worker's pipe failures, its stdin closing and its exit, in the order the
+ * runtime delivers them. When the child dies under a large write, either the failed write
+ * or the exit can reach the client first: Linux and macOS fail the write first, and
+ * windows-latest can deliver the exit first. Node's and Bun's `ChildProcess` both destroy
+ * stdin just before they emit `exit`, so after an exit that came first the rest of the
+ * write is dropped without a stdin error. These listeners run after the client's own,
+ * so this is also the order the client saw.
+ */
+function recordWorkerEvents(client: SQLiteWorkerClient): WorkerEvent[] {
+  const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child;
+  const events: WorkerEvent[] = [];
+  for (const stream of ["stdin", "stdout", "stderr"] as const) {
+    child[stream].on("error", (error) => events.push({ event: "stream-error", stream, error }));
+  }
+  child.stdin.once("close", () => events.push({ event: "stdin-close" }));
+  child.once("exit", () => events.push({ event: "exit" }));
+  return events;
+}
+
+/** The warning the client logs for a child it did not stop, killed by SIGKILL. */
+const EXIT_WARNING = "[sqlite-worker] child exited (code null, signal SIGKILL)";
+
+/** Record every uncaught exception and unhandled rejection until `stop()`. */
+function watchUncaught(): { readonly seen: unknown[]; stop(): void } {
+  const seen: unknown[] = [];
+  const record = (error: unknown): void => {
+    seen.push(error);
+  };
+  process.on("uncaughtException", record);
+  process.on("unhandledRejection", record);
+  return {
+    seen,
+    stop() {
+      process.off("uncaughtException", record);
+      process.off("unhandledRejection", record);
+    },
+  };
+}
+
+/** A SQLite connection as Studio's provider factory hands it over: on the file `admittedFileConnection` admits. */
 function makeConfig(dbPath: string): DatabaseConnection {
-  return { id: "worker-test", name: "Worker", type: "sqlite", database: dbPath, createdAt: new Date() };
+  return admittedFileConnection({
+    id: "worker-test",
+    name: "Worker",
+    type: "sqlite",
+    database: dbPath,
+    createdAt: new Date(),
+  });
 }
 
 /** Create an on-disk database with one table, then close the writer. */
@@ -187,6 +264,150 @@ describe("SQLite child-process worker (#1623)", () => {
     }
   });
 
+  test("an infinite REAL crosses the worker as the number it is", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "nonfinite.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const read = await client.queryRows("SELECT 1e999 AS p, -1e999 AS n", []);
+      expect(read.values).toEqual([[Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]]);
+      expect(await client.get("SELECT 1e999 AS p")).toEqual({ p: Number.POSITIVE_INFINITY });
+      await client.exec("CREATE TABLE r (v REAL)");
+      await client.queryRows("INSERT INTO r (v) VALUES (?1), (?2)", [
+        Number.POSITIVE_INFINITY,
+        Number.NEGATIVE_INFINITY,
+      ]);
+      expect(await client.all("SELECT v, typeof(v) AS t FROM r ORDER BY v")).toEqual([
+        { v: Number.NEGATIVE_INFINITY, t: "real" },
+        { v: Number.POSITIVE_INFINITY, t: "real" },
+      ]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("values of every tag survive a bound round trip through the worker", async () => {
+    // Seeded, so a failure names a case that replays: mulberry32 over fixed seeds.
+    const mulberry32 = (seed: number) => {
+      let state = seed >>> 0;
+      return () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    const MIN_I64 = -(BigInt(2) ** BigInt(63));
+    const SPAN_I64 = BigInt(2) ** BigInt(64);
+    const client = await SQLiteWorkerClient.start({ dbPath: join(dir, "tags.db"), readonly: false, queryOnly: false });
+    try {
+      for (const seed of [1, 7, 42]) {
+        const random = mulberry32(seed);
+        const params: unknown[] = [];
+        const expected: unknown[] = [];
+        for (let n = 0; n < 40; n++) {
+          const kind = Math.floor(random() * 5);
+          if (kind === 0) {
+            let acc = BigInt(0);
+            for (let i = 0; i < 2; i++) acc = (acc << BigInt(32)) | BigInt(Math.floor(random() * 2 ** 32));
+            const value = MIN_I64 + (acc % SPAN_I64);
+            params.push(value);
+            const asNumber = Number(value);
+            expected.push(Number.isSafeInteger(asNumber) ? asNumber : value.toString());
+          } else if (kind === 1) {
+            const bytes = Uint8Array.from({ length: Math.floor(random() * 20) }, () => Math.floor(random() * 256));
+            params.push(bytes);
+            expected.push(Buffer.from(bytes));
+          } else if (kind === 2) {
+            const value = [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NaN][Math.floor(random() * 3)];
+            params.push(value);
+            // SQLite stores no NaN: it binds as NULL.
+            expected.push(Number.isNaN(value) ? null : value);
+          } else if (kind === 3) {
+            const value = ["$", "i64", "obj", "__libredb_sqlite_bigint", "__libredb_sqlite_bytes", "x"][
+              Math.floor(random() * 6)
+            ];
+            params.push(value);
+            expected.push(value);
+          } else {
+            const value = (random() - 0.5) * 1e6;
+            params.push(value);
+            expected.push(value);
+          }
+        }
+        const sql = `SELECT ${params.map((_, index) => `?${index + 1}`).join(", ")}`;
+        const read = await client.queryRows(sql, params);
+        expect(read.values, `seed ${seed}`).toEqual([expected]);
+        for (const [index, cell] of read.values[0].entries()) {
+          if (expected[index] instanceof Uint8Array)
+            expect(Buffer.isBuffer(cell), `seed ${seed}, cell ${index}`).toBe(true);
+        }
+      }
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a bigint wider than SQLite's signed 64 bits still meets the driver's own refusal", async () => {
+    const client = await SQLiteWorkerClient.start({ dbPath: join(dir, "wide.db"), readonly: false, queryOnly: false });
+    try {
+      const refused = await client.queryRows("SELECT ?1", [BigInt(2) ** BigInt(63)]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      expect((refused as Error).message).toContain("too large");
+      expect((await client.queryRows("SELECT 1 AS one", [])).values).toEqual([[1]]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a column named like a wire tag stays a column", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "lookalike.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      expect(await client.all("SELECT '9' AS __libredb_sqlite_bigint")).toEqual([{ __libredb_sqlite_bigint: "9" }]);
+      expect(await client.all("SELECT 'i64' AS \"$\", '9' AS v")).toEqual([{ $: "i64", v: "9" }]);
+      expect(await client.get("SELECT 'nf' AS \"$\", 'NaN' AS v")).toEqual({ $: "nf", v: "NaN" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  test("a parameter the worker cannot bind is refused by name, and the next statement runs", async () => {
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "unbindable.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const refused = await client.queryRows("SELECT ?1", [new Date(0)]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(refused).toBeInstanceOf(Error);
+      expect((refused as Error).message).toBe('The SQLite worker cannot bind a timestamp (ts) value, at "/0".');
+      expect((await client.queryRows("SELECT 2 AS two", [])).values).toEqual([[2]]);
+
+      const undefinedParam = await client.queryRows("SELECT ?1", [undefined]).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(undefinedParam).toBeInstanceOf(ValueCodecError);
+      expect((undefinedParam as ValueCodecError).path).toBe("/0");
+      expect((await client.queryRows("SELECT 3 AS three", [])).values).toEqual([[3]]);
+    } finally {
+      await client.close();
+    }
+  });
+
   test("the editor's query timeout kills an overrunning statement", async () => {
     const dbPath = await seedFile(dir, "timeout.db");
     const provider = new SQLiteProvider(makeConfig(dbPath), { queryTimeout: 100 });
@@ -325,6 +546,241 @@ describe("SQLite child-process worker (#1623)", () => {
       expect(await client.all("SELECT 1 AS one")).toEqual([{ one: 1 }]);
     } finally {
       await client.close();
+    }
+  });
+
+  test("terminating the worker while a large statement is still being written rejects it with the worker's named error", async () => {
+    const watch = watchUncaught();
+    const debug = spyOn(logger, "debug");
+    const warn = spyOn(logger, "warn");
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "large-terminate.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const events = recordWorkerEvents(client);
+      const closed = stdinClosed(client);
+      const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
+      const outcome = client.queryRows(LARGE, []).then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+      client.terminate();
+
+      const failure = (await outcome) as Error;
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe("SQLite worker was terminated");
+      await closed;
+      await exited;
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+      // The stream did not close cleanly before the child died. When the exit comes first
+      // this cannot tell a dropped write from a finished one; terminate() right after the
+      // write is what keeps the write queued.
+      expect(events[0]?.event).not.toBe("stdin-close");
+      // A write that failed once the child was gone is reported on the stream at debug
+      // level, not thrown out of its event handler.
+      expect(debug.mock.calls.filter(([line]) => String(line).startsWith("[sqlite-worker]"))).toEqual(
+        events.flatMap((entry) =>
+          entry.event === "stream-error"
+            ? [[`[sqlite-worker] ${entry.stream} failed after terminate(): ${entry.error.message}`]]
+            : [],
+        ),
+      );
+      // The client stopped the child on purpose, so its exit is not reported as a failure.
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      watch.stop();
+      debug.mockRestore();
+      warn.mockRestore();
+      client.terminate();
+    }
+  });
+
+  test("a large statement written to a child that has already died is rejected with the worker's named error", async () => {
+    const watch = watchUncaught();
+    const warn = spyOn(logger, "warn");
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "large-dead.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    try {
+      const events = recordWorkerEvents(client);
+      const closed = stdinClosed(client);
+      const exited = once((client as unknown as { child: ChildProcessWithoutNullStreams }).child, "exit");
+      // Killed from outside the client, so the client still believes it is alive and
+      // writes the statement into a pipe nobody reads any more.
+      (client as unknown as { child: ChildProcessWithoutNullStreams }).child.kill("SIGKILL");
+      const failure = (await client.queryRows(LARGE, []).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
+
+      await closed;
+      await exited;
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+      // Either the exit or the failed write reaches the client first, and whichever does
+      // rejects the request with the worker's named error in its own words.
+      const [first] = events.filter((entry) => entry.event !== "stdin-close");
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe(
+        first?.event === "stream-error"
+          ? `SQLite worker ${first.stream} failed: ${first.error.message}`
+          : "SQLite worker exited (code null, signal SIGKILL)",
+      );
+      // Each is reported once, as a warning: the failed write does not say why the child
+      // is gone, and its exit does.
+      expect(warn.mock.calls).toEqual(
+        events.flatMap((entry) => {
+          if (entry.event === "stream-error") {
+            return [[`[sqlite-worker] ${entry.stream} failed: ${entry.error.message}`]];
+          }
+          return entry.event === "exit" ? [[EXIT_WARNING]] : [];
+        }),
+      );
+    } finally {
+      watch.stop();
+      warn.mockRestore();
+      client.terminate();
+    }
+  });
+
+  test("a child whose exit reaches the client before its large write fails rejects the statement with the exit, reported once", async () => {
+    const watch = watchUncaught();
+    const warn = spyOn(logger, "warn");
+    const client = await SQLiteWorkerClient.start({
+      dbPath: join(dir, "large-exit-first.db"),
+      readonly: false,
+      queryOnly: false,
+    });
+    const child = (client as unknown as { child: ChildProcessWithoutNullStreams }).child;
+    try {
+      const events = recordWorkerEvents(client);
+      const closed = stdinClosed(client);
+      const exited = once(child, "exit");
+      // The order windows-latest can deliver, made certain here: the statement's write is
+      // held until the runtime has delivered the child's exit, and only then handed to the
+      // stream, which the runtime destroyed on that exit.
+      const held: string[] = [];
+      const write = spyOn(child.stdin, "write").mockImplementation(((chunk: string) => {
+        held.push(chunk);
+        return false;
+      }) as unknown as typeof child.stdin.write);
+      child.kill("SIGKILL");
+      const outcome = client.queryRows(LARGE, []).then(
+        () => null,
+        (error: unknown) => error,
+      );
+      await exited;
+      write.mockRestore();
+      expect(held).toHaveLength(1);
+      child.stdin.write(held[0]);
+
+      const failure = (await outcome) as Error;
+      await closed;
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe("SQLite worker exited (code null, signal SIGKILL)");
+      // The runtime closed stdin without an error, so the exit is the only report.
+      expect(events.map((entry) => entry.event)).toEqual(["exit", "stdin-close"]);
+      expect(warn.mock.calls).toEqual([[EXIT_WARNING]]);
+    } finally {
+      watch.stop();
+      warn.mockRestore();
+      client.terminate();
+    }
+  });
+
+  test.each(["stdout", "stderr"] as const)(
+    "an error on the worker's %s rejects the request in flight with the worker's named error and stops the child",
+    async (stream) => {
+      const warn = spyOn(logger, "warn");
+      const client = await SQLiteWorkerClient.start({
+        dbPath: join(dir, `${stream}-error.db`),
+        readonly: false,
+        queryOnly: false,
+      });
+      try {
+        const outcome = client.queryRows(SLOW, []).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        (client as unknown as { child: ChildProcessWithoutNullStreams }).child[stream].emit(
+          "error",
+          new Error(`${stream} broke`),
+        );
+
+        const failure = (await outcome) as Error;
+        expect(failure.name).toBe("SQLiteWorkerError");
+        expect(failure.message).toBe(`SQLite worker ${stream} failed: ${stream} broke`);
+        expect(warn).toHaveBeenCalledWith(`[sqlite-worker] ${stream} failed: ${stream} broke`);
+        // A child whose pipe broke cannot answer again, so the next statement starts a new one.
+        expect(client.isAlive()).toBe(false);
+      } finally {
+        warn.mockRestore();
+        client.terminate();
+      }
+    },
+  );
+
+  test("a worker whose executable cannot be found fails to start with the worker's named error", async () => {
+    const watch = watchUncaught();
+    const realSpawn = childProcess.spawn;
+    const spawn = spyOn(childProcess, "spawn").mockImplementation(((
+      _command: string,
+      args: readonly string[],
+      options: childProcess.SpawnOptions,
+    ) => realSpawn("libredb-missing-sqlite-worker", args, options)) as unknown as typeof childProcess.spawn);
+    try {
+      const failure = (await SQLiteWorkerClient.start({
+        dbPath: join(dir, "missing-executable.db"),
+        readonly: false,
+        queryOnly: false,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
+
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toMatch(/^SQLite worker failed: .*libredb-missing-sqlite-worker/);
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+      spawn.mockRestore();
+    }
+  });
+
+  test("a spawn that cannot create the worker's pipes fails to start with the worker's named error", async () => {
+    // Out of file descriptors (EMFILE, ENFILE), Node returns a child with no pipes and
+    // reports the reason as the child's `error` event on the next tick.
+    const watch = watchUncaught();
+    const spawn = spyOn(childProcess, "spawn").mockImplementation((() => {
+      const child = new EventEmitter();
+      process.nextTick(() => child.emit("error", Object.assign(new Error("spawn node EMFILE"), { code: "EMFILE" })));
+      return child;
+    }) as unknown as typeof childProcess.spawn);
+    try {
+      const failure = (await SQLiteWorkerClient.start({
+        dbPath: join(dir, "no-pipes.db"),
+        readonly: false,
+        queryOnly: false,
+      }).then(
+        () => null,
+        (error: unknown) => error,
+      )) as Error;
+
+      expect(failure.name).toBe("SQLiteWorkerError");
+      expect(failure.message).toBe("SQLite worker failed: spawn node EMFILE");
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(watch.seen).toEqual([]);
+    } finally {
+      watch.stop();
+      spawn.mockRestore();
     }
   });
 

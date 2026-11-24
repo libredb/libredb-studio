@@ -2,9 +2,10 @@
  * The dial, and the one regression it exists to prevent.
  *
  * THE CASE THAT MATTERS. The shared egress helpers do not all behave the same way about
- * `DB_HTTP_BLOCK_PRIVATE_HOSTS`: `assertPublicLiteralHost` returns early when the flag is off,
- * `assertPublicDnsAnswers` checks no flag at all, and `guardedNodeOptions` returns `{}` when the
- * flag is off so the lookup is never installed. A provider that calls the DNS guard directly, or
+ * `DB_HTTP_BLOCK_PRIVATE_HOSTS`: `assertPublicLiteralHost` returns early when the decision it is
+ * handed allows private hosts, `assertPublicDnsAnswers` checks no decision at all, and
+ * `guardedNodeOptions` returns `{}` for such a decision so the lookup is never installed. The dial
+ * is handed the decision in `Endpoint.egress`, as the provider hands it the one it was built with. A provider that calls the DNS guard directly, or
  * installs the lookup unconditionally, therefore refuses every NAME-addressed device even with the
  * flag off. For Modbus that is the common case rather than an edge: a controller sits on a local
  * network and is usually addressed by name. The second test below is the one that fails if this
@@ -14,8 +15,9 @@
  * unexercised, and a mutation there stays green while the branch is dead to the test.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { createServer, type Server } from "node:net";
+import { createServer, type Server, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import { ModbusFramingError } from "@/lib/db/providers/industrial/modbus/framing";
 import { ModbusValveDefect } from "@/lib/db/providers/industrial/modbus/valve";
 import { DIAL_TIMEOUT_MS, REQUEST_TIMEOUT_MS } from "@/lib/db/providers/industrial/modbus/constants";
@@ -27,14 +29,13 @@ import {
   ModbusDialTimeout,
   socketWire,
 } from "@/lib/db/providers/industrial/modbus/client";
+import { ModbusSession } from "@/lib/db/providers/industrial/modbus/session";
+import { fakeModbusDevice, readAdu } from "../../../helpers/modbus-fake-device";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const originalFlag = process.env[FLAG];
 const open: Server[] = [];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
   for (const server of open.splice(0)) server.close();
 });
 
@@ -77,11 +78,10 @@ const request = () => {
   return b;
 };
 
-describe("with the guard off, a local device is reachable both ways", () => {
+describe("with an allowing decision, a local device is reachable both ways", () => {
   test("by IP literal", async () => {
-    delete process.env[FLAG];
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
@@ -91,39 +91,43 @@ describe("with the guard off, a local device is reachable both ways", () => {
    * this, because the DNS guard blocks loopback and checks no flag of its own.
    */
   test("by NAME, which is how a controller is usually addressed", async () => {
-    delete process.env[FLAG];
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "localhost", port });
+    const socket = await dialModbus({ host: "localhost", port, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
 });
 
-describe("with the guard on, the shared rule refuses and its own words are kept", () => {
+describe("with a blocking decision, the shared rule refuses and its own words are kept", () => {
   test("a private literal is refused before any socket exists", async () => {
-    process.env[FLAG] = "true";
-    const error = await dialModbus({ host: "10.20.30.40", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "10.20.30.40", port: 502, egress: BLOCKS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(BLOCKED_HOST);
   });
 
   test("a loopback literal is refused too, which is why the flag is off for local work", async () => {
-    process.env[FLAG] = "true";
-    const error = await dialModbus({ host: "127.0.0.1", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "127.0.0.1", port: 502, egress: BLOCKS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(BLOCKED_HOST);
   });
 });
 
 describe("link-local, where the cost runs the other way than it does for a broker", () => {
   test("refused by default, whatever the flag says", async () => {
-    delete process.env[FLAG];
-    const error = await dialModbus({ host: "169.254.10.20", port: 502 }).catch((e: unknown) => e);
+    const error = await dialModbus({ host: "169.254.10.20", port: 502, egress: ALLOWS_PRIVATE_HOSTS }).catch(
+      (e: unknown) => e,
+    );
     expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(LINK_LOCAL_HOST);
   });
 
   test("reachable only when the call site says so, which is where that decision belongs", async () => {
-    delete process.env[FLAG];
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port, refusesLinkLocal: false });
+    const socket = await dialModbus({ host: "127.0.0.1", port, refusesLinkLocal: false, egress: ALLOWS_PRIVATE_HOSTS });
     expect(socket.destroyed).toBe(false);
     socket.destroy();
   });
@@ -131,9 +135,8 @@ describe("link-local, where the cost runs the other way than it does for a broke
 
 describe("one exchange on an open socket", () => {
   test("a complete answer resolves with the frame", async () => {
-    delete process.env[FLAG];
     const port = await listener("answer");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     const got = await exchangeOnce(socket, request(), { expect: EXPECT });
     if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
     expect(got.frame.functionCode).toBe(3);
@@ -142,9 +145,8 @@ describe("one exchange on an open socket", () => {
   });
 
   test("a silent device ends by our own timer and names the time", async () => {
-    delete process.env[FLAG];
     const port = await listener("silent");
-    const socket = await dialModbus({ host: "127.0.0.1", port });
+    const socket = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS });
     const error = await exchangeOnce(socket, request(), {
       expect: EXPECT,
       timeoutMs: 40,
@@ -167,18 +169,24 @@ describe("one exchange on an open socket", () => {
    * two outcomes are no longer different.
    */
   test("a device that ends the connection before answering is a ConnectionError, either way", async () => {
-    delete process.env[FLAG];
     const port = await listener("close");
-    const socket = await dialModbus({ host: "127.0.0.1", port }).catch(() => undefined);
-    if (socket === undefined) return;
-    const error = await exchangeOnce(socket, request(), {
-      expect: EXPECT,
-      timeoutMs: 500,
-      endpoint: { host: "127.0.0.1", port },
-    }).catch((e: unknown) => e);
+    // "Either way" is the race between the device's close and the dial: the close usually lands
+    // after the connect, so the exchange sees it, and under load it can land during the dial as a
+    // reset. Both are the device ending the connection. A dial refused for any other reason, the
+    // egress guard's DatabaseConfigError above all, is not, so it fails here instead of returning.
+    const error = await dialModbus({ host: "127.0.0.1", port, egress: ALLOWS_PRIVATE_HOSTS }).then(
+      (socket) =>
+        exchangeOnce(socket, request(), {
+          expect: EXPECT,
+          timeoutMs: 500,
+          endpoint: { host: "127.0.0.1", port },
+        }).catch((e: unknown) => e),
+      (e: unknown) => e,
+    );
     // The endpoint rides in the error's own fields rather than in its sentence, which is where a
-    // reader can use it. Asserting the message would have been asserting the wrong place.
+    // reader can use it. The sentence is asserted only for which side ended the connection.
     expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as ConnectionError).message).toMatch(/closed the connection before answering|ECONNRESET|EPIPE/);
     expect((error as ConnectionError).host).toBe("127.0.0.1");
     expect((error as ConnectionError).port).toBe(port);
   });
@@ -226,10 +234,9 @@ describe("the dial timer", () => {
   }
 
   test("a listener that never accepts ends by our timer, and the time is in the sentence", async () => {
-    delete process.env[FLAG];
     const fake = silentSocket();
     const error = await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 30, connect: () => fake.socket as never },
     ).catch((e: unknown) => e);
     // A dial that never completes has not failed one read, it has failed the connection, so the
@@ -239,20 +246,18 @@ describe("the dial timer", () => {
   });
 
   test("the socket is destroyed when the dial times out, so nothing is left half open", async () => {
-    delete process.env[FLAG];
     const fake = silentSocket();
     await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 20, connect: () => fake.socket as never },
     ).catch(() => undefined);
     expect(fake.destroyed()).toBe(true);
   });
 
   test("the timer is armed with a positive value, which a zero would not be", async () => {
-    delete process.env[FLAG];
     const fake = silentSocket();
     await dialModbus(
-      { host: "203.0.113.7", port: 502 },
+      { host: "203.0.113.7", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
       { dialTimeoutMs: 25, connect: () => fake.socket as never },
     ).catch(() => undefined);
     expect(fake.timeoutMs()).toBe(25);
@@ -334,6 +339,10 @@ describe("the error event reaches the boundary too", () => {
       },
       once(event: string, listener: (arg: never) => void) {
         return socket.on(event, listener);
+      },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
       },
       setTimeout() {
         return socket;
@@ -519,7 +528,6 @@ describe("the error event reaches the boundary too", () => {
  */
 describe("the declared timers, on the path that reads them", () => {
   test("the dial arms the declared dial timeout when none is given", async () => {
-    delete process.env[FLAG];
     let armed = -1;
     const socket = {
       setTimeout(ms: number) {
@@ -540,7 +548,10 @@ describe("the declared timers, on the path that reads them", () => {
       },
       destroyed: false,
     };
-    void dialModbus({ host: "203.0.113.9", port: 502 }, { connect: () => socket as never }).catch(() => undefined);
+    void dialModbus(
+      { host: "203.0.113.9", port: 502, egress: ALLOWS_PRIVATE_HOSTS },
+      { connect: () => socket as never },
+    ).catch(() => undefined);
     await new Promise((r) => setTimeout(r, 5));
     // The LITERAL, not the constant. Asserting `armed === DIAL_TIMEOUT_MS` compares the constant
     // with itself: a mutation to 1 ms armed 1 ms and the test agreed. A number that is a contract
@@ -559,6 +570,9 @@ describe("the declared timers, on the path that reads them", () => {
         return socket;
       },
       once() {
+        return socket;
+      },
+      removeListener() {
         return socket;
       },
       setTimeout() {
@@ -605,6 +619,10 @@ describe("what ends an exchange besides an answer", () => {
       },
       once(event: string, listener: (arg: never) => void) {
         return socket.on(event, listener);
+      },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
       },
       setTimeout() {
         return socket;
@@ -681,6 +699,200 @@ describe("what ends an exchange besides an answer", () => {
 });
 
 /**
+ * Each exchange removes its own listeners when it settles.
+ *
+ * A read of many blocks runs one exchange per block over ONE socket, and each exchange listens for
+ * `data`, `error` and `close` while it waits. Listeners an exchange left behind would stay on that
+ * socket for the rest of the read: every later chunk would also reach every earlier exchange's
+ * frame reader.
+ * Every ending is driven here, because a removal on one path says nothing about the others.
+ */
+describe("each exchange removes its own listeners when it settles", () => {
+  function countingSocket(): {
+    socket: unknown;
+    emit: (event: "close" | "error" | "data", arg?: unknown) => void;
+    held: () => { data: number; error: number; close: number };
+    written: Buffer[];
+  } {
+    const handlers: Record<string, ((arg: never) => void)[]> = {};
+    const written: Buffer[] = [];
+    const emit = (event: string, arg?: unknown) => {
+      for (const listener of [...(handlers[event] ?? [])]) (listener as (a: unknown) => void)(arg);
+    };
+    const socket = {
+      on(event: string, listener: (arg: never) => void) {
+        (handlers[event] ??= []).push(listener);
+        return socket;
+      },
+      once(event: string, listener: (arg: never) => void) {
+        return socket.on(event, listener);
+      },
+      removeListener(event: string, listener: (arg: never) => void) {
+        handlers[event] = (handlers[event] ?? []).filter((held) => held !== listener);
+        return socket;
+      },
+      setTimeout() {
+        return socket;
+      },
+      write(chunk: Buffer) {
+        written.push(chunk);
+        return true;
+      },
+      // As a real socket does, a destroy is announced with `close`.
+      destroy() {
+        emit("close");
+        return socket;
+      },
+      destroyed: false,
+    };
+    return {
+      socket,
+      emit,
+      written,
+      held: () => ({
+        data: handlers.data?.length ?? 0,
+        error: handlers.error?.length ?? 0,
+        close: handlers.close?.length ?? 0,
+      }),
+    };
+  }
+
+  /** One complete answer ADU for `request()`, two registers. */
+  function answer(transactionId: number, unitId = 1): Buffer {
+    const head = Buffer.alloc(7);
+    head.writeUInt16BE(transactionId, 0);
+    head.writeUInt16BE(0, 2);
+    head.writeUInt16BE(7, 4);
+    head[6] = unitId;
+    return Buffer.concat([head, Buffer.from([3, 4, 0, 7, 0, 14])]);
+  }
+
+  const NONE = { data: 0, error: 0, close: 0 };
+  const ENDINGS: ReadonlyArray<{
+    readonly name: string;
+    readonly end: (fake: ReturnType<typeof countingSocket>) => void;
+  }> = [
+    { name: "an answer", end: (fake) => fake.emit("data", answer(1)) },
+    { name: "the device's exception", end: (fake) => fake.emit("data", Buffer.from([0, 1, 0, 0, 0, 3, 1, 0x83, 2])) },
+    {
+      name: "a socket error",
+      end: (fake) => fake.emit("error", Object.assign(new Error("reset"), { code: "ECONNRESET" })),
+    },
+    { name: "a close", end: (fake) => fake.emit("close") },
+    { name: "a frame that cannot answer this request", end: (fake) => fake.emit("data", answer(1, 9)) },
+    {
+      name: "a chunk the reader refuses at the header",
+      end: (fake) => fake.emit("data", Buffer.from([0, 1, 0, 0, 0xff, 0xff, 1])),
+    },
+  ];
+
+  for (const ending of ENDINGS) {
+    test(`ended by ${ending.name}, the exchange leaves none of its listeners on the socket`, async () => {
+      const fake = countingSocket();
+      const pending = exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 5000 });
+      // The control: while it waits, the exchange does hold one listener of each kind.
+      expect(fake.held()).toEqual({ data: 1, error: 1, close: 1 });
+      ending.end(fake);
+      await pending.catch(() => undefined);
+      expect(fake.held()).toEqual(NONE);
+    });
+  }
+
+  test("ended by its own deadline, the exchange leaves none of its listeners on the socket", async () => {
+    const fake = countingSocket();
+    const error = await exchangeOnce(fake.socket as never, request(), { expect: EXPECT, timeoutMs: 20 }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("a frame the valve refuses is never written, and the close the session sends removes its listeners", async () => {
+    const fake = countingSocket();
+    const session = new ModbusSession(socketWire(fake.socket as never, { host: "h", port: 1 }));
+    const error = await session
+      .exchange((transactionId) => {
+        const write = request();
+        write.writeUInt16BE(transactionId, 0);
+        write[7] = 0x06; // Write Single Register
+        return write;
+      })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ModbusValveDefect);
+    expect(fake.written).toHaveLength(0);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("a frame the valve refuses, called with no session around it, leaves none of its listeners on the socket", async () => {
+    const fake = countingSocket();
+    const write = request();
+    write[7] = 0x06; // Write Single Register
+    const error = await exchangeOnce(fake.socket as never, write, { expect: EXPECT, timeoutMs: 5000 }).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(ModbusValveDefect);
+    expect(fake.written).toHaveLength(0);
+    // Nothing closed the socket here, so the exchange removed its listeners on its own.
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("the next exchange on the same socket is the only one its chunk reaches", async () => {
+    const fake = countingSocket();
+    const wire = socketWire(fake.socket as never, { host: "h", port: 1 });
+    const first = wire.exchange(request(), { aborted: false });
+    fake.emit("data", answer(1));
+    await first;
+
+    const second = request();
+    second.writeUInt16BE(2, 0);
+    const pending = wire.exchange(second, { aborted: false });
+    // One data listener, the second exchange's own: the first exchange's reader is not fed.
+    expect(fake.held()).toEqual({ data: 1, error: 1, close: 1 });
+    fake.emit("data", answer(2));
+    const got = await pending;
+    if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+    expect(got.frame.transactionId).toBe(2);
+    expect(fake.held()).toEqual(NONE);
+  });
+
+  test("forty exchanges on one dialled socket leave it holding only the dial's own listeners", async () => {
+    const dev = await fakeModbusDevice({ holding: Array.from({ length: 80 }, (_, at) => 100 + at) });
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.name);
+    process.on("warning", onWarning);
+    const endpoint = { host: "127.0.0.1", port: dev.port, egress: ALLOWS_PRIVATE_HOSTS };
+    const socket = await dialModbus(endpoint);
+    const count = () => ({
+      data: (socket as unknown as Socket).listenerCount("data"),
+      error: (socket as unknown as Socket).listenerCount("error"),
+      close: (socket as unknown as Socket).listenerCount("close"),
+    });
+    const baseline = count();
+    const after: Array<ReturnType<typeof count>> = [];
+    const values: number[] = [];
+    try {
+      const wire = socketWire(socket, endpoint);
+      for (let at = 0; at < 40; at += 1) {
+        // oxlint-disable-next-line no-await-in-loop -- one exchange at a time, as a read runs them on one socket.
+        const got = await wire.exchange(readAdu(at + 1, 1, 3, at * 2, 1), { aborted: false });
+        if (got.kind !== "answer") throw new Error(`expected an answer and got ${got.kind}`);
+        values.push(got.frame.body.readUInt16BE(1));
+        after.push(count());
+      }
+      // A warning is emitted on a later tick than the listener that set it off.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off("warning", onWarning);
+      socket.destroy();
+      await dev.close();
+    }
+    expect(values).toEqual(Array.from({ length: 40 }, (_, at) => 100 + at * 2));
+    expect(after).toEqual(Array.from({ length: 40 }, () => baseline));
+    expect(warnings).not.toContain("MaxListenersExceededWarning");
+  });
+});
+
+/**
  * The panel's material at the dial, which is the half the provider hands over.
  *
  * `connection-options.test.ts` measures what the panel YIELDS; these measure what the dial DOES
@@ -710,7 +922,9 @@ describe("the TLS material becomes the dial's options", () => {
   test("a plain endpoint dials net, with no TLS option in sight", () => {
     const seen = capturing();
 
-    void dialModbus({ host: "127.0.0.1", port: 502 }, { connect: seen.connect }).catch(() => undefined);
+    void dialModbus({ host: "127.0.0.1", port: 502, egress: ALLOWS_PRIVATE_HOSTS }, { connect: seen.connect }).catch(
+      () => undefined,
+    );
 
     expect(seen.calls[0]?.tls).toBe(false);
     expect(seen.calls[0]?.target).not.toHaveProperty("rejectUnauthorized");
@@ -719,9 +933,10 @@ describe("the TLS material becomes the dial's options", () => {
   test("the material's trust anchor, client pair and host check all reach the options", () => {
     const seen = capturing();
 
-    void dialModbus({ host: "plant.internal", port: 802, tls: material }, { connect: seen.connect }).catch(
-      () => undefined,
-    );
+    void dialModbus(
+      { host: "plant.internal", port: 802, tls: material, egress: ALLOWS_PRIVATE_HOSTS },
+      { connect: seen.connect },
+    ).catch(() => undefined);
 
     const target = seen.calls[0]?.target ?? {};
     expect(seen.calls[0]?.tls).toBe(true);
@@ -739,7 +954,7 @@ describe("the TLS material becomes the dial's options", () => {
     const seen = capturing();
 
     void dialModbus(
-      { host: "127.0.0.1", port: 802, tls: { ...material, identity: "127.0.0.1" } },
+      { host: "127.0.0.1", port: 802, tls: { ...material, identity: "127.0.0.1" }, egress: ALLOWS_PRIVATE_HOSTS },
       { connect: seen.connect },
     ).catch(() => undefined);
 

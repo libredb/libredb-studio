@@ -60,7 +60,9 @@ import {
   QueryCancelledError,
   QueryError,
 } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
+import { SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
 import { SNOWFLAKE_KEY_SENTENCES } from "@/lib/db/providers/sql/snowflake/auth";
 import { SNOWFLAKE, SNOWFLAKE_ERROR_SENTENCES } from "@/lib/db/providers/sql/snowflake/errors";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
@@ -72,6 +74,7 @@ import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { historyMaskOf, maskStatementForHistory } from "@/lib/history-mask";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { handleAnswer, resultAnswer } from "../../helpers/snowflake-answers";
 import { KEY_TEST_PASSPHRASE, pbes2Pbkdf2Pem, pkcs8Pem, rsaKey } from "../../helpers/snowflake-keys";
 import {
@@ -313,7 +316,13 @@ function build(connection: DatabaseConnection): Built {
   const transports = scriptedTransports();
   const clock = fakeClock();
   const deps = testDeps(transports, clock);
-  const entry = { provider: new SnowflakeProvider(connection, {}, deps), transports, deps, clock, connection };
+  const entry = {
+    provider: new SnowflakeProvider(connection, {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps),
+    transports,
+    deps,
+    clock,
+    connection,
+  };
   built.push(entry);
   return entry;
 }
@@ -462,6 +471,49 @@ describe("connect", () => {
       { message: SNOWFLAKE_INTROSPECT_SENTENCES.emptyWarehouse },
       READER_SECONDARY,
     ]);
+  });
+});
+
+// ============================================================================
+// Through the factory
+// ============================================================================
+
+describe("through the factory", () => {
+  /** A connection as an embedder hands `createDatabaseProvider` one; no transport is injected, and none is used. */
+  const record = (overrides: Partial<DatabaseConnection>): DatabaseConnection => ({
+    id: "sf-factory",
+    name: "Snowflake",
+    type: SNOWFLAKE,
+    host: "myorg-myacct",
+    user: "studio_svc",
+    role: "STUDIO_RO",
+    createdAt: new Date(0),
+    ...overrides,
+  });
+
+  test("a key-pair connection without a key and a token connection without a token are refused before any build, with connect()'s own sentences", async () => {
+    for (const [overrides, sentence] of [
+      [{ authMethod: "keypair" }, SNOWFLAKE_FIELD_SENTENCES.keyEmpty],
+      [{}, SNOWFLAKE_FIELD_SENTENCES.keyEmpty],
+      [{ authMethod: "pat", password: "  " }, SNOWFLAKE_FIELD_SENTENCES.tokenEmpty],
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- each record is refused on its own.
+      const error = await caught(createDatabaseProvider(record(overrides)));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).toBe(sentence);
+    }
+  });
+
+  test("with its secret, the factory returns an unconnected SnowflakeProvider and sends nothing", async () => {
+    for (const overrides of [
+      { authMethod: "keypair", privateKey: PEM },
+      { authMethod: "pat", password: crypto.randomUUID() },
+    ] as const) {
+      // oxlint-disable-next-line no-await-in-loop -- each record is built on its own.
+      const provider = await createDatabaseProvider(record(overrides));
+      expect(provider).toBeInstanceOf(SnowflakeProvider);
+      expect(provider.isConnected()).toBe(false);
+    }
   });
 });
 

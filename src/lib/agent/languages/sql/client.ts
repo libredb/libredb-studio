@@ -4,11 +4,10 @@
  */
 import type { AgentVariantRequirement, AgentWorkflowVariant } from "../../agent-manifest";
 import { AGENT_HANDOVER_BUDGET } from "../../execution-policy";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import type { AgentRunWorkflowType } from "../../types";
 import { OPERATIONS_VARIANT, READ_CLASS_TOOLS } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /** The SQL consent sentence: the database's own read-only session bounds both paths. */
 function sqlHandoverTerms(budgets: StatementBudgets): string {
@@ -16,12 +15,10 @@ function sqlHandoverTerms(budgets: StatementBudgets): string {
 }
 
 /** Agent mode on a SQL engine: the database's read-only session is the boundary. */
-function sqlReadsPosture(bounds: StatementBudgets): AgentPosture {
+function sqlReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per statement, enforced by the engine`,
     title: "Agent mode reads, under a boundary the engine enforces",
     body: `Agent mode runs statements it wrote itself, in a read-only session the database enforces, bounded to ${rows} rows and ${seconds} seconds each. Writes and DDL are refused by the engine rather than by reading the statement. Nothing reaches your editor unless you tick the hand-over when the run opens.`,
@@ -120,9 +117,7 @@ export const SQL_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: sqlReadsPosture,
-    widened: (bounds: StatementBudgets): AgentPosture => ({
-      tone: "widened",
-      headline: "Reads only, and one statement in your editor",
+    widened: (bounds: StatementBudgets): AgentPostureCopy => ({
       qualifier: `${AGENT_HANDOVER_BUDGET.maxResultRows} rows, no time limit, same read-only session`,
       title: "Reads only, and one statement lands in your editor",
       body: sqlHandoverTerms(bounds),

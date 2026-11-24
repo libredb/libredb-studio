@@ -4,7 +4,7 @@
  */
 import { readFile } from "fs/promises";
 import { logger } from "@/lib/logger";
-import { entriesFromConfig, parseSeedConfigText, seedConfigFormatOf } from "./config-text";
+import { entriesFromConfig, parseSeedConfigText, seedConfigFormatOf, unavailableFromConfig } from "./config-text";
 import { OperatorSourceError, type OperatorLoadContext, type OperatorSource, type OperatorSourceResult } from "./types";
 
 export const DEFAULT_SEED_CONFIG_PATH = "/app/config/seed-connections.yaml";
@@ -45,14 +45,18 @@ async function loadFile(context: OperatorLoadContext): Promise<OperatorSourceRes
       logger.warn("Seed config file not found, seed connections disabled", { route: ROUTE, path });
     }
     // An explicit path the operator named is shown as not found; the absent default file is a zero-config install.
-    return { entries: [], skips: [], notes: [], status: { state: explicit ? "missing" : "empty" } };
+    return { entries: [], unavailable: [], skips: [], notes: [], status: { state: explicit ? "missing" : "empty" } };
   }
   missingPathsLogged.delete(path);
 
   const config = parseSeedConfigText(raw, path, seedConfigFormatOf(path));
-  logger.info("Seed config loaded", { route: ROUTE, connectionCount: config.connections.length });
+  logger.info("Seed config loaded", {
+    route: ROUTE,
+    connectionCount: config.connections.length,
+    unavailableCount: config.unavailable.length,
+  });
   const entries = entriesFromConfig(config, path, context.literalValues);
-  return { entries, skips: [], notes: [], status: { state: "ok" } };
+  return { entries, unavailable: unavailableFromConfig(config, path), skips: [], notes: [], status: { state: "ok" } };
 }
 
 export function createFileSource(): OperatorSource {

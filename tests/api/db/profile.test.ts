@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { grantedSnapshot } from "../../helpers/governance/granted-snapshot";
@@ -9,6 +10,7 @@ import { validateSettings } from "@/lib/governance/settings";
 import { buildQueryEvent, queryEventPolicy } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import type { QueryEventSinkState } from "@/lib/query-events/sink";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Mock providers ─────────────────────────────────────────────────────────
 const mockSQLProvider = createMockProvider({
@@ -56,6 +58,7 @@ mock.module("@/lib/query-events/sink", () => ({
     if (governanceEnabled()) recordedEvents.push(input);
   },
   queryEventSinkState: () => sinkState,
+  queryEventSinkClosed: () => false,
   flushQueryEvents: async () => {},
   resetQueryEventSink: () => {},
 }));
@@ -86,6 +89,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockSQLProvider),
+  // The barrel `@/lib/db` re-exports it from this module, and the route loads the barrel; never called here.
+  readProviderDeclarations: mock(async () => {
+    throw new Error("readProviderDeclarations is not read by this route");
+  }),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module.
   findCachedProvider: mock(() => null),
 }));
@@ -95,6 +102,7 @@ const { POST } = await import("@/app/api/db/profile/route");
 const { KafkaProvider } = await import("@/lib/db/providers/stream/kafka/index");
 const { EtcdProvider } = await import("@/lib/db/providers/keyvalue/etcd/index");
 const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+const { admittedFileConnection } = await import("@/lib/db/provider-files");
 const { ConnectionError, PermissionDeniedError, QueryError, TimeoutError } = await import("@/lib/db/errors");
 const { InfluxDB3Provider, InfluxDBProvider } = await import("@/lib/db/providers/timeseries/influxdb/index");
 const { createInfluxClient } = await import("@/lib/db/providers/timeseries/influxdb/client");
@@ -187,7 +195,7 @@ async function connectedInfluxdb3(
   const provider = new InfluxDB3Provider(
     { ...influxdb3Connection, createdAt: new Date(0) },
     {},
-    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
     (options, routes) => createInfluxClient(options, routes, wire.factory),
   );
   await provider.connect();
@@ -233,6 +241,30 @@ describe("POST /api/db/profile", () => {
     expect(emitted).not.toContain("column_name");
   });
 
+  test("quotes the address and the columns by the provider's type, never the port its declaration names", async () => {
+    // The declaration names PostgreSQL's port; only the provider's type can write MySQL's backticks.
+    const mysqlProvider = createMockProvider({
+      type: "mysql",
+      capabilities: { queryLanguage: "sql", defaultPort: 5432 },
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => mysqlProvider);
+    const req = createMockRequest("/api/db/profile", {
+      method: "POST",
+      body: {
+        connection: { ...validConnection, type: "mysql" },
+        tablePath: ["app", "Order Items"],
+        columns: ["Order Date"],
+      },
+    });
+
+    await POST(req as never);
+
+    const emitted = (mysqlProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => String(call[0]));
+    expect(emitted).toContain("SELECT COUNT(*) AS total FROM app.`Order Items`");
+    expect(emitted.some((sql) => sql.startsWith("SELECT `Order Date` FROM app.`Order Items`"))).toBe(true);
+    expect(emitted.join("\n")).not.toContain('"Order');
+  });
+
   // E2E-007's root cause: one PostgreSQL-only statement for every engine. Every statement
   // the route writes is now plain SQL with no cast, so it is checked here on an engine that
   // is not PostgreSQL, through the real provider: SQLite rejected `::text` outright.
@@ -246,7 +278,7 @@ describe("POST /api/db/profile", () => {
     };
 
     async function seededSqlite() {
-      const provider = new SQLiteProvider(sqliteConnection);
+      const provider = new SQLiteProvider(admittedFileConnection(sqliteConnection));
       await provider.connect();
       await provider.query("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, total REAL, payload BLOB)");
       // ids 1..200, so text ordering would answer max 99; every third name is NULL.
@@ -302,7 +334,7 @@ describe("POST /api/db/profile", () => {
     // A lowercase reserved word passes the bare-name test, so it went into the statement
     // unquoted and the engine read it as a keyword: `COUNT(order)` is a syntax error (#2245).
     test("profiles a column named after a reserved word", async () => {
-      const provider = new SQLiteProvider(sqliteConnection);
+      const provider = new SQLiteProvider(admittedFileConnection(sqliteConnection));
       await provider.connect();
       await provider.query('CREATE TABLE orders (id INTEGER PRIMARY KEY, "order" INTEGER, "group" TEXT)');
       await provider.query("INSERT INTO orders VALUES (1, 10, 'a'), (2, NULL, 'b'), (3, 30, NULL)");
@@ -419,6 +451,64 @@ describe("POST /api/db/profile", () => {
       'SELECT COUNT(DISTINCT "body") AS distinct_count FROM dbo.notes',
       'SELECT MIN("body") AS min_value, MAX("body") AS max_value FROM dbo.notes',
     ]);
+  });
+
+  test("an error that holds the connection's credential keeps its status and code and holds none of it", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const failing = (message: string) => {
+      const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+      (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+        throw new QueryError(message, "postgres");
+      });
+      return provider;
+    };
+    const send = () =>
+      POST(
+        createMockRequest("/api/db/profile", {
+          method: "POST",
+          body: { connection, tablePath: ["public", "users"], columns: ["id"] },
+        }) as never,
+      );
+
+    mockGetOrCreateProvider.mockResolvedValueOnce(failing(`relation for ${password} does not exist`));
+    const withheld = await send();
+    const body = await parseResponseJSON<Record<string, unknown>>(withheld);
+    expect(withheld.status).toBe(400);
+    expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(body)).not.toContain(password);
+
+    mockGetOrCreateProvider.mockResolvedValueOnce(failing("relation does not exist"));
+    const clean = await send();
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "relation does not exist" });
+  });
+
+  test("a column refusal that holds the connection's credential answers the withheld sentence in its error and warnings", async () => {
+    const password = crypto.randomUUID();
+    const connection = { ...validConnection, password };
+    const sqlProvider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (sqlProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.includes("geom")) throw new QueryError(`type refused for ${password}`);
+      if (sql.includes("COUNT(DISTINCT")) throw new QueryError(`DISTINCT refused for ${password}`);
+      if (sql.includes("MIN(")) throw new QueryError("MIN refused");
+      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
+      return { rows: [], fields: [] };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(sqlProvider);
+    const body = { connection, tablePath: ["dbo", "notes"], columns: ["body", "geom"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ columns: Record<string, unknown>[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.columns[0].warnings).toEqual([
+      `Distinct count: ${withheldErrorMessage("QueryError")}`,
+      "Min/max: MIN refused",
+    ]);
+    expect(data.columns[1]).toEqual({ name: "geom", totalRows: 4, error: withheldErrorMessage("QueryError") });
+    expect(JSON.stringify(data)).not.toContain(password);
   });
 
   test("a range the engine refuses is reported with its reason", async () => {
@@ -1310,6 +1400,27 @@ describe("POST /api/db/profile under governance", () => {
       statement: "public.users",
       statement_type: "SELECT",
     });
+  });
+
+  test("governance: a profile that fails with an error holding the connection's credential records the withheld sentence", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const password = crypto.randomUUID();
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async () => {
+      throw new QueryError(`relation for ${password} does not exist`, "postgres");
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const body = { connection: { ...governedConnection, password }, tablePath: ["public", "users"], columns: ["id"] };
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+
+    expect(res.status).toBe(400);
+    expect(onlyRow()).toMatchObject({
+      status: "error",
+      error_code: "QUERY_ERROR",
+      error_message: withheldErrorMessage("QueryError"),
+    });
+    expect(JSON.stringify(recordedEvents)).not.toContain(password);
   });
 
   test("governance: refuse mode with a backing-off sink answers 503 AUDIT_UNAVAILABLE before any read and records a refused event", async () => {

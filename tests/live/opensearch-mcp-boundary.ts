@@ -72,6 +72,7 @@ import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -252,6 +253,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       return acquireExecutionProfileProvider(target, profile);
@@ -264,6 +266,9 @@ async function mcp(
 
 const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
+
+/** A refusal the OpenSearch provider wrote, read after the notice naming it; "" when the answer is not one. */
+const refusalOf = (result: ToolResult): string => providerRefusalText(result, "opensearch");
 
 const rowsOf = (result: ToolResult) => result.structuredContent?.rows as Record<string, unknown>[] | undefined;
 
@@ -309,7 +314,7 @@ async function checkOpen(agent: ManagedConnection): Promise<{ seedRole: ManagedC
     sql: "SELECT COUNT(*) AS n FROM probe_buckets",
   });
   check(
-    textOf(admin.result) ===
+    refusalOf(admin.result) ===
       `${TOO_BROAD}${ADMIN_USER} may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name${GRANT_INSTEAD}` &&
       admin.acquired.join() === "agent-read-only",
     `open: with security on, a seed signed in as admin is refused at open -> ${textOf(admin.result).slice(0, 200)}`,
@@ -324,7 +329,7 @@ async function checkOpen(agent: ManagedConnection): Promise<{ seedRole: ManagedC
     });
     const refused = await mcp(login, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" });
     check(
-      textOf(refused.result) === `${TOO_BROAD}${SCRATCH}_${kind} ${finding}${GRANT_INSTEAD}`,
+      refusalOf(refused.result) === `${TOO_BROAD}${SCRATCH}_${kind} ${finding}${GRANT_INSTEAD}`,
       `open: a role granting ${actions.join(" and ")} on * is refused at open -> ${textOf(refused.result).slice(0, 200)}`,
     );
   }
@@ -332,7 +337,7 @@ async function checkOpen(agent: ManagedConnection): Promise<{ seedRole: ManagedC
     cluster_permissions: ["cluster:monitor/state"],
     index_permissions: [{ index_patterns: ["probe_*"], allowed_actions: AGENT_INDICES }],
   });
-  const noVersion = textOf((await mcp(unversioned, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" })).result);
+  const noVersion = refusalOf((await mcp(unversioned, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" })).result);
   check(
     noVersion.startsWith(
       "run_read_query cannot run on this connection: The agent read-only profile is checked on OpenSearch 3.8, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
@@ -399,7 +404,7 @@ async function checkBoundary(origin: URL, connection: ManagedConnection, label: 
     }
     const refused = query.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL;
     check(
-      acquired.join() === "agent-read-only" && textOf(result) === unsent(refused),
+      acquired.join() === "agent-read-only" && refusalOf(result) === unsent(refused),
       `${label}: bypassed, the provider's statement check refuses ${query} unsent -> ${textOf(result).slice(0, 90)}`,
     );
     check(
@@ -463,7 +468,7 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
       // A double-quoted name is part of the index name to 3.8.0, so that one answers raw with no such index.
       const answered = sql.includes('"') ? rows === null : rows !== null && rows.length > 0;
       check(
-        answered && textOf(result) === refusal && acquired.join() === "agent-read-only",
+        answered && refusalOf(result) === refusal && acquired.join() === "agent-read-only",
         `hidden: ${sql} ${sql.includes('"') ? "is refused raw too" : "answers raw"}, and MCP refuses it before it is sent -> ${textOf(result).slice(0, 110)}`,
       );
     }
@@ -478,7 +483,7 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
     for (const arm of [RUN_READ_QUERY, UNFENCED]) {
       const { result, acquired } = await mcp(agent, { sql: bare }, arm);
       check(
-        textOf(result) === unsent(CHARACTER_REFUSAL) && acquired.join() === "agent-read-only",
+        refusalOf(result) === unsent(CHARACTER_REFUSAL) && acquired.join() === "agent-read-only",
         `hidden: ${bare} is refused before it is sent, ${arm === UNFENCED ? "unfenced" : "through the fenced tool"} -> ${textOf(result).slice(0, 110)}`,
       );
     }
@@ -549,7 +554,7 @@ async function checkPluginIndices(origin: URL, reader: ManagedConnection, label:
     for (const [sql, reference] of statements) {
       const { result, acquired } = await mcp(reader, { sql });
       check(
-        textOf(result) === unsent(hiddenTargetRefusal(reference)) && acquired.join() === "agent-read-only",
+        refusalOf(result) === unsent(hiddenTargetRefusal(reference)) && acquired.join() === "agent-read-only",
         `plugin (${label}): ${sql} is refused before it is sent -> ${textOf(result).slice(0, 110)}`,
       );
     }
@@ -572,7 +577,7 @@ async function checkSecurityIndex(wide: ManagedConnection): Promise<void> {
   ] as const) {
     const { result, acquired } = await mcp(wide, { sql });
     check(
-      textOf(result) === refusal && acquired.join() === "agent-read-only",
+      refusalOf(result) === refusal && acquired.join() === "agent-read-only",
       `security index: as a role reading every index, ${sql} is refused unsent -> ${textOf(result).slice(0, 110)}`,
     );
   }
@@ -607,7 +612,7 @@ async function checkForms(agent: ManagedConnection): Promise<void> {
     const { result } = await mcp(agent, { sql }, RUN_READ_QUERY);
     const raw = await send(ORIGIN, "POST", "/_plugins/_sql", { query: sql });
     check(
-      textOf(result) === unsent(STATEMENT_REFUSAL) && raw.status === 400 && PLUGIN_REFUSAL.test(raw.text),
+      refusalOf(result) === unsent(STATEMENT_REFUSAL) && raw.status === 400 && PLUGIN_REFUSAL.test(raw.text),
       `forms: ${sql} passes the MCP fence and the provider refuses it unsent; sent raw the plugin refuses it -> ${raw.status}`,
     );
   }

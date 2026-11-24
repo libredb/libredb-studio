@@ -50,6 +50,7 @@ import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
+import { fakeTextScrub, providerRefusalText } from "../helpers/mcp-fixtures";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -139,6 +140,7 @@ async function mcp(
     caller: { username: "live", role: "admin" },
     visibleConnections: async () => [connection],
     resolve: async () => connection,
+    textScrub: fakeTextScrub,
     acquire: async (target: ManagedConnection, profile: ExecutionProfile) => {
       acquired.push(profile);
       const provider: DatabaseProvider = await acquireExecutionProfileProvider(target, profile);
@@ -342,7 +344,10 @@ async function main(): Promise<void> {
       fenced.result.isError === true && fenced.acquired.length === 0 && ownWords,
       `refused: ${what} fenced, in its own words (${refusal?.code}), nothing acquired`,
     );
-    check(textOf(unfenced.result).includes(NOT_SENT), `refused: ${what} unfenced, refused before anything was sent`);
+    check(
+      providerRefusalText(unfenced.result, "snmp").startsWith(NOT_SENT),
+      `refused: ${what} unfenced, refused before anything was sent`,
+    );
     refused.push({ request: what, code: refusal?.code, ownWords, fenced: textOf(fenced.result).slice(0, 80) });
   }
   const overBudget = await mcp(broad, { statement: "walk 1.3.6.1.4.1.8072.1.2" });
@@ -378,7 +383,7 @@ async function main(): Promise<void> {
   const unfencedSet = await mcp(writer, { statement: "set sysContact.0 s tool-set" }, UNFENCED);
   const contactAfterTool = rawGet(".1.3.6.1.2.1.1.4.0");
   check(
-    textOf(unfencedSet.result).includes(NOT_SENT) && contactAfterTool === contactAfterRaw,
+    providerRefusalText(unfencedSet.result, "snmp").startsWith(NOT_SENT) && contactAfterTool === contactAfterRaw,
     "writes: the same Set through the unfenced tool, with the writer's community, sent nothing and changed nothing",
   );
 

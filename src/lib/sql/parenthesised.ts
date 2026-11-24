@@ -14,7 +14,7 @@
  * cross it.
  */
 
-import type { SqlGrammar } from "./grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "./spans";
 import { readSqlWord } from "./words";
 

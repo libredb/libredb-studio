@@ -6,7 +6,7 @@ in [`packaging/linux/`](../linux).
 
 | Piece | Purpose |
 |---|---|
-| [`launcher/`](launcher) | Go source of `libredb-studio.exe` — resolves its own directory, applies the local-first defaults (`HOSTNAME`/`LIBREDB_BIND`, `STORAGE_SQLITE_PATH` under `%LOCALAPPDATA%\LibreDB\Studio`), and runs the bundled `node\node.exe` against `server.js` |
+| [`launcher/`](launcher) | Go source of `libredb-studio.exe`: resolves its own directory, applies the local-first defaults (`HOSTNAME`/`LIBREDB_BIND`, `STORAGE_SQLITE_PATH` under `%LOCALAPPDATA%\LibreDB\Studio`, `SEED_ASSETS_DIR` at the `seed-assets` directory beside it, `NEXT_MANUAL_SIG_HANDLE=true` so Studio's shutdown handler ends the server), and runs the bundled `node\node.exe` against `server.js` |
 | [`fetch-node.sh`](fetch-node.sh) | Downloads the pinned Node runtime zip from nodejs.org, verifies the in-repo sha256, installs only `node.exe` into the payload |
 | [`../winget/`](../winget) | winget manifest templates (`LibreDB.Studio`), rendered by [`scripts/render-windows-packaging.mjs`](../../scripts/render-windows-packaging.mjs) |
 | [`../chocolatey/`](../chocolatey) | Chocolatey package templates (`libredb-studio`), rendered by the same script |

@@ -1,16 +1,18 @@
+import path from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { LAUNCH_E2E_ENV } from "./e2e/helpers/launch-token";
 
 // Ports of every Playwright configuration, so none collides with another: this file's main server
 // 3000 (E2E_PORT), offline server 3010 (E2E_OFFLINE_PORT), passkey server 3011 (E2E_PASSKEY_PORT),
-// launch server 3012 (E2E_LAUNCH_PORT) and Firestore server 3013 (E2E_FIRESTORE_PORT), whose stub listens on 3014
-// (E2E_FIRESTORE_STUB_PORT); playwright.base-path.config.ts's app 3020 and proxy 3021.
+// launch server 3012 (E2E_LAUNCH_PORT), Firestore server 3013 (E2E_FIRESTORE_PORT), whose stub listens on 3014
+// (E2E_FIRESTORE_STUB_PORT), and unknown-provider seed server 3015 (E2E_UNKNOWN_SEED_PORT);
+// playwright.base-path.config.ts's app 3020 and proxy 3021.
 // Override one with its variable when that port is occupied by another instance.
 const port = Number(process.env.E2E_PORT ?? 3000);
 
 // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb
-// providers spec and the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs get a second server
-// process on its own port - see the projects and the webServer array below for why. Override with
+// providers spec and the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs and the
+// unknown-provider connection spec get a second server process on its own port - see the projects and the webServer array below for why. Override with
 // E2E_OFFLINE_PORT under the same collision circumstances as E2E_PORT.
 const offlinePort = Number(process.env.E2E_OFFLINE_PORT ?? 3010);
 
@@ -25,11 +27,20 @@ const launchPort = Number(process.env.E2E_LAUNCH_PORT ?? 3012);
 const firestorePort = Number(process.env.E2E_FIRESTORE_PORT ?? 3013);
 const firestoreStubPort = Number(process.env.E2E_FIRESTORE_STUB_PORT ?? 3014);
 
+// unknown-provider-seed.spec.ts gets a sixth server process, whose seed file holds an entry whose type names no
+// provider: see the chromium-unknown-provider-seed project for why.
+const unknownSeedPort = Number(process.env.E2E_UNKNOWN_SEED_PORT ?? 3015);
+
 // How long each server below may take to answer. The first one runs a cold `next build` before `next start`, and
 // every other one waits for that build's .next/BUILD_ID, so each budget covers the build. Measured 2026-10-12 on
 // GitHub runners: the build's first output came 65 to 114 s after the command started in ten runs of main, and
 // two runs were stopped at the earlier 120 s before the build finished.
 const SERVER_START_TIMEOUT_MS = 300_000;
+
+// The built-in samples' assets, which the server reads from SEED_ASSETS_DIR (docs/DISTRIBUTION.md, "Built-in sample
+// assets"): every Studio server below names this checkout's own directory, so a value the caller exported never changes
+// what the suite checks.
+const seedAssetsEnv = { SEED_ASSETS_DIR: path.join(__dirname, "seed-assets") };
 
 const testCredentials = {
   JWT_SECRET: "test-jwt-secret-for-e2e-tests-32ch",
@@ -69,11 +80,12 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
       // offline-editor.spec.ts, the kafka, etcd, neo4j, milvus, qdrant and weaviate provider specs, the influxdb providers
-      // spec, the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs and the firestore dialog spec
-      // run under their own projects below, against the second server, passkey.spec.ts against the third,
-      // launch.spec.ts against the fourth and the firestore browse spec against the fifth.
+      // spec, the oxia, databend, snowflake, spark, s3, kubernetes, rabbitmq and mqtt provider specs, the firestore dialog spec and
+      // the unknown-provider connection spec run under their own projects below, against the second server, passkey.spec.ts against the third,
+      // launch.spec.ts against the fourth, the firestore browse spec against the fifth and the unknown-provider seed spec
+      // against the sixth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|totp-enrolment-qr|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|unknown-provider-connection|unknown-provider-seed|passkey|totp-enrolment-qr|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -237,6 +249,22 @@ export default defineConfig({
       testMatch: /mqtt-provider\.spec\.ts/,
     },
     {
+      // unknown-provider-connection.spec.ts reloads the studio in every test, so it pays the shared account's hydration
+      // requests twice, and its file sorts late, where the specs before it have spent that account's "query" bucket on
+      // the shared server. It takes the second server for the reason kafka-provider.spec.ts does.
+      name: "chromium-unknown-provider",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${offlinePort}` },
+      testMatch: /unknown-provider-connection\.spec\.ts/,
+    },
+    {
+      // unknown-provider-seed.spec.ts reads a seed file that holds an entry whose type names no provider (FND-1). A seed
+      // file is the server's own, and every spec on a shared server would list its entries and could pick one as its
+      // default connection, so this spec has a server of its own and no other spec shares it.
+      name: "chromium-unknown-provider-seed",
+      use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${unknownSeedPort}` },
+      testMatch: /unknown-provider-seed\.spec\.ts/,
+    },
+    {
       // Passkeys need an account registry, so this server runs in store mode (STORAGE_PROVIDER=sqlite)
       // with PASSKEY_ORIGIN set; the servers above keep the default local mode, where passkeys are off
       // and the Permissions-Policy still denies publickey-credentials-get. Chromium only: the virtual
@@ -267,11 +295,22 @@ export default defineConfig({
       // rm -f first: without it, a local re-run reusing a stale .next/BUILD_ID from a previous
       // build would let the second server below start serving mid-rebuild, before this build
       // finishes overwriting it.
+      //
+      // RATE_LIMIT_QUERY_MAX is raised for the reason the second server raises it: nearly every spec
+      // here signs in as user@libredb.org, so the suite shares that account's "query" bucket, and the
+      // production budget of 120 requests a minute is sized for one person. Measured on 2026-11-21, in a
+      // local run of every spec on this server (12 workers, no retries): user@libredb.org spent 532
+      // requests of that bucket inside 50 seconds and admin@libredb.org 137. With the default, `CI=1
+      // bunx playwright test e2e/security-headers.spec.ts e2e/object-edit.spec.ts --project=chromium
+      // --repeat-each=5 --retries=0` failed 2 of its 40 runs on "Too many requests" and 10 more did not
+      // run. 10000 is the second server's figure, close to twenty times that peak. Raised rather than
+      // set to 0, so the limiter still runs on every request; no spec on this server asserts its refusal
+      // (tests/unit/e2e-project-servers.test.ts).
       command: "rm -f .next/BUILD_ID && bun run build && bun start",
       url: `http://localhost:${port}`,
       reuseExistingServer: !process.env.CI,
       timeout: SERVER_START_TIMEOUT_MS,
-      env: { PORT: String(port), ...testCredentials },
+      env: { PORT: String(port), RATE_LIMIT_QUERY_MAX: "10000", ...seedAssetsEnv, ...testCredentials },
     },
     {
       // Reuses the SAME build output as the server above - it only ever needs to wait for that
@@ -299,6 +338,7 @@ export default defineConfig({
         PORT: String(offlinePort),
         STORAGE_SQLITE_PATH: "./data-e2e-offline/libredb-storage.db",
         RATE_LIMIT_QUERY_MAX: "10000",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -322,6 +362,7 @@ export default defineConfig({
         // cases of passkey.spec.ts share one client budget; the defaults (5 and 10) would refuse them.
         RATE_LIMIT_LOGIN_MAX: "100",
         RATE_LIMIT_PASSKEY_MAX: "100",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -344,6 +385,7 @@ export default defineConfig({
         // provokes shares one client budget with every retry.
         RATE_LIMIT_LOGIN_MAX: "100",
         ...LAUNCH_E2E_ENV,
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },
@@ -362,6 +404,26 @@ export default defineConfig({
         LIBREDB_EMBEDDED_SAMPLE: "false",
         SQLITE_EMBEDDED_SAMPLE: "false",
         FIRESTORE_EMULATOR_HOST: `127.0.0.1:${firestoreStubPort}`,
+        ...seedAssetsEnv,
+        ...testCredentials,
+      },
+    },
+    {
+      // The same shared build. Its seed file lists an entry whose type names no provider and a SQLite seed offered to
+      // admins alone, the file-access posture an admin needs to open SQLite. Its own data dir, a raised query bucket for
+      // the reason the second server raises it, and both embedded samples off, so the seed file is the whole list.
+      command: "rm -rf data-e2e-unknown-seed && until [ -f .next/BUILD_ID ]; do sleep 1; done; bun start",
+      url: `http://localhost:${unknownSeedPort}`,
+      reuseExistingServer: !process.env.CI,
+      timeout: SERVER_START_TIMEOUT_MS,
+      env: {
+        PORT: String(unknownSeedPort),
+        STORAGE_SQLITE_PATH: "./data-e2e-unknown-seed/libredb-storage.db",
+        SEED_CONFIG_PATH: "./e2e/fixtures/unknown-provider-seed-connections.json",
+        RATE_LIMIT_QUERY_MAX: "10000",
+        LIBREDB_EMBEDDED_SAMPLE: "false",
+        SQLITE_EMBEDDED_SAMPLE: "false",
+        ...seedAssetsEnv,
         ...testCredentials,
       },
     },

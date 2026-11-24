@@ -193,6 +193,7 @@ ExecStartPre=-/usr/bin/docker rm -f libredb-studio
 ExecStart=/usr/bin/docker run \\
   --name libredb-studio \\
   --init \\
+  --stop-timeout 30 \\
   --network libredb \\
   -p 127.0.0.1:3000:3000 \\
   --env-file /etc/libredb-studio.env \\

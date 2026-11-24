@@ -17,8 +17,8 @@
  * whole content is "these two agree" can drift silently, and they had already begun
  * to: measured at cbca31d the two predicates behaved identically over 161 inputs
  * while their comments disagreed about whether exponent form was a shape the read can
- * print. `providers/sql/read-only-budget.ts` is the precedent followed here - one
- * small module in the SQL provider family, stated once, imported by each provider
+ * print. `src/lib/db/read-only-budget.ts` is the precedent followed here - one
+ * small module, stated once, imported by each provider
  * that must obey it - and `tests/unit/db/sqlite-int64.test.ts` is what keeps a third
  * driver from quietly growing a copy of its own.
  *

@@ -17,7 +17,7 @@ import {
   INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
   INFLUXQL_AGENT_WIRE_EXPANSION,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
-import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/languages/influxql/agent-statement";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -42,20 +42,21 @@ import {
   influxqlSelectQuery,
   influxqlTableQuery,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-generators";
-import { INFLUXQL_KEYWORDS } from "@/lib/db/providers/timeseries/influxdb/influxql-lexer";
+import { INFLUXQL_KEYWORDS } from "@/lib/languages/influxql/lexer";
 import { describeInfluxqlMeasurement } from "@/lib/db/providers/timeseries/influxdb/influxql-objects";
 import {
   evaluateInfluxql,
   INFLUXQL_MAX_TEXT_BYTES,
   INFLUXQL_POLICY_SENTENCES,
   type InfluxqlRefusalReason,
-} from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+} from "@/lib/languages/influxql/policy";
 import { InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import { INFLUXQL_CHUNK_SIZE, INFLUXQL_ROUTES, type InfluxRoute } from "@/lib/db/providers/timeseries/influxdb/routes";
 import { INFLUX_SYSTEM_DATABASES, RUN_DATABASE_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/run-database";
 import { GENERATION_TRAITS } from "@/lib/db/providers/timeseries/influxdb/versions";
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadInfluxCapture, loadInfluxManifest } from "../../../helpers/influxdb-fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
@@ -240,7 +241,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const remote = new InfluxDBProvider(
       { ...INFLUXDB, host: "influx.example.com", password: TEST_PASSWORD },
       {},
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       factory,
     );
     const sentence = await rejection(() => remote.connect());
@@ -272,7 +273,12 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const statements = [...(line ?? "").matchAll(/`([^`]+)`/g)].map((match) => match[1]);
     expect(statements.length).toBe(10);
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     await connected.connect();
     for (const statement of [...statements, "SHOW MEASUREMENTS"]) {
       const text = statement === "SHOW GRANTS FOR" ? 'SHOW GRANTS FOR "reader"' : statement;
@@ -319,7 +325,12 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       "SHOW USERS": "SHOW USERS",
     };
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
+    const connected = new InfluxDBProvider(
+      { ...INFLUXDB, database: "home" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
     await connected.connect();
     const withoutDatabase: string[] = [];
     for (const [form, text] of Object.entries(grammar)) {
@@ -525,10 +536,11 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     );
   });
 
-  test("the monitoring empty states are the labels'", () => {
+  test("the labels declare no empty state for the Queries and Sessions panels, which are not offered", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("the seed recipe is a connection the seed schema accepts, and its fields are the recipe's in SEED_CONNECTIONS.md", () => {

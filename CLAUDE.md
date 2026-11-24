@@ -33,7 +33,7 @@ bun run format           # Biome formatter check (format:fix to write); CSS/JSON
 bun run lint             # oxlint (fast, syntactic) then ESLint 9
 bun run lint:oxc         # oxlint only
 bun run typecheck        # TypeScript strict
-bun run test             # every test file under tests/ (except tests/live/), one bun process per file
+bun run test             # every test file under tests/ and packages/*/tests/ (except their live/), one bun process per file
 bun run test:unit        # one layer; also test:api, test:integration, test:hooks, test:security, test:evals, test:components
 bun run test:e2e         # Playwright (builds and starts its own servers; see playwright.config.ts)
 bun run test:coverage    # coverage report (merged lcov)
@@ -72,7 +72,7 @@ Run the required-check gate set locally before claiming done. [`.github/workflow
   && bun run test && bun run build
 ```
 
-A clean local pass is still not a guarantee: the same job also runs `build:lib` + `attw` and `gofmt`/`go vet`/`go test` over `packaging/windows/launcher`, and the coverage gate below lives in a separate required job.
+A clean local pass is still not a guarantee: the same job also runs `build:lib`, `attw`, `lib:closure`, `lib:load` and `gofmt`/`go vet`/`go test` over `packaging/windows/launcher`, and the coverage gate below lives in a separate required job.
 
 > **100% line coverage is a hard CI gate — work TDD, always.** `scripts/check-coverage.mjs` fails the required `Unit & Integration Tests` job below 100%, so every change that adds or alters executable lines lands with its tests **in the same PR** — write the failing test first, even unasked. `bun run test:coverage && bun run coverage:check` prints the exact uncovered file:line ranges. Measurement rationale: [`docs/TOOLCHAIN.md`](docs/TOOLCHAIN.md).
 
@@ -85,12 +85,19 @@ A clean local pass is still not a guarantee: the same job also runs `build:lib` 
 
 > **⚠️ Providers are the lifeblood of this project — keep the triad in lockstep: code ↔ docs ↔ tests**, 1:1 per canonical type-id — the type-id set is the `DatabaseType` union in [`src/lib/types.ts`](src/lib/types.ts), which is the only list:
 > - Code: `src/lib/db/providers/<family>/<type-id>.ts`, or `.../<type-id>/index.ts` when the provider is split across modules · Docs: `docs/providers/<type-id>.md` · Tests: `tests/integration/db/<type-id>-provider.test.ts`
+> - **Or as a workspace package:** Code: `packages/provider-<type-id>/src/` · Docs: `packages/provider-<type-id>/docs/<type-id>.md` · Tests: `packages/provider-<type-id>/tests/integration/<type-id>-provider.test.ts`.
+>   A type-id lives in exactly one layout, so the change that moves a provider deletes its legacy code, doc and integration test.
+>   A package serves only the type-id its directory names, until the provider manifest can declare several.
+>   `tests/unit/db/provider-triad.test.ts` holds this for every shipped type-id, and a test finds a provider's files through `tests/helpers/provider-layout.ts`.
 > - **One directory may serve two type-ids** — `sql/search/` is both `elasticsearch` and `opensearch` (#424), and `timeseries/influxdb/` is both `influxdb` and `influxdb3`, two classes on two bases.
 >   Docs and tests stay 1:1 anyway: the invariant is per type-id.
+>   A type-id moved out of such a directory leaves `PROVIDER_DIRECTORY_MAP` (`tests/helpers/provider-directory-map.ts`) in the same change.
 > - **Agent leg.** A type-id whose `AGENT_STATEMENT_LANGUAGE` row is non-null also keeps, in the same PR: Code: `src/lib/agent/languages/<statement-language>/engines/<type-id>.ts` plus its client row in `languages/<statement-language>/engines/client.ts` · Docs: the `Agent language pack` subsection of `docs/providers/<type-id>.md`, naming the statement-language family and every overlay member · Tests: `tests/unit/lib/agent/engine-docs.test.ts`, which holds that subsection to the overlay, plus the engine's cases in `engine-overlays.test.ts` and `engine-pack-contract.test.ts`.
+>   The agent leg has a place only in the legacy layout so far, so a type-id with a non-null row stays there until the change that moves it gives its package one, and the triad test refuses it in a package until then.
 > - Any change to one side MUST sync the others **in the same PR**. The doc mirrors the code and the code mirrors the doc — never let them drift.
 
 - **DB abstraction:** Strategy Pattern. SQL-dialect providers extend `SQLBaseProvider`; the non-SQL ones (`mongodb`, `redis`, `couchbase`, `firestore`, `prometheus`, `influxdb`, `kafka`, `mqtt`, `etcd`, `oxia`, `milvus`, `qdrant`, `weaviate`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly, `neo4j` extends `GraphBaseProvider` (`src/lib/db/graph/`), and `SQLBaseProvider` and `GraphBaseProvider` themselves extend it. Inside `src/lib/db`, never branch on the type id; drive behaviour through capabilities/labels. Outside the provider layer, a per-engine fact is a row of a contract registry, never a type-id branch: the `src/lib/db/connection-string/`, `src/lib/db/execution-ui/`, `src/lib/db/sql-grammar/`, `src/lib/db/migration-ddl/` and `src/lib/db/sql-writing/` rows are declared beside each provider, and `CONNECTION_FIELDS` and `SEED_ONLY_FIELDS` are central UI-free tables in `src/lib/db/connection-fields.ts`; `tests/unit/lib/no-engine-branches.test.ts` fails on any other type-id branch, and its debt list is empty, so a new branch is moved into a contract rather than listed.
+- **Core imports into provider directories:** `tests/unit/lib/db/provider-imports.test.ts` lists every import from core into `src/lib/db/providers/` by file and fails on a new one, except a new engine's rows in the registry indexes and the factory; [`docs/PROVIDER_IMPORTS.md`](docs/PROVIDER_IMPORTS.md) records where each shared module goes and the PR that removes each inward import. A statement language's confirmation row lives in its core family module (`src/lib/languages/<language>/`, `src/lib/sql/` or `src/lib/db/graph/cypher/`), not beside a provider.
 - **Auth:** `NEXT_PUBLIC_AUTH_PROVIDER` = `local` (email/password), `oidc` (PKCE → the same JWT cookie) or `openshift` (the cluster's OAuth server, its token kept in server memory under a session handle); read only through `src/lib/config/auth-provider.ts`, and any other value stops the boot; `src/proxy.ts` enforces RBAC (admin vs user). [`docs/OIDC.md`](docs/OIDC.md), [`docs/OPENSHIFT.md`](docs/OPENSHIFT.md).
 - **Storage:** write-through cache — localStorage serves reads, `useStorageSync` pushes mutations to the server (debounced). `STORAGE_PROVIDER` (server-side only) = `local` | `sqlite` | `postgres`. [`docs/STORAGE.md`](docs/STORAGE.md).
 - **API routes:** all backend in `src/app/api/`, except `/health`, which is a route at the app root so the plainest liveness path exists; JWT-protected except the public set in [`src/proxy.ts`](src/proxy.ts) — `/login`, `/launch`, `/api/auth/*`, `/health`, `/api/health`, `/api/db/health`, `/api/ready`, `/api/storage/config`, `/_next`, `/favicon.ico` and static assets — plus two machine paths gated by bearer credentials of their own instead of the JWT: the agent drive callback and /api/mcp. `src/proxy.ts` is the authority; do not restate the list elsewhere.

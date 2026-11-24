@@ -9,9 +9,11 @@ import {
   readClusterEndpoint,
 } from "@/lib/db/providers/platform/kubernetes/connection-options";
 import { TUNNEL_FAR_END, type DatabaseConnection, type WithTunnelFarEnd } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { kubernetesConnection, TEST_TOKEN } from "../../../helpers/kubernetes-connection";
 
-const CONTEXT = { queryTimeout: 30_000, appVersion: "0.18.2" };
+// An allowing decision, so the origin never refuses and each case's own rule is the subject.
+const CONTEXT = { queryTimeout: 30_000, appVersion: "0.18.2", egress: ALLOWS_PRIVATE_HOSTS };
 
 function refusal(connection: DatabaseConnection & WithTunnelFarEnd): DatabaseConfigError {
   try {
@@ -52,6 +54,7 @@ describe("an accepted connection", () => {
     const endpoint = readClusterEndpoint(kubernetesConnection({ password: "" }), {
       queryTimeout: 1000,
       appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
     });
     expect(endpoint.headers).toEqual({ "user-agent": "libredb-studio (kubernetes)" });
     expect(endpoint.secretForms).toEqual([]);
@@ -118,10 +121,6 @@ describe("credentials", () => {
     expect(readClusterEndpoint(proxy, CONTEXT).anonymous).toBe(false);
   });
 
-  test("a user name is refused: basic authentication is never sent", () => {
-    expect(refusal(kubernetesConnection({ user: "admin" })).message).toBe(S.userNotTaken);
-  });
-
   test("a Bearer prefix is refused with a sentence to remove it, in any case", () => {
     expect(refusal(kubernetesConnection({ password: `Bearer ${TEST_TOKEN}` })).message).toBe(S.bearerPrefix);
     expect(refusal(kubernetesConnection({ password: `bearer ${TEST_TOKEN}` })).message).toBe(S.bearerPrefix);
@@ -136,12 +135,6 @@ describe("credentials", () => {
   test("a field of the wrong type is refused naming the field", () => {
     expect(refusal(kubernetesConnection({ password: 5 as never })).message).toBe(
       "The connection's password must be a string; nothing was sent.",
-    );
-    expect(refusal(kubernetesConnection({ sshTunnel: "on" as never })).message).toBe(
-      "The connection's sshTunnel must be an object; nothing was sent.",
-    );
-    expect(refusal(kubernetesConnection({ sshTunnel: { enabled: "yes" } as never })).message).toBe(
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
     );
   });
 });
@@ -264,11 +257,13 @@ describe("TLS and plain HTTP", () => {
 });
 
 describe("the tunnel and the timeout", () => {
-  test("a tunnel that is on but did not open is refused", () => {
-    const connection = kubernetesConnection({
-      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
-    });
-    expect(refusal(connection).message).toBe(S.tunnelNotOpened);
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      const endpoint = readClusterEndpoint(kubernetesConnection({ sshTunnel: sshTunnel as never }), CONTEXT);
+      expect(endpoint).toEqual(readClusterEndpoint(kubernetesConnection(), CONTEXT));
+    }
   });
 
   test("a link-local literal far end is refused", () => {
@@ -288,6 +283,8 @@ describe("the tunnel and the timeout", () => {
   });
 
   test("a query timeout outside 1 to 2147483647 is refused", () => {
-    expect(() => readClusterEndpoint(kubernetesConnection(), { queryTimeout: 0 })).toThrow(S.queryTimeout);
+    expect(() =>
+      readClusterEndpoint(kubernetesConnection(), { queryTimeout: 0, egress: ALLOWS_PRIVATE_HOSTS }),
+    ).toThrow(S.queryTimeout);
   });
 });

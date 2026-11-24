@@ -219,7 +219,7 @@ describe("supportsResultPagination (#816)", () => {
   test.each(TYPES)("%s: the statement a tree click generates is bounded at the preview page size", async (type) => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
     const capabilities = provider.getCapabilities();
-    const generated = generateTableQuery(TREE_CLICK_PATH[type] ?? DEFAULT_TREE_CLICK_PATH, capabilities);
+    const generated = generateTableQuery(TREE_CLICK_PATH[type] ?? DEFAULT_TREE_CLICK_PATH, type, capabilities);
     const pageOne = prepare(provider, 0, generated);
     expect(pageOne.threw).toBe(false);
     if (pageOne.threw) return;

@@ -88,6 +88,7 @@ import { generateSelectQuery } from "@/lib/query-generators";
 import type { ColumnSchema, DatabaseConnection, SSLConfig } from "@/lib/types";
 import { capture, captureBody, captureVm } from "../../../helpers/prometheus-fixtures";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // The fake network, answering from what a live server answered
@@ -271,7 +272,7 @@ async function connectedProvider(
   overrides: Partial<DatabaseConnection> = {},
   options: ProviderOptions = {},
 ): Promise<PrometheusProvider> {
-  const provider = new PrometheusProvider(connection(overrides), options, {}, deps());
+  const provider = new PrometheusProvider(connection(overrides), options, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
   await provider.connect();
   sent = [];
   return provider;
@@ -316,10 +317,15 @@ describe("connect", () => {
     }) as typeof fetch;
 
     // Neither `endpoint` nor `send` is injected: the composition every real connection gets (#1086).
-    const provider = new PrometheusProvider(connection(), {}, {}, { now: () => NOW_MS });
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, { now: () => NOW_MS });
     await provider.connect();
     // The control: the port is the connection's own, not a constant the adapter writes.
-    await new PrometheusProvider(connection({ port: 9091 }), {}, {}, { now: () => NOW_MS }).connect();
+    await new PrometheusProvider(
+      connection({ port: 9091 }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { now: () => NOW_MS },
+    ).connect();
 
     expect(provider.isConnected()).toBe(true);
     expect(fetched).toEqual([
@@ -336,7 +342,12 @@ describe("connect", () => {
     };
 
     for (const ssl of [undefined, { mode: "disable" as const }, { mode: "require" as const }]) {
-      await new PrometheusProvider(connection({ ssl }), {}, {}, { endpoint, send, now: () => NOW_MS }).connect();
+      await new PrometheusProvider(
+        connection({ ssl }),
+        {},
+        { egress: ALLOWS_PRIVATE_HOSTS },
+        { endpoint, send, now: () => NOW_MS },
+      ).connect();
     }
 
     expect(asked).toEqual([
@@ -347,12 +358,17 @@ describe("connect", () => {
   });
 
   test("hands the connection's user and password to the transport as its Basic credential", async () => {
-    await new PrometheusProvider(connection({ user: "reader", password: "secret" }), {}, {}, deps()).connect();
+    await new PrometheusProvider(
+      connection({ user: "reader", password: "secret" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      deps(),
+    ).connect();
     expect(authorizationOf(sent[0])).toBe(`Basic ${Buffer.from("reader:secret").toString("base64")}`);
 
     // The control: a connection with neither sends no credential at all.
     sent = [];
-    await new PrometheusProvider(connection(), {}, {}, deps()).connect();
+    await new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps()).connect();
     expect(authorizationOf(sent[0])).toBeUndefined();
   });
 
@@ -364,7 +380,7 @@ describe("connect", () => {
   test.each(LINE_FEED_CREDENTIALS)(
     "a line feed in %s is refused before any request, and neither the error nor the log carries it (#1085 S3)",
     async (_where, credential) => {
-      const provider = new PrometheusProvider(connection(credential), {}, {}, deps());
+      const provider = new PrometheusProvider(connection(credential), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
 
       const failure = await provider.connect().then(
         () => new Error("connect resolved with a line feed in the credential"),
@@ -386,7 +402,7 @@ describe("connect", () => {
 
   test("an unreachable server is a ConnectionError, logged, and the provider stays disconnected", async () => {
     respond = () => Promise.reject(new RequestFailure("network", "connect ECONNREFUSED 127.0.0.1:9090"));
-    const provider = new PrometheusProvider(connection(), {}, {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -398,9 +414,9 @@ describe("connect", () => {
     // plain-text 401, and no envelope.
     respond = async () => replay("auth-no-credentials");
 
-    await expect(new PrometheusProvider(connection(), {}, {}, deps()).connect()).rejects.toBeInstanceOf(
-      AuthenticationError,
-    );
+    await expect(
+      new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps()).connect(),
+    ).rejects.toBeInstanceOf(AuthenticationError);
   });
 
   test("with no send injected, a plaintext connection sends through the global fetch", async () => {
@@ -410,7 +426,12 @@ describe("connect", () => {
       fetched.push(String(input));
       return new Response(buildinfo.text, { status: buildinfo.status, headers: buildinfo.headers });
     }) as typeof fetch;
-    const provider = new PrometheusProvider(connection(), {}, {}, { endpoint: () => TEST_ENDPOINT, now: () => NOW_MS });
+    const provider = new PrometheusProvider(
+      connection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { endpoint: () => TEST_ENDPOINT, now: () => NOW_MS },
+    );
 
     await provider.connect();
 
@@ -481,7 +502,7 @@ describe("connect over TLS, through the request function a real connection gets 
    * the default request function, from nothing but the connection and its TLS panel.
    */
   const providerFor = (port: number, ssl: SSLConfig): PrometheusProvider =>
-    new PrometheusProvider(connection({ host: "127.0.0.1", port, ssl }));
+    new PrometheusProvider(connection({ host: "127.0.0.1", port, ssl }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
   test("verify-full with no CA refuses the test CA's server as a ConnectionError naming the code, and sends it nothing", async () => {
     const { port, received } = await serveTls();
@@ -561,7 +582,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
   test("every request carries the response byte cap: connect, a query, a monitoring read and an object read", async () => {
     respond = oneMetricListing;
-    const provider = new PrometheusProvider(connection(), {}, {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
 
     await provider.connect();
     await provider.query("up");
@@ -593,7 +614,12 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
       respond = oneMetricListing;
       // Not the product's default, so a deadline written as a constant is told apart from the
       // connection's own.
-      const provider = new PrometheusProvider(connection(), { queryTimeout: 4321 }, {}, deps());
+      const provider = new PrometheusProvider(
+        connection(),
+        { queryTimeout: 4321 },
+        { egress: ALLOWS_PRIVATE_HOSTS },
+        deps(),
+      );
 
       await provider.connect();
       await provider.getTableStats();
@@ -607,7 +633,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
       // The control: with none configured it is the product's own default.
       sent = [];
-      await new PrometheusProvider(connection(), {}, {}, deps()).connect();
+      await new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps()).connect();
       expect(sent.map(deadlineOf)).toEqual([DEFAULT_QUERY_TIMEOUT]);
     } finally {
       timeout.mockRestore();
@@ -646,7 +672,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
 describe("query", () => {
   test("a provider that is not connected refuses before anything is sent", async () => {
-    const provider = new PrometheusProvider(connection(), {}, {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
 
     await expect(provider.query("up")).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(sent).toEqual([]);
@@ -737,7 +763,12 @@ describe("query", () => {
       { name: "code", type: "label", nullable: true, isPrimary: false },
       { name: "handler", type: "label", nullable: true, isPrimary: false },
     ];
-    const generated = generateSelectQuery(["prometheus_http_requests_total"], columns, provider.getCapabilities());
+    const generated = generateSelectQuery(
+      ["prometheus_http_requests_total"],
+      columns,
+      "prometheus",
+      provider.getCapabilities(),
+    );
 
     await provider.query(generated);
 
@@ -1167,7 +1198,7 @@ describe("the monitoring surfaces", () => {
   });
 
   test("getPoolStats is absent, so the pool-stats route answers its own fallback", () => {
-    const provider = new PrometheusProvider(connection());
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect("getPoolStats" in provider).toBe(false);
     // The control: the same presence test sees a method that is there.
@@ -1235,7 +1266,7 @@ describe("the object surface", () => {
   test("readObjectSource", () => expectDelegated("readObjectSource", [["up"], "metric", 100], SOURCE));
 
   test("a provider that is not connected refuses the object surface before anything is sent", async () => {
-    const provider = new PrometheusProvider(connection(), {}, {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }, deps());
 
     await expect(provider.listObjects([], "metric")).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(sent).toEqual([]);
@@ -1268,7 +1299,12 @@ describe("the object surface", () => {
       request.url.pathname === "/api/v1/label/__name__/values"
         ? Promise.resolve(json('{"status":"success","data":["up"]}'))
         : captured(request);
-    const provider = new PrometheusProvider(connection(), {}, {}, { endpoint: () => TEST_ENDPOINT, send });
+    const provider = new PrometheusProvider(
+      connection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { endpoint: () => TEST_ENDPOINT, send },
+    );
     await provider.connect();
     const listings = (): SentRequest[] =>
       sent.filter((request) => request.pathname === "/api/v1/label/__name__/values");
@@ -1295,7 +1331,7 @@ describe("the object surface", () => {
 
 describe("the declarations", () => {
   test("the capabilities are #1085 section 6.3, exactly", () => {
-    expect(new PrometheusProvider(connection()).getCapabilities()).toEqual({
+    expect(new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()).toEqual({
       queryLanguage: "promql",
       supportsExplain: false,
       supportsExternalQueryLimiting: false,
@@ -1320,7 +1356,10 @@ describe("the declarations", () => {
   });
 
   test("the schema refresh pattern matches no statement, because none changes the tree", () => {
-    const pattern = new RegExp(new PrometheusProvider(connection()).getCapabilities().schemaRefreshPattern, "i");
+    const pattern = new RegExp(
+      new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().schemaRefreshPattern,
+      "i",
+    );
 
     for (const statement of ["up", "DROP TABLE x", 'delete_series{job="x"}', "CREATE", ""]) {
       expect(pattern.test(statement)).toBe(false);
@@ -1329,8 +1368,8 @@ describe("the declarations", () => {
     expect(new RegExp("(CREATE|DROP|ALTER|TRUNCATE)\\b", "i").test("DROP TABLE x")).toBe(true);
   });
 
-  test("the labels name metrics and series, the statement language, and why two panels are empty", () => {
-    expect(new PrometheusProvider(connection()).getLabels()).toEqual({
+  test("the labels name metrics and series, the statement language and the Tables caption", () => {
+    expect(new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels()).toEqual({
       entityName: "Metric",
       entityNamePlural: "Metrics",
       rowName: "series",
@@ -1339,9 +1378,6 @@ describe("the declarations", () => {
       generateAction: "Generate Query",
       searchPlaceholder: "Search metrics or labels...",
       statementLanguage: "PromQL",
-      slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
-      sessionsEmptyState:
-        "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
       tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
       analyzeAction: "TSDB Statistics",
       vacuumAction: "Compact Blocks",
@@ -1358,7 +1394,9 @@ describe("the declarations", () => {
 
   test("the Tables caption is true of the list getTableStats answers, on Prometheus and on VictoriaMetrics", async () => {
     // The caption is built from the list's bound, so a change to the bound changes the sentence too.
-    expect(new PrometheusProvider(connection()).getLabels().tableStatsCaption).toContain(`at most ${TSDB_TOP_METRICS}`);
+    expect(
+      new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels().tableStatsCaption,
+    ).toContain(`at most ${TSDB_TOP_METRICS}`);
 
     // Prometheus cuts its ranked list at limit and VictoriaMetrics at topN, and each lists fewer where
     // the head holds fewer metrics, so "at most" is the count that holds on both.
@@ -1409,7 +1447,7 @@ describe("the declarations", () => {
   });
 
   test("prepareQuery hands the text on untouched, at the series cap and never at an offset", () => {
-    const provider: DatabaseProvider = new PrometheusProvider(connection());
+    const provider: DatabaseProvider = new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.prepareQuery("up", { limit: 50, offset: 50 })).toEqual({
       query: "up",
@@ -1426,8 +1464,10 @@ describe("the declarations", () => {
   });
 
   test("a connection with no host is refused when the provider is built", () => {
-    expect(() => new PrometheusProvider(connection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(() => new PrometheusProvider(connection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS })).toThrow(
+      DatabaseConfigError,
+    );
     // The control: the same connection with its host builds.
-    expect(new PrometheusProvider(connection()).type).toBe("prometheus");
+    expect(new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).type).toBe("prometheus");
   });
 });

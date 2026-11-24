@@ -23,6 +23,7 @@ import type { InfluxqlRouteId } from "@/lib/db/providers/timeseries/influxdb/rou
 import type { InfluxGeneration } from "@/lib/db/providers/timeseries/influxdb/versions";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 3, maxResultBytes: 1_000 };
 const NONCE = "0123456789abcdef";
@@ -325,12 +326,24 @@ describe("the response cap and the budget refusals", () => {
     expect(tooLarge?.message).toBe(
       `Read-only execution exceeded the byte budget: ${influxqlAgentResponseCap(BUDGET) + 1} bytes > 1000 allowed`,
     );
+    expect(errorKind(tooLarge)).toBe("byte-budget-refusal");
     const late = influxqlAgentReadFailure(new TransportError("timeout", "x"), BUDGET, "SELECT 1");
     expect(late?.message).toBe("Read-only execution exceeded the time budget: no answer within 5000ms");
+    expect(errorKind(late)).toBe("time-budget-refusal");
     expect(influxqlAgentReadFailure(new TransportError("network", "x"), BUDGET, "SELECT 1")).toBeUndefined();
     expect(influxqlAgentReadFailure(new Error("x"), BUDGET, "SELECT 1")).toBeUndefined();
   });
 });
+
+/** The kind of the error `run` throws. */
+function kindOf(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return errorKind(error);
+  }
+  throw new Error("expected a refusal");
+}
 
 describe("shapeInfluxqlAgentAnswer", () => {
   const rows = (count: number, columns = ["time", "v"]) =>
@@ -365,6 +378,7 @@ describe("shapeInfluxqlAgentAnswer", () => {
     })();
     expect(error).toBeInstanceOf(QueryError);
     expect(error?.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("refuses rows past the byte budget", () => {
@@ -374,6 +388,7 @@ describe("shapeInfluxqlAgentAnswer", () => {
     expect(() => shapeInfluxqlAgentAnswer(wide, BUDGET, [], "SELECT s FROM m")).toThrow(
       /^Read-only execution exceeded the byte budget: \d+ bytes > 1000 allowed$/,
     );
+    expect(kindOf(() => shapeInfluxqlAgentAnswer(wide, BUDGET, [], "SELECT s FROM m"))).toBe("byte-budget-refusal");
   });
 
   test("refuses rows the cell budget cuts, as past the rows the budget allows", () => {
@@ -389,6 +404,9 @@ describe("shapeInfluxqlAgentAnswer", () => {
     expect(() =>
       shapeInfluxqlAgentAnswer(body, { ...BUDGET, maxResultBytes: 100_000_000 }, [], "SELECT * FROM m"),
     ).toThrow("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+    expect(
+      kindOf(() => shapeInfluxqlAgentAnswer(body, { ...BUDGET, maxResultBytes: 100_000_000 }, [], "SELECT * FROM m")),
+    ).toBe("row-budget-refusal");
   });
 
   test("refuses a result the server marked partial, which it cut at its max-row-limit, rather than answer it cut", () => {

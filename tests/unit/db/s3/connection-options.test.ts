@@ -25,9 +25,10 @@ import {
   SYNTHETIC_PAIR,
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
-const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000 };
+const CONTEXT = { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS };
 const fixtures = loadTlsFixtures();
 const FAR_END = { [TUNNEL_FAR_END]: { host: "s3.internal", port: 9000 } };
 const TUNNEL = { ...FAR_END, host: "127.0.0.1", port: 41000, sshTunnel: { enabled: true } };
@@ -88,10 +89,7 @@ describe("what a connection builds", () => {
   });
 
   test("Bucket and Region are read; a short query timeout caps the surface deadline", () => {
-    const options = build(
-      { database: "sales", region: "garage-probe" },
-      { executionReadOnly: false, queryTimeout: 2_000 },
-    );
+    const options = build({ database: "sales", region: "garage-probe" }, { ...CONTEXT, queryTimeout: 2_000 });
     expect(options).toMatchObject({
       pinnedBucket: "sales",
       region: "garage-probe",
@@ -119,7 +117,7 @@ describe("what a connection builds", () => {
   test("read-only sources: the connection's own flag, a seed's, then the execution profile's", () => {
     expect(build({ readOnly: true }).readOnly).toBe("connection");
     expect(build({ readOnly: true, seedId: "seed-1" }).readOnly).toBe("seed");
-    expect(build({}, { executionReadOnly: true, queryTimeout: 30_000 }).readOnly).toBe("execution-profile");
+    expect(build({}, { ...CONTEXT, executionReadOnly: true }).readOnly).toBe("execution-profile");
     expect(build({ readOnly: false }).readOnly).toBeUndefined();
   });
 
@@ -136,14 +134,15 @@ describe("the refusals, in order", () => {
     expect(refusal({ region: true })).toBe(S.wrongType("region", "a string"));
     expect(refusal({ allowInsecureAuth: "yes" })).toBe(S.wrongType("allowInsecureAuth", "true or false"));
     expect(refusal({ seedId: 7 })).toBe(S.wrongType("seedId", "a string"));
-    expect(refusal({ sshTunnel: "on" })).toBe(S.wrongType("sshTunnel", "an object"));
-    expect(refusal({ sshTunnel: { enabled: "yes" } })).toBe(S.wrongType("sshTunnel.enabled", "true or false"));
   });
 
-  test("row 2: a tunnel that did not open", () => {
-    expect(refusal({ sshTunnel: { enabled: true } })).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so the S3 server was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
+  // Row 2 was this provider's refusal of a tunnel that did not open. Core decides the tunnel before any provider is
+  // built and refuses one that is on and was not opened (tests/security/provider-tunnel-decisions.test.ts), so the far
+  // end alone says a tunnel carries the connection.
+  test("row 2 is core's: reads no sshTunnel, the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      expect(build({ sshTunnel }).origin).toEqual(build().origin);
+    }
   });
 
   test("row 3: the shared host and port sentences, dialled and far end", () => {
@@ -270,14 +269,13 @@ describe("the refusals, in order", () => {
   });
 
   test("row 14: a query timeout outside its range", () => {
-    expect(refusal({}, { executionReadOnly: false, queryTimeout: 0 })).toBe(
+    expect(refusal({}, { ...CONTEXT, queryTimeout: 0 })).toBe(
       "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
     );
   });
 
   test("an earlier row wins over a later one", () => {
-    expect(refusal({ user: 5, sshTunnel: { enabled: true } })).toBe(S.wrongType("user", "a string"));
-    expect(refusal({ sshTunnel: { enabled: true }, host: "bad host" })).toBe(S.tunnelNotOpened);
+    expect(refusal({ user: 5, host: "bad host" })).toBe(S.wrongType("user", "a string"));
     expect(refusal({ host: "bad host", password: "" })).toBe(
       "Invalid host: expected a hostname, an IPv4 address or an IPv6 address",
     );
@@ -286,7 +284,7 @@ describe("the refusals, in order", () => {
     expect(refusal({ database: "a b", region: "us east" })).toBe(S.bucket);
     expect(refusal({ region: "us east", ...REMOTE })).toBe(S.region);
     expect(refusal({ ...REMOTE, readOnly: "yes" })).toBe(S.plaintext);
-    expect(refusal({ readOnly: "yes" }, { executionReadOnly: false, queryTimeout: 0 })).toBe(S.readOnlyNotBoolean);
+    expect(refusal({ readOnly: "yes" }, { ...CONTEXT, queryTimeout: 0 })).toBe(S.readOnlyNotBoolean);
   });
 });
 

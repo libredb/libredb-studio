@@ -70,6 +70,8 @@ import { getExplainStrategy } from "@/lib/explain";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { ExplainTreeNode } from "@/lib/explain/types";
 import { comparePaths } from "@/lib/db/object-path";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { errorKind } from "@/lib/db/error-record";
 
 // ============================================================================
 // Connection
@@ -480,7 +482,7 @@ function sentAnything(match: string): boolean {
 }
 
 async function connectProvider(overrides: Partial<DatabaseConnection> = {}): Promise<DruidProvider> {
-  const provider = new DruidProvider(makeConnection(overrides));
+  const provider = new DruidProvider(makeConnection(overrides), {}, { egress: ALLOWS_PRIVATE_HOSTS });
   await provider.connect();
   return provider;
 }
@@ -508,7 +510,7 @@ afterEach(() => {
 
 describe("DruidProvider metadata", () => {
   test("declares the capabilities the design spec settled on", () => {
-    const capabilities = new DruidProvider(makeConnection()).getCapabilities();
+    const capabilities = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities).toEqual({
       queryLanguage: "sql",
@@ -539,28 +541,34 @@ describe("DruidProvider metadata", () => {
     // BIGINT)` answers HTTP 400 "Incorrect syntax near the keyword 'CREATE' at
     // line 1, column 1" - the parser lists the statements it expected, and no
     // form of CREATE is among them. Datasources are created by ingestion.
-    expect(new DruidProvider(makeConnection()).getCapabilities().createTable).toBeUndefined();
+    expect(
+      new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().createTable,
+    ).toBeUndefined();
   });
 
   test("keeps supportsInlineRowEdit false because UPDATE is not in Druid's grammar either", () => {
     // Same class of answer as CREATE: `UPDATE t SET ...` is rejected as
     // `Unsupported SQL statement [UPDATE]`, so the inline row editor's statement
     // could never run. Druid SQL has no row-level DML at all.
-    expect(new DruidProvider(makeConnection()).getCapabilities().supportsInlineRowEdit).toBe(false);
+    expect(
+      new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().supportsInlineRowEdit,
+    ).toBe(false);
   });
 
   test("declares declaresForeignKeys false because a datasource cannot reference another", () => {
     // Druid has no constraints at all - which is also why `isPrimary` is hardwired
     // false in the introspection. An empty relations list here is the engine, not
     // the schema (#414).
-    expect(new DruidProvider(makeConnection()).getCapabilities().declaresForeignKeys).toBe(false);
+    expect(
+      new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities().declaresForeignKeys,
+    ).toBe(false);
   });
 
   test("offers no maintenance operation, because SQL reaches none of them", () => {
     // Compaction and retention are Coordinator and task concerns, and `kill` has
     // a second problem: there is no `sys.queries` catalog, so there is nowhere
     // honest for a user to read a cancellable query id from.
-    const capabilities = new DruidProvider(makeConnection()).getCapabilities();
+    const capabilities = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(capabilities.supportsMaintenance).toBe(false);
     expect(capabilities.maintenanceOperations).toEqual([]);
@@ -569,14 +577,17 @@ describe("DruidProvider metadata", () => {
   test("declares no connection string, because Druid's SQL endpoint has no URI form", () => {
     // Its JDBC driver addresses Avatica (jdbc:avatica:remote:url=...), and
     // http:// / https:// already resolve to ClickHouse in the shared parser.
-    expect(new DruidProvider(makeConnection()).getCapabilities().supportsConnectionString).toBe(false);
+    expect(
+      new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities()
+        .supportsConnectionString,
+    ).toBe(false);
   });
 
   test("calls a table a Datasource, and a row a row", () => {
     // Datasource is the Druid word and the sidebar is where a user meets it. The
     // rest is inherited on purpose: a Druid row IS a row, and the maintenance
     // labels name work this provider does not offer.
-    const labels = new DruidProvider(makeConnection()).getLabels();
+    const labels = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getLabels();
 
     expect(labels.entityName).toBe("Datasource");
     expect(labels.entityNamePlural).toBe("Datasources");
@@ -586,13 +597,16 @@ describe("DruidProvider metadata", () => {
     expect(labels.generateAction).toBe("Generate Query");
   });
 
-  test("the empty slow-query panel says Druid keeps no query log", () => {
-    // `getSlowQueries()` is empty by design here, so this panel is ALWAYS empty - and
-    // until #U12 it told the reader to enable a PostgreSQL extension.
-    const { slowQueriesEmptyState } = new DruidProvider(makeConnection()).getLabels();
+  test("declares no slow-query sentence, because Druid offers no Queries panel to draw it", () => {
+    // Druid keeps no query log, so its `ENGINE_FACETS` row does not offer the panel and
+    // nothing would render a sentence explaining why it is empty.
+    const { slowQueriesEmptyState } = new DruidProvider(
+      makeConnection(),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    ).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("no query log");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 });
 
@@ -602,7 +616,9 @@ describe("DruidProvider metadata", () => {
 
 describe("DruidProvider validation", () => {
   test("requires a host", () => {
-    expect(() => new DruidProvider(makeConnection({ host: undefined }))).toThrow(DatabaseConfigError);
+    expect(() => new DruidProvider(makeConnection({ host: undefined }), {}, { egress: ALLOWS_PRIVATE_HOSTS })).toThrow(
+      DatabaseConfigError,
+    );
   });
 
   test("ignores the connection's database field entirely", async () => {
@@ -678,7 +694,11 @@ describe("DruidProvider lifecycle", () => {
 
   test("connect maps a denial to an AuthenticationError", async () => {
     replyFor = () => fail(403, deniedBody("FORBIDDEN"));
-    const provider = new DruidProvider(makeConnection({ user: "reader", password: "wrong" }));
+    const provider = new DruidProvider(
+      makeConnection({ user: "reader", password: "wrong" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -686,14 +706,18 @@ describe("DruidProvider lifecycle", () => {
 
   test("connect maps a rejected credential to an AuthenticationError too", async () => {
     replyFor = () => fail(401, deniedBody("UNAUTHORIZED"));
-    const provider = new DruidProvider(makeConnection({ user: "reader", password: "wrong" }));
+    const provider = new DruidProvider(
+      makeConnection({ user: "reader", password: "wrong" }),
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
 
     await expect(provider.connect()).rejects.toBeInstanceOf(AuthenticationError);
   });
 
   test("connect maps an unreachable cluster to a ConnectionError naming the target", async () => {
     networkFailure = new Error("connect ECONNREFUSED 127.0.0.1:8888");
-    const provider = new DruidProvider(makeConnection());
+    const provider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const failure = provider.connect();
 
@@ -706,7 +730,7 @@ describe("DruidProvider lifecycle", () => {
     // the SQL endpoint: the probe is what turns all of those into one failure at
     // the moment the user is looking at the connection form.
     replyFor = () => fail(404, "<html><head><title>404 Not Found</title></head></html>");
-    const provider = new DruidProvider(makeConnection({ port: 8081 }));
+    const provider = new DruidProvider(makeConnection({ port: 8081 }), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -714,7 +738,7 @@ describe("DruidProvider lifecycle", () => {
 
   test("a failed connect leaves nothing open behind it", async () => {
     replyFor = () => fail(400, UNKNOWN_DATASOURCE);
-    const provider = new DruidProvider(makeConnection());
+    const provider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     await expect(provider.query(CONNECT_PROBE)).rejects.toBeInstanceOf(DatabaseConfigError);
@@ -734,7 +758,7 @@ describe("DruidProvider lifecycle", () => {
     // cache metrics, no query log and no index objects anywhere in SQL, so there
     // is no statement to send and no answer a socket could change. Requiring one
     // would only turn an honest empty into an error.
-    const provider = new DruidProvider(makeConnection());
+    const provider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(await provider.getPerformanceMetrics()).toEqual({});
     expect(await provider.getSlowQueries()).toEqual([]);
@@ -773,7 +797,7 @@ describe("DruidProvider query", () => {
   });
 
   test("honours a configured query timeout on both halves", async () => {
-    const provider = new DruidProvider(makeConnection(), { queryTimeout: 5_000 });
+    const provider = new DruidProvider(makeConnection(), { queryTimeout: 5_000 }, { egress: ALLOWS_PRIVATE_HOSTS });
     await provider.connect();
     armedDeadlines = [];
 
@@ -1050,7 +1074,7 @@ describe("DruidProvider error mapping", () => {
 
   test("connect reports a connection that never opened without query advice (#1431)", async () => {
     networkFailure = connectTimeout();
-    const provider = new DruidProvider(makeConnection());
+    const provider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     const failure = provider.connect();
 
@@ -1127,7 +1151,7 @@ function connectTimeout(): Error {
 // ============================================================================
 
 describe("DruidProvider query preparation", () => {
-  const provider = () => new DruidProvider(makeConnection());
+  const provider = () => new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
   test("applies the external row limit to a plain SELECT", () => {
     const prepared = provider().prepareQuery('SELECT * FROM "libredb_demo"', { limit: 25 });
@@ -1603,12 +1627,14 @@ describe("DruidProvider monitoring", () => {
     const data = await provider.getMonitoringData();
 
     expect(data.overview?.version).toBe("unknown");
-    expect(data.performance).toEqual({});
-    expect(data.slowQueries).toEqual([]);
     expect(data.activeSessions).toEqual([]);
     expect(data.tables).toEqual([]);
-    expect(data.indexes).toEqual([]);
     expect(data.storage).toEqual([]);
+    // Druid has no query log, no cache figure and no secondary index to read: never read, listed instead.
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "indexes"]);
+    expect(data.performance).toBeUndefined();
+    expect(data.slowQueries).toBeUndefined();
+    expect(data.indexes).toBeUndefined();
   });
 
   test("getMonitoringData fills every panel on a healthy cluster", async () => {
@@ -1658,7 +1684,7 @@ function walk(node: ExplainTreeNode, seen: ExplainTreeNode[] = []): ExplainTreeN
 
 describe("DruidProvider explain", () => {
   test("the declared format resolves to a registered strategy", () => {
-    const capabilities = new DruidProvider(makeConnection()).getCapabilities();
+    const capabilities = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getCapabilities();
 
     expect(getExplainStrategy(capabilities.explainFormat)?.format).toBe("druid-native");
   });
@@ -2939,7 +2965,7 @@ describe("endOpenQueryTransaction()", () => {
   ] as const;
 
   test("is not implemented, and the doc names WHICH absence that is", () => {
-    const provider: DatabaseProvider = new DruidProvider(makeConnection());
+    const provider: DatabaseProvider = new DruidProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
 
@@ -3043,7 +3069,12 @@ describe("queryReadOnly", () => {
   }
 
   async function open(recorded: ReturnType<typeof recording>, execution = { readOnly: true, sendsStatements: true }) {
-    const provider = new DruidProvider(makeConnection(), {}, execution, () => recorded.transport);
+    const provider = new DruidProvider(
+      makeConnection(),
+      {},
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      () => recorded.transport,
+    );
     await provider.connect();
     return provider;
   }
@@ -3075,7 +3106,7 @@ describe("queryReadOnly", () => {
     const provider = new DruidProvider(
       makeConnection(),
       {},
-      { readOnly: true, sendsStatements: true },
+      { readOnly: true, sendsStatements: true, egress: ALLOWS_PRIVATE_HOSTS },
       () => recorded.transport,
     );
     const error = await provider.connect().catch((caught: unknown) => caught);
@@ -3280,17 +3311,17 @@ describe("queryReadOnly", () => {
   test("refuses a result past the row budget, never cuts it", async () => {
     const recorded = recording(async () => rowsOf([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]));
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
-    );
+    const refused = await provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("refuses a result past the byte budget", async () => {
     const recorded = recording(async () => rowsOf([{ s: "x".repeat(2000) }]));
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
-      "Read-only execution exceeded the byte budget",
-    );
+    const refused = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("Read-only execution exceeded the byte budget");
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("refuses an answer the transport stopped reading at its byte cap, and cancels the statement's own id", async () => {
@@ -3301,6 +3332,7 @@ describe("queryReadOnly", () => {
     const error = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toStartWith("Read-only execution exceeded the byte budget");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
     expect((error as Error).message).toEndWith(
       "; the server's answer passed that many bytes and was not read further; the server accepted the cancel of its query id",
     );
@@ -3317,9 +3349,11 @@ describe("queryReadOnly", () => {
       throw new DruidTransportError("Druid refused the cancel with HTTP 403");
     });
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "was not read further; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
     );
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a statement the server stopped at its own timeout is refused on the time budget, and nothing is cancelled", async () => {
@@ -3327,9 +3361,11 @@ describe("queryReadOnly", () => {
       throw new DruidTransportError("Query [x] timed out!", "TIMEOUT", "legacyQueryException", "OPERATOR");
     });
     const provider = await open(recorded);
-    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
+    const refused = await provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "Read-only execution exceeded the time budget: the server stopped the statement at 30000ms",
     );
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     expect(recorded.cancels).toEqual([]);
   });
 
@@ -3346,9 +3382,11 @@ describe("queryReadOnly", () => {
     test("cancels the statement's own id, and says the server accepted the cancel", async () => {
       const recorded = recording(hangs);
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; the server accepted the cancel of its query id",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       const statement = recorded.agent.at(-1);
       expect(statement?.sql).toBe("SELECT n FROM t");
       expect(recorded.cancels.map((cancel) => cancel.queryId)).toEqual([statement?.opts.queryId ?? "no statement"]);
@@ -3359,9 +3397,11 @@ describe("queryReadOnly", () => {
       const recorded = recording(hangs);
       recorded.answerCancel(async () => "not-found");
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; the server holds no statement under its id any longer",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
     });
 
     test("names a cancel that could not be confirmed, and still refuses on the time budget", async () => {
@@ -3370,17 +3410,21 @@ describe("queryReadOnly", () => {
         throw new DruidTransportError("Druid refused the cancel with HTTP 403");
       });
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
     });
 
     test("a deadline that passes while the planner is asked refuses on the time budget, and cancels nothing", async () => {
       const recorded = recording(undefined, hangs);
       const provider = await open(recorded);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       expect(recorded.agent.at(-1)?.sql).toBe("EXPLAIN PLAN FOR\nSELECT n FROM t");
       expect(recorded.cancels).toEqual([]);
     });
@@ -3389,9 +3433,11 @@ describe("queryReadOnly", () => {
       const recorded = recording();
       const provider = await open(recorded);
       recorded.transport.agentQuery = (sql, opts) => hangs(sql, opts);
-      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+      const refused = await provider.queryReadOnly("SELECT n FROM t", SHORT).catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the time budget: no answer within 20ms",
       );
+      expect(errorKind(refused)).toBe("time-budget-refusal");
       expect(recorded.cancels).toEqual([]);
     });
   });

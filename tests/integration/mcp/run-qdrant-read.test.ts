@@ -23,7 +23,8 @@ import { QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { QDRANT_PROOF_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-read";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -31,6 +32,10 @@ import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../h
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 import { agentAnswer, agentServer } from "../../helpers/qdrant-agent";
 import { type RecordedAnswer, okAnswer, recordingQdrantTransport } from "../../helpers/qdrant-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+
+/** The notice an answer carrying database content opens with on this file's qdrant connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("qdrant"));
 
 pinMcpTestEnvironment();
 
@@ -73,7 +78,7 @@ beforeEach(() => {
       const provider = new QdrantProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        { readOnly: agent, sendsStatements: agent },
+        { readOnly: agent, sendsStatements: agent, egress: ALLOWS_PRIVATE_HOSTS },
         (options, routes) => createRestQdrantClient(options, routes, transport.factory),
       );
       await provider.connect();
@@ -169,7 +174,7 @@ describe("a read", () => {
   test("the collection list answers names behind the notice, after the proof, recorded under run_qdrant_read", async () => {
     const result = await qdrant("GET /collections");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:vectors",
@@ -252,8 +257,12 @@ describe("a refusal", () => {
     answer = agentServer("full");
     const result = await qdrant("GET /collections");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("Qdrant provider, bundled with Studio") },
         {
           type: "text",
           text: `run_qdrant_read cannot run on this connection: ${QDRANT_PROOF_SENTENCES.writes.replace(/\.+$/, "")}. It runs on Qdrant.`,
@@ -270,7 +279,8 @@ describe("a refusal", () => {
     });
     const result = await qdrant("GET /collections");
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain(QDRANT_PROOF_SENTENCES.writesCollection.replace(/\.+$/, ""));
+    expect(result.content[0].text).toBe(providerTextNotice("Qdrant provider, bundled with Studio"));
+    expect(result.content[1].text).toContain(QDRANT_PROOF_SENTENCES.writesCollection.replace(/\.+$/, ""));
     expect(lines().at(-1)).toBe("POST /collections/plain/points/delete");
   });
 
@@ -297,6 +307,7 @@ describe("a refusal", () => {
     answer = readOnly({ "GET /aliases": aliases(1_001) });
     const result = await qdrant("GET /aliases");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

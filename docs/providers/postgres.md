@@ -23,6 +23,7 @@
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts) |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table, the function and procedure object edit, maintenance (`vacuum`, `analyze`, `reindex`, `kill`) and the transaction route all send writes, and the database role is the boundary |
+| **Failed statement outcome** | checkout-not-sent: a failure to take a connection from the pool (`pool.connect()`) for a statement or for a transaction's `BEGIN`, which comes before anything is sent, answers outcome `not-sent`, so does a call on a held transaction whose session had already ended, and every failure after it `unknown` |
 
 ---
 
@@ -103,13 +104,13 @@ PostgreSQL connection is opened by `createDatabaseProvider()`
 ```ts
 case 'postgres': {
   const { PostgresProvider } = await import('./providers/sql/postgres');
-  return new PostgresProvider(connection, options);
+  return new PostgresProvider(connection, options, context);
 }
 ```
 
 API routes use `getOrCreateProvider()`, which caches the connected provider per `connection.id`,
-evicts after 30 minutes idle, and disconnects on graceful shutdown — `disconnect()` calls
-`pool.end()` to drain the pool.
+evicts after 30 minutes idle, and disconnects at a shutdown Studio's handler owns
+([DISTRIBUTION.md](../DISTRIBUTION.md#stopping-the-server)): `disconnect()` calls `pool.end()` to drain the pool.
 
 ---
 
@@ -1464,16 +1465,18 @@ releases it in a `finally` block.
 
 #### Idle-client failures are handled, not fatal
 
-`connect()` attaches an `error` listener to the pool as soon as it is constructed. This is not
-optional bookkeeping: a client that fails while **checked out** rejects its own query, but a client
-that fails while **idle** (the server dropped it, the network went away) has no query to reject, so
-`pg` removes and destroys it and emits `error` on the pool instead. An `error` event with no listener
-is an uncaught exception — i.e. a long-running server process would die from a dropped idle
-connection.
+`pg` emits `error` on a client whose connection fails or ends: the server ended the session (a terminated backend, an idle-in-transaction timeout, a failover) or the network went away.
+That event reaches a caller as a named error only through a listener, so every client has to be heard for its whole life, checked out or idle.
 
-The listener reports the failure with the file's usual bracketed-prefix `console.error` and does
-nothing else. `pg` has already discarded the client, so the handler exists to keep the event
-non-fatal and visible, not to reconnect; the pool opens a fresh client on the next acquire.
+Every client the provider's pools build is a `NoticeKeepingClient`, which attaches its own `error` listener at construction ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts)).
+That is the part that covers a client while it is **checked out**: `pg-pool` takes its own listener off a client for as long as somebody holds it, which for the transaction client is the whole transaction, so a listener attached by each borrow would have to be repeated at every checkout and could be forgotten at one.
+The listener logs the event once through the server logger, as `PostgreSQL connection error on a pooled session` with the provider and the driver's message (`terminating connection due to administrator command`, `Connection terminated unexpectedly`), never the connection's config or credentials.
+It also records the error on the client, which is how a held transaction learns its session is gone ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)).
+
+A client that fails while **idle** is removed and destroyed by `pg-pool`, which then emits the same `error` on the pool.
+`connect()` attaches a listener to the pool as soon as it is constructed, so that re-emit is heard as well.
+It logs nothing itself: the client's own listener has already reported the event, and a second line would report one failure twice.
+`pg` has already discarded the client, so neither listener reconnects; the pool opens a fresh client on the next acquire.
 
 The same guard is on the PostgreSQL **storage** pool (see [STORAGE.md](../STORAGE.md)), which is a
 second long-lived `pg.Pool` when `STORAGE_PROVIDER=postgres`. Across the other pooled drivers, only
@@ -1877,7 +1880,7 @@ Every relative that goes through `PostgresProvider` (the `via: "postgres"` entri
 ### 5.6 NaN and the float infinities
 
 `real` and `double precision` (and their arrays) are still whatever `pg-types` makes of them, a JavaScript number, so `'NaN'`, `'Infinity'` and `'-Infinity'` arrive as `NaN`, `Infinity` and `-Infinity`.
-JSON has no form for those three, and the routes, the agent's row rendering, the MCP serializer and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
+JSON has no form for those three, and the routes, the agent's row rendering and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)), while MCP answers each as the value codec's `nf` tag ([`MCP.md`](../MCP.md), Limits).
 `numeric` was already the engine's text, `'NaN'` and `'Infinity'` included.
 
 Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
@@ -2060,6 +2063,29 @@ same quantity twice with one of the two mislabelled, and substituted `100` when 
 `0`. PostgreSQL publishes no buffer-pool occupancy without the `pg_buffercache` extension, which is
 not installed by default and whose scan locks `shared_buffers`.
 
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `postgres` offers is its row in `ENGINE_FACETS`, declared in [`postgres-engine-facets.ts`](../../src/lib/db/providers/sql/postgres-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `vacuum`, `analyze`, `reindex`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+The connected server may accept fewer ([section 9.1](#91-what-the-connected-server-accepts-measured-at-connect)), and an operation it does not accept is refused with the same code after connect.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
+
 ---
 
 ## 8. Transactions
@@ -2070,9 +2096,9 @@ the client is not returned to the pool until commit/rollback. Surfaced via `POST
 
 | Method | Behaviour |
 |--------|-----------|
-| `beginTransaction()` | Acquires a client, runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
-| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
-| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. Throws if none active. |
+| `beginTransaction()` | Acquires a client through `checkoutPhase`, so a failed checkout answers `not-sent` ([§11](#11-error-handling)), runs `BEGIN`, arms a **5-minute auto-rollback** timer ([`postgres.ts`](../../src/lib/db/providers/sql/postgres.ts), duration set by `TX_TIMEOUT_MS`). Throws if one is already active, and refuses a `BEGIN` that opened nothing ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)). |
+| `queryInTransaction(sql, params?)` | Runs on the transaction's client. Throws if none active. Ends the session when the statement ended the transaction itself ([§8.0](#80-a-begin-that-opens-nothing-and-a-statement-that-ends-the-transaction)), and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
+| `commitTransaction()` / `rollbackTransaction()` | Ends the transaction, clears the timer, releases the client. A `COMMIT` or `ROLLBACK` that fails answers its mapped class with `outcome` `unknown` ([§11](#11-error-handling)), and the provider holds no transaction after it. Throws if none active, and reports the transaction lost when its database session has ended ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)). |
 | `expireTransaction()` | The timeout callback — auto-`ROLLBACK` to prevent leaked locks if a transaction is abandoned. |
 | `isInTransaction()` | Current state. |
 
@@ -2161,6 +2187,32 @@ A server that already has the setting on is left alone.
 The read-only profile ([12](#12-agent-read-only-execution-profile-328)) asks nothing: it writes nothing, and a probe at connect would be a statement outside its `BEGIN READ ONLY` envelope.
 A session that refuses the `SET` is reported on the server console and stays in the pool, where its writes behave as they did before.
 
+### 8.0.2 A session that ends while a statement or the transaction holds it
+
+The server can end a session at any time: a terminated backend, `idle_in_transaction_session_timeout`, a restart or failover, or a network reset.
+Each of these is reported as a named error, and the provider never retries, reconnects the transaction or carries on as if nothing happened.
+
+- **The statement in flight fails with the server's own message**, for example `terminating connection due to administrator command`, as any failed statement does, on `query()`, `queryInTransaction()` and `queryReadOnly()` alike.
+  The agent read-only path then meets a dead client at its `ROLLBACK` and hands the client back with that error, so the pool discards it.
+- **A call already sent or queued on that client fails with the driver's error.**
+  A statement sent at once after one whose session ended can be handed the same pooled client before its socket has closed, and a `commitTransaction()` sent at once, or queued behind the failing statement, meets the same client.
+  Each answers `Connection terminated unexpectedly` as a `DatabaseError` (`500 DATABASE_ERROR`, `outcome` `unknown`), and the provider holds no transaction after such a COMMIT or ROLLBACK.
+  Once the connection has ended, `pg` marks the client unqueryable and `pg-pool` discards it on release, so it is never handed out again and later statements get a fresh session.
+- **A held transaction is reported lost.**
+  The next `queryInTransaction()`, `commitTransaction()` or `rollbackTransaction()` after the client heard its session end sends nothing and answers a `TransactionLostError` (HTTP 503 `TRANSACTION_LOST`, `outcome` `not-sent`, since nothing was sent): `The transaction was lost: its database session ended (<the server's or the driver's message>). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`
+  The sentence does not claim that nothing was committed.
+  A COMMIT can reach the server and its answer be lost with the session: a typed `COMMIT` whose answer a network reset lost, a `COMMIT` followed in the same text by a statement that ended the session, or a `COMMIT; BEGIN` text that left a new transaction open.
+  Measured on PostgreSQL 17, each of these committed its rows while the next call reported the transaction lost.
+  The held client goes back with the session's error, so the pool discards it, and the provider holds no transaction from then on: `isInTransaction()` answers false and a further COMMIT or ROLLBACK answers `NO_ACTIVE_TRANSACTION`.
+  The editor reads `TRANSACTION_LOST` as the transaction having ended and leaves transaction mode, and under governance the statement's request records the transaction's terminal `rolled-back` row with `status` `error` ([GOVERNANCE.md](../GOVERNANCE.md#query-events)).
+  Until that next call the provider still reports the transaction open, because nothing has asked it yet; the event itself is in the server log at once ([§4.2](#42-connection-pooling)).
+
+Measured on PostgreSQL 17 through this provider under Node: a terminated backend reports `terminating connection due to administrator command` (`57P01`) and then `Connection terminated unexpectedly`, and an idle-in-transaction timeout reports `terminating connection due to idle-in-transaction timeout` (`25P03`) and then the same second error.
+The cause named in the sentence is the first error the client heard as an event.
+When the session ended while no statement was running, that is the server's own message.
+When a statement was running, the server's message went to that statement as its error and is never an event, so the sentence names `Connection terminated unexpectedly`.
+`tests/live/postgres-held-session-live.ts` drives each of these cases against a real server, under Bun and under Node, and fails unless every call reports its failure as an error the caller receives.
+
 ### 8.1 `endOpenQueryTransaction()` — a transaction left open on a pooled client
 
 The lifecycle above is not the only way a transaction starts here.
@@ -2183,8 +2235,9 @@ Both were false, measured 2026-09-15 on 18.4 (D87).
 And `beginTransaction()` calls `pool.connect()` on a LIFO idle list, so it is handed the very object a previous `query()` recorded: the ender rolled the interactive session's committed `CREATE TABLE` away while the status route still read `inTransaction` and `commit` answered "Transaction committed".
 Both controls, run without the ender, kept the table.
 
-`POST /api/db/multi-query` and `POST /api/db/query` each call this in a `finally` under a scope of their own and report the outcome.
+`POST /api/db/multi-query` and `POST /api/db/query` each end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), each under a scope of its own, and report the outcome; an end that fails is answered in the run's place.
 What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
+On `POST /api/db/query` the end comes after the run's page is read, one turn of the event loop later for a page of one batch, and after the whole read, and any wait for the large-page slot, for a page of several batches, so that moment is that much longer, tracked as [D620](../BACKLOG.md).
 That is the leak ending it promptly is for, not a second defect.
 
 THE OTHER REQUEST CAN BE THE INTERACTIVE SESSION, and then its `commit` lies, which is sharper than the sentence above and is said here rather than left to be met.
@@ -2196,7 +2249,7 @@ Ten apparent losses in the first run of that probe were `HTTP 429` from the rout
 Every client the scope recorded is attempted inside its own `try`, so one dead socket cannot strand the clients behind it in the loop, and the held failures are raised together once the loop is done: `Could not roll back the transaction this request left open on N of M pooled clients: ...`, where `M` counts the clients ASKED and not the clients recorded, because a client a later statement of the same scope already returned to `I` was never sent anything.
 Neither arm of the outcome type is true of a client still sitting in `T`: `"none"` denies the transaction and `"rolled-back"` certifies a rollback that did not happen.
 The class raised is the base `DatabaseError` with `code: "DATABASE_ERROR"` and NOT the `QueryError` the rest of this provider raises, because `databaseErrorBody` in [`error-body.ts`](../../src/lib/api/error-body.ts), reached through `createErrorResponse`, maps `QueryError` to HTTP 400 `QUERY_ERROR`, which would report a rollback this server could not issue on a client of its own pool as a fault in the SQL the caller sent; the `DatabaseError` arm answers HTTP 500 `DATABASE_ERROR`, which is what it is.
-The cost is two losses and both are deliberate: the throw is inside the route's `finally`, so it replaces the response the request had already produced, a script's per-statement results included, and a `finally` that throws also DISCARDS the exception the body was leaving with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
+The cost is two losses and both are deliberate: the throw is answered in the run's place, so it replaces the response the request had already produced, a script's per-statement results included, and it also DISCARDS the exception the statement was failing with, so a dead socket that killed the statement AND the ROLLBACK costs the engine's own message with its `position` and `detail`.
 A pooled client left `idle in transaction` poisons every later user of that stored connection, which is the failure this whole surface exists for, so it is raised rather than reported quietly.
 
 ---
@@ -2448,18 +2501,19 @@ PostgreSQL keeps the default SQL vocabulary from `BaseDatabaseProvider` (entity 
 row → *row*, *Select Top 50*, *Vacuum Table*, *Analyze Table*, etc.) — the generic SQL wording
 already fits.
 
-`getLabels()` is overridden for **one** triad only: the Operations tab's global Reindex card, which
-was hardcoded to *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."*
-for every engine (#464). That wording was written for this engine — the global card
-sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE`
-([§9](#9-maintenance)) — so declaring it changes nothing on PostgreSQL and lets the
-other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead:
+`getLabels()` is overridden for two things: the Operations tab's global Reindex card and the Queries tab's empty slow-query list.
+The reindex triad is the wording the card hardcoded for every engine, *"Run Reindex"* / *"Rebuild Indexes"* / *"Reconstructs all indexes in the database."* (#464).
+That wording was written for this engine: the global card sends no target, so `runMaintenance('reindex')` here runs `REINDEX DATABASE` ([§9](#9-maintenance)).
+Declaring it changes nothing on PostgreSQL and lets the other providers that offer `reindex`, such as SQLite, libSQL and Couchbase, say what theirs does instead.
+`slowQueriesEmptyState` is the `pg_stat_statements` advice the Queries tab used to show as its default on every engine without a sentence of its own.
+It is PostgreSQL's advice, so PostgreSQL declares it, and the tab's default says only *"No query statistics available."*:
 
 | Field | Value |
 | --- | --- |
 | `reindexGlobalLabel` | *Run Reindex* |
 | `reindexGlobalTitle` | *Rebuild Indexes* |
 | `reindexGlobalDesc` | *Runs REINDEX DATABASE, reconstructing every index in the database.* |
+| `slowQueriesEmptyState` | *Enable pg_stat_statements extension to see query stats.* |
 
 ### SQL writing
 
@@ -2495,16 +2549,23 @@ the shared hierarchy:
 | SQL syntax / bad column / relation | `QueryError` (with position when available) |
 | `statement_timeout` or `lock_timeout` exceeded (`canceling statement due to statement timeout` / `due to lock timeout`) | `TimeoutError` — a time budget elapsed, so since #1145 `mapDatabaseError()` recognises these **before** its cancellation branch and keeps the engine's text |
 | User cancel via `pg_cancel_backend` (`canceling statement due to user request`) | `QueryCancelledError` |
-| Generic timeout / connection-acquire timeout (message contains "timeout"/"timed out") | `TimeoutError` |
+| Generic timeout (message contains "timeout"/"timed out") | `TimeoutError`, except a pool wait in the editor's statement, which answers the `ConnectionError` below |
 | A privilege the role lacks (SQLSTATE `42501`: `permission denied for table orders`, `must be owner of table orders`) | `PermissionDeniedError`, answered `403 PERMISSION_DENIED` with `Permission denied: ` before the server's sentence |
 | A refused credential (SQLSTATE class `28`: `28P01` a wrong password, `28000` a `pg_hba.conf` refusal or an unknown role) | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Pool exhausted / too many connections | `PoolExhaustedError` |
+| A call on a held transaction whose database session has ended | `TransactionLostError`, a `ConnectionError`, answered `503 TRANSACTION_LOST`, `outcome` `not-sent`, with the transaction-lost sentence ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)) |
 
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
 
-`isRetryableError()` treats connection/timeout errors as retryable, but not auth, privilege, config, or
-syntax errors.
+A connect that fails answers `outcome` `not-sent`, and so does a statement Studio refuses before sending it; a statement that fails after it was sent answers `unknown`, because PostgreSQL may have run it ([API reference](../API_DOCS.md#error-kind-and-outcome)).
+
+The editor's statement (`query`) takes its client from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `pg` error maps to: a refused connection `ConnectionError`, a refused credential `AuthenticationError`, an ended pool `PoolExhaustedError` ([CONTRACT](./CONTRACT.md), E-5).
+A checkout that waits out the pool's bound (`connectionTimeoutMillis`, which is `acquireTimeout`), on a busy pool or a new client that does not open, is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
+A connection lost after the client was taken, `Connection terminated unexpectedly` included, answers `unknown`, since the statement may have reached the server.
+A transaction's `beginTransaction()` takes its client the same way before it sends the `BEGIN`, so a failed checkout there answers `not-sent` in the same class, and a pool wait that ran out the same `503 CONNECTION_ERROR` and sentence.
+The `BEGIN` itself, a `COMMIT` and a `ROLLBACK` that fail answer the class their `pg` error maps to, with `outcome` `unknown`, as a statement does: a lost connection `500 DATABASE_ERROR`, a deferred constraint a `COMMIT` checks (`23505`) `400 QUERY_ERROR`.
+The other paths that take a client (the agent's read-only profile, the catalog and monitoring reads) still answer `unknown` for a failed checkout.
 
 ---
 
@@ -2519,6 +2580,7 @@ through `queryReadOnly()`, where the DATABASE — not a SQL parser — is the bo
 - The profiled cache is physically separate from `getOrCreateProvider`'s cache: an agent
   acquisition never returns, inserts, or touches a shared writable entry (unit-tested in both
   directions), so an agent execution can never be handed the editor's pool — and vice versa.
+- An engine Studio's review record (`AGENT_EXECUTION_ENGINES` in [compatibility.ts](../../src/lib/db/compatibility.ts)) does not list is refused first, with `PROFILE_ENGINE_NOT_REVIEWED`, before anything is built or dialled, even when its provider implements `queryReadOnly`.
 - Provider types without a read-only statement path (`queryReadOnly`) are refused with
   `PROFILE_UNSUPPORTED_BY_PROVIDER`; there is no fallback to `query()`. A provider that supports the
   profile but cannot apply it to *this* target refuses with `PROFILE_UNSUPPORTED_TARGET` (SQLite
@@ -2714,8 +2776,9 @@ Four things about the PostgreSQL side of that layer are worth knowing here:
   cancel uses. Since #1145 `mapDatabaseError` recognises that phrasing (and `due to lock timeout`)
   **before** its cancellation branch and returns a `TimeoutError` carrying the engine's own text, so a
   budget timeout arrives as a `TimeoutError` on this engine like everywhere else — only
-  `pg_cancel_backend`'s `due to user request` stays a `QueryCancelledError`. The agent tool layer
-  treats the timeout as a repairable statement failure — narrowing the read is the repair that helps.
+  `pg_cancel_backend`'s `due to user request` stays a `QueryCancelledError`.
+  On the agent path Studio's own time refusal usually arrives first: its timer starts before the pool checkout, `BEGIN READ ONLY` and `SET LOCAL statement_timeout`, so the run reads `Read-only execution exceeded the time budget: no answer within <timeout>ms` (a `QueryError`, from `runReadOnlyStatement` in `src/lib/db/operations/read-only-statement.ts`), and the engine's own cancel follows a few milliseconds later, once the statement has started.
+  The agent tool layer treats either timeout as a repairable statement failure: narrowing the read is the repair that helps.
   A run cancellation is still enforced by the run loop's own state rather than by that exception,
   because an operator cancel arriving mid-statement is repairable too (see [BACKLOG](../BACKLOG.md) B4
   for the residual: classification reads the message text rather than the `57014`/`55P03` SQLSTATE).
@@ -2798,6 +2861,14 @@ nothing should: a `libredb-postgres` already running on a machine may hold someb
 databases.
 
 The E2E suite (`e2e/`) has been verified against PostgreSQL 18.x.
+
+### 13.5 Live checks CI runs
+
+Two scripts under `tests/live/` start their own PostgreSQL container, on a loopback port Docker picks, and run in the "Functional Smoke" job of [`ci.yml`](../../.github/workflows/ci.yml).
+They are not part of `bun run test`.
+
+- `postgres-read-only-live.ts`: the agent read-only profile against a real server ([§12](#12-agent-read-only-execution-profile-328)).
+- `postgres-held-session-live.ts`: a session that ends under a statement or a held transaction ([§8.0.2](#802-a-session-that-ends-while-a-statement-or-the-transaction-holds-it)), run under Bun and, bundled with `bun build --target=node`, under Node.
 
 ---
 

@@ -33,6 +33,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
 import type { AgentRunEvent, AgentRunWorkflowType } from "@/lib/agent/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -123,7 +124,7 @@ async function gateRun(
   forgetHeldSnapshots();
   const availability = workflowAvailability("agent", workflowType, "kubernetes");
   if (!availability.open) throw new Error(`${workflowType} does not open on kubernetes`);
-  const facts = persistedRunFacts("agent", workflowType, availability);
+  const facts = persistedRunFacts("agent", workflowType, "kubernetes", availability);
   if (facts.statementLanguage !== "kubectl") throw new Error(`${workflowType} does not open as a kubectl run`);
 
   const store = new AgentRunStore({
@@ -180,7 +181,12 @@ async function main(): Promise<number> {
   if (context === undefined) throw new Error(`${file}: ${imported.refusals.join(" ")}`);
   const connection = { ...connectionOf(context, PERSONA), id: "kubernetes-agent-gate", name: "kubernetes agent gate" };
 
-  const provider = new KubernetesProvider(connection, { queryTimeout: QUERY_TIMEOUT_MS }, {}, { readOnly: true });
+  const provider = new KubernetesProvider(
+    connection,
+    { queryTimeout: QUERY_TIMEOUT_MS },
+    {},
+    { readOnly: true, egress: egressDecision() },
+  );
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "kubernetes-agent-gate-"));
   const runs: GateRun[] = [];
   try {

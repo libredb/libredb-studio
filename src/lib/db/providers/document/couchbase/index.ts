@@ -36,11 +36,14 @@ import {
 } from "@/lib/db/object-kinds";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
@@ -63,7 +66,7 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -85,8 +88,9 @@ import {
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { couchbaseAgentStatementRefusal, verifyCouchbaseAgentProfile } from "./agent-boundary";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { CouchbaseHttpTransport, type CouchbaseHttpTransportDeps } from "./http-transport";
 import { CATALOG_TIMEOUT_MS, inferColumns, inferColumnsEach } from "./introspect";
 import { COUCHBASE_DEFAULT_SCOPE, keyspaceFromDisplayName, keyspacePath, quoteIdentifier } from "./keyspace";
@@ -364,6 +368,9 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
   /**
    * `transportDeps` is the test seam of the transport the open builds: the factory passes three arguments, so a real
    * connection always builds its own.
@@ -371,11 +378,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     private readonly transportDeps: CouchbaseHttpTransportDeps = {},
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -497,7 +505,11 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
 
   public async connect(): Promise<void> {
     this.validate();
-    const transport = new CouchbaseHttpTransport(this.transportConfig(), this.transportDeps);
+    const transport = new CouchbaseHttpTransport(
+      this.transportConfig(),
+      this.transportDeps,
+      requireEgressDecision(this.egress),
+    );
 
     try {
       // Cheapest proof that the cluster is reachable AND the credentials work:
@@ -710,10 +722,14 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
       (error instanceof TransportError && error.kind === "timeout") ||
       (error instanceof CouchbaseError && error.code === REQUEST_TIMEOUT_CODE);
     if (timedOut) {
-      return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, this.type, sql);
+      return new TimeBudgetRefusal(
+        `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+        this.type,
+        sql,
+      );
     }
     if (error instanceof TransportError && error.kind === "too-large") {
-      return new QueryError(
+      return new ByteBudgetRefusal(
         `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further`,
         this.type,
         sql,
@@ -734,12 +750,12 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
     sql: string,
   ): QueryResult {
     if (result.rows.length > budget.maxResultRows) {
-      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+      throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
     }
     const answer = this.toQueryResult(result, executionTime);
     const bytes = measureResultBytes(answer.rows);
     if (bytes > budget.maxResultBytes) {
-      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+      throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
     }
     return answer;
   }

@@ -15,17 +15,24 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import { ENGINE_FACETS } from "@/lib/db/engine-facets";
+import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
-// The unconnected provider the route reads capabilities from, the provider-meta pattern.
-const mockCreateDatabaseProvider = mock<(conn: { id: string }) => Promise<typeof mockProvider>>(
-  async () => mockProvider,
+// The declarations the route reads capabilities from, the provider-meta pattern: data read off a provider.
+const declarationsOf = (provider: ReturnType<typeof createMockProvider>) => ({
+  capabilities: provider.getCapabilities(),
+  labels: provider.getLabels(),
+  supportsQueryCancel: false,
+});
+const mockReadProviderDeclarations = mock<(conn: { id: string }) => Promise<ReturnType<typeof declarationsOf>>>(
+  async () => declarationsOf(mockProvider),
 );
+const { readProviderDeclarations: realReadProviderDeclarations } = await import("@/lib/db/factory");
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
@@ -46,7 +53,7 @@ mock.module("@/lib/auth", () => ({
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
-  createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
   getProviderCacheStats: mock(),
@@ -62,7 +69,6 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
@@ -102,8 +108,8 @@ describe("POST /api/admin/fleet-health", () => {
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
-    mockCreateDatabaseProvider.mockClear();
-    mockCreateDatabaseProvider.mockImplementation(async () => mockProvider);
+    mockReadProviderDeclarations.mockClear();
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
   });
 
@@ -191,6 +197,54 @@ describe("POST /api/admin/fleet-health", () => {
     expect(data.results[0].databaseSizeBytes).toBeUndefined();
   });
 
+  test("an engine that offers the overview but not table statistics is asked for it once and carries its byte figure", async () => {
+    expect(ENGINE_FACETS.kafka.monitoring.overview).toBe("offered");
+    expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
+    const kafkaProvider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => kafkaProvider);
+    const kafka = {
+      id: "conn-kafka",
+      name: "Events",
+      type: "kafka",
+      host: "broker.example.com",
+      port: 9092,
+      database: "",
+      createdAt: new Date(),
+    };
+
+    const req = createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [kafka] } });
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(kafkaProvider.getOverview).toHaveBeenCalledTimes(1);
+    expect(data.results[0].databaseSizeBytes).toBe(268435456);
+  });
+
+  test("an engine that does not offer the overview panel is never asked for it, and its row carries no byte figure", async () => {
+    const s3Provider = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => s3Provider);
+    const s3 = {
+      id: "conn-s3",
+      name: "Objects",
+      type: "s3",
+      host: "objects.example.com",
+      port: 9000,
+      database: "",
+      createdAt: new Date(),
+    };
+
+    const req = createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [s3] } });
+    const res = await POST(req);
+    const data = await parseResponseJSON<{ results: { status: string; databaseSizeBytes?: number }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0].status).toBe("healthy");
+    expect(s3Provider.getHealth).toHaveBeenCalledTimes(1);
+    expect(s3Provider.getOverview).not.toHaveBeenCalled();
+    expect("databaseSizeBytes" in data.results[0]).toBe(false);
+  });
+
   test("returns 403 for non-admin user", async () => {
     mockGetSession.mockResolvedValueOnce({ role: "user", username: "user" });
 
@@ -262,6 +316,55 @@ describe("POST /api/admin/fleet-health", () => {
     const errorItem = data.results.find((r) => r.status === "error");
     expect(errorItem).toBeDefined();
     expect(errorItem!.error).toContain("Connection refused");
+  });
+
+  test("an item whose check fails with an error holding its connection's credential answers the withheld sentence, and the other items are unchanged", async () => {
+    const password = crypto.randomUUID();
+    const failing = (error: Error) => {
+      const provider = createMockProvider();
+      (provider.getHealth as ReturnType<typeof mock>).mockRejectedValue(error);
+      return provider;
+    };
+    const providers: Record<string, ReturnType<typeof createMockProvider>> = {
+      "conn-1": failing(new ConnectionError(`could not connect as ${password}`, "postgres")),
+      "conn-2": mockProvider,
+      "conn-3": failing(new ConnectionError("could not connect", "postgres")),
+    };
+    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => providers[resolved.id]) as never);
+    const items = [
+      { ...connections[0], password },
+      connections[1],
+      { ...connections[0], id: "conn-3", name: "Reporting DB", password: password },
+    ];
+
+    const res = await POST(
+      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: items } }),
+    );
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string; error?: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results.map(({ connectionId, status, error }) => ({ connectionId, status, error }))).toEqual([
+      { connectionId: "conn-1", status: "error", error: withheldErrorMessage("ConnectionError") },
+      { connectionId: "conn-2", status: "healthy", error: undefined },
+      { connectionId: "conn-3", status: "error", error: "could not connect" },
+    ]);
+    expect(JSON.stringify(data)).not.toContain(password);
+  });
+
+  test("an item whose check throws a value that is not an Error answers Connection failed", async () => {
+    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => {
+      if (resolved.id !== "conn-1") return mockProvider;
+      const provider = createMockProvider();
+      (provider.getHealth as ReturnType<typeof mock>).mockRejectedValue("socket closed");
+      return provider;
+    }) as never);
+
+    const res = await POST(createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections } }));
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string; error?: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results[0]).toMatchObject({ connectionId: "conn-1", status: "error", error: "Connection failed" });
+    expect(data.results[1]).toMatchObject({ connectionId: "conn-2", status: "healthy" });
   });
 
   test("invalid JSON body returns 500", async () => {
@@ -344,7 +447,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
-    mockCreateDatabaseProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
@@ -354,8 +457,8 @@ describe("POST /api/admin/fleet-health billed compute", () => {
   test("a resumesBilledCompute connection is answered not-checked, with no cached provider and no statement", async () => {
     const billedProvider = createMockProvider({ capabilities: { resumesBilledCompute: true } });
     const controlProvider = createMockProvider();
-    mockCreateDatabaseProvider.mockImplementation(async (conn) =>
-      conn.id === billed.id ? billedProvider : createMockProvider(),
+    mockReadProviderDeclarations.mockImplementation(async (conn) =>
+      declarationsOf(conn.id === billed.id ? billedProvider : createMockProvider()),
     );
     mockGetOrCreateProvider.mockImplementation(async () => controlProvider);
 
@@ -392,6 +495,25 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     expect(controlProvider.getHealth).toHaveBeenCalledTimes(1);
   });
 
+  test("a tunnelled connection's declarations are read without opening its tunnel (FND-2 slice 5)", async () => {
+    mockReadProviderDeclarations.mockImplementationOnce(realReadProviderDeclarations as never);
+    const tunnelled = {
+      ...connections[0],
+      id: "conn-tunnelled",
+      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "jump", authMethod: "password" },
+    };
+
+    const res = await POST(
+      createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections: [tunnelled] } }),
+    );
+    const data = await parseResponseJSON<{ results: { connectionId: string; status: string }[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.results).toMatchObject([{ connectionId: "conn-tunnelled", status: "healthy" }]);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+  });
+
   test("other connections are checked as before", async () => {
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",
@@ -403,7 +525,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
 
     expect(res.status).toBe(200);
     expect(data.results.map((r) => r.status)).toEqual(["healthy", "healthy"]);
-    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(2);
+    expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(2);
     expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(2);
   });
 });

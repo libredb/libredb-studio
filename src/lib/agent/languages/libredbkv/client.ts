@@ -3,10 +3,9 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on a LibreDB file: the boundary is the handle. Each command opens the file read-only on a handle of its
@@ -14,12 +13,10 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
  * budgets are counted by this server, and the time budget is checked when a read ends, since a read inside this
  * server's own process cannot be stopped midway; the body says so rather than claiming a deadline.
  */
-function libredbkvReadsPosture(bounds: StatementBudgets): AgentPosture {
+function libredbkvReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} keys and ${seconds} s per command, enforced by a read-only file handle`,
     title: "Agent mode reads, through a handle that cannot write",
     body: `Agent mode runs LibreDB reads it wrote itself, get, prefix and range, bounded to ${rows} keys each and refused past them rather than cut. Each read opens the file read-only on a handle of its own: it takes no lock, so your editor keeps the file and keeps writing, and no call on it can change the file. A read runs inside this server, so one that outruns ${seconds} seconds is refused when it ends rather than stopped midway. Studio's reader refuses put and delete before the file is opened. Nothing reaches your editor.`,
@@ -78,7 +75,6 @@ export const LIBREDBKV_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: libredbkvReadsPosture,
-    widened: libredbkvReadsPosture,
     handoverTerms: () =>
       "A LibreDB answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

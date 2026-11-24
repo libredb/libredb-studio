@@ -1,5 +1,5 @@
-import { KUBECTL_QUERY_DIALECT } from "@/lib/db/providers/platform/kubernetes/query-dialect";
 import type { ProviderCapabilities } from "@/lib/db/types";
+import { CREDENTIAL_FLAGS } from "@/lib/languages/kubectl/commands";
 import type { QueryTab } from "@/lib/types";
 
 /**
@@ -48,6 +48,9 @@ export interface DialectSpec {
  * dialect has a profile statement in its grammar, and Firestore's alone has a count statement, written by its
  * `DIALECT_GENERATORS` record. Kafka renders in Monaco's built-in `json`
  * mode, which `DIALECT_EDITORS` says, and not here: this record is keyed by dialect, that one by tab type.
+ *
+ * The answers are Studio's: a declaration restates the row of the dialect it names, and Studio reads them from this
+ * record, never from a declaration (docs/providers/CONTRACT.md, clause M-50).
  */
 export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Object.freeze({
   libredb: Object.freeze({
@@ -151,8 +154,20 @@ export const QUERY_DIALECTS: Readonly<Record<QueryDialect, DialectSpec>> = Objec
     offersCountQuery: false,
     offersSqlExport: false,
   }),
-  // Kubernetes: the provider's own row, whose history mask is its console's list of credential flags.
-  kubectl: KUBECTL_QUERY_DIALECT,
+  // Kubernetes: one statement of a read-only kubectl subset. Its grids are the API server's own columns, so no
+  // profile, model or count statement of its grammar applies, and neither SQL export format applies.
+  kubectl: Object.freeze({
+    tabType: "kubectl",
+    offersColumnProfiling: false,
+    offersCodeGeneration: false,
+    offersCountQuery: false,
+    offersSqlExport: false,
+    // A line pasted from a shell may carry kubectl's credential flags or a Secret's values, which the console refuses;
+    // query history keeps none of their values. The flags are the kubectl family's `CREDENTIAL_FLAGS`
+    // (`src/lib/languages/kubectl/commands.ts`), the list the console refuses, read here so the mask and the refusals
+    // are one list; the test "the dialect declares exactly the console's credential flags" holds it.
+    historyMask: Object.freeze({ credentialFlags: CREDENTIAL_FLAGS }),
+  }),
 
   // OPC UA: one JSON read request, either current values or raw history. Its grids are the server's own
   // DataValues, so no profile, model or count statement of its grammar applies. The SQL export formats

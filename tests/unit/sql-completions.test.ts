@@ -3,6 +3,7 @@ import { describe, test, expect } from "bun:test";
 import type * as Monaco from "monaco-editor";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import { refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import { containerSpellingOf, quoteIdentifier } from "@/lib/query-generators";
 import {
@@ -805,14 +806,15 @@ describe("Completion addresses outside the default container (#1397)", () => {
     expect(applied(line, customers)).toBe('SELECT * FROM libredb_objects.app."Customers"');
   });
 
-  test("a postgres type that is not a primitive string gets no PostgreSQL quoting", () => {
-    // The quoting rule was an identity comparison, so a String object from plain JavaScript never named PostgreSQL.
-    const line = "SELECT * FROM Cus";
+  test("a postgres type that is not a primitive string is refused as not text when the provider registers", () => {
+    // A String object from plain JavaScript is not a type id, so the grammar refuses it (FND-1) before any
+    // completion is registered, rather than reading PostgreSQL's quoting or the default under it.
+    const monaco = createMockMonaco();
     const boxed = new String("postgres") as unknown as Parameters<typeof registerSQLCompletionProvider>[2];
-    const customers = complete(line, boxed).find((item) => item.label === "Customers")!;
-    const plain = complete(line).find((item) => item.label === "Customers")!;
-    expect(applied(line, customers)).toBe(applied(line, plain));
-    expect(applied(line, customers)).not.toBe('SELECT * FROM libredb_objects.app."Customers"');
+    const refusal = refusalThrownBy(() => registerSQLCompletionProvider(monaco, addressedCache(), boxed));
+    expect(refusal).toEqual(refusalOf(boxed));
+    expect(refusal).toMatchObject({ reason: "malformed" });
+    expect(monaco._getProvider()).toBeNull();
   });
 
   test("a schema qualifier and a dot offer that schema's tables, by their own name", () => {
@@ -935,8 +937,8 @@ describe("Completion of a container name the engine spells itself", () => {
         segment,
         qualify: true,
       })),
-      quoteSegment: (segment) => quoteIdentifier(segment, caps),
-      containerSpelling: containerSpellingOf(caps),
+      quoteSegment: (segment) => quoteIdentifier(segment, dialect, caps),
+      containerSpelling: containerSpellingOf(dialect, caps),
     });
     registerSQLCompletionProvider(monaco, cache, dialect);
     return monaco._getProvider()!.provideCompletionItems(createMockModel(line), createPosition(1, line.length + 1))

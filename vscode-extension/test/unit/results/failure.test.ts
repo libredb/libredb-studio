@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { BackendError, BackendExitedError } from "../../../src/host/backend-client";
+import { RunNotConfirmedError } from "../../../src/host/editor/run-confirmation";
 import { toRunFailure } from "../../../src/host/results/failure";
 import { parseHostMessage, type RunFailure } from "../../../src/results-protocol";
 import { RUN_A } from "../../fixtures/results-sequences";
@@ -30,6 +31,12 @@ describe("toRunFailure", () => {
   it("maps QUERY_CANCELLED to cancelled and logs nothing", () => {
     const { map, lines } = recorded();
     assert.deepEqual(map(new BackendError(499, "QUERY_CANCELLED", "Query was cancelled")), { kind: "cancelled" });
+    assert.deepEqual(lines, []);
+  });
+
+  it("a declined confirmation is cancelled, and logs nothing", () => {
+    const { map, lines } = recorded();
+    assert.deepEqual(map(new RunNotConfirmedError()), { kind: "cancelled" });
     assert.deepEqual(lines, []);
   });
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { applyQueryLimit } from "@/lib/db/utils/query-limiter";
-import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { hasUnterminatedSpan } from "@/lib/sql/spans";
 import { splitExecutionUnits } from "@/lib/sql/statement-splitter";

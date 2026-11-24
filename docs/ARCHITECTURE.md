@@ -187,6 +187,9 @@ The graph core under `src/lib/db/graph/` is pure and shipped to the browser, whe
 
 Adding a new database type takes several steps, from registering the type to verifying it; [`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md) walks through each one.
 
+Core code does not gain imports into a provider directory: the ones it holds today are listed by file, each with the change that removes it, in [`PROVIDER_IMPORTS.md`](./PROVIDER_IMPORTS.md), and `tests/unit/lib/db/provider-imports.test.ts` refuses any other.
+The same record gives every core module provider code imports a destination in the provider plugin program.
+
 `CouchbaseProvider` extends `BaseDatabaseProvider` even though SQL++ is a SQL dialect: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and declares its SQL-ness through `queryLanguage: 'sql'` instead. Being reached over HTTP is **not** the reason — `ClickHouseProvider`, `DruidProvider` and `TrinoProvider` add no driver either, and all three extend `SQLBaseProvider`, because double-quoted identifiers are correct in each dialect. Each driver-free provider is a directory rather than a single file, with its wire format behind a transport seam that provider logic never bypasses. Trino inherits everything except the limiter: its grammar is `[ OFFSET count ] [ LIMIT count ]` and only that way round, so `prepareQuery()` transposes the clause the shared limiter emits. See [`docs/providers/couchbase.md`](providers/couchbase.md), [`clickhouse.md`](providers/clickhouse.md), [`druid.md`](providers/druid.md) and [`trino.md`](providers/trino.md).
 
 ## 4. Key Architectural Patterns
@@ -201,6 +204,12 @@ No `isMongoDB` / `=== 'mongodb'` checks outside provider classes. All behavior d
 The connection dialog reads the same way: each engine's fields are a row of `CONNECTION_FIELDS` in `src/lib/db/connection-fields.ts`, and its scheme, URL TLS reader, paste reader and seed checks a row of `CONNECTION_STRING` in `src/lib/db/connection-string/`, declared beside its provider.
 Each field is drawn from its row of `CONNECTION_FIELD_DESCRIPTORS` in the same module by one renderer, `src/components/ConnectionFieldControl.tsx`, in the order `src/lib/db/connection-field-layout.ts` works out, so `ConnectionModal.tsx` lays out only the engine-agnostic parts and names no engine and no engine-specific field.
 The rolled-back notice's keyword and the agent consent card's deadline chip and sentence are a row of `EXECUTION_UI` in `src/lib/db/execution-ui/`, read by type id so they answer without provider metadata, and the explain request's engine hint with no connection is `explainRequestEngine` there.
+Which of the seven monitoring panels an engine offers is a row of `ENGINE_FACETS` in `src/lib/db/engine-facets/`, declared beside its provider and read through `engineFacetsFor`.
+`BaseDatabaseProvider.getMonitoringData` hands the row to `readDeclaredPanels`, which reads only the offered panels, so a panel is answered, failed (with its sentence under `errors`), not requested, or not offered (listed in `notOffered` and never read).
+The monitoring dashboard, the admin Operations page and fleet health read the same row by type id and draw or ask for nothing an engine does not offer.
+The row also declares the maintenance operations the engine offers, and `POST /api/db/maintenance` and its preview refuse any other by name with `400 FACET_NOT_OFFERED` through `src/lib/db/engine-facets/maintenance.ts` before a provider is built.
+It declares, as `agentReadings`, the curated `inspect_operations` readings agent mode is offered on the engine: each is the kind of an offered panel whose read the agent handle answers, or `health` where the agent handle answers it.
+When the whole read fails, `useMonitoringData` keeps only the payload its own selection read before, so a switch shows the new connection's error and none of the previous connection's panels, and the dashboard names a failed refresh beside the panels it keeps.
 `tests/unit/lib/no-engine-branches.test.ts` is the guard: outside the provider layer, a type-id branch fails unless its closed lists name it as a registry or a false positive, and its debt list of branches still to move is empty.
 
 `src/lib/db/object-kinds.ts` is the kernel through which every provider reads its own declaration, and it takes only facts that follow from the declaration and hold for every engine.
@@ -217,25 +226,27 @@ The editor's query dialects follow the same rule through three registries, each 
 `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language, keyed by tab type because that is what a restored tab carries.
 `EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`) gives each Monaco language its registration, completion source, formatter and answer card accent, each row declared beside the provider that owns the language (`sql` and `json`, which no one engine owns, in that directory), so the shared editor imports the registry and never a provider module.
 `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
-`LANGUAGE_GENERATORS` beside it does the same for each query language an engine writes its own text in, MongoDB's JSON documents included, and `SQL_PORT_GENERATORS` holds the SQL forms and identifier quoting one SQL engine writes apart from the shared ones, keyed by the default port the generators have always read them by.
+`LANGUAGE_GENERATORS` beside it does the same for each query language an engine writes its own text in, MongoDB's JSON documents included.
+`SQL_ENGINE_GENERATORS` holds the SQL forms and identifier quoting one SQL engine writes apart from the shared ones, keyed by type id and read through `typeIdRow`, so a connection's forms follow its type and never the port its declaration names, and a value outside the union is refused by name.
 Every row is declared beside its provider, so `src/lib/query-generators.ts` is the engine-agnostic dispatcher and names no engine, which `tests/unit/lib/query-generators-isolation.test.ts` holds.
 A dialect is one record in each, and no reader branches on its name: `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of `queryDialect`, of the JSON language and of a negated language to a closed list with its owner.
 
 How a generated statement spells a literal, a name and a bind follows the same rule beside `QUERY_DIALECTS`, keyed by type id rather than by dialect.
 `src/lib/db/sql-writing/` holds the `SqlWritingSpec` contract (`types.ts`), the building blocks more than one engine spells alike (`shared.ts`), and `SQL_WRITING` (`index.ts`), a `Record` over `DatabaseType` the compiler holds complete.
 Each row is declared in a module beside its provider, which imports only the contract, the building blocks, the engine-neutral export helpers (`export-shared.ts`) and, where it has one, its own `typed-literals` sibling, so one engine's rules cannot reach another's.
-`quoteLiteral`, `unquoteLiteral`, `temporalLiteral` and `positionalPlaceholder` (`src/lib/sql/values.ts`) and `quoteIdentifier` (`src/lib/sql/identifier.ts`) read the row through `sqlWritingFor`, which gives a missing connection and a string outside the union their own named specs.
+`quoteLiteral`, `unquoteLiteral`, `temporalLiteral` and `positionalPlaceholder` (`src/lib/sql/values.ts`) and `quoteIdentifier` (`src/lib/sql/identifier.ts`) read the row through `sqlWritingFor`, which gives a missing connection its own named spec and refuses any other value that is not a type id with `UnknownProviderError`.
 `useInlineEditing` (`src/hooks/use-inline-editing.ts`) reads the row's `inlineEdit` the same way: the type names that make a key column an instant, a 64-bit float or an exact decimal, and the `boundEdit` that wraps an edit's bind where the engine needs one.
 `buildResultExport` (`src/lib/export/result-export.ts`) and `typedLiteral` (`src/lib/export/typed-literals.ts`) read the row's `export` field the same way: the CREATE TABLE types, the type vocabulary that classifies a declared type, and the literals an exported INSERT writes.
 The golden files under `tests/unit/db/sql-writing/golden/` pin every engine's output.
 
 The schema-diff migration text follows it too, through `MIGRATION_DDL` in `src/lib/db/migration-ddl/`, a `Record<DatabaseType, MigrationDdlSpec>` the compiler holds complete beside `QUERY_DIALECTS`.
 Each row is a module beside its provider (`<family>/<id>-migration-ddl.ts`, or `migration-ddl.ts` inside a provider directory) that either refuses the whole diff with one line or writes every statement kind through its own function, sharing PostgreSQL's spelling by importing a named building block from `shared.ts`.
-`generateMigrationSQL` reads a connection's row through `migrationDdlFor`, which answers a spec of its own for no connection and for a type outside the union, and names no type id itself.
+`generateMigrationSQL` reads a connection's row through `migrationDdlFor`, which answers a spec of its own for no connection, refuses a value outside the union with `UnknownProviderError`, and names no type id itself.
 
 How each engine's statement text is read sits in a registry of the same kind beside `QUERY_DIALECTS`: `SQL_GRAMMAR` in `src/lib/db/sql-grammar/`, a `Record<DatabaseType, SqlGrammarSpec>` the compiler holds total.
 Each row is a module beside its engine's provider that states the grammar facts the statement splitter, the row limiter and the confirmation gate read, whether the text is SQL at all (`readsSqlText`), what a redacted query event keeps, the words the update-target reader adds, and how completion quotes a name.
-`sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and an unknown one with `UNKNOWN_TYPE_SQL_GRAMMAR`, so no reader of these facts names a type id.
+The confirmation gate reads the facts that would spare a statement, `readsSqlText: false`, a `confirmExemptForms` form and a vocabulary row's `decidesAlone`, through Studio's review record of such claims, `CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`, and counts each only where the record lists it.
+`sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and refuses a value outside the union with `UnknownProviderError`, so no reader of these facts names a type id or reads another engine's facts.
 
 ### 4.2. Authentication Flow
 
@@ -291,7 +302,12 @@ See [LAUNCH.md](LAUNCH.md).
 
 Multi-statement queries execute sequentially via `POST /api/db/multi-query`, one request per execution unit (`splitExecutionUnits`): a statement, or on SQL Server the whole batch between `GO` lines.
 
-The run target, the connection type's refusal, the confirmation and the route of a run are decided by the functions `analyzeStatement` in `src/lib/editor/statement-analysis.ts` composes in the web editor's order: the web editor calls them one by one, `POST /api/db/statement/analyze` answers `analyzeStatement` whole to a client outside the browser, and the VS Code extension's child calls the run target, the editor language and the gate.
+The run target, the connection type's refusal, the confirmation and the route of a run are decided by the functions `analyzeStatement` in `src/lib/editor/statement-analysis.ts` composes in the web editor's order: the web editor calls them one by one, `POST /api/db/statement/analyze` answers `analyzeStatement` whole to a client outside the browser, and the VS Code extension's child calls the run target, the editor language and the run gate (`gateRun` in `src/lib/api/run-confirmation.ts`), on `query/target` and on every `query/run`.
+
+The server takes the confirmation decision again on every run (`src/lib/api/run-confirmation.ts`): `POST /api/db/query`, `POST /api/db/multi-query` and the `query` action of `POST /api/db/transaction` read the submitted statement with `confirmationVerdict`, the same verdict `analyzeStatement` composes, after their field checks and before the admission gate and any provider.
+A statement the gate asks about is answered 428 with a confirmation token (`src/lib/api/run-confirmation-token.ts`) when the request asks or `LIBREDB_RUN_CONFIRMATION` is `required`, and runs when it comes back with that token; the web editor asks on every run and keeps its own gate in front of the server's ([API_DOCS.md](API_DOCS.md#server-confirmation-of-a-run)).
+The verdict reads the connection's environment: on `production` every statement the gate asks about is confirmed by typing the connection's name, which the server compares before it verifies the token.
+The web editor asks that value in its own dialog, and where the server's 428 asks a value its run did not carry (an inline edit, a page, a SANDBOX run), the run waits on the safety dialog and is sent again with what the person typed, or ends as not run once the dialog closes (`src/hooks/use-query-execution.ts`).
 
 ### 4.4. Storage Abstraction Layer
 
@@ -316,20 +332,54 @@ The run target, the connection type's refusal, the confirmation and the route of
 Studio ships both as a standalone app and as the `@libredb/studio` npm package consumed by libredb-platform (built with `tsup` via `build:lib`).
 
 - **`src/workspace/`** — `StudioWorkspace.tsx` is the embeddable shell. Its adapter hooks (`hooks/use-connection-adapter`, `hooks/use-query-adapter`) let the host (standalone or platform) supply connections and query execution, so the same UI runs in both contexts.
+- **Host connections a provider cannot open**: the connection adapter decides availability from each host connection's `type` by the standalone shell's rule, so a connection whose type names no provider in the package is listed as unavailable and never opened; see [STORAGE.md](STORAGE.md#connections-whose-type-this-studio-has-no-provider-for).
 - **`src/exports/`** — barrel modules (`components.ts`, `providers.ts`, `workspace.ts`, `types.ts`) that define the package's public surface; `package.json` `exports`/`main`/`module` point at the tsup `dist/` output.
-- **`src/styles/theme.css`** — the semantic colour tokens every exported component resolves through, shipped as `dist/styles.css` (`exports["./styles.css"]`) because `globals.css` is not packaged. A host imports it once: `import "@libredb/studio/styles.css"`. `build:lib` is `tsup && node scripts/copy-theme.mjs` in that order — tsup cleans `dist/`, so the copy has to follow it. See [`docs/ui/theming.md`](ui/theming.md).
+- **`src/styles/theme.css`**: the semantic colour tokens every exported component resolves through, shipped as `dist/styles.css` (`exports["./styles.css"]`) because `globals.css` is not packaged. A host imports it once: `import "@libredb/studio/styles.css"`. `build:lib` is `tsup && node scripts/copy-theme.mjs` in that order: tsup cleans `dist/`, so the copy has to follow it. `dist/styles.css` starts with `@import "@xyflow/react/dist/style.css";`, the ER diagram's base styles, since the published JavaScript imports no stylesheet. See [`docs/ui/theming.md`](ui/theming.md).
 - Platform integration rules (Tailwind tokens, Lucide stroke widths, chunk scanning) live in `CLAUDE.md`.
+- **No process listeners**: importing the package, or the provider factory through `@libredb/studio/providers`, adds no SIGTERM or SIGINT listener to the embedder's process.
+  An embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler; Studio's own handler is installed only by its standalone boot ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+  It changed what an import does: 1.3.0 and earlier added SIGTERM and SIGINT listeners when the factory was imported outside `NODE_ENV=test`, which ran the shutdown hooks, closed the provider caches and ended the process with exit code 0, so an embedder that relied on that exit now ends the process itself.
 
 ### 4.7. Standalone Boot Flow (`src/instrumentation.ts`)
 
-Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime. On standalone boot it:
+Next.js runs `register()` once per server worker, **only** when Studio boots its own server (never when `@libredb/studio` is imported by libredb-platform) and only on the Node.js runtime.
+Before any of the steps below it installs the uncaught-exception exit (`src/lib/uncaught-exception.ts`), once per process however often `register()` runs.
+An exception that nothing catches is then logged by Studio in one redacted line, after Next.js 16.4's own print of it with its stack, and ends the process with exit code 70, so whatever started it may start a fresh one ([DISTRIBUTION.md](DISTRIBUTION.md#uncaught-errors-and-restarts)).
+It applies under `next dev` too: Next.js's dev command restarts its server only for its own exit code 77, so `bun dev` ends with code 70 and is started again by hand.
+Unhandled promise rejections stay non-fatal, as Next.js keeps them, unless Node.js runs with `--unhandled-rejections=strict`, which raises each one as an uncaught exception that then ends the process too.
+Second, it reads `NEXT_MANUAL_SIG_HANDLE` and installs the shutdown handler (`src/lib/shutdown-handler.ts`), once per process: a value other than unset, empty or `true`, and `true` on Bun, where the request drain sees no request, refuses the boot with exit code 1, a deliberate stop for the reason step 2 gives, since a server whose exit has two owners or none cannot shut down as configured.
+On SIGTERM or SIGINT, where `NEXT_MANUAL_SIG_HANDLE=true` gives Studio the exit, which the three images and every launcher that starts the server on Node.js set, the handler first closes the HTTP server and waits for the requests in flight (`src/lib/shutdown-drain.ts`, through node:diagnostics_channel), then runs the shutdown hooks, then closes every provider cache through the shutdown registry (`src/lib/shutdown.ts`) and exits with 0, 143 or 130; where Next.js owns the exit, Studio's handler runs only the hooks ([DISTRIBUTION.md](DISTRIBUTION.md#stopping-the-server)).
+Third, it takes Studio's storage location (`storageLocation` in `src/lib/data-dir.ts`): `STORAGE_SQLITE_PATH` resolved against the working directory at that moment, logged once at info with the route `storage-location` and kept for the life of the process, so the files the provider factory reserves and OPC UA's default PKI root are fixed before the bootstrap writes its credentials file ([SECURITY.md](SECURITY.md) control 3.45).
+On standalone boot it then:
 
 1. **Bootstraps missing auth env** (`src/lib/auth-bootstrap.ts`, #109). When `JWT_SECRET` / `ADMIN_PASSWORD` are absent they are generated once, persisted to `<data dir>/auth-bootstrap.json` (mode `0600`), and injected into `process.env` before any secret reader runs; the admin password is printed once. Explicitly set env vars always win. Disable with `AUTH_BOOTSTRAP=off|false|0` (case-insensitive); an unrecognized value warns and stays on. In OIDC mode only the JWT secret is generated.
-2. **Runs the auth-config preflight** (`src/lib/config/auth-preflight.ts`, #227). A `JWT_SECRET` that is set but shorter than 32 characters prints an operator-facing banner (length only, never the value) and exits with code 1. It runs *after* bootstrap so a generated secret is validated too. This is the one step that intentionally stops boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling the failure there would restart the pod forever and hide the login screen's actionable 503; refusing to start costs nothing because a too-short secret can sign no session at all.
-3. **Seeds the embedded LibreDB sample** (`src/lib/seed/libredb-sample.ts`). Unless the sample is off (`LIBREDB_EMBEDDED_SAMPLE=false`, or the Kubernetes access review on without `LIBREDB_EMBEDDED_SAMPLE=true`), it creates `<data dir>/sample.libredb` (idempotently, atomic rename) and `GET /api/connections/managed` then advertises an editable, dismissable "Sample (LibreDB)" connection pointing at it.
-4. **Seeds the embedded SQLite sample, asynchronously** (`src/lib/seed/sqlite-sample.ts`). Unless `SQLITE_EMBEDDED_SAMPLE=false`, it fires-and-forgets a copy of the vendored `seed-assets/sqlite/employee.db` template to `<data dir>/sample-employees.db` (idempotent, atomic rename) — boot never waits. While the copy is in flight the managed-connections API advertises the seed id in `pendingSeeds`; `useConnectionManager` polls (1s, max 30) so "Sample (Employees)" appears without a page refresh.
+2. **Runs the boot preflights, in this order**, each of which prints an operator-facing banner naming what to fix, never a secret's value, and exits with code 1, so the steps after it never run:
+   1. the auth-config preflight (`src/lib/config/auth-preflight.ts`, #227), which refuses an auth or storage setting the server could not work with, such as an unknown `NEXT_PUBLIC_AUTH_PROVIDER` or a `JWT_SECRET` that is set but shorter than 32 characters (length only, never the value); it runs *after* bootstrap so a generated secret is validated too;
+   2. the private CA preflight (`src/lib/config/ca-bundle-preflight.ts`), which reads the file `NODE_EXTRA_CA_CERTS` names once for the process through `src/lib/db/trust-material.ts`, keeping its CA certificates for the providers whose TLS does not read Node's store, and refuses a missing, unreadable or empty file, or one that holds a block under the legacy `X509 CERTIFICATE` label, holds no certificate block or leaves one unclosed, where Node itself only warns or, for the legacy label, trusts it;
+   3. the egress preflight (`src/lib/config/egress-preflight.ts`), which takes the `DB_HTTP_BLOCK_PRIVATE_HOSTS` decision, logs it once, and refuses a value other than `true`, `on`, `1`, `false`, `off`, `0` or empty, naming the variable;
+   4. the run confirmation preflight (`src/lib/config/run-confirmation-preflight.ts`), which refuses a `LIBREDB_RUN_CONFIRMATION` other than `advisory`, `required` or empty, naming the variable;
+   5. the governance preflight (`src/lib/governance/preflight.ts`, [GOVERNANCE.md](GOVERNANCE.md#boot-checks)), which with `GOVERNANCE_SOURCE` set refuses an environment that contradicts governance mode, and checks nothing while governance is off;
+   6. the Kubernetes access review preflight (`src/lib/kubernetes-access/preflight.ts`, [SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#kubernetes-access-review)), which with `KUBERNETES_ACCESS_REVIEW` on refuses an environment that contradicts the review, and checks nothing while it is off.
 
-Failures in the bootstrap and seeding steps are logged and swallowed — boot never breaks. The preflight in step 2 is the deliberate exception.
+3. **Re-seals and checks the stored credentials when asked** (`src/lib/storage/reseal-at-boot.ts`, [STORAGE.md](STORAGE.md#re-sealing-the-store)).
+   With `STORAGE_ENCRYPTION_REQUIRE_V2` set, it first checks that the store records version 1 as retired, and runs no re-seal: while that is set, the re-seal runs only on a store that records it.
+   Without it, with `STORAGE_ENCRYPTION_RESEAL` set, it backs the server store up, re-seals every stored credential and retires version 1 envelopes, and serving waits for it.
+   With both unset, it does nothing and opens no store.
+   It runs after the bootstrap, because the storage key may derive from the `JWT_SECRET` the bootstrap fills in, and after the preflights, so a boot they refuse never touches the store.
+   A value of either variable it cannot read, `STORAGE_PROVIDER=local`, a re-seal that does not complete, or a check that does not pass prints a banner and exits with code 1.
+
+   Steps 2 and 3, and the `NEXT_MANUAL_SIG_HANDLE` refusal above, are the ones that intentionally stop boot: `GET /api/db/health` is the Kubernetes livenessProbe and the Docker/PaaS health check, so signalling such a failure there would restart the pod forever and hide the actionable error behind a green check; refusing to start costs nothing because a server with such a setting cannot work as configured, a too-short secret, for one, can sign no session at all.
+4. **Starts copying the built-in samples, asynchronously** (`src/lib/seed/samples.ts`, `src/lib/seed/sample-copy.ts`).
+   Which samples are enabled, where each one's file goes and whether that path is admitted are decided here, once, and kept for the life of the process; every listing reads that decision, and checks only whether the file exists on each request; a file lost after boot is listed unavailable as `target-lost` and logged once.
+   Every enabled sample, "Sample (Employees)" and "Sample (LibreDB)", has its committed, digest-pinned file in the seed assets directory (`SEED_ASSETS_DIR`, which every launcher sets, and `bun dev` and `bun start` set to the checkout's own) copied to the data directory, never over an existing file, and no database is opened.
+   The working directory is never used for it: with `SEED_ASSETS_DIR` unset or blank, a sample whose file is not in place yet is listed unavailable as `asset-directory-unset`.
+   Boot never waits: while a copy is in flight the managed-connections API advertises the seed id in `pendingSeeds`; `useConnectionManager` polls (1s, max 30) so the sample appears without a page refresh.
+   Each is then listed as an editable, dismissable connection ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
+
+A failure in the bootstrap step is logged and swallowed.
+A sample whose path cannot be checked, whose target is refused or whose copy fails is logged once, with its reason, and listed unavailable with that reason; boot never breaks.
+A copy that fails with an error the copy does not know is a defect: its sample is listed unavailable as `copy-defect`, and the error is rethrown into the copies' promise, which nothing awaits, so it is the process's unhandled rejection that Next.js logs and the server keeps serving.
+The preflights in step 2, the credential re-seal in step 3, and the `NEXT_MANUAL_SIG_HANDLE` refusal before them, are the deliberate exceptions.
 
 ### 4.8. SQLite Driver Selection (`src/lib/db/providers/sql/sqlite-driver.ts`)
 
@@ -372,6 +422,81 @@ With `KUBERNETES_ACCESS_REVIEW=on`, the cluster's own RBAC decides who may use a
 `review.ts` asks one SubjectAccessReview with the pod's ServiceAccount token, `decisions.ts` caches the answers and keeps one request in flight per key, `groups.ts` holds the groups of each OIDC sign-in per issuer and subject, `gate.ts` applies both decisions, `session-guard.ts` signs a session in again when its groups record is gone, and `preflight.ts` refuses a contradicting environment at boot.
 The gate sits in `src/lib/governance/visible.ts`, the one dispatcher the managed list and `resolveConnection` ask, so the list and every route that opens a connection decide alike; the caches live on `globalThis`, because each route handler is bundled apart.
 Behaviour and setup: [`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#kubernetes-access-review).
+
+### 4.13. Value codec (`@libredb/provider-sdk/values`)
+
+`encodeValue` and `decodeValue` write a database value as plain JSON and read it back.
+The module is `packages/provider-sdk/src/values/codec.ts`, part of the provider contract ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md#values)), and Studio imports it by the package name.
+A value JSON cannot carry is written as a tagged value, an object whose own keys are exactly `$` and `v`: `i64` for a `bigint` from -2^63 to 2^64 - 1 (decimal digits), `bytes` for a `Uint8Array` (padded base64), `ts` for a valid `Date` (its `toISOString` text) and `nf` for `NaN`, `Infinity` and `-Infinity`.
+The `obj` tag escapes a data object whose own keys are exactly `$` and `v`, so nothing a database hands back is ever read as a tag.
+The tags are stated once, as `$defs/valueTag` in the manifest schema, and `ValueTag` is their generated type.
+Every other value, and every malformed or unknown tag on decode, is refused with a `ValueCodecError` that names the kind and the JSON Pointer of the place, never the value.
+An object member whose value is `undefined` is left out, as JSON leaves it out, and `undefined` anywhere else is refused.
+Nesting is bounded at `MAX_VALUE_DEPTH` arrays and objects on encode and decode, so a deep or cyclic value is refused by name instead of overflowing the stack.
+The module uses no Node-only global, so it loads in the browser as well as on the server.
+The SQLite worker's line is the hop that carries it: the parent encodes parameters and decodes answers with the module, and the child's bootstrap carries a restricted copy ([`docs/providers/sqlite.md`](providers/sqlite.md#34-no-transactions-api-no-pool-cancellation-via-the-child-process-worker)).
+MCP's statement tools answer each row in it ([`docs/MCP.md`](MCP.md#limits)).
+
+### 4.14. Error records (`src/lib/db/error-record.ts`)
+
+A failed call answers, beside its words, a closed record a reader can branch on.
+The record's shape, its vocabularies and patterns, and the kinds a provider may raise are the provider contract's, `@libredb/provider-sdk/errors` ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md#errors)); `src/lib/db/error-record.ts` is core's reading of Studio's error classes into it, with Studio's own code vocabulary.
+`kind` names the class of failure: one kind per error class of `src/lib/db/errors.ts`, and `internal` for any other thrown value.
+A class declared elsewhere, such as a provider's own `QueryError` subclass, takes the kind of its nearest class there, found by walking the prototype chain, so a kind decides exactly what `instanceof` decides.
+`code` is the error's API code, or for the two execution profile kinds the refusal's deny code.
+`sqlState` is the SQLSTATE the driver reported, when it reported one.
+`engineCode` is an engine's own error code; no error carries one yet.
+`outcome` is `not-sent` when the statement never reached the database: a refusal before send (`RefusedBeforeSendError` and its subclasses), whatever a provider's connect raised, which `connectPhase` marks, whatever a provider's checkout of a connection or session before the send raised, which `checkoutPhase` marks, or a lost transaction the provider found before sending, a `TransactionLostError` raised with `beforeSend`, which its class marks.
+Every other failure answers `unknown`, since the statement may have run.
+`sessionState` says whether the session is in a transaction; no error carries one yet.
+The record holds no text of the error: no message, detail, statement or identifier.
+The full record is built only by `errorRecord` in `src/lib/db/operations/provider-text.ts`, which applies the core scrub first, so a credential of the connection in the SQLSTATE withholds the error's text whole, as one in the message does.
+A withheld error's record keeps the error's own kind, code and outcome and leaves out its SQLSTATE.
+The error body of every route that resolves the calling connection and reaches its provider (the database routes, the object routes and the agent runs, hand-over and drive routes), and the VS Code backend child's `data`, follow the same rule: only the texts are replaced.
+`readErrorRecord` reads a record strictly and refuses anything else with an `ErrorRecordError` that names the field, never its value.
+Every database error body the API routes answer (`databaseErrorBody` in `src/lib/api/error-body.ts`), and the `data` of the VS Code extension's error answers, carry `kind` and `outcome` ([`docs/API_DOCS.md`](API_DOCS.md#error-kind-and-outcome)).
+A body a route builds with the connection's scrub, and the VS Code backend child's `data` for a provider step's failure, also carry the record's `sqlState`, and the agent's ledger refusal of a failed statement carries the whole record (`record`), which the agent and MCP decide a failure by.
+An MCP tool's error answer built from a failure carries the whole record in `structuredContent.error`, built under the call's scrub (`src/lib/mcp/output.ts`).
+The module uses no Node-only global.
+
+### 4.15. The provider host core (`src/lib/provider-host/core/`)
+
+The host core is the part of Studio that will own every provider session: its open, its calls and its teardown ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md)).
+Today it holds two primitives the provider factory (`src/lib/db/factory.ts`) runs both of its caches on, and the console calls the editor query and its cancel run through.
+`open-once.ts` keeps one open in flight per cache key: concurrent callers share one open, a caller's own signal ends only its own wait, the open admits its own result into its cache, a failure no caller waits for goes to the table's `unclaimed` hook, and a discard aborts the signal of every matching open in flight (clause C-44).
+An open table may carry its owner's deadline: at it every caller still waiting is answered the owner's error, the open leaves the table so the next caller opens afresh, and the open closes what it opened once it settles; the factory's two tables carry each engine's connect budget (`src/lib/db/connect-budget.ts`, clause C-55).
+`teardown.ts` tears a provider down under fixed deadlines: the rollback of an open transaction waited for at most `TEARDOWN_ROLLBACK_MS` (5 s), then the close at most `TEARDOWN_CLOSE_MS` (10 s), the SDK's cleanup deadline, with an outcome per step and never a rejection (clause C-45).
+`console.ts` makes a console execute, cancel, endScope or transaction call: it checks the call before it is made, freezes its context and request, waits for it until the call's signal, pumps the first result within the page's 32 MiB, and answers a record of how the call ended; a stop sends the run's cancel under a cleanup context of its own (clauses C-47 and C-48); a transaction call, and a statement sent inside a transaction, answers the session state the session answered, read by the SDK's checks, and keeps none between calls (clause C-58); an endScope call answers the outcome its session answered, and core's execute never ends a scope, since the caller that minted it ends it (clause C-48).
+`objects.ts` makes the tree call, `treeCall`: it checks the call and the session's `objects.tree` offer before it is made, freezes its context and request, waits for it until the call's signal, and answers the session's answer by reference, with the console calls' own machinery (clause C-64).
+`turns.ts` awaits one turn of the event loop before every pull of a result, so a page of rows already in memory never holds the event loop for more than one batch (clause C-49).
+`page-budget.ts` bounds the pages in flight (clause C-53): a budget of large-page slots, one in each host core, `LARGE_PAGE_SLOTS`.
+Every page takes its first batch without waiting; before a page's second pull `withLargePageSlot` takes a slot, waiting for one in arrival order until the call's signal aborts, and every later pull runs under it.
+The page record holds the slot until its caller calls `release()` once its answer body is built, which `runEditorQuery` does in a `finally`; a run that answers no page gives the slot back before it answers, a page answered after its call stopped is released by the call's late handler, and a second release throws.
+One slot is the count measured safe on the 384 MiB old space the image and the chart set, since a bridged 32 MiB page holds about 150 MiB at its fullest with its provider's rows; it does not follow the heap limit V8 reports, whose young generation differs by Node version and machine.
+The budget does not bound a legacy provider's own rows, held before the first pull, nor the caller's answer text, written after the release.
+`state()` answers a budget's slots, held and waiting counts as data, for a test or a debugger.
+
+Core imports only the public subpaths of `@libredb/provider-sdk` other than `testing`, Node built-ins and its own files, and declares no module state: every table it uses is created by its owner and handed in (`tests/unit/lib/provider-host/core-boundary.test.ts`).
+It answers plain data and passes errors through by reference, so it never constructs a class that code in another Next.js bundle would test with `instanceof`.
+
+One process holds one host core (clause C-52).
+`host-core.ts` creates it, `createHostCore()`: a frozen object holding the four console calls and the tree call and nothing else, `executeCall` bound to a page budget the core creates for itself and `cancelCall`, `endScopeCall`, `transactionCall` and `treeCall` by identity, so the process holds one page budget as it holds one core.
+`src/lib/provider-host/instance.ts` keeps it in a global under `Symbol.for("libredb-studio.provider-host-core")`, which every bundle of the process resolves to one key.
+Each composition root installs it when its process starts, naming itself (`HostCoreRoot`): `register()` in `src/instrumentation.ts` for the server, after the boot checks and the credential re-seal, and the VS Code backend child's entry, `vscode-extension/src/backend/main.ts`, before it starts the backend, so the child holds a core and a page budget of its own.
+The caller facade reads it at the start of every call, so a route bundle holds no copy of the console calls; a call made before the install fails with `HostCoreBootOrderError`, by name, so no core is ever created on demand.
+A second install from the same root keeps the first core and its page budget, so `register()` may run again in one process as the installs beside it already allow, and a second install from another root fails with `HostCoreBootOrderError` naming both roots, so no second core is ever used.
+Next.js loads instrumentation and each route handler as separate module instances, each with its own copy of Studio's error classes, so a class the instrumentation bundle constructs is not the route's: the core therefore constructs none, and the ports that read the caller's classes (`HostCallPorts`) and the accessor stay in the calling bundle, built per call.
+A record the core answers becomes the route's own class through the route's accessor, and a provider error the route built passes through the core by reference (`tests/unit/lib/provider-host/cross-bundle.test.ts`, and live against the built standalone server, `tests/live/host-core-live.ts`).
+The library surface never reads the slot, so an embedder of the npm package composes nothing.
+`register()` runs once per server process, `next dev` included, and a dev server does not reload instrumentation or the core when either is edited, so a change under `src/lib/provider-host/core/` needs a restart of the dev server.
+
+Beside core, in the calling bundle, sit the two pieces that serve today's providers through it.
+`src/lib/provider-host/legacy-bridge.ts` serves a legacy `DatabaseProvider` as one session of console execute, cancel, endScope and transaction and of the object tree, its tree call running the provider's own tree member for each action (clause C-50), and `src/lib/provider-host/access.ts`, the accessor, builds Studio's error classes from the records core answers (clause C-51).
+The caller facades are `src/lib/api/editor-query.ts`, `src/lib/api/editor-transaction.ts` and `src/lib/api/object-tree.ts`.
+`runEditorQuery` and `cancelEditorRun` keep the shape `POST /api/db/query`, `POST /api/db/cancel` and the VS Code backend child's `query/run` and `query/cancel` have always called, and run each call through the bridge, core and the accessor under the call's deadline: the statement timeout plus 10 s for a statement, 10 s for a cancel.
+`runEditorQuery` mints the run's scope for a session that offers `console.endScope` and ends it through the bridge's `console.endScope` and core's `endScopeCall` after the run, under the 10 s cleanup deadline, never the run's own (clause C-60); `POST /api/db/multi-query` ends its script's scope through the same call, `endEditorScope`, so the bridge is the one caller of a provider's ender.
+The transaction facade serves `POST /api/db/transaction`: its begin, statement, COMMIT, ROLLBACK and state read run through the bridge's transaction session and core's transaction and execute calls under the deadlines of clause C-59, and answer the session state each call answered, never one kept between calls (clause C-58).
+The object tree's facade, `objectTree`, serves the six tree routes under `POST /api/db/objects/` and the VS Code backend child's tree calls, `objects/selectStatement`'s describe among them: each container listing, count, object listing and description, the container walks of an inventory and a search included, is one call of core's tree call on the bridge's session, under its own deadline, the statement timeout plus 10 s from that read's start, and the request's signal or, in the child, the JSON-RPC request's cancellation (clause C-65).
 
 ## 5. Directory Structure
 
@@ -435,21 +560,27 @@ src/
     │   │   ├── stream/      # kafka/ (read-client seam + JSON read requests over the Kafka protocol via @platformatic/kafka)
     │   │   ├── graph/       # neo4j/ (an engine profile, catalog, statement gate and monitoring on the graph layer below)
     │   │   ├── vector/      # milvus/ (a gRPC client of its own via the shared gRPC transport, Milvus's REST v2 requests as the console, run over gRPC); qdrant/ (a REST client of its own over the shared node transport, the closed console, the payload sample); weaviate/ (a REST client of its own over the shared node transport, the closed console run over REST or GraphQL as the server's version decides)
-    │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own SigV4 module over node:crypto; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
+    │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own signing policy over the shared SigV4 core in db/auth/aws; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
     │   │   ├── platform/    # kubernetes/ (a REST client of its own over the shared node transport behind a read-only request allowlist; a kubectl read-command console; namespaces and kinds in the tree, a YAML view of every object, Secret values redacted)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
     │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
-    │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators), objects.ts, values.ts and
+    │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators, the confirmation row), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only
-    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap); node-transport.ts also holds the byte transport (GET and HEAD to an exact target, bytes, selected headers, a per-request signer)
+    │   ├── http/            # endpoint.ts: the validated URL builder every HTTP transport uses (no redirects); node-transport.ts: the shared node:http(s) transport a new REST provider takes (one keep-alive Agent per connection, no proxy variables, a streamed byte cap, an optional request signer and AWS JSON media types); node-transport.ts also holds the byte transport (GET and HEAD to an exact target, bytes, selected headers, a per-request signer)
+    │   ├── auth/            # How a connection signs in to a cloud service, not Studio's user sign-in (docs/DB_AUTH.md): server-identity-gate.ts (the operator opt-in rule), lanes.ts (credential-endpoint transport options), refresh.ts (a cached expiring value), google/ (credentials and the token source), aws/ (the SigV4 core, regions and endpoints, typed credentials and the request signer)
     │   ├── grpc/            # channel.ts: the one gRPC channel (options, unary and bidirectional calls, deadlines, aborts, the sent or unsent notice); credentials.ts: TLS credentials and the closing wrapper; tls.ts: the SSL / TLS panel, the TLS identity and the dial target, for every gRPC provider
+    │   ├── engine-facets/   # ENGINE_FACETS: the monitoring panels, maintenance operations and agent readings each engine offers, one row
+    │   │                    #   beside each provider; readDeclaredPanels, the one orchestration of the panel reads; and
+    │   │                    #   maintenance.ts, the maintenance routes' check before and after connect
     │   ├── factory.ts       # Provider factory
     │   ├── query-dialects.ts # The dialect registry: each queryDialect's tab type and row-menu answers
     │   └── types.ts         # Database types
     ├── agent/               # Agent runtime: run ledger, workflow, tools, policy (docs/AGENT.md)
     │   └── languages/       # Statement language packs, their engine overlays and resolvers (docs/AGENT.md, Language packs)
     ├── mcp/                 # MCP server: SDK handler, token, pre-processing, tools (docs/MCP.md)
+    ├── provider-host/       # instance.ts: the process's one host core, installed by each composition root (§4.15)
+    │   └── core/            # The provider host core (§4.15): one open in flight per key, teardown under fixed deadlines, console calls
     ├── governance/          # Governance (docs/GOVERNANCE.md): contract v1, the settings registry and the runtime that
     │                        #   reads the source: keyring, admission, pool, snapshot, freshness, refresher, listener
     ├── kubernetes-access/   # Kubernetes access review (docs/SEED_CONNECTIONS.md): settings, the SubjectAccessReview
@@ -469,6 +600,10 @@ src/
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path
     ├── sql/                 # Statement splitter, alias extractor
+    ├── languages/           # Statement language family modules, the core vocabulary every provider of a language reads;
+    │                        #   today each non-SQL language's confirmation row, and for influxql, oxiacli, weaviateapi
+    │                        #   and kubectl also the readers the admissions, the agent packs and the providers share
+    │                        #   (docs/PROVIDER_IMPORTS.md)
     ├── seed/                # Seed connections: operator sources (sources/), operator loader, filter, credential resolver, CapRover and Kubernetes discovery + sample seeding
     ├── config/              # auth-env.ts — single JWT_SECRET reader (auth.ts, proxy.ts, oidc.ts)
     │                        #   custom-connections.ts: the ALLOW_CUSTOM_CONNECTIONS switch
@@ -484,6 +619,10 @@ src/
         ├── factory.ts       # Env-based provider factory
         └── providers/       # SQLite + PostgreSQL backends
 ```
+
+The tree shows each database provider in its legacy place, under `src/lib/db/providers/`.
+A provider can instead live as a workspace package `packages/provider-<type-id>/`, with its code under `src/`, its doc under `docs/` and its integration test under `tests/integration/`, never in both places.
+`tests/helpers/provider-layout.ts` says which layout a type-id is in, and `packages/README.md` holds the package layout.
 
 ## 6. Deployment
 

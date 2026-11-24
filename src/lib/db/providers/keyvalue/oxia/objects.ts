@@ -22,8 +22,9 @@ import type {
   ObjectSourcePart,
 } from "@/lib/db/types";
 import type { OxiaCallOptions, OxiaRecordView, OxiaShard } from "./client";
-import { OXIA_INTERNAL_KEY_SENTENCE } from "./commands";
-import { OXIA_INTERNAL_PREFIX, OXIA_RECEIVE_CAP_BYTES, OXIA_SOURCE_HEX_BYTES, OXIA_TYPE } from "./constants";
+import { OXIA_INTERNAL_KEY_SENTENCE } from "@/lib/languages/oxiacli/commands";
+import { OXIA_INTERNAL_PREFIX } from "@/lib/languages/oxiacli/constants";
+import { OXIA_RECEIVE_CAP_BYTES, OXIA_SOURCE_HEX_BYTES, OXIA_TYPE } from "./constants";
 import { keyOrderWords } from "./labels";
 import { hexDump, isoFromEpochMs, shownKey, viewOxiaValue } from "./values";
 import { type OxiaSurface, readKeyAnywhere } from "./walks";
@@ -42,7 +43,7 @@ export const OXIA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
   },
 ] as const);
 
-/** SB2-7.2: the `key` listing's refusal, J3-14's sentence; `tableStatsCaption` restates it (SB2-12 D3). */
+/** SB2-7.2: the `key` listing's refusal, J3-14's sentence. */
 export const OXIA_KEYS_LISTED_ELSEWHERE = "Keys are listed in the Keys panel and with list in the console.";
 
 const RECEIVE_CAP_MIB = OXIA_RECEIVE_CAP_BYTES / (1024 * 1024);

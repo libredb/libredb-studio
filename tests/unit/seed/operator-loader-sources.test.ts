@@ -76,7 +76,7 @@ function entry(id: string, origin: string, extra: Partial<SeedConnection> = {}, 
 }
 
 function ok(entries: OperatorEntry[], extra: Partial<OperatorSourceResult> = {}): OperatorSourceResult {
-  return { entries, skips: [], notes: [], status: { state: "ok" }, ...extra };
+  return { entries, unavailable: [], skips: [], notes: [], status: { state: "ok" }, ...extra };
 }
 
 /** A promise the test opens by hand, so a fill can be held while another starts. */
@@ -161,6 +161,7 @@ describe("operator-loader with several sources", () => {
         ],
         skipped: [],
         notes: [],
+        unavailable: [],
       },
       {
         source: "SEED_CONNECTION",
@@ -171,8 +172,27 @@ describe("operator-loader with several sources", () => {
         connected: [{ id: "c", name: "Name c", type: "postgres" }],
         skipped: [],
         notes: [{ kind: "ignored-variable", name: "SEED_CONNECTION_C_PORT" }],
+        unavailable: [],
       },
     ]);
+  });
+
+  it("refuses an id one source declares for an entry whose type names no provider and another for a connection", async () => {
+    const first = fakeSource("SEED_CONFIG_PATH", async () =>
+      ok([], {
+        unavailable: [{ entry: { id: "acme", name: "Acme", type: "acmefoo", roles: ["*"] }, origin: "/seed/a.yaml" }],
+      }),
+    );
+    const second = fakeSource("SEED_CONNECTION", async () => ok([entry("acme", "SEED_CONNECTION_ACME_URL")]));
+    sources = [first, second];
+
+    const failure = await loadOperatorSources().catch((thrown: unknown) => thrown);
+
+    expect(failure).toBeInstanceOf(OperatorSourceError);
+    expect((failure as OperatorSourceError).code).toBe("duplicate-id");
+    expect((failure as Error).message).toBe(
+      'Seed connection id "acme" is declared by both /seed/a.yaml and SEED_CONNECTION_ACME_URL',
+    );
   });
 
   it("keeps the earlier ok source and records the failing one, throws, and reads again on the next call", async () => {
@@ -295,7 +315,13 @@ describe("operator-loader with several sources", () => {
     process.env.SEED_CONFIG_PATH = "/seed/absent.yaml";
     const sourceSkip = { id: "v", origin: "SEED_CONNECTION", reason: "no URL given" };
     sources = [
-      fakeSource("SEED_CONFIG_PATH", async () => ({ entries: [], skips: [], notes: [], status: { state: "missing" } })),
+      fakeSource("SEED_CONFIG_PATH", async () => ({
+        entries: [],
+        unavailable: [],
+        skips: [],
+        notes: [],
+        status: { state: "missing" },
+      })),
       fakeSource("SEED_CONNECTION", async () =>
         ok([entry("u", "SEED_CONNECTION_U_URL", { password: "${OPERATOR_SOURCES_UNSET}" })], {
           skips: [sourceSkip],

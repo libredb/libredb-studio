@@ -24,7 +24,8 @@ import type { EtcdClient } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdError } from "@/lib/db/providers/keyvalue/etcd/client";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { databaseContentNotice, providerTextNotice } from "@/lib/mcp/output";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
@@ -32,6 +33,9 @@ import { capturedClient, type EtcdAgentPrincipal, principalCapture } from "../..
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../helpers/etcd-fake-client";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
+
+/** The notice an answer carrying database content opens with on this file's etcd connections. */
+const DATABASE_CONTENT_NOTICE = databaseContentNotice(providerAuthor("etcd"));
 
 pinMcpTestEnvironment();
 
@@ -170,7 +174,7 @@ describe("a read", () => {
   test("the member list answers ids and counts behind the notice, after the proof, recorded under run_etcd_read", async () => {
     const result = await etcd("member list");
     expect(result.isError ?? false).toBe(false);
-    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect(result.content[0]).toEqual({ type: "text", text: DATABASE_CONTENT_NOTICE });
     expect(result.content[1].text).toBe(JSON.stringify(result.structuredContent));
     expect(result.structuredContent).toMatchObject({
       connection_id: "seed:cluster",
@@ -275,8 +279,12 @@ describe("a refusal", () => {
     principal = refused;
     const result = await etcd("endpoint status");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_PRIVILEGES_TOO_BROAD", outcome: "unknown" },
+      },
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
         {
           type: "text",
           text: `run_etcd_read cannot run on this connection: ${sentence.replace(/\.+$/, "")}. It runs on etcd.`,
@@ -295,15 +303,19 @@ describe("a refusal", () => {
     };
     const result = await etcd("endpoint status");
     expect(result).toEqual({
+      structuredContent: {
+        error: { kind: "execution-profile", code: "PROFILE_SERVER_UNENFORCED", outcome: "unknown" },
+      },
       isError: true,
       content: [
+        { type: "text", text: providerTextNotice("etcd provider, bundled with Studio") },
         {
           type: "text",
           text: `run_etcd_read cannot run on this connection: ${ETCD_PROOF_SENTENCES.authOff.replace(/\.+$/, "")}. It runs on etcd.`,
         },
       ],
     });
-    expect(result.content[0].text).not.toContain("(etcd:");
+    expect(result.content[1].text).not.toContain("(etcd:");
     expect(methods()).toEqual(["authenticate", "close"]);
   });
 
@@ -320,7 +332,8 @@ describe("a refusal", () => {
     };
     const result = await etcd("endpoint status");
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain(ETCD_PROOF_SENTENCES.kubernetes("/registry/").replace(/\.+$/, ""));
+    expect(result.content[0].text).toBe(providerTextNotice("etcd provider, bundled with Studio"));
+    expect(result.content[1].text).toContain(ETCD_PROOF_SENTENCES.kubernetes("/registry/").replace(/\.+$/, ""));
   });
 
   test("a key outside the user's READ ranges is refused in Studio's words, never etcd's", async () => {
@@ -366,6 +379,7 @@ describe("a refusal", () => {
     };
     const result = await etcd("lease list");
     expect(result).toEqual({
+      structuredContent: { error: { kind: "row-budget-refusal", code: "QUERY_ERROR", outcome: "unknown" } },
       isError: true,
       content: [
         {

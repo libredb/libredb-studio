@@ -12,7 +12,7 @@
  *   session instead (`boundByClose`, `driver.ts`); M7 a duplicate column kept, under a numbered name
  *   (`values.ts`); a lost LOB edit named, and kept out of the preview (K24, `values.ts`);
  * - a driver failure classified by its `driverCode` (K17, `driver.ts`);
- * - TLS that fails closed, and a tunnel that is never dialled around (`connection.ts`).
+ * - TLS that fails closed, and through an opened tunnel the dial address is always its local end (`connection.ts`).
  *
  * One shared client per provider, no pool: four concurrent queries on one client were measured
  * correct, and a pool would multiply the cleartext-password exposure of a connection that opted
@@ -40,8 +40,8 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
-  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryPrepareOptions,
@@ -51,6 +51,7 @@ import type {
   SlowQueryStats,
   StorageStats,
   TableStats,
+  TrustMaterial,
 } from "../../../types";
 import {
   ConnectionError,
@@ -58,11 +59,12 @@ import {
   ExecutionProfileError,
   NO_ACTIVE_TRANSACTION,
   QueryError,
+  TimeBudgetRefusal,
 } from "../../../errors";
 import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
-import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "../read-only-budget";
+import { assertReadOnlyBudget, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { SQLBaseProvider } from "../sql-base";
 import {
   assertAgentColumnTypes,
@@ -140,6 +142,14 @@ export class Db2Provider extends SQLBaseProvider {
   private readonly caFileSystem: CaFileSystem;
 
   /**
+   * The trust material the factory built this provider with (`ProviderBuildContext.trust`): the CA certificates core read
+   * from the file `NODE_EXTRA_CA_CERTS` names, which db2-node's own TLS never reads. Every client this provider opens,
+   * the shared one, a transaction's session and an agent call's, takes it in the modes that verify against the system
+   * trust store (`caPemFor` in `connection.ts`); absent, those modes are refused by name before anything is dialled.
+   */
+  private readonly trust: TrustMaterial | undefined;
+
+  /**
    * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
    * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `queryReadOnly` answer, and only after the
    * user is proved on the statement's own connection (`verifyAgentPrincipal` in `agent-read.ts`). The operations
@@ -161,10 +171,11 @@ export class Db2Provider extends SQLBaseProvider {
   constructor(
     config: Db2Connection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
     seams: Db2ProviderSeams = {},
   ) {
     super(config, options);
+    this.trust = execution.trust;
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.valueFree = execution.readOnly === true;
     const columns: ColumnSource = this.valueFree ? VALUE_FREE_COLUMNS : SYSCAT_COLUMNS;
@@ -200,7 +211,7 @@ export class Db2Provider extends SQLBaseProvider {
 
   public async connect(): Promise<void> {
     try {
-      const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
       this.client = opened.client;
       this.caDir = opened.caDir;
       this.setConnected(true);
@@ -342,7 +353,7 @@ export class Db2Provider extends SQLBaseProvider {
     budget: ReadOnlyStatementBudget,
     work: (transaction: Db2Transaction) => Promise<T>,
   ): Promise<T> {
-    const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+    const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
     let transaction: Db2Transaction | undefined;
     let retired = false;
     try {
@@ -361,7 +372,11 @@ export class Db2Provider extends SQLBaseProvider {
       );
     } catch (error) {
       if (retired) {
-        throw new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "db2", sql);
+        throw new TimeBudgetRefusal(
+          `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+          "db2",
+          sql,
+        );
       }
       throw error;
     } finally {
@@ -391,7 +406,7 @@ export class Db2Provider extends SQLBaseProvider {
     this.opening = true;
     const generation = this.generation;
     try {
-      const opened = await openClient(this.config, this.loadDriver, this.caFileSystem);
+      const opened = await openClient(this.config, this.trust, this.loadDriver, this.caFileSystem);
       let transaction: Db2Transaction;
       try {
         transaction = await opened.client.beginTransaction();

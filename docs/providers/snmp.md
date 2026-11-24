@@ -10,11 +10,12 @@ measured, the document says so instead of estimating.
 | | |
 |---|---|
 | **Write reach** | none: the statement grammar, `parseStatement`, holds four read commands, and the valve refuses a Set PDU on every datagram it can read; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on the provider's one UDP socket, and nothing is taken from a pool before it is sent |
 
 ## 1. What it does
 
 `connect` checks the connection record, resolves the host through the repository's shared egress
-policy, and opens one UDP socket connected to the agent. `query` parses the statement before the
+policy, and opens one UDP socket connected to the agent, udp6 for an IPv6 agent (section 1.2). `query` parses the statement before the
 socket is touched, asks, and renders each value by the tag the AGENT put on it. `getOverview`
 reads `sysDescr.0` and `sysUpTime.0` from the device; one the agent does not answer, or answers with an exception such as `noSuchObject`, is shown as no figure rather than as an empty one. `disconnect` closes the socket.
 
@@ -30,9 +31,31 @@ silence. A second place that decides when a walk is over is a second place that 
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/network/snmp/sql-grammar.ts`](../../src/lib/db/providers/network/snmp/sql-grammar.ts), the `snmp` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one of the four commands `get`, `next`, `walk` and `table`, which the provider parses before the socket is touched, so no span of it is SQL.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/network/snmp/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/snmpget/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
+
+### 1.2 IPv6 agents, and a connect that fails
+
+An agent on IPv6 is supported: a literal (`::1`, `[::1]`, `2001:db8::1`) or a name whose first answer is an IPv6 address is reached over a udp6 socket, and any other agent over a udp4 one.
+The socket's family is taken from the address the host resolved to, in [`client.ts`](../../src/lib/db/providers/network/snmp/client.ts) `resolveTarget`, and the socket is connected to that same address.
+A host is an address literal only when `isIP` reads it as one, as in the shared egress policy, so a dotted form such as `127.1` is resolved as a name and checked as one.
+A name is dialled at its first answer only, so an agent that listens only on IPv4 behind a name whose first answer is IPv6 reads as no agent at that address or the wrong community.
+Typing that agent's IPv4 address reaches it over udp4.
+`::1` is loopback to the cleartext check of [section 3](#3-the-community-is-a-single-secret); any other IPv6 agent needs the same `allowInsecureAuth` consent as any other agent off this machine.
+
+A connect the socket cannot make, such as an IPv6 address on a host with no IPv6 route, fails `connect` with `SnmpTransportError` before anything is sent, and the message names the socket, the address, the port and the reason the runtime gave.
+Measured on 21 November 2026 against `2001:db8::1` on a host with no IPv6 route: Node 24 says `could not connect a udp6 socket to 2001:db8::1 port 161: ENETUNREACH`, and Bun 1.4.4, which gives the error no code, says `... port 161: Failed to connect socket`.
+A socket whose bind fails fails `connect` the same way, with the code the runtime gave: `EAFNOSUPPORT` for a udp6 socket on a host without IPv6, such as a kernel booted with `ipv6.disable=1`, or `EMFILE` when the process has no descriptor left.
+There is no retry, and no second attempt over IPv4.
+Every connect that fails closes the socket it opened: this one, one whose probe the agent does not answer, and a v3 discovery that ends unanswered.
+
+### 1.3 Private destinations
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, an agent at a loopback, private or other non-public address is refused before a socket exists, with the shared guard's sentence, whether the host is an address literal or a name.
+The setting is the decision core takes once per process ([`egress-decision.ts`](../../src/lib/db/egress-decision.ts)) and hands the provider when it builds it, as it hands the other guarded engines it builds with a context, so the literal check and the name lookup read one decision.
+A value other than `true`, `on`, `1`, `false`, `off`, `0` or empty (trimmed, any case) is refused by name before the provider is built, so before any lookup, and a standalone server refuses to start on it.
+A link-local address and AWS's IPv6 instance metadata address are refused whatever the setting says.
 
 ## 2. Why v2c only, today
 
@@ -254,6 +277,8 @@ What the agent got: version 1 on the wire, the community, the OIDs, two objects 
 What the caller got: the values, the type each was rendered as, and a short table column reported as an absence rather than shifting the rows below it.
 A refused statement sends nothing, and that is proved by counting the agent's datagrams rather than by watching the throw.
 
+[`socket-family.test.ts`](../../tests/unit/db/snmp/socket-family.test.ts) reads an agent listening on `::1` through `::1`, `[::1]` and a name that resolves to it, and holds that every connect that fails closes its socket, including one whose bind fails, and leaves the provider not open.
+
 The health read is driven the same way: a full answer, an object answered with an exception, an object left out of the answer, an answer carrying a non-zero error-status, and an agent that stops answering.
 The catalog needs no listener, because it sends nothing: `tests/unit/db/snmp/mib-tree.test.ts` and `tests/unit/db/snmp/provider.test.ts` hold the listing order, the batch limit, the column and index shapes and the refusals to the bundled modules.
 
@@ -277,7 +302,7 @@ known defect; they are the places where the evidence stops.
   and time 10, so every window case is driven from constructed values.
 - **Modules this build does not carry.** A descriptor resolves against the index generated from the bundled MIB modules, and the catalog lists only what they define.
   A name from any other module is refused with the reason `explainUnknown` gives, and a table the catalog lists may hold no rows on a given agent.
-- **IPv6 end to end.** Measured only against the library's own in-process agent.
+- **IPv6 to a device.** An agent on `::1` is read end to end in the tests, over a udp6 socket, but no device has been read over an IPv6 network yet.
 
 ## 13. Agent mode
 
@@ -435,6 +460,32 @@ The tool's reads used one whose view is the whole tree but hrDevice (1.3.6.1.2.1
 So the scope of a narrow community is held by the agent's view, which does not depend on parsing the request, and the withheld set, computed on every answer, holds every subtree the probe found a marker in whatever the view grants.
 A `set` sent through the tool with its fence removed, with a community whose view may write, is refused by the provider's reader before anything is sent and leaves `sysContact` as it was, while the same Set sent raw with that community changes it.
 What no prefix list holds is written in [section 13.3](#133-values-and-what-is-withheld): a `pass`, `pass_persist` or `proxy` directive's subtree and a vendor MIB the list does not name are read as the agent answers them.
+
+## Monitoring
+
+Only the overview panel reads the agent, so the monitoring dashboard draws the Overview tab and the pool view for this engine.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `snmp` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/network/snmp/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## Migration DDL
 

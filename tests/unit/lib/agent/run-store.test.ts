@@ -3,9 +3,18 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createLocalWorld, type LocalWorld } from "@workflow/world-local";
+import { AGENT_WORKFLOW_VARIANTS, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import { AGENT_ENABLED_ENV, AGENT_WORLD_TARGET_ENV, AgentConfigError } from "@/lib/agent/config";
 import type { AgentLedgerEntry, AgentLedgerWorld } from "@/lib/agent/run-store";
-import { AgentRunStore, AgentRunStoreError, ledgerStreamName, resolveAgentLedgerWorld } from "@/lib/agent/run-store";
+import {
+  AgentRunStore,
+  AgentRunStoreError,
+  AgentRunUnavailableError,
+  ledgerStreamName,
+  resolveAgentLedgerWorld,
+} from "@/lib/agent/run-store";
+import type { AgentGoalVerifierId } from "@/lib/agent/goal-verifier";
+import { statementFamilyOf } from "@/lib/agent/languages/client";
 import { AgentStateError } from "@/lib/agent/state-guard";
 import type { AgentRunActor, AgentRunEvent } from "@/lib/agent/types";
 
@@ -700,6 +709,235 @@ describe("AgentRunStore — refuses a ledger it cannot trust", () => {
     await world.writeToStream(ledgerStreamName(runId), runId, `${JSON.stringify({ kind: "who-knows" })}\n`);
 
     expect((await captureStoreError(() => store.read(runId))).reasonCode).toBe("MALFORMED_LEDGER");
+  });
+
+  test("refuses a header naming a statement language this build does not hold, by name, with the run's persisted actor", async () => {
+    const { store } = storeAt();
+    const actor: AgentRunActor = { sessionId: "sess_owner", role: "user" };
+    const { runId } = await store.openRun({ ...OPEN_INPUT, actor, statementLanguage: "cobol" as never });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error).toBeInstanceOf(AgentRunUnavailableError);
+    const unavailable = error as AgentRunUnavailableError;
+    expect(unavailable.reasonCode).toBe("RUN_UNAVAILABLE");
+    expect(unavailable.runId).toBe(runId);
+    expect(unavailable.actor).toEqual(actor);
+    expect(unavailable.refusal).toMatchObject({ field: "statementLanguage", reason: "unknown", id: "cobol" });
+    expect(unavailable.message).toBe(
+      `agent run "${runId}" names the statement language "cobol", which this LibreDB Studio does not have`,
+    );
+  });
+
+  test("refuses a header naming a retired verifier as retired", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, verifier: "agent-operations.1" });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error).toBeInstanceOf(AgentRunUnavailableError);
+    expect((error as AgentRunUnavailableError).refusal).toMatchObject({
+      field: "verifier",
+      reason: "retired",
+      id: "agent-operations.1",
+    });
+    expect(error.message).toBe(
+      `agent run "${runId}" names the goal rule "agent-operations.1", which this LibreDB Studio has retired`,
+    );
+  });
+
+  test("refuses an agent-mode header whose workflow has no variant on its language, naming both", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({
+      ...OPEN_INPUT,
+      workflowType: "data-analysis",
+      statementLanguage: "rediscli",
+    });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error).toBeInstanceOf(AgentRunUnavailableError);
+    expect((error as AgentRunUnavailableError).refusal).toMatchObject({
+      field: "workflowType",
+      reason: "unknown",
+      id: "data-analysis",
+    });
+    expect(error.message).toBe(
+      `agent run "${runId}" names the workflow "data-analysis" in the statement language "rediscli", which this LibreDB Studio does not have`,
+    );
+  });
+
+  test("refuses a header whose workflow this build does not hold", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, mode: "planning", workflowType: "schema-review" as never });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error.message).toBe(
+      `agent run "${runId}" names the workflow "schema-review", which this LibreDB Studio does not have`,
+    );
+  });
+
+  test("reads a planning header that names the planning verifier, which judges every plan", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, mode: "planning", verifier: "agent-planning.1" });
+
+    expect((await store.read(runId))?.record).toMatchObject({ mode: "planning", verifier: "agent-planning.1" });
+  });
+
+  test("names the header's language before an event kind no pack declares", async () => {
+    const dataDir = freshDataDir();
+    const world = worldAt(dataDir);
+    const store = new AgentRunStore({ world });
+    const { runId } = await store.openRun({ ...OPEN_INPUT, statementLanguage: "cobol" as never });
+    await world.writeToStream(
+      ledgerStreamName(runId),
+      runId,
+      `${JSON.stringify({ kind: "event", event: event("cobol-evidence" as never, 2) })}\n`,
+    );
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error.reasonCode).toBe("RUN_UNAVAILABLE");
+    expect((error as AgentRunUnavailableError).refusal.id).toBe("cobol");
+  });
+
+  test.each([
+    ["statementLanguage", 5],
+    ["statementLanguage", null],
+    ["statementLanguage", {}],
+    ["statementLanguage", []],
+    ["workflowType", 5],
+    ["workflowType", null],
+    ["verifier", 5],
+    ["verifier", null],
+    ["verifier", {}],
+    ["verifier", []],
+    ["engine", null],
+    ["engine", {}],
+  ] as const)("refuses a header whose %s is %p, not text, as malformed", async (field, value) => {
+    const dataDir = freshDataDir();
+    const world = worldAt(dataDir);
+    const runId = "arun_nottext";
+    const header = {
+      kind: "run-opened",
+      atMs: 1,
+      runId,
+      mode: "agent",
+      actor: ACTOR,
+      connectionId: "conn_1",
+      objective: "Why?",
+      [field]: value,
+    };
+    await world.writeToStream(ledgerStreamName(runId), runId, `${JSON.stringify(header)}\n`);
+
+    const error = await captureStoreError(() => new AgentRunStore({ world }).read(runId));
+
+    expect(error.reasonCode).toBe("MALFORMED_LEDGER");
+    expect(error.message).toBe(`agent run "${runId}" has an unreadable ledger: its header's ${field} is not text`);
+  });
+
+  test("folds a ledger whose ending records a verdict under a retired verifier", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+    await store.appendEvent(runId, event("run-started", 1, { mode: "agent" }));
+    await store.appendEvent(
+      runId,
+      event("run-finished", 2, {
+        status: "succeeded",
+        goalVerdict: { outcome: "answered", verifier: "agent-query-optimization.1", unmet: [] },
+      }),
+    );
+
+    // Only the header is checked: nothing interprets the verdict's verifier, and 0.x ledgers carry retired ids there.
+    expect((await store.read(runId))?.record.status).toBe("succeeded");
+  });
+
+  test("every statement language and every verifier goalOf judges round-trips through openRun and read", async () => {
+    const { store } = storeAt();
+    const languages = Object.keys(AGENT_WORKFLOW_VARIANTS) as AgentStatementLanguageId[];
+    const verifiers: readonly AgentGoalVerifierId[] = [
+      "agent-investigation.1",
+      "agent-query-optimization.3",
+      "agent-database-assessment.1",
+      "agent-operations.2",
+      "agent-data-analysis.1",
+      "agent-query-optimization-kubectl.1",
+      "agent-database-assessment-kubectl.1",
+      "agent-query-optimization-mongo.1",
+    ];
+    for (const statementLanguage of languages) {
+      const { runId } = await store.openRun({ ...OPEN_INPUT, statementLanguage });
+      expect((await store.read(runId))?.record.statementLanguage).toBe(statementLanguage);
+    }
+    for (const verifier of verifiers) {
+      const { runId } = await store.openRun({ ...OPEN_INPUT, verifier });
+      expect((await store.read(runId))?.record.verifier).toBe(verifier);
+    }
+  });
+
+  test("openRun writes the engine and the fold reads it back", async () => {
+    const { store, dataDir } = storeAt();
+    const opened = await store.openRun({ ...OPEN_INPUT, engine: "kafka" });
+
+    expect(opened.engine).toBe("kafka");
+    const { store: resumed } = storeAt(dataDir);
+    expect((await resumed.read(opened.runId))?.record.engine).toBe("kafka");
+  });
+
+  test("a header written before the engine field folds without one", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+
+    const record = (await store.read(runId))?.record;
+
+    expect(record && "engine" in record).toBe(false);
+  });
+
+  test("a header whose engine is not text is malformed", async () => {
+    const dataDir = freshDataDir();
+    const world = worldAt(dataDir);
+    const runId = "arun_engine5";
+    const header = {
+      kind: "run-opened",
+      atMs: 1,
+      runId,
+      mode: "agent",
+      actor: ACTOR,
+      connectionId: "conn_1",
+      objective: "Why?",
+      engine: 5,
+    };
+    await world.writeToStream(ledgerStreamName(runId), runId, `${JSON.stringify(header)}\n`);
+
+    const error = await captureStoreError(() => new AgentRunStore({ world }).read(runId));
+
+    expect(error.reasonCode).toBe("MALFORMED_LEDGER");
+    expect(error.message).toBe(`agent run "${runId}" has an unreadable ledger: its header's engine is not text`);
+  });
+
+  test("a header naming an engine this build has no provider for is unavailable by name", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun({ ...OPEN_INPUT, engine: "acmefoo" as never });
+
+    const error = await captureStoreError(() => store.read(runId));
+
+    expect(error.reasonCode).toBe("RUN_UNAVAILABLE");
+    expect((error as AgentRunUnavailableError).refusal).toMatchObject({
+      field: "engine",
+      reason: "unknown",
+      id: "acmefoo",
+    });
+  });
+
+  test("a header with no language folds without one, and reads as sql", async () => {
+    const { store } = storeAt();
+    const { runId } = await store.openRun(OPEN_INPUT);
+
+    const record = (await store.read(runId))?.record;
+
+    expect(record && "statementLanguage" in record).toBe(false);
+    expect(statementFamilyOf(record?.statementLanguage)).toBe("sql");
   });
 
   test("tolerates a chunk boundary that splits an entry in two", async () => {

@@ -93,12 +93,16 @@ mock.module("@/components/SavedQueries", () => ({
 // the tab's own result or a run's, with or without the chart the run composed, and
 // only the props say which.
 let capturedDataChartsProps: Record<string, unknown> = {};
+// Every render, not only the last: the Dashboard draws one DataCharts per saved chart,
+// and each card's props have to be checked on their own (#2281).
+const dataChartsRenders: Record<string, unknown>[] = [];
 
 mock.module("@/components/DataCharts", () => ({
   DataCharts: (props: Record<string, unknown>) => {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const React = require("react");
     capturedDataChartsProps = props;
+    dataChartsRenders.push(props);
     return React.createElement("div", { "data-testid": "datacharts" }, "DataCharts");
   },
 }));
@@ -286,9 +290,9 @@ describe("BottomPanel", () => {
 
   afterEach(() => {
     cleanup();
-    // ChartDashboard now reads the saved charts from a lazy useState initializer, which
-    // React may re-invoke if it discards and retries a render. A persistent mockReturnValue
-    // reset here is what keeps a populated fixture from silently becoming empty.
+    // ChartDashboard reads the saved charts through useSavedCharts, whose snapshot React
+    // re-reads on every render (#2281). A persistent mockReturnValue reset here is what
+    // keeps a populated fixture from silently becoming empty.
     mockGetSavedCharts.mockReturnValue([]);
   });
 
@@ -1114,6 +1118,71 @@ describe("BottomPanel", () => {
     expect(getByText(/X: month/)).not.toBeNull();
     expect(getByText(/Y: revenue/)).not.toBeNull();
     expect(queryByTestId("datacharts")).not.toBeNull();
+  });
+
+  test("each Dashboard card hands DataCharts its own saved chart, drawn chart-only (#2281)", () => {
+    const pie = makeSavedChart({ id: "chart-pie", name: "Share", chartType: "pie", xAxis: "id", yAxis: ["n"] });
+    const line = makeSavedChart({ id: "chart-line", name: "Trend", chartType: "line", xAxis: "id", yAxis: ["n"] });
+    mockGetSavedCharts.mockReturnValue([pie, line]);
+    dataChartsRenders.length = 0;
+    const props = createDefaultProps({
+      mode: "dashboard",
+      currentTab: {
+        id: "tab-1",
+        name: "Query 1",
+        query: "SELECT id, n FROM t",
+        result: { rows: [{ id: "a", n: 1 }], fields: ["id", "n"], rowCount: 1, executionTime: 10 },
+        isExecuting: false,
+        type: "sql" as const,
+      },
+    });
+    render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    const savedOf = (p: Record<string, unknown>) => p.saved as SavedChartConfig | undefined;
+    expect(new Set(dataChartsRenders.map((p) => savedOf(p)?.id))).toEqual(new Set(["chart-pie", "chart-line"]));
+    expect(dataChartsRenders.every((p) => p.chartOnly === true)).toBe(true);
+    expect(savedOf(dataChartsRenders.find((p) => savedOf(p)?.id === "chart-pie")!)).toMatchObject({
+      chartType: "pie",
+      xAxis: "id",
+      yAxis: ["n"],
+    });
+    expect(savedOf(dataChartsRenders.find((p) => savedOf(p)?.id === "chart-line")!)).toMatchObject({
+      chartType: "line",
+    });
+  });
+
+  test("a chart saved while the Dashboard is open shows up without reopening it (#2281)", () => {
+    mockGetSavedCharts.mockReturnValue([]);
+    const props = createDefaultProps({ mode: "dashboard" });
+    const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+    expect(queryByText("No saved charts yet")).not.toBeNull();
+
+    const fresh = makeSavedChart({ id: "chart-fresh", name: "Fresh" });
+    mockGetSavedCharts.mockReturnValue([fresh]);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("libredb-storage-change", { detail: { collection: "saved_charts", data: [fresh] } }),
+      );
+    });
+
+    expect(queryByText("Fresh")).not.toBeNull();
+    expect(queryByText("No saved charts yet")).toBeNull();
+  });
+
+  test("the Dashboard ignores changes to other stored collections (#2281)", () => {
+    mockGetSavedCharts.mockReturnValue([]);
+    const props = createDefaultProps({ mode: "dashboard" });
+    const { queryByText } = render(<BottomPanel {...(props as React.ComponentProps<typeof BottomPanel>)} />);
+
+    mockGetSavedCharts.mockReturnValue([makeSavedChart({ name: "Unrelated" })]);
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent("libredb-storage-change", { detail: { collection: "favorite_connections", data: [] } }),
+      );
+    });
+
+    expect(queryByText("Unrelated")).toBeNull();
+    expect(queryByText("No saved charts yet")).not.toBeNull();
   });
 
   test("Dashboard shows placeholder on saved chart card when result is null", () => {

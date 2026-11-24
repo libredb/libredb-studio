@@ -6,11 +6,13 @@
  */
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { GOOGLE_ADC_ENV_NAMES } from "@/lib/db/auth/google/credentials";
+import type { GoogleAuthLane } from "@/lib/db/auth/google/token-source";
 import { createNodeTransport, type NodeTransport, type NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { ENV } from "./constants";
 
-/** Which lane a transport serves: Firestore's API, Google's token endpoint, the metadata server, or the emulator. */
-export type LaneKind = "api" | "token" | "metadata" | "emulator";
+/** Which lane a transport serves: Firestore's API, the emulator, or a credential endpoint of the shared Google auth. */
+export type LaneKind = "api" | "emulator" | GoogleAuthLane;
 
 export interface FirestoreEnv {
   readonly [name: string]: string | undefined;
@@ -32,14 +34,11 @@ export interface FirestoreSeams {
   readonly platform: string;
 }
 
-/** The variables this provider reads, and nothing else of the environment. */
+/** The variables this provider reads, and nothing else of the environment: its own two, then the ADC chain's. */
 export const FIRESTORE_ENV_NAMES: readonly string[] = Object.freeze([
   ENV.emulatorHost,
   ENV.serverCredentials,
-  ENV.credentialsFile,
-  ENV.metadataHost,
-  "APPDATA",
-  "HOME",
+  ...GOOGLE_ADC_ENV_NAMES,
 ]);
 
 /** A frozen copy of the FIRESTORE_ENV_NAMES variables `source` sets. */
@@ -73,7 +72,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 /** The real seams, with any member `partial` names in its place; the environment is read only when not given. */
 export function resolveSeams(partial: Partial<FirestoreSeams> = {}): FirestoreSeams {
   return Object.freeze({
-    createTransport: partial.createTransport ?? ((options: NodeTransportOptions) => createNodeTransport(options)),
+    createTransport: partial.createTransport ?? createNodeTransport,
     now: partial.now ?? (() => Date.now()),
     sleep: partial.sleep ?? sleep,
     timeoutSignal: partial.timeoutSignal ?? ((ms: number) => AbortSignal.timeout(ms)),

@@ -13,8 +13,9 @@ import {
 } from "@/lib/db/providers/keyvalue/oxia/agent-metadata-read";
 import type { OxiaRecordView, OxiaSnapshot } from "@/lib/db/providers/keyvalue/oxia/client";
 import { OxiaError } from "@/lib/db/providers/keyvalue/oxia/errors";
-import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
+import { errorKind } from "@/lib/db/error-record";
 
 const BUDGET = { maxResultRows: 200, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 
@@ -146,6 +147,13 @@ describe("the answers", () => {
   test("an answer past the byte budget is refused, not cut", () => {
     const tight = { ...BUDGET, maxResultBytes: 4 };
     expect(() => oxiaAgentResult({ op: "key count", count: 1 }, tight, "list", 1)).toThrow(BYTE_BUDGET_PREFIX);
+    let refused: unknown;
+    try {
+      oxiaAgentResult({ op: "key count", count: 1 }, tight, "list", 1);
+    } catch (error) {
+      refused = error;
+    }
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("the count sentences carry the row budget's prefix and offer no narrower count", () => {
@@ -183,6 +191,12 @@ describe("the failures", () => {
     const expected = `${TIME_BUDGET_PREFIX}: no answer within 10000ms`;
     expect(oxiaAgentFailure(new OxiaError("deadline-exceeded"), BUDGET, "get x")?.message).toBe(expected);
     expect(oxiaAgentFailure(new DOMException("late", "TimeoutError"), BUDGET, "get x")?.message).toBe(expected);
+    expect(errorKind(oxiaAgentFailure(new OxiaError("deadline-exceeded"), BUDGET, "get x"))).toBe(
+      "time-budget-refusal",
+    );
+    expect(errorKind(oxiaAgentFailure(new DOMException("late", "TimeoutError"), BUDGET, "get x"))).toBe(
+      "time-budget-refusal",
+    );
   });
 
   test("a projection refusal is its own sentence; anything else passes on as it is", () => {

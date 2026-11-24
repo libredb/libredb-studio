@@ -14,6 +14,7 @@ server used only to check that a rule was not one implementation's habit.
 | | |
 |---|---|
 | **Write reach** | none: the request builder, `buildRpc`, writes four read operations and `<close-session>`, and no `<edit-config>`; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: every statement is sent on the one session opened at connect, and nothing is taken from a pool before it is sent |
 
 ## 1. Overview
 
@@ -112,6 +113,15 @@ text is ASCII.
 per connection, and every surface below goes through it, so there is one place where a session is
 opened and one place where it is closed.
 
+A session that ends closes its connection to the device, whichever way it ended.
+A session that fails to open fails `connect()` with the sentence that names why, prefixed with the device's address, for example: the device's hello carried no session-id, offered no base version this client speaks, did not arrive within the hello deadline, or the device closed the channel.
+Any other ending during the open, such as a framing fault or a channel that failed, fails `connect()` with that ending's own sentence.
+A private key that cannot be read fails `connect()` as a configuration error, and the socket dialled for it is closed.
+The SSH connection to the device is already closed when `connect()` fails.
+A session that ends on its own after it opened, on a framing fault, a reply NETCONF does not allow, a channel the device closed or a channel that failed under it, fails the read in flight and every later read with that ending's sentence, and closes its SSH connection at that moment rather than at `disconnect()`.
+`disconnect()` after such an ending sends nothing to the device, because no session is left to close.
+A device that closes the channel before it sends its hello fails the open at once with `the device closed this session`, not after the hello deadline with the deadline's sentence.
+
 ## 3. Design decisions
 
 ### 3.1 A JSON read request, not a query language
@@ -204,12 +214,16 @@ Four further spellings were then measured and handled: an attribute on the eleme
 `>`, a space inside the closing tag, and `<capability xmlns=…>`, which had read back as zero
 capabilities.
 
-### 3.7 Four end reasons, not one
+### 3.7 Five end reasons, not one
 
 A session used to end with one reason, `protocol`, written nine times in seven different sentences,
 and one of those nine was OUR OWN defect ("a request is already in flight"). The reason is now
 `protocol`, `deadline`, `incompatible` or `internal`, and the compiler's exhaustive switch showed
 the cost of each existing call site immediately.
+
+`transport` is a fifth reason, in addition to those four.
+A channel that fails under the session, as the SSH library reports it with an `error` event on the channel or on its error stream, ends the session as `transport`, with the library's message in its sentence: `the channel to the device failed (...), so the session was ended`.
+The transport listens for that event from the moment the channel is handed over, and a failure that arrives before the session listens is kept and ends the session as soon as it does.
 
 ### 3.8 The read-only mode
 
@@ -248,6 +262,16 @@ credential warning about one. `CREDENTIAL_WARNINGS` carries no entry for this en
 reason is measured rather than assumed: there is no documented vendor default account to warn
 about, no JWT, and the "no secret" case is unreachable because a missing, empty or wrong
 credential all end in the same refusal.
+
+### 4.4 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in [`egress-policy.ts`](../../src/lib/db/http/egress-policy.ts), to the socket it hands `ssh2`.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private or other non-public address is refused as well, before any byte reaches the device: an IP literal before any socket opens, with the shared sentence, and a name at the lookup the socket dials through.
+
+Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that address.
+So with the flag on a tunnelled connection is refused, and with it off the forward is dialled.
+The device at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
 
 ### Connection string
 
@@ -309,7 +333,7 @@ of this fixture reaches one.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/network/netconf/sql-grammar.ts`](../../src/lib/db/providers/network/netconf/sql-grammar.ts), the `netconf` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request naming a datastore and a path, so no span of it is SQL (#1724).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/network/netconf/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/netconfrpc/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -371,9 +395,31 @@ register.
 ## 7. Monitoring and health
 
 The health read reports the session: whether it is open, and the server's `session-id` and
-capability count from the hello. There are no performance metrics, no slow queries, no table or
-index statistics and no storage statistics, and each of those answers empty rather than throwing,
-because the truthful answer is that this engine publishes none of them.
+capability count from the hello.
+There are no performance metrics, no slow queries, no session list, no table or index statistics and no storage statistics: each of those methods refuses with its reason, because this engine publishes none of them.
+None of those six panels is offered, so `getMonitoringData` never reads them and the dashboard draws only the Overview tab and the pool view for NETCONF.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `netconf` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/network/netconf/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports what the device's YANG library and datastore list said at connect |
+| `performance` | No | `getPerformanceMetrics` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` refuses with `SENTENCES.noMetrics` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` refuses with `SENTENCES.noSessions` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `indexes` | No | `getIndexStats` refuses with `SENTENCES.noTables` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SENTENCES.noStorage` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 
@@ -501,6 +547,11 @@ refusal, and this session did not change it, because the case is unreachable aga
 measured: neither captured reply carries one. A device that does send one gets a named refusal
 instead of silence.
 
+**No editor statement timeout of the provider's own, and no cancel.**
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until the device answers it.
+
 **Phase 2, `gnmi`, is not started.**
 
 ## Migration DDL
@@ -527,7 +578,7 @@ The refusal reason it prints, verbatim:
 ## 14. Agent mode
 
 Agent mode reads a NETCONF device through `queryReadOnly`, on a handle opened under the agent read-only profile only; on an editor handle it is refused before anything is sent.
-The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth.
+The provider takes the build context, the execution context plus the egress decision core took, as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth, and each of the two openers is handed the connection and the egress decision from that build context.
 
 ### 14.1 The boundary
 
@@ -581,6 +632,7 @@ Measured on the fixture under the read-only account (`tests/fixtures/netconf/2.8
 
 A list holding more entries than the request's `limit` or the row budget is refused rather than cut, an answer past the byte budget is refused, and a read past the time budget, which covers the session, the module check and the read, is refused in Studio's words.
 A failure is worded by its category: an `rpc-error` by its RFC 6241 error-tag alone, never by the device's message, path or info, which can echo a value, and a dial, credential or session failure by its class, never with a credential or host key.
+A provider built outside Studio's provider factory without the egress decision refuses the read with the sentence that names the missing decision, as its `connect()` does, and not with the settings sentence.
 
 On a handle of either agent profile, the console, a node's or key's source and the overview are refused with their reason, since none passes through the check; the object surface answers names only, as on every handle, and the metric, session, table and storage readings already answer their reason.
 

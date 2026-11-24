@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveUpdateTarget, selectsPlainColumn } from "@/lib/sql/update-target";
+import { refusalOf, refusalThrownBy } from "../../helpers/outside-the-union";
 
 // Inline grid editing writes `UPDATE <table> SET ...`, and this decides what `<table>`
 // may be. It used to be the tab's title, which is free text and outlives the query it was
@@ -663,30 +664,25 @@ describe("selectsPlainColumn", () => {
 });
 
 // A host calling from plain JavaScript can pass a type that is not a primitive string but converts to a type id.
-// The comment, opener and set-operator rules were identity comparisons, so such a value never named an engine for them:
-// it is read with no engine's own rule, while the span grammar keeps the row its property key names.
+// Such a value is not text, so the grammar refuses it as malformed (FND-1) before any engine's rule or the
+// compatibility default reads the statement.
 describe("a type that is not a primitive string", () => {
-  test.each<[string, string, string]>([
-    ["mysql", "SELECT id FROM products --x", "products"],
-    [
-      "mysql",
-      "SELECT a FROM t --c\n, u",
-      "REFUSED: A comma in this query could separate two tables, so the row's table cannot be told apart",
-    ],
-    [
-      "oracle",
-      "SELECT id FROM products MINUS SELECT id FROM orders",
-      "REFUSED: This query reads from more than one place, so the row's table cannot be told apart",
-    ],
-    ["duckdb", "SELECT id, (PIVOT orders ON k USING max(note)) FROM products", "products"],
-  ])("new String(%s) applies none of that engine's own rules to %j", (id, sql, expected) => {
+  test.each<[string, string]>([
+    ["mysql", "SELECT id FROM products --x"],
+    ["mysql", "SELECT a FROM t --c\n, u"],
+    ["oracle", "SELECT id FROM products MINUS SELECT id FROM orders"],
+    ["duckdb", "SELECT id, (PIVOT orders ON k USING max(note)) FROM products"],
+  ])("new String(%s) is refused as not text before %j is read", (id, sql) => {
     const boxed = new String(id) as unknown as Parameters<typeof resolveUpdateTarget>[1];
-    expect(table(sql, boxed)).toBe(expected);
-    expect(table(sql, boxed)).toBe(table(sql));
+    const refusal = refusalThrownBy(() => resolveUpdateTarget(sql, boxed));
+    expect(refusal).toEqual(refusalOf(boxed));
+    expect(refusal).toMatchObject({ reason: "malformed" });
   });
 
-  test("selectsPlainColumn reads a boxed mysql without its comment rule", () => {
+  test("selectsPlainColumn refuses a boxed mysql as not text", () => {
     const boxed = new String("mysql") as unknown as Parameters<typeof selectsPlainColumn>[2];
-    expect(selectsPlainColumn("SELECT a FROM t --c\n, u", "a", boxed)).toBe(true);
+    const refusal = refusalThrownBy(() => selectsPlainColumn("SELECT a FROM t --c\n, u", "a", boxed));
+    expect(refusal).toEqual(refusalOf(boxed));
+    expect(refusal).toMatchObject({ reason: "malformed" });
   });
 });

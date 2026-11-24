@@ -55,6 +55,7 @@ import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators"
 import { SeedConnectionSchema } from "@/lib/seed/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { loadInfluxCapture, loadInfluxManifest } from "../../../helpers/influxdb-fixtures";
 import { recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 
@@ -203,7 +204,6 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
   test("the authentication rules quote the connection options' sentences and the credential warning", () => {
     const auth = flat(sectionOf(DOC, "### 4.2 Authentication"));
     expect(auth).toContain("`Authorization: Bearer <token>`");
-    expect(auth).toContain(`> ${INFLUX_CONNECTION_SENTENCES.influxdb3User}`);
     expect(auth).toContain(`> ${INFLUX_CONNECTION_SENTENCES.malformed("Token")}`);
     const noSecret = CREDENTIAL_WARNINGS.influxdb3?.find((entry) => entry.kind === "no-secret");
     expect(noSecret).toBeDefined();
@@ -217,7 +217,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
       loadInfluxCapture("2.9.1", "ping-auth"),
       loadInfluxCapture("2.9.1", "health-auth"),
     ]);
-    const misPicked = new InfluxDB3Provider(CONNECTION, {}, {}, (options, routes) =>
+    const misPicked = new InfluxDB3Provider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, (options, routes) =>
       createInfluxClient(options, routes, wire.factory),
     );
     const refusal = await misPicked.connect().then(
@@ -368,8 +368,8 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
 
   test("the previews are the generators' output over the built provider's capabilities", async () => {
     const previews = sectionOf(DOC, "### 5.9 Previews and Generate Query");
-    const table = generateTableQuery(["home"], capabilities);
-    const select = generateSelectQuery(["home"], await homeColumns(), capabilities);
+    const table = generateTableQuery(["home"], "influxdb3", capabilities);
+    const select = generateSelectQuery(["home"], await homeColumns(), "influxdb3", capabilities);
     expect(table).not.toMatch(/\bLIMIT\b/);
     expect(previews).toContain(`\`\`\`sql\n${table}\n\`\`\``);
     expect(previews).toContain(`\`\`\`sql\n${select}\n\`\`\``);
@@ -424,8 +424,9 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
 
   test("the monitoring section quotes the labels, the overview's version text and its floor", () => {
     const monitoring = flat(sectionOf(DOC, "## 7. Monitoring & health"));
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
     const ping = loadInfluxCapture(CORE, "ping-auth");
     const version = readPing({ status: ping.status, text: ping.body });
     const overview = (cut: boolean) =>

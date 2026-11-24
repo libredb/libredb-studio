@@ -78,19 +78,28 @@ import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
 import { comparePaths } from "../../object-path";
 import {
+  ByteBudgetRefusal,
+  checkoutPhase,
   DatabaseConfigError,
   ConnectionError,
   DatabaseError,
   ExecutionProfileError,
   PoolExhaustedError,
   QueryError,
+  RowBudgetRefusal,
+  TransactionLostError,
   NO_TRANSACTION_OPENED,
   NO_ACTIVE_TRANSACTION,
 } from "../../errors";
 import { mapDatabaseError } from "../../map-database-error";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import type { QueryResultSet } from "@/lib/types";
-import { assertReadOnlyBudget, byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "./read-only-budget";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/read-only-budget";
 import { sendPgCancelRequest, type PgCancelTarget } from "./pg-wire-cancel";
 import { POSTGRES_CREATE_TABLE } from "./postgres-create-table";
 import { type PgFieldMetadata, postgresColumnTypes } from "./column-types";
@@ -251,11 +260,35 @@ interface NoticeBatch {
 }
 
 /**
- * The client every pool of this provider builds, so its notices are kept from the first byte.
+ * The first error each pooled client reported on its own session, kept by the client's own listener
+ * (`NoticeKeepingClient`). A client is in this map once its connection has failed or ended: `pg`
+ * marks it unqueryable before it emits, fails every statement still queued on it, and `pg-pool`
+ * discards it on release instead of handing it out again. The held transaction reads it to report
+ * the transaction lost (`refuseLostTransaction`). Weak for the reason `pendingNotices` is.
+ */
+const endedSessions = new WeakMap<ClientBase, Error>();
+
+/** What the log says when a pooled client reports an error on its own session. */
+const SESSION_ERROR_LOG = "PostgreSQL connection error on a pooled session";
+
+/**
+ * The client every pool of this provider builds, so its notices are kept from the first byte and
+ * its `error` is heard for its whole life.
  *
  * A listener attached after `pool.connect()` would be too late for the startup handshake, which
  * is where Materialize reports a missing session database: the pool resolves the borrow only
  * after ReadyForQuery, and the NOTICE arrives before it.
+ *
+ * `pg` emits `error` on a client whose connection fails or ends, whether the server ended the
+ * session (a terminated backend, an idle-in-transaction timeout, a failover) or the network did,
+ * and an `error` event with no listener is thrown out of the emit instead of reaching a caller as
+ * a named error. `pg-pool` listens on a client
+ * only while it is idle: it takes its listener off for as long as the client is checked out, which
+ * for the held transaction client is the whole transaction. So the listener is the client's own,
+ * attached at construction, and no borrow, however it is written, can hold a client without one.
+ * It records the error for the held transaction and logs the event, naming only the provider and
+ * the driver's message: the client's config, which holds the credentials, is never read here. It
+ * is the only place the event is logged, idle clients included (see `attachPoolListeners`).
  */
 class NoticeKeepingClient extends Client {
   constructor(config?: string | ClientConfig) {
@@ -266,7 +299,25 @@ class NoticeKeepingClient extends Client {
       if (batch.kept.length < NOTICE_KEEP_LIMIT) batch.kept.push(notice);
       else batch.dropped++;
     });
+    this.on("error", (error: Error) => {
+      if (!endedSessions.has(this)) endedSessions.set(this, error);
+      logger.warn(SESSION_ERROR_LOG, {
+        provider: "postgres",
+        error: error.message,
+        code: (error as { code?: string }).code,
+      });
+    });
   }
+}
+
+/**
+ * What a call on the held transaction answers once its session has ended. The server rolls back
+ * what is still open when a session ends, but the sentence does not claim that nothing was
+ * committed: a COMMIT can reach the server and its answer be lost with the session (a typed
+ * `COMMIT`, or one in a text whose later statement ended the session), and that work stays.
+ */
+function transactionLostSentence(cause: Error): string {
+  return `The transaction was lost: its database session ended (${cause.message}). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`;
 }
 
 /** Everything `client` has received and not yet handed out, emptied as it is read. */
@@ -3104,11 +3155,17 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * Only the global reindex triad; every other label is the SQL default and right.
+   * The global reindex triad and the slow-query empty state; every other label is the SQL
+   * default and right.
    *
    * The Operations tab's reindex card was hardcoded to this wording for every engine
    * (#464), so declaring it here changes nothing on PostgreSQL and lets the two other
    * providers that declare `reindex` say what theirs does instead.
+   *
+   * The Queries tab showed the `pg_stat_statements` advice as its default on every engine
+   * without a sentence of its own, which told BigQuery users to install a PostgreSQL
+   * extension. It is PostgreSQL's advice, so PostgreSQL declares it, and the tab's default
+   * says only that no statistics are available.
    */
   public override getLabels(): ProviderLabels {
     return {
@@ -3116,6 +3173,7 @@ export class PostgresProvider extends SQLBaseProvider {
       reindexGlobalLabel: "Run Reindex",
       reindexGlobalTitle: "Rebuild Indexes",
       reindexGlobalDesc: "Runs REINDEX DATABASE, reconstructing every index in the database.",
+      slowQueriesEmptyState: "Enable pg_stat_statements extension to see query stats.",
     };
   }
 
@@ -3231,21 +3289,18 @@ export class PostgresProvider extends SQLBaseProvider {
   }
 
   /**
-   * A client that fails while CHECKED OUT rejects its own query, which is why ordinary
-   * query failures behave correctly. A client that fails while IDLE — the server dropped
-   * it, the network went away — has no query to reject, so `pg` removes and destroys it
-   * and then emits `error` on the pool. An `error` event with no listener is an uncaught
-   * exception, so without this handler a dropped idle connection takes the whole server
-   * process down (#298).
+   * A client that fails while IDLE (the server dropped it, the network went away) has no
+   * query to reject, so `pg-pool` removes and destroys it and then emits `error` on the pool.
+   * An `error` event with no listener is thrown out of the emit, so the pool needs this
+   * listener for that re-emit (#298).
    *
-   * The client is already gone by the time this fires, so the handler exists to keep the
-   * event non-fatal and visible — not to reconnect. The pool opens a fresh client on the
-   * next acquire by itself.
+   * The event is already visible by the time this fires: the client's own listener
+   * (`NoticeKeepingClient`) heard it first and logged it, and logging it here as well would
+   * report one event twice. The handler is not there to reconnect either: the pool opens a
+   * fresh client on the next acquire by itself.
    */
   private attachPoolListeners(pool: Pool): void {
-    pool.on("error", (error) => {
-      console.error("[Postgres] Idle pool client error:", error);
-    });
+    pool.on("error", () => {});
     // Most borrows (the object browser, monitoring) never read their notices, so a client
     // returned to the pool drops what it holds rather than keeping it for the life of the
     // process. A statement that reports them took them before its own release.
@@ -3459,7 +3514,11 @@ export class PostgresProvider extends SQLBaseProvider {
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          const client = await this.pool!.connect();
+          // A failure to take the client precedes the send, so it answers not-sent (CONTRACT E-5).
+          const client = await checkoutPhase(
+            () => this.pool!.connect(),
+            (error) => mapDatabaseError(error, "postgres", sql),
+          );
           try {
             // Track PID for cancellation support
             if (queryId) {
@@ -3635,11 +3694,11 @@ export class PostgresProvider extends SQLBaseProvider {
       // measured on the keyed rows, which are what the caller receives.
       const result = pgQueryResult(answered as unknown as PgArrayAnswer, sql, this.userDefinedTypes);
       if (result.rows.length > budget.maxResultRows) {
-        throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "postgres", sql);
+        throw new RowBudgetRefusal(rowBudgetSentence(result.rows.length, budget.maxResultRows), "postgres", sql);
       }
       const resultBytes = measureResultBytes(result.rows);
       if (resultBytes > budget.maxResultBytes) {
-        throw new QueryError(byteBudgetSentence(resultBytes, budget.maxResultBytes), "postgres", sql);
+        throw new ByteBudgetRefusal(byteBudgetSentence(resultBytes, budget.maxResultBytes), "postgres", sql);
       }
 
       return { ...result, executionTime };
@@ -3681,13 +3740,17 @@ export class PostgresProvider extends SQLBaseProvider {
     this.ensureConnected();
     this.refuseWithoutCatalog();
     if (this.txActive) throw new QueryError("Transaction already active", "postgres");
-    this.txClient = await this.pool!.connect();
+    // A failure to take the client precedes the BEGIN, so it answers not-sent (CONTRACT E-5).
+    this.txClient = await checkoutPhase(
+      () => this.pool!.connect(),
+      (error) => mapDatabaseError(error, "postgres", "BEGIN"),
+    );
     try {
       await this.txClient.query("BEGIN");
     } catch (error) {
       this.txClient.release();
       this.txClient = null;
-      throw error;
+      throw mapDatabaseError(error, "postgres", "BEGIN");
     }
     // The ReadyForQuery byte after BEGIN is the server saying whether a transaction is open.
     // A PostgreSQL-wire relative can accept the statement and open none: RisingWave answers
@@ -3707,10 +3770,13 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async commitTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
     this.clearTxTimeout();
     const client = this.txClient;
     try {
       await client.query("COMMIT");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "COMMIT");
     } finally {
       this.releaseHeldClient(client);
     }
@@ -3718,10 +3784,13 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async rollbackTransaction(): Promise<void> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
     this.clearTxTimeout();
     const client = this.txClient;
     try {
       await client.query("ROLLBACK");
+    } catch (error) {
+      throw mapDatabaseError(error, "postgres", "ROLLBACK");
     } finally {
       this.releaseHeldClient(client);
     }
@@ -3729,6 +3798,28 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public isInTransaction(): boolean {
     return this.txActive;
+  }
+
+  /**
+   * Raise, before anything is sent, when the session the transaction is held on has ended since
+   * the transaction began (`endedSessions`): the server ended the transaction with it, so a
+   * statement, a COMMIT or a ROLLBACK has nothing left to act on. The client goes back with the
+   * session's error, so the pool discards it, and the provider holds no transaction from here on:
+   * this call reports the loss and the next one answers `NO_ACTIVE_TRANSACTION`. A
+   * `TransactionLostError`, a `ConnectionError`, because the connection and not the statement is
+   * what failed, raised with `beforeSend`, so it answers `not-sent`: the session is read before any
+   * `client.query`, and `pg` refuses a query on a client whose connection ended without writing it.
+   */
+  private refuseLostTransaction(client: PoolClient): void {
+    const ended = endedSessions.get(client);
+    if (ended === undefined) return;
+    this.clearTxTimeout();
+    this.txClient = null;
+    this.txActive = false;
+    client.release(ended);
+    throw new TransactionLostError(transactionLostSentence(ended), "postgres", this.config.host, this.config.port, {
+      beforeSend: true,
+    });
   }
 
   /**
@@ -3913,6 +4004,7 @@ export class PostgresProvider extends SQLBaseProvider {
 
   public async queryInTransaction(sql: string, params?: unknown[]): Promise<QueryResult> {
     if (!this.txClient || !this.txActive) throw new QueryError(NO_ACTIVE_TRANSACTION, "postgres");
+    this.refuseLostTransaction(this.txClient);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

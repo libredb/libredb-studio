@@ -8,7 +8,9 @@
 // oxlint-disable no-await-in-loop -- each statement runs after the one before, so each request is one statement's.
 import { afterEach, describe, expect, test } from "bun:test";
 import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
-import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError, TimeBudgetRefusal } from "@/lib/db/errors";
+import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { SNMP_PROVIDER_SENTENCES as S, SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_AGENT_FAILURE_SENTENCES as F, SnmpAgentError } from "@/lib/db/providers/network/snmp/agent-read";
 import {
@@ -20,6 +22,7 @@ import { SNMP_AGENT_WITHHELD as W } from "@/lib/db/providers/network/snmp/agent-
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { type FakeAgent, octets, startFakeAgent, text, ticks } from "../../../helpers/snmp-fake-agent";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
@@ -67,7 +70,11 @@ async function connected(
   options: Parameters<typeof startFakeAgent>[1] = {},
 ): Promise<{ provider: SnmpProvider; agent: FakeAgent }> {
   agent = await startFakeAgent(TREE, options);
-  provider = new SnmpProvider(connection(agent.port), { queryTimeout: 1_000 }, execution);
+  provider = new SnmpProvider(
+    connection(agent.port),
+    { queryTimeout: 1_000 },
+    { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+  );
   await provider.connect();
   return { provider, agent };
 }
@@ -90,7 +97,7 @@ describe("queryReadOnly answers only on the agent read-only profile", () => {
   });
 
   test("a handle that never connected refuses it", async () => {
-    const unopened = new SnmpProvider(connection(9), {}, READ_ONLY);
+    const unopened = new SnmpProvider(connection(9), {}, { ...READ_ONLY, egress: ALLOWS_PRIVATE_HOSTS });
     await expect(unopened.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(DatabaseConfigError);
   });
 
@@ -133,6 +140,7 @@ describe("every request is pinned in full", () => {
       label: "result",
       operationId: "snmpget.query.read",
       reference: "r1",
+      relayedBy: providerAuthor("snmp"),
     });
     expect(fenced.split(UNTRUSTED_CONTENT_END)).toHaveLength(2);
     expect(fenced.endsWith(UNTRUSTED_CONTENT_END)).toBe(true);
@@ -235,7 +243,8 @@ describe("failures and budgets", () => {
     const started = Date.now();
     const error = await provider.queryReadOnly("get sysDescr.0", BUDGET).catch((caught: unknown) => caught);
     expect(Date.now() - started).toBeLessThan(1_500);
-    expect(error).toBeInstanceOf(SnmpAgentError);
+    expect(error).toBeInstanceOf(TimeBudgetRefusal);
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect((error as Error).message).toBe(F.silence(400));
     expect(leaks(error)).toBe(false);
     const after = await provider.queryReadOnly("get sysName.0", BUDGET);
@@ -244,14 +253,19 @@ describe("failures and budgets", () => {
 
   test("an error-status is the agent's refusal by its number", async () => {
     const { provider } = await connected(READ_ONLY, { errorStatus: (request) => (request === 2 ? 5 : 0) });
-    await expect(provider.queryReadOnly("get sysDescr.0", BUDGET)).rejects.toThrow(F.refused(5));
+    const error = await provider.queryReadOnly("get sysDescr.0", BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(SnmpAgentError);
+    expect((error as Error).message).toBe(F.refused(5));
+    expect(errorKind(error)).toBe("query");
   });
 
   test("a walk past the row budget is Studio's refusal, never cut", async () => {
     const { provider } = await connected(READ_ONLY);
-    await expect(provider.queryReadOnly("walk ifEntry", { ...BUDGET, maxResultRows: 3 })).rejects.toThrow(
-      "Read-only execution exceeded the row budget: 5 rows > 3 allowed",
-    );
+    const error = await provider
+      .queryReadOnly("walk ifEntry", { ...BUDGET, maxResultRows: 3 })
+      .catch((caught: unknown) => caught);
+    expect((error as Error).message).toContain("Read-only execution exceeded the row budget: 5 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 });
 
@@ -329,7 +343,7 @@ describe("the other surfaces of an agent-mode handle", () => {
   });
 
   test("a reading on an agent-mode handle that never connected says so first", async () => {
-    const unopened = new SnmpProvider(connection(9), {}, OPERATIONS);
+    const unopened = new SnmpProvider(connection(9), {}, { ...OPERATIONS, egress: ALLOWS_PRIVATE_HOSTS });
     await expect(unopened.getOverview()).rejects.toThrow(DatabaseConfigError);
     await expect(unopened.getStorageStats()).rejects.toThrow("`connect` comes before a reading");
   });

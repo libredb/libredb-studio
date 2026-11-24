@@ -1,4 +1,5 @@
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
@@ -27,7 +28,10 @@ import { EDIT_BODY_BYTE_LIMIT } from "@/lib/db/object-edit";
 // both ends is the only thing that keeps the pair from drifting into a contradiction (#789).
 import { isSourceDocumentShape } from "@/components/object-source/source-reader";
 import { ApiErrorCode } from "@/lib/api/error-codes";
-import { QueryError } from "@/lib/db/errors";
+import { TIMEOUT_SENTENCE } from "@/lib/api/error-body";
+import { PermissionDeniedError, QueryError } from "@/lib/db/errors";
+import { errorKind } from "@/lib/db/error-record";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import type {
   Container,
   ContainerLevels,
@@ -53,9 +57,15 @@ import {
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
+import type { CallContext } from "@libredb/provider-sdk/calls";
+import { EXECUTE_SLACK_MS } from "@/lib/api/editor-query";
+import { waitedSeconds } from "@/lib/db/errors";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import { ALLOWS_PRIVATE_HOSTS } from "../helpers/egress-decisions";
 
 // NOTE: the mocks below are inline rather than in a shared helper, and the request is built by
 // `createMockRequest` with the session supplied by a mocked `@/lib/auth`. That is the ONE pattern
@@ -80,26 +90,28 @@ mock.module("@/lib/auth", () => ({
   logout: mock(async () => {}),
 }));
 
-mock.module("@/lib/seed/resolve-connection", () => {
-  class SeedConnectionError extends Error {
-    constructor(
-      message: string,
-      public statusCode: number,
-    ) {
-      super(message);
-      this.name = "SeedConnectionError";
-    }
+class SeedConnectionError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number,
+  ) {
+    super(message);
+    this.name = "SeedConnectionError";
   }
-  return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
-      if (!body.connection && !body.connectionId) {
-        throw new SeedConnectionError("Either connection or connectionId is required", 400);
-      }
-      return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
-    }),
-    SeedConnectionError,
-  };
+}
+
+/** The resolution: an inline connection as given, or a seeded record for a connectionId. A test queues its own. */
+const mockResolveConnection = mock(async (body: Record<string, unknown>): Promise<unknown> => {
+  if (!body.connection && !body.connectionId) {
+    throw new SeedConnectionError("Either connection or connectionId is required", 400);
+  }
+  return body.connection ?? { id: "seed-1", name: "Seeded", type: "postgres" };
 });
+
+mock.module("@/lib/seed/resolve-connection", () => ({
+  resolveConnection: mockResolveConnection,
+  SeedConnectionError,
+}));
 
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
@@ -119,10 +131,13 @@ mock.module("@/lib/db", () => ({
   isQueryError,
   isTimeoutError,
   isAuthenticationError,
-  isRetryableError,
   mapDatabaseError,
   BaseDatabaseProvider: class {},
 }));
+
+// The tree routes read the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const containersRoute = await import("@/app/api/db/objects/containers/route");
 const countsRoute = await import("@/app/api/db/objects/counts/route");
@@ -2150,7 +2165,7 @@ describe("the inventory and search routes over RabbitMQ's management API", () =>
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       { queryTimeout: 60_000 },
-      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
       { managementTransport: stub.factory, deadlineSignal: manualDeadlines().factory },
     );
     await provider.connect();
@@ -2912,6 +2927,196 @@ describe("the edit routes' body read", () => {
   });
 });
 
+describe("the connection's scrub on the object routes", () => {
+  /** Generated at run time and holding a slash, so its URI-encoded form differs from the value itself. */
+  const password = `${crypto.randomUUID()}/${crypto.randomUUID().slice(0, 8)}`;
+  const scrubbed = { ...connection, password: password };
+  const call = (route: { POST: (req: never) => Promise<Response> }, name: string, body: Record<string, unknown>) =>
+    route.POST(createMockRequest(`/api/db/objects/${name}`, { method: "POST", body }) as never);
+  const FUNCTION_SOURCE_KIND: ObjectKindSpec = {
+    id: "function",
+    role: "routine",
+    label: "Function",
+    labelPlural: "Functions",
+    hasSource: true,
+    sourceLanguage: "sql",
+    acceptsSourceEdits: true,
+  };
+
+  test("an error answer that holds the connection's credential keeps its status, code, kind and retryable and holds none of it", async () => {
+    // Keyed by the container each case asks for, so the cases share one provider and run together.
+    const cases = [
+      [
+        "app",
+        new QueryError(`relation near ${password} does not exist`, "postgres"),
+        400,
+        "QUERY_ERROR",
+        "query",
+        undefined,
+      ],
+      [
+        "ops",
+        new ConnectionError(`could not connect as ${encodeURIComponent(password)}`, "postgres"),
+        503,
+        "CONNECTION_ERROR",
+        "connection",
+        true,
+      ],
+    ] as const;
+    activeProvider = objectProvider({
+      countObjects: mock(async (container: readonly string[]) => {
+        throw cases.find(([name]) => name === container[0])?.[1];
+      }),
+    });
+    const answers = await Promise.all(
+      cases.map(async ([name]) => {
+        const response = await call(countsRoute, "counts", { connection: scrubbed, container: [name] });
+        return { status: response.status, body: await parseResponseJSON<Record<string, unknown>>(response) };
+      }),
+    );
+    cases.forEach(([, error, status, code, kind, retryable], index) => {
+      const { status: answered, body } = answers[index];
+      expect(answered).toBe(status);
+      expect(body).toMatchObject({ code, kind, error: withheldErrorMessage(error.name) });
+      expect(body.retryable).toBe(retryable);
+      expect(JSON.stringify(body)).not.toContain(password);
+      expect(JSON.stringify(body)).not.toContain(encodeURIComponent(password));
+    });
+
+    activeProvider = objectProvider({
+      countObjects: mock(async () => {
+        throw new QueryError("relation does not exist", "postgres");
+      }),
+    });
+    const clean = await call(countsRoute, "counts", { connection: scrubbed, container: ["app"] });
+    expect(clean.status).toBe(400);
+    expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "relation does not exist" });
+  });
+
+  test("counts answers an unavailable and a sampled sentence that hold the connection's credential withheld", async () => {
+    activeProvider = objectProvider({
+      countObjects: mock(async () => ({
+        table: { count: 9, sampledFrom: `sampled as ${password}` },
+        view: { unavailable: `permission denied for ${password}` },
+      })),
+    });
+    const response = await call(countsRoute, "counts", { connection: scrubbed, container: ["app"] });
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toEqual({
+      table: { count: 9, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      view: { unavailable: PROVIDER_TEXT_WITHHELD },
+    });
+  });
+
+  test("describe answers an unavailable index sentence that holds the connection's credential withheld", async () => {
+    activeProvider = objectProvider({
+      describeObject: mock(async (path: readonly string[]) => ({
+        ...emptyDetail(path),
+        indexes: { unavailable: `index read refused for ${password}` },
+      })),
+    });
+    const response = await call(describeRoute, "describe", {
+      connection: scrubbed,
+      path: ["app", "orders"],
+      kind: "table",
+    });
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toEqual({
+      ...emptyDetail(["app", "orders"]),
+      indexes: { unavailable: PROVIDER_TEXT_WITHHELD },
+    });
+  });
+
+  test("inventory answers its details' and the provider's column bound sentences withheld, and keeps Studio's own bound sentence", async () => {
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () => [object(["app", "orders"], "table")]),
+      describeObjects: mock(async () => ({
+        details: [{ ...emptyDetail(["app", "orders"]), indexes: { unavailable: `refused for ${password}` } }],
+        truncated: { limit: 1, reason: `bounded for ${password}` },
+      })),
+    });
+    const response = await call(inventoryRoute, "inventory", { connection: scrubbed, includeColumns: true });
+    const body = await parseResponseJSON<{ details: ObjectDetail[]; truncated: { limit: number; reason: string } }>(
+      response,
+    );
+    expect(response.status).toBe(200);
+    expect(body.details).toEqual([
+      { ...emptyDetail(["app", "orders"]), indexes: { unavailable: PROVIDER_TEXT_WITHHELD } },
+    ]);
+    expect(body.truncated).toEqual({ limit: 1, reason: PROVIDER_TEXT_WITHHELD });
+
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND],
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async () =>
+        Array.from({ length: INVENTORY_LIMIT + 1 }, (_unused, index) => object(["app", `t${index}`], "table")),
+      ),
+      describeObjects: mock(async () => ({
+        details: [],
+        truncated: { limit: 1, reason: `bounded for ${password}` },
+      })),
+    });
+    const studioBound = await call(inventoryRoute, "inventory", { connection: scrubbed, includeColumns: true });
+    expect((await parseResponseJSON<{ truncated: unknown }>(studioBound)).truncated).toEqual({
+      limit: INVENTORY_LIMIT,
+      reason: "inventory limit reached",
+    });
+  });
+
+  test("source answers a part's refusal, truncation and refused edit sentences withheld, and joins Studio's bound sentence after a withheld one", async () => {
+    const document: ObjectSourceDocument = {
+      path: ["app", "order_total(integer)"],
+      kind: "function",
+      parts: [
+        { id: "definition", label: "Definition", unavailable: `refused for ${password}` },
+        {
+          id: "body",
+          label: "Body",
+          text: "x".repeat(SOURCE_CHARACTER_LIMIT + 1),
+          language: "sql",
+          form: "partial",
+          origin: "stored",
+          truncated: { limit: SOURCE_CHARACTER_LIMIT + 1, reason: `cut for ${password}` },
+        },
+        {
+          id: "comment",
+          label: "Comment",
+          text: "COMMENT ON FUNCTION order_total(integer) IS 'kept'",
+          language: "sql",
+          form: "complete",
+          origin: "rendered",
+          edit: { offered: false, reason: `owned by ${password}` },
+        },
+      ],
+    };
+    activeProvider = objectProvider({
+      objectKinds: [TABLE_KIND, FUNCTION_SOURCE_KIND],
+      readObjectSource: mock(async () => document),
+    });
+    const response = await call(sourceRoute, "source", {
+      connection: scrubbed,
+      path: ["app", "order_total(integer)"],
+      kind: "function",
+    });
+    const body = await parseResponseJSON<ObjectSourceDocument>(response);
+    expect(response.status).toBe(200);
+    expect(body.parts[0]).toEqual({ id: "definition", label: "Definition", unavailable: PROVIDER_TEXT_WITHHELD });
+    expect(body.parts[1]).toMatchObject({
+      truncated: {
+        limit: SOURCE_CHARACTER_LIMIT,
+        reason: `${PROVIDER_TEXT_WITHHELD}; ${sourceBoundTruncationReason(SOURCE_CHARACTER_LIMIT)}`,
+      },
+    });
+    expect(body.parts[2]).toMatchObject({
+      text: "COMMENT ON FUNCTION order_total(integer) IS 'kept'",
+      edit: { offered: false, reason: PROVIDER_TEXT_WITHHELD },
+    });
+    expect(JSON.stringify(body)).not.toContain(password);
+  });
+});
+
 /**
  * The three fields an audit event for an applied DDL is attributed with. A wrong binding here names
  * the wrong caller or the wrong route on a write against a live engine, and no other test in this
@@ -2922,20 +3127,26 @@ describe("the context the handler hands run", () => {
   const post = (body: unknown) =>
     createMockRequest(`/${probeRoute}`, { method: "POST", body }) as never as Parameters<typeof handleObjectRequest>[0];
 
-  test("it carries the RESOLVED connection, the guard's session and the route, and nothing else", async () => {
+  test("it carries the RESOLVED connection, the guard's session, the route and that connection's scrub, and nothing else", async () => {
     let seen: ObjectRequestContext | undefined;
     // The body names a connectionId and NO connection, so an object taken from the BODY cannot be
-    // what the context carries: only the resolution answers `{ id: "seed-1", name: "Seeded", ... }`.
+    // what the context carries: only the resolution answers the seeded record, and only that record
+    // holds the password, so a scrub built from the body would hold no form of it.
+    const password = crypto.randomUUID();
+    const resolved = { id: "seed-1", name: "Seeded", type: "postgres", password };
+    mockResolveConnection.mockResolvedValueOnce(resolved);
     const response = await handleObjectRequest(post({ connectionId: "seed-1" }), probeRoute, async (_p, _b, ctx) => {
       seen = ctx;
       return { ok: true };
     });
 
     expect(response.status).toBe(200);
-    expect(seen?.connection).toEqual({ id: "seed-1", name: "Seeded", type: "postgres" } as never);
+    expect(seen?.connection).toEqual(resolved as never);
     expect(seen?.session).toEqual({ role: "admin", username: "admin" });
     expect(seen?.route).toBe(probeRoute);
-    expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "session"]);
+    expect(seen?.scrub).toEqual(providerTextScrub(resolved as never, "any"));
+    expect(seen?.scrub.forms).toContain(password);
+    expect(Object.keys(seen ?? {}).sort()).toEqual(["connection", "route", "scrub", "session"]);
   });
 
   test("an INLINE connection reaches the context as the resolution answered it", async () => {
@@ -2994,5 +3205,532 @@ describe("a server-level connection's walks", () => {
     expect((await post(inventoryRoute, "/api/db/objects/inventory", {})).status).toBe(400);
     expect((await post(searchRoute, "/api/db/objects/search", { term: "orders" })).status).toBe(400);
     expect(listContainers).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// What the tree routes answer today (the host core keeps it)
+// ============================================================================
+
+/**
+ * What the four tree routes, the inventory and the search answer today for a provider's error and for a provider's
+ * answer. Each title passes on the routes as they are and is the oracle the move of the tree onto the host core keeps
+ * unchanged; what that move changes by design, a deadline and a caller that leaves, is its own.
+ */
+describe("what the tree routes answer today, which the host core keeps", () => {
+  /** One tree route: its handler, its path, its body and the provider member it reaches. */
+  interface TreeRoute {
+    readonly name: string;
+    readonly route: { POST: (req: never) => Promise<Response> };
+    readonly body: Record<string, unknown>;
+    readonly member: "listContainers" | "countObjects" | "listObjects" | "describeObject";
+  }
+  const TREE_ROUTES: readonly TreeRoute[] = [
+    { name: "containers", route: containersRoute, body: {}, member: "listContainers" },
+    { name: "counts", route: countsRoute, body: { container: ["app"] }, member: "countObjects" },
+    { name: "list", route: listRoute, body: { container: ["app"], kind: "table" }, member: "listObjects" },
+    {
+      name: "describe",
+      route: describeRoute,
+      body: { path: ["app", "orders"], kind: "table" },
+      member: "describeObject",
+    },
+  ];
+
+  /** Each Studio error class a provider raises, and the status, code and retry hint its answer carries. */
+  const STUDIO_ERRORS: readonly {
+    readonly name: string;
+    readonly raise: (text: string) => Error;
+    readonly status: number;
+    readonly code: string;
+    readonly retryable?: true;
+    readonly sentence?: string;
+  }[] = [
+    { name: "QueryError", raise: (text) => new QueryError(text, "postgres"), status: 400, code: "QUERY_ERROR" },
+    {
+      name: "ConnectionError",
+      raise: (text) => new ConnectionError(text, "postgres"),
+      status: 503,
+      code: "CONNECTION_ERROR",
+      retryable: true,
+    },
+    {
+      name: "TimeoutError",
+      raise: (text) => new TimeoutError(text, "postgres", 1000),
+      status: 504,
+      code: "TIMEOUT_ERROR",
+      retryable: true,
+      sentence: TIMEOUT_SENTENCE,
+    },
+    {
+      name: "PoolExhaustedError",
+      raise: (text) => new PoolExhaustedError(text, "postgres", 10),
+      status: 503,
+      code: "POOL_EXHAUSTED",
+      retryable: true,
+    },
+    {
+      name: "PermissionDeniedError",
+      raise: (text) => new PermissionDeniedError(text, "postgres"),
+      status: 403,
+      code: "PERMISSION_DENIED",
+    },
+  ];
+
+  /** `route` posted with the connection and its own body. */
+  function post(route: TreeRoute["route"], name: string, body: Record<string, unknown>): Promise<Response> {
+    return route.POST(
+      createMockRequest(`/api/db/objects/${name}`, { method: "POST", body: { connection, ...body } }) as never,
+    );
+  }
+
+  /** The provider of a tree route whose member rejects with `error`. */
+  function rejecting(member: TreeRoute["member"], error: Error): DatabaseProvider {
+    return objectProvider({
+      [member]: mock(async () => {
+        throw error;
+      }),
+    });
+  }
+
+  test("each tree route answers a provider's Studio error by its class, with its code, kind and outcome", async () => {
+    for (const tree of TREE_ROUTES) {
+      for (const studio of STUDIO_ERRORS) {
+        const text = `refused ${randomUUID()}`;
+        const error = studio.raise(text);
+        activeProvider = rejecting(tree.member, error);
+
+        // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+        const response = await post(tree.route, tree.name, tree.body);
+        // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+        const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+        expect([tree.name, studio.name, response.status]).toEqual([tree.name, studio.name, studio.status]);
+        expect([tree.name, studio.name, body]).toEqual([
+          tree.name,
+          studio.name,
+          {
+            error: studio.sentence ?? text,
+            code: studio.code,
+            statusCode: studio.status,
+            ...(studio.retryable === undefined ? {} : { retryable: true }),
+            kind: errorKind(error),
+            outcome: "unknown",
+          },
+        ]);
+      }
+    }
+  });
+
+  test("each tree route answers a provider's raw error 500 INTERNAL_ERROR with its own words, and no kind or outcome", async () => {
+    for (const tree of TREE_ROUTES) {
+      const text = `socket ${randomUUID()}`;
+      activeProvider = rejecting(tree.member, new Error(text));
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const response = await post(tree.route, tree.name, tree.body);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 500]);
+      expect([tree.name, body]).toEqual([tree.name, { error: text, code: "INTERNAL_ERROR", statusCode: 500 }]);
+    }
+  });
+
+  test("each tree route asks the provider once with the request's own arguments and answers what the provider answered", async () => {
+    const containers: Container[] = [{ path: ["app"], name: "app", level: 0, isSessionDefault: true }];
+    const counts: Record<string, KindCount> = {
+      table: { count: 2 },
+      view: { count: 1204, sampledFrom: `one walk ${randomUUID()}` },
+      index: { unavailable: `refused ${randomUUID()}` },
+    };
+    const objects: DatabaseObject[] = [{ ...object(["app", "orders"], "table"), rowCount: 3 }];
+    const detail: ObjectDetail = {
+      path: ["app", "orders"],
+      columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+      indexes: { unavailable: `refused ${randomUUID()}` },
+      foreignKeys: [],
+    };
+    const listContainers = mock(async () => containers);
+    const countObjects = mock(async () => counts);
+    const listObjects = mock(async () => objects);
+    const describeObject = mock(async () => detail);
+    activeProvider = objectProvider({ listContainers, countObjects, listObjects, describeObject });
+    const answers: [TreeRoute, unknown, ReturnType<typeof mock>, unknown[]][] = [
+      [TREE_ROUTES[0] as TreeRoute, containers, listContainers, [undefined]],
+      [TREE_ROUTES[1] as TreeRoute, counts, countObjects, [["app"]]],
+      [TREE_ROUTES[2] as TreeRoute, objects, listObjects, [["app"], "table"]],
+      [TREE_ROUTES[3] as TreeRoute, detail, describeObject, [["app", "orders"], "table"]],
+    ];
+
+    for (const [tree, answer, member, args] of answers) {
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each call log is its own route's.
+      const response = await post(tree.route, tree.name, tree.body);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 200]);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      expect([tree.name, await parseResponseJSON<unknown>(response)]).toEqual([tree.name, answer]);
+      expect([tree.name, member.mock.calls]).toEqual([tree.name, [args]]);
+    }
+  });
+
+  test("an inventory whose listing or bulk read fails answers that error by its class, and no partial inventory", async () => {
+    const listingText = `lost ${randomUUID()}`;
+    activeProvider = objectProvider({
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async (container: readonly string[], kind: string) => {
+        if (kind === "view") throw new ConnectionError(listingText, "postgres");
+        return [object([...container, "orders"], kind)];
+      }),
+    });
+    const listing = await post(inventoryRoute, "inventory", {});
+    const listingBody = await parseResponseJSON<Record<string, unknown>>(listing);
+
+    const bulkText = `refused ${randomUUID()}`;
+    activeProvider = objectProvider({
+      listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]),
+      listObjects: mock(async (container: readonly string[], kind: string) => [object([...container, "orders"], kind)]),
+      describeObjects: mock(async () => {
+        throw new PermissionDeniedError(bulkText, "postgres");
+      }),
+    });
+    const bulk = await post(inventoryRoute, "inventory", { includeColumns: true });
+    const bulkBody = await parseResponseJSON<Record<string, unknown>>(bulk);
+
+    expect(listing.status).toBe(503);
+    expect(listingBody).toEqual({
+      error: listingText,
+      code: "CONNECTION_ERROR",
+      statusCode: 503,
+      retryable: true,
+      kind: errorKind(new ConnectionError(listingText, "postgres")),
+      outcome: "unknown",
+    });
+    expect(bulk.status).toBe(403);
+    expect(bulkBody).toEqual({
+      error: bulkText,
+      code: "PERMISSION_DENIED",
+      statusCode: 403,
+      kind: errorKind(new PermissionDeniedError(bulkText, "postgres")),
+      outcome: "unknown",
+    });
+  });
+
+  test("a search whose listing fails answers that error by its class, and no partial match list", async () => {
+    const text = `timed out ${randomUUID()}`;
+    activeProvider = objectProvider({
+      listContainers: mock(async () => [
+        { path: ["app"], name: "app", level: 0 },
+        { path: ["ops"], name: "ops", level: 0 },
+      ]),
+      listObjects: mock(async (container: readonly string[], kind: string) => {
+        if (container[0] === "ops") throw new TimeoutError(text, "postgres", 1000);
+        return [object([...container, "orders"], kind)];
+      }),
+    });
+
+    const response = await post(searchRoute, "search", { term: "orders" });
+    const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+    expect(response.status).toBe(504);
+    expect(body).toEqual({
+      error: TIMEOUT_SENTENCE,
+      code: "TIMEOUT_ERROR",
+      statusCode: 504,
+      retryable: true,
+      kind: errorKind(new TimeoutError(text, "postgres", 1000)),
+      outcome: "unknown",
+    });
+  });
+});
+
+describe("the tree routes on the host core", () => {
+  /** One single-read tree route: its handler, its path, its body, the provider member it reaches and its read's noun. */
+  interface SingleRead {
+    readonly name: string;
+    readonly route: { POST: (req: never) => Promise<Response> };
+    readonly body: Record<string, unknown>;
+    readonly member: "listContainers" | "countObjects" | "listObjects" | "describeObject";
+    readonly noun: string;
+  }
+  const SINGLE_READS: readonly SingleRead[] = [
+    { name: "containers", route: containersRoute, body: {}, member: "listContainers", noun: "The container listing" },
+    {
+      name: "counts",
+      route: countsRoute,
+      body: { container: ["app"] },
+      member: "countObjects",
+      noun: "The object count",
+    },
+    {
+      name: "list",
+      route: listRoute,
+      body: { container: ["app"], kind: "table" },
+      member: "listObjects",
+      noun: "The object listing",
+    },
+    {
+      name: "describe",
+      route: describeRoute,
+      body: { path: ["app", "orders"], kind: "table" },
+      member: "describeObject",
+      noun: "The object description",
+    },
+  ];
+
+  /** `route` posted with the connection, its own body and `signal`, as a request whose caller can leave. */
+  function postWith(
+    route: SingleRead["route"],
+    name: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<Response> {
+    const request = new Request(`http://localhost:3000/api/db/objects/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connection, ...body }),
+      signal,
+    });
+    return route.POST(request as never);
+  }
+
+  /** A provider member that signals when it is reached and answers only when the test settles it. */
+  function heldMember<T>() {
+    const answer = Promise.withResolvers<T>();
+    const reached = Promise.withResolvers<void>();
+    const member = mock(() => {
+      reached.resolve();
+      return answer.promise;
+    });
+    return { answer, reached: reached.promise, member };
+  }
+
+  /** D5's sentence for `noun` at Studio's default statement timeout, the mock connection's. */
+  const deadlineSentence = (noun: string) =>
+    `${noun} did not answer within the statement timeout of ${waitedSeconds(DEFAULT_QUERY_TIMEOUT)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`;
+
+  /** Runs `body` with `make(real)` installed in place of the real host core, then puts the real one back. */
+  async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+    const real = hostCore();
+    forgetHostCore();
+    installHostCore(make(real), "test");
+    try {
+      return await body();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  test("a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown", async () => {
+    for (const tree of SINGLE_READS) {
+      const held = heldMember<never>();
+      activeProvider = objectProvider({ [tree.member]: held.member });
+      const caller = new AbortController();
+
+      const answering = postWith(tree.route, tree.name, tree.body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      await held.reached;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above, before its member settles.
+      const response = await answering;
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+      held.answer.reject(new Error(randomUUID()));
+      // oxlint-disable-next-line no-await-in-loop -- the member settles after the answer, with a plain await.
+      await held.answer.promise.catch(() => undefined);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 499]);
+      expect([tree.name, body]).toMatchObject([
+        tree.name,
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" },
+      ]);
+    }
+  });
+
+  test("a tree route whose request is already gone answers 499 not-sent and asks the provider nothing", async () => {
+    for (const tree of SINGLE_READS) {
+      const member = mock(async () => {
+        throw new Error("a request already gone reached the provider");
+      });
+      activeProvider = objectProvider({ [tree.member]: member });
+      const caller = new AbortController();
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const response = await postWith(tree.route, tree.name, tree.body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+
+      expect([tree.name, response.status]).toEqual([tree.name, 499]);
+      expect([tree.name, body]).toMatchObject([
+        tree.name,
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" },
+      ]);
+      expect([tree.name, member.mock.calls.length]).toEqual([tree.name, 0]);
+    }
+    // The route's own checks still run first: a body with no container is the caller's mistake, a 400.
+    const gone = new AbortController();
+    gone.abort(new DOMException("The request went away.", "AbortError"));
+    const refused = await postWith(countsRoute, "counts", {}, gone.signal);
+    expect(refused.status).toBe(400);
+  });
+
+  test("an inventory or a search whose request leaves between its reads sends no further read", async () => {
+    for (const [route, name, body] of [
+      [inventoryRoute, "inventory", { includeColumns: true }],
+      [searchRoute, "search", { term: "orders" }],
+    ] as const) {
+      const second = heldMember<DatabaseObject[]>();
+      const listObjects = mock(async (container: readonly string[], kind: string) => {
+        if (listObjects.mock.calls.length === 2) return second.member();
+        return [object([...container, "orders"], kind)];
+      });
+      const describeObjects = mock(async () => ({ details: [] }));
+      activeProvider = objectProvider({
+        listContainers: mock(async () => [
+          { path: ["app"], name: "app", level: 0 },
+          { path: ["ops"], name: "ops", level: 0 },
+        ]),
+        listObjects,
+        describeObjects,
+      });
+      const caller = new AbortController();
+
+      const answering = postWith(route, name, body, caller.signal);
+      // oxlint-disable-next-line no-await-in-loop -- one walk at a time, so each call log is its own route's.
+      await second.reached;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the walk above.
+      const response = await answering;
+      second.answer.resolve([object(["app", "orders"], "view")]);
+      // oxlint-disable-next-line no-await-in-loop -- the held listing settles after the answer, with a plain await.
+      await second.answer.promise;
+
+      expect([name, response.status]).toEqual([name, 499]);
+      expect([name, listObjects.mock.calls.length]).toEqual([name, 2]);
+      // The inventory described the first pair's object before the second listing, and nothing after it.
+      expect([name, describeObjects.mock.calls.length]).toEqual([name, name === "inventory" ? 1 : 0]);
+    }
+  });
+
+  test("a tree route past its deadline answers 504 studio-timeout-refusal naming the read", async () => {
+    const stopAt = (action: string) => (real: HostCore) => ({
+      ...real,
+      treeCall: (async (session, request, ctx, ports) =>
+        request.action === action
+          ? {
+              kind: "stopped",
+              reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+              settled: Promise.resolve(),
+            }
+          : real.treeCall(session, request, ctx, ports)) satisfies HostCore["treeCall"],
+    });
+    const actions: Record<SingleRead["name"], string> = {
+      containers: "containers",
+      counts: "count",
+      list: "list",
+      describe: "describe",
+    };
+    const answers: [string, Response, string][] = [];
+    for (const tree of SINGLE_READS) {
+      activeProvider = objectProvider();
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own core's.
+      const response = await withCore(stopAt(actions[tree.name] as string), () =>
+        postWith(tree.route, tree.name, tree.body),
+      );
+      answers.push([tree.name, response, tree.noun]);
+    }
+    activeProvider = objectProvider({ listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]) });
+    const inventory = await withCore(stopAt("list"), () => postWith(inventoryRoute, "inventory", {}));
+    answers.push(["inventory", inventory, "The object listing"]);
+
+    for (const [name, response, noun] of answers) {
+      // oxlint-disable-next-line no-await-in-loop -- each answer's body, read in order.
+      const body = await parseResponseJSON<Record<string, unknown>>(response);
+      expect([name, response.status]).toEqual([name, 504]);
+      expect([name, body]).toMatchObject([
+        name,
+        {
+          error: deadlineSentence(noun),
+          code: "TIMEOUT_ERROR",
+          kind: "studio-timeout-refusal",
+          outcome: "unknown",
+        },
+      ]);
+    }
+  });
+
+  test("every read of an inventory, its container walk included, is a host core tree call with a deadline of its own", async () => {
+    activeProvider = objectProvider({
+      listContainers: mock(async () => [
+        { path: ["app"], name: "app", level: 0 },
+        { path: ["ops"], name: "ops", level: 0 },
+      ]),
+      listObjects: mock(async (container: readonly string[], kind: string) =>
+        container[0] === "app" ? [object([...container, `${kind}s`], kind)] : [],
+      ),
+      describeObjects: mock(async () => ({ details: [] })),
+    });
+    const calls: { readonly action: string; readonly ctx: CallContext }[] = [];
+    const before = Date.now();
+    const response = await withCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          calls.push({ action: request.action, ctx });
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      () => postWith(inventoryRoute, "inventory", { includeColumns: true }),
+    );
+    const after = Date.now();
+
+    expect(response.status).toBe(200);
+    expect(calls.map(({ action }) => action)).toEqual([
+      "containers",
+      "list",
+      "describeMany",
+      "list",
+      "describeMany",
+      "list",
+      "list",
+    ]);
+    const slack = DEFAULT_QUERY_TIMEOUT + EXECUTE_SLACK_MS;
+    expect(new Set(calls.map(({ ctx }) => ctx)).size).toBe(calls.length);
+    for (const { ctx } of calls) {
+      expect(ctx.deadline).toBeGreaterThanOrEqual(before + slack);
+      expect(ctx.deadline).toBeLessThanOrEqual(after + slack);
+    }
+    const deadlines = calls.map(({ ctx }) => ctx.deadline);
+    expect(deadlines).toEqual([...deadlines].sort((a, b) => a - b));
+  });
+
+  test("a tree route reads no catalog, and its provider's forCatalog is never called", async () => {
+    const forCatalog = mock(async () => {
+      throw new Error("a tree route asked for another catalog");
+    });
+    const posts: [string, SingleRead["route"], Record<string, unknown>][] = [
+      ...SINGLE_READS.map((tree): [string, SingleRead["route"], Record<string, unknown>] => [
+        tree.name,
+        tree.route,
+        tree.body,
+      ]),
+      ["search", searchRoute, { term: "orders" }],
+      ["inventory", inventoryRoute, { includeColumns: true }],
+    ];
+    const statuses: [string, number][] = [];
+    for (const [name, route, body] of posts) {
+      activeProvider = Object.assign(
+        objectProvider({ listContainers: mock(async () => [{ path: ["app"], name: "app", level: 0 }]) }),
+        { forCatalog },
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own provider's.
+      const response = await postWith(route, name, { ...body, catalog: `other_${randomUUID()}` });
+      statuses.push([name, response.status]);
+    }
+
+    expect(statuses).toEqual(posts.map(([name]) => [name, 200]));
+    expect(forCatalog).not.toHaveBeenCalled();
   });
 });

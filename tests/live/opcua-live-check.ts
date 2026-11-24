@@ -27,11 +27,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OPCUA_CURRENT_SESSION_COUNT, OPCUA_OBJECTS_FOLDER } from "@/lib/db/providers/industrial/opcua/constants";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
+import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/provider-files";
 import { OPCUA_LIBRARY_BRIDGE } from "@/lib/db/providers/industrial/opcua/library";
 import { openReadOnlySession } from "@/lib/db/providers/industrial/opcua/session";
 import { readHistory } from "@/lib/db/providers/industrial/opcua/history";
-import type { OpcuaConnectionOptions } from "@/lib/db/providers/industrial/opcua/connection";
+import type { OpcuaSessionOptions } from "@/lib/db/providers/industrial/opcua/connection";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 
 const ENDPOINT = process.env.LIBREDB_OPCUA_LIVE_URL ?? "opc.tcp://127.0.0.1:54840/";
@@ -55,7 +55,7 @@ function measure(what: string, value: unknown): void {
 }
 
 /** One connection, with a PKI root of its own so a run never reuses another's trust list. */
-function options(over: Partial<OpcuaConnectionOptions> = {}): OpcuaConnectionOptions {
+function options(over: Partial<OpcuaSessionOptions> = {}): OpcuaSessionOptions {
   const url = new URL(ENDPOINT);
   const pkiRoot = mkdtempSync(join(tmpdir(), "opcua-live-pki-"));
   ROOTS.push(pkiRoot);

@@ -29,7 +29,7 @@
  * a JSDoc block; the real syntax has no backslash.
  */
 
-import { DEFAULT_SQL_GRAMMAR } from "./grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "./spans";
 
 /**

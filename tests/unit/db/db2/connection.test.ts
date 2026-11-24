@@ -16,6 +16,7 @@ import {
   DB2_DEFAULT_PORT,
   NODE_CA_FILE_SYSTEM,
   assertTransport,
+  caPemFor,
   clientOptions,
   openClient,
   resolveTarget,
@@ -23,9 +24,24 @@ import {
   type Db2Connection,
 } from "@/lib/db/providers/sql/db2/connection";
 import type { Db2ClientOptions, Db2Driver, Db2Transaction } from "@/lib/db/providers/sql/db2/driver";
+import type { TrustMaterial } from "@/lib/db/types";
+import { TRUST_MATERIAL_MISSING } from "@/lib/db/utils/require-trust-material";
 import { TUNNEL_FAR_END, type SSLMode } from "@/lib/types";
 
 const PEM = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n";
+
+/** Trust material as the factory hands it, with certificate blocks made at run time. */
+function material(count: number): TrustMaterial {
+  const certificates = Array.from({ length: count }, () =>
+    ["-----BEGIN CERTIFICATE-----", `MIIB${crypto.randomUUID().replaceAll("-", "")}`, "-----END CERTIFICATE-----"].join(
+      "\n",
+    ),
+  );
+  return Object.freeze({ certificates: Object.freeze(certificates) });
+}
+
+/** The material of a process whose NODE_EXTRA_CA_CERTS is unset. */
+const NO_CERTIFICATES = material(0);
 
 function connection(overrides: Partial<Db2Connection> = {}): Db2Connection {
   return {
@@ -224,11 +240,16 @@ describe("assertTransport (fail closed)", () => {
     },
   );
 
-  test("a tunnel that was not opened is refused rather than dialled around", () => {
-    const config = connection({
-      sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
-    });
-    expect(() => assertTransport(config, resolveTarget(config))).toThrow("asks for an SSH tunnel and none was opened");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const mode of ["verify-system", "verify-full"] as SSLMode[]) {
+      const config = connection({
+        ssl: { mode, caCert: PEM },
+        sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u", authMethod: "password" },
+      });
+      expect(() => assertTransport(config, resolveTarget(config))).not.toThrow();
+    }
   });
 
   test("through a tunnel, a mode that checks the server's name is refused", () => {
@@ -267,7 +288,10 @@ describe("clientOptions (M4, M6)", () => {
     [undefined, { ssl: false, securityMechanism: "userPassword" }],
     ["disable", { ssl: false, securityMechanism: "userPassword" }],
     ["require", { ssl: true, rejectUnauthorized: false }],
-    ["verify-system", { ssl: true, rejectUnauthorized: true }],
+    [
+      "verify-system",
+      { ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "Basic", caCert: "/tmp/x/ca.pem" },
+    ],
     ["verify-ca", { ssl: true, rejectUnauthorized: true, sslClientHostnameValidation: "OFF", caCert: "/tmp/x/ca.pem" }],
     [
       "verify-full",
@@ -279,6 +303,23 @@ describe("clientOptions (M4, M6)", () => {
 
   test("a verifying mode with no CA file passes no caCert", () => {
     expect(clientOptions(target("verify-full"))).not.toHaveProperty("caCert");
+  });
+
+  // The name check of a mode that may carry a CA file never rests on the driver's default, measured equal to Basic.
+  test("mode verify-system with a CA file carries it, with the host name checked", () => {
+    expect(clientOptions(target("verify-system"), "/tmp/x/ca.pem")).toEqual({
+      ...base,
+      ssl: true,
+      rejectUnauthorized: true,
+      sslClientHostnameValidation: "Basic",
+      caCert: "/tmp/x/ca.pem",
+    });
+    expect(clientOptions(target("verify-system"))).toEqual({
+      ...base,
+      ssl: true,
+      rejectUnauthorized: true,
+      sslClientHostnameValidation: "Basic",
+    });
   });
 
   test("never queryTimeout or currentSchema, whatever the connection carries", () => {
@@ -300,6 +341,51 @@ describe("clientOptions (M4, M6)", () => {
     for (const mode of ["require", "verify-system", "verify-ca", "verify-full"] as const) {
       const options = clientOptions(resolveTarget(connection({ ssl: { mode, caCert: PEM } })), "/tmp/ca.pem");
       expect(Object.keys(options)).not.toContain("securityMechanism");
+    }
+  });
+});
+
+// db2-node's TLS, rustls, reads the operating system's store and never Node.js's, so NODE_EXTRA_CA_CERTS reaches a Db2
+// connection only as the trust material the factory hands the provider, written to its CA file.
+describe("caPemFor (FND-2 slice 4)", () => {
+  const target = (ssl: Db2Connection["ssl"]) => resolveTarget(connection({ ssl, allowInsecureAuth: true }));
+
+  test("Verify (system trust) takes the handed certificates, joined in order", () => {
+    const trust = material(2);
+    expect(caPemFor(target({ mode: "verify-system" }), trust)).toBe(
+      `${trust.certificates[0]}\n${trust.certificates[1]}`,
+    );
+  });
+
+  test("Verify full without a CA of its own takes them too", () => {
+    const trust = material(1);
+    expect(caPemFor(target({ mode: "verify-full" }), trust)).toBe(trust.certificates[0]);
+  });
+
+  test("a connection's own CA is taken alone", () => {
+    for (const mode of ["verify-ca", "verify-full"] as SSLMode[]) {
+      expect(caPemFor(target({ mode, caCert: PEM }), material(2))).toBe(PEM);
+      expect(caPemFor(target({ mode, caCert: PEM }), undefined)).toBe(PEM);
+    }
+  });
+
+  test("with no certificate handed, Verify (system trust) takes no CA", () => {
+    expect(caPemFor(target({ mode: "verify-system" }), NO_CERTIFICATES)).toBeUndefined();
+    expect(caPemFor(target({ mode: "verify-full" }), NO_CERTIFICATES)).toBeUndefined();
+  });
+
+  test("require and no TLS take none, and need no trust material", () => {
+    expect(caPemFor(target({ mode: "require" }), material(1))).toBeUndefined();
+    expect(caPemFor(target({ mode: "require" }), undefined)).toBeUndefined();
+    expect(caPemFor(target({ mode: "disable" }), undefined)).toBeUndefined();
+    expect(caPemFor(target(undefined), undefined)).toBeUndefined();
+  });
+
+  test("a system-store mode built without trust material is refused by name", () => {
+    for (const ssl of [{ mode: "verify-system" }, { mode: "verify-full" }] as Db2Connection["ssl"][]) {
+      const error = refusal(() => caPemFor(target(ssl), undefined));
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect(error.message).toBe(TRUST_MATERIAL_MISSING);
     }
   });
 });
@@ -403,7 +489,7 @@ describe("openClient", () => {
   test("connects with the CA written to a file and hands back its directory", async () => {
     const { fs, calls } = memoryFs();
     const { driver, built } = fakeDriver();
-    const opened = await openClient(connection(), async () => driver, fs);
+    const opened = await openClient(connection(), NO_CERTIFICATES, async () => driver, fs);
 
     expect(opened.caDir).toBe(join(tmpdir(), "libredb-db2-abc"));
     expect(built[0].caCert).toBe(join(tmpdir(), "libredb-db2-abc", "ca.pem"));
@@ -412,7 +498,12 @@ describe("openClient", () => {
 
   test("the insecure opt-in reaches the driver as the plaintext mechanism, named", async () => {
     const { driver, built } = fakeDriver();
-    await openClient(connection({ ssl: undefined, allowInsecureAuth: true }), async () => driver, memoryFs().fs);
+    await openClient(
+      connection({ ssl: undefined, allowInsecureAuth: true }),
+      NO_CERTIFICATES,
+      async () => driver,
+      memoryFs().fs,
+    );
 
     expect(built[0]).toMatchObject({ ssl: false, securityMechanism: "userPassword" });
   });
@@ -425,15 +516,22 @@ describe("openClient", () => {
     ["without TLS behind the insecure opt-in", { ssl: undefined, allowInsecureAuth: true }],
   ])("a password holding ! ^ [ ] and | reaches the driver as typed, %s", async (_, overrides) => {
     const { driver, built } = fakeDriver();
-    await openClient(connection({ ...overrides, password: "Pw!a^b[c]d|9" }), async () => driver, memoryFs().fs);
+    // Made at run time; the characters under test are its fixed part.
+    const password = `${crypto.randomUUID()}!a^b[c]d|9`;
+    await openClient(connection({ ...overrides, password }), NO_CERTIFICATES, async () => driver, memoryFs().fs);
 
-    expect(built[0].password).toBe("Pw!a^b[c]d|9");
+    expect(built[0].password).toBe(password);
   });
 
   test("with no CA there is no file and no directory", async () => {
     const { fs, calls } = memoryFs();
     const { driver } = fakeDriver();
-    const opened = await openClient(connection({ ssl: { mode: "verify-system" } }), async () => driver, fs);
+    const opened = await openClient(
+      connection({ ssl: { mode: "verify-system" } }),
+      NO_CERTIFICATES,
+      async () => driver,
+      fs,
+    );
 
     expect(opened).not.toHaveProperty("caDir");
     expect(calls).toEqual([]);
@@ -442,7 +540,9 @@ describe("openClient", () => {
   test("a failed connect removes the CA directory and answers Failed to connect to Db2", async () => {
     const { fs, calls } = memoryFs();
     const { driver } = fakeDriver(new Error("TLS handshake failed: invalid peer certificate: NotValidForName"));
-    const error = (await openClient(connection(), async () => driver, fs).catch((e: unknown) => e)) as ConnectionError;
+    const error = (await openClient(connection(), NO_CERTIFICATES, async () => driver, fs).catch(
+      (e: unknown) => e,
+    )) as ConnectionError;
 
     expect(error).toBeInstanceOf(ConnectionError);
     expect(error.message).toBe(
@@ -456,7 +556,12 @@ describe("openClient", () => {
   test("a failure that is not an Error is still reported", async () => {
     const { driver } = fakeDriver("refused");
     await expect(
-      openClient(connection({ ssl: undefined, allowInsecureAuth: true }), async () => driver, memoryFs().fs),
+      openClient(
+        connection({ ssl: undefined, allowInsecureAuth: true }),
+        NO_CERTIFICATES,
+        async () => driver,
+        memoryFs().fs,
+      ),
     ).rejects.toThrow("Failed to connect to Db2: refused");
   });
 
@@ -464,7 +569,7 @@ describe("openClient", () => {
     const missing = Object.assign(new Error("Cannot find module 'db2-node'"), { code: "MODULE_NOT_FOUND" });
     const { driver } = fakeDriver(missing);
     await expect(
-      openClient(connection({ ssl: { mode: "require" } }), async () => driver, memoryFs().fs),
+      openClient(connection({ ssl: { mode: "require" } }), NO_CERTIFICATES, async () => driver, memoryFs().fs),
     ).rejects.toThrow("Db2 is not available in this deployment");
   });
 
@@ -473,6 +578,7 @@ describe("openClient", () => {
     await expect(
       openClient(
         connection({ ssl: undefined }),
+        NO_CERTIFICATES,
         async () => {
           loaded = true;
           return fakeDriver().driver;
@@ -481,5 +587,51 @@ describe("openClient", () => {
       ),
     ).rejects.toThrow(DatabaseConfigError);
     expect(loaded).toBe(false);
+  });
+
+  test("with handed certificates, Verify (system trust) writes them to the private CA file and hands its path to the driver", async () => {
+    const trust = material(2);
+    const written: string[] = [];
+    const { fs, calls } = memoryFs({
+      writeFile: async (_path, data) => {
+        written.push(data);
+      },
+    });
+    const { driver, built } = fakeDriver();
+    const opened = await openClient(connection({ ssl: { mode: "verify-system" } }), trust, async () => driver, fs);
+
+    expect(written).toEqual([trust.certificates.join("\n")]);
+    expect(opened.caDir).toBe(join(tmpdir(), "libredb-db2-abc"));
+    expect(built[0]).toMatchObject({
+      ssl: true,
+      rejectUnauthorized: true,
+      sslClientHostnameValidation: "Basic",
+      caCert: join(tmpdir(), "libredb-db2-abc", "ca.pem"),
+    });
+    expect(calls).toEqual([expect.stringMatching(/^mkdtemp .*libredb-db2-$/)]);
+  });
+
+  test("built without trust material, a Verify (system trust) connection is refused before the driver is loaded", async () => {
+    for (const ssl of [{ mode: "verify-system" }, { mode: "verify-full" }] as Db2Connection["ssl"][]) {
+      let loaded = false;
+      const { fs, calls } = memoryFs();
+      // oxlint-disable-next-line no-await-in-loop -- each mode reads its own fake file system and driver flag, one after another.
+      const error = await openClient(
+        connection({ ssl }),
+        undefined,
+        async () => {
+          loaded = true;
+          return fakeDriver().driver;
+        },
+        fs,
+      ).then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(DatabaseConfigError);
+      expect((error as Error).message).toBe(TRUST_MATERIAL_MISSING);
+      expect(loaded).toBe(false);
+      expect(calls).toEqual([]);
+    }
   });
 });

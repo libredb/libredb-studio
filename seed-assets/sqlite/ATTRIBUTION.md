@@ -28,6 +28,8 @@ Employees Sample Database at
   (`expected_value`, `found_value`, `tchecksum`) and compacted the file with
   `VACUUM` — those tables exist to verify a full-dataset install and are not
   sample content.
+- Set header bytes 18 and 19 (the file format write and read versions) from 1 to 2, which opens the file in WAL journal mode; no page changed.
+  `scripts/generate-sqlite-sample.mjs` makes this change, and `tests/unit/seed/sqlite-sample-asset.test.ts` holds that it is the only one.
 
 Shipped tables: `employee`, `department`, `dept_emp`, `dept_manager`,
 `salary`, `title`; views `current_dept_emp`, `dept_emp_latest_date`.

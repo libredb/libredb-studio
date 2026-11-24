@@ -11,9 +11,10 @@ import {
   splitTimestamp,
   stripTerminalEscapes,
 } from "@/lib/db/providers/platform/kubernetes/console/logs";
-import { type KubectlStatement, parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+import { type KubectlStatement, parseKubectl } from "@/lib/languages/kubectl/parse";
 import { consoleContext, listAnswer, routes, sentLines, textAnswer } from "../../../../helpers/kubernetes-console";
 import { jsonAnswer } from "../../../../helpers/kubernetes-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 type Logs = Extract<KubectlStatement, { readonly command: "logs" }>;
 
@@ -199,9 +200,13 @@ describe("the 5,000 rows of one statement", () => {
 
   test("streams times --tail past 5,000 lines answer a sentence before any log is read", async () => {
     const { context, transport } = consoleContext(routes({ "GET /api/v1/namespaces/shop/pods/web": jsonAnswer(five) }));
-    await expect(readLogs(context, logs("logs web --all-containers --tail=5000"))).rejects.toThrow(
+    const refused = await readLogs(context, logs("logs web --all-containers --tail=5000")).catch(
+      (caught: unknown) => caught,
+    );
+    expect((refused as Error).message).toContain(
       "This statement would read up to 25,000 lines across 5 log streams, more than the 5,000 one statement shows: lower --tail, name one container with -c, or narrow the selector. No log was read.",
     );
+    expect(errorKind(refused)).toBe("query");
     expect(sentLines(transport)).toEqual(["GET /api/v1/namespaces/shop/pods/web"]);
   });
 
@@ -222,9 +227,11 @@ describe("the 5,000 rows of one statement", () => {
       [logLine("web", "app", 10)]: textAnswer(flood),
     });
     const { context } = consoleContext(answer);
-    await expect(readLogs(context, logs("logs web --tail=10"))).rejects.toThrow(
+    const refused = await readLogs(context, logs("logs web --tail=10")).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain(
       "The log streams answered more than the 5,000 lines one statement shows: lower --tail, name one container with -c, or narrow the selector.",
     );
+    expect(errorKind(refused)).toBe("query");
   });
 });
 

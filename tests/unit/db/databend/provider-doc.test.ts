@@ -119,6 +119,7 @@ import {
   transportDeps,
   transportHarness,
 } from "../../../helpers/databend-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -204,7 +205,6 @@ const QUOTED: Readonly<Record<string, { readonly keys: readonly string[]; readon
       DATABEND_CONNECTION_SENTENCES.malformed("Password"),
       DATABEND_CONNECTION_SENTENCES.warehouse,
       DATABEND_CONNECTION_SENTENCES.plaintext,
-      DATABEND_CONNECTION_SENTENCES.tunnelNotOpened,
       DATABEND_CONNECTION_SENTENCES.queryTimeout,
       DATABEND_CONNECTION_SENTENCES.wrongType("[field]", "[type]"),
     ],
@@ -766,7 +766,6 @@ describe("docs/providers/databend.md quotes what the code says", () => {
         "malformed",
         "warehouse",
         "plaintext",
-        "tunnelNotOpened",
         "queryTimeout",
         "wrongType",
       ],
@@ -1138,7 +1137,7 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       { method: "POST", path: LOGOUT_PATH, reply: { status: 200 } },
     ]);
     const time = transportDeps(script);
-    const subject = new DatabendProvider(CONNECTION, {}, time.deps);
+    const subject = new DatabendProvider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, time.deps);
     await subject.connect();
     const running = subject.query("SELECT 1", undefined, "doc-cancel").catch((error: unknown) => error);
     await script.received(3);

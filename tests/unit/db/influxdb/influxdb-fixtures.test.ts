@@ -19,6 +19,7 @@ import {
   loadInfluxManifest,
   loadWriteRefusalCaptures,
 } from "../../../helpers/influxdb-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 
 const ORIGIN = { protocol: "http:", hostname: "127.0.0.1", port: 8086 } as never;
@@ -26,6 +27,7 @@ const TRANSPORT_OPTIONS = {
   origin: ORIGIN,
   tls: null,
   maxSockets: 4,
+  egress: ALLOWS_PRIVATE_HOSTS,
   headers: { authorization: "Token <token>" },
 };
 

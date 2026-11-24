@@ -25,6 +25,9 @@ import {
   PermissionDeniedError,
   PoolExhaustedError,
   QueryError,
+  TimeoutError,
+  TransactionLostError,
+  NO_ACTIVE_TRANSACTION,
   NO_TRANSACTION_OPENED,
 } from "@/lib/db/errors";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
@@ -37,6 +40,10 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { renderSegments, userPositionOf } from "@/lib/db/object-edit";
 import { POSTGRES_CREATE_TABLE } from "@/lib/db/providers/sql/postgres-create-table";
 import { logger } from "@/lib/logger";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
+
+/** What the provider logs when a pooled client reports an `error` on its own session. */
+const SESSION_ERROR_LOG = "PostgreSQL connection error on a pooled session";
 
 // ============================================================================
 // Mock pg BEFORE importing the provider
@@ -1238,6 +1245,8 @@ describe("PostgresProvider", () => {
         error: "Permission denied: permission denied for table orders",
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 
@@ -1252,6 +1261,77 @@ describe("PostgresProvider", () => {
 
       expect(refused).toBeInstanceOf(AuthenticationError);
       expect(createErrorResponse(refused, { route: "api/db/query" }).status).toBe(401);
+    });
+
+    /** Make the provider's pool refuse its next checkout with `error`, the way `pg-pool` rejects `connect()`. */
+    function refuseCheckout(error: Error) {
+      (lastPool as unknown as { connect: () => Promise<unknown> }).connect = () => Promise.reject(error);
+    }
+
+    test("a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const sent: string[] = [];
+      mockQueryFn = async (sql) => {
+        sent.push(sql);
+        return { rows: [] };
+      };
+      refuseCheckout(Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" }));
+
+      const refused = await provider.query("INSERT INTO orders VALUES (1)").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect((refused as ConnectionError).outcome).toBe("not-sent");
+      expect(sent).toEqual([]);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a pool checkout that waits out the pool's bound answers a ConnectionError naming the wait, not-sent", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      refuseCheckout(new Error("timeout exceeded when trying to connect"));
+
+      const refused = await provider.query("SELECT 1").catch((error: unknown) => error);
+
+      expect(refused).toBeInstanceOf(ConnectionError);
+      expect(refused).not.toBeInstanceOf(TimeoutError);
+      expect((refused as ConnectionError).message).toMatch(
+        /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+      );
+      expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+      const response = createErrorResponse(refused, { route: "api/db/query" });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        code: ApiErrorCode.CONNECTION_ERROR,
+        statusCode: 503,
+        kind: "connection",
+        outcome: "not-sent",
+      });
+    });
+
+    test("a statement that fails after its connection was taken answers outcome unknown", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const released = spyOn(mockClient, "release");
+      mockQueryFn = async () => {
+        throw new Error("Connection terminated unexpectedly");
+      };
+
+      const failed = await provider.query("UPDATE orders SET total = 0").catch((error: unknown) => error);
+
+      expect(failed).toBeInstanceOf(DatabaseError);
+      expect(failed).not.toBeInstanceOf(ConnectionError);
+      expect((failed as DatabaseError).outcome).toBeUndefined();
+      expect(errorKind(failed)).toBe("database");
+      expect(released).toHaveBeenCalledTimes(1);
+      released.mockRestore();
     });
   });
 
@@ -1524,6 +1604,162 @@ describe("PostgresProvider", () => {
         release.mockRestore();
       }
     });
+
+    test("a begin whose pool checkout fails answers its mapped class with outcome not-sent, sends nothing and holds no transaction", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const checkout = spyOn(lastPool!, "connect").mockRejectedValueOnce(
+        Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:5432"), { code: "ECONNREFUSED" }),
+      );
+      mockWire = [];
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect((refused as ConnectionError).outcome).toBe("not-sent");
+        expect(mockWire).toEqual([]);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        checkout.mockRestore();
+      }
+      // Nothing was left claimed, so a begin on a pool that answers opens a transaction.
+      await provider.beginTransaction();
+      expect(provider.isInTransaction()).toBe(true);
+      await provider.rollbackTransaction();
+    });
+
+    test("a begin whose pool checkout waits out the pool's bound answers a ConnectionError naming the wait, not-sent", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const checkout = spyOn(lastPool!, "connect").mockRejectedValueOnce(
+        new Error("timeout exceeded when trying to connect"),
+      );
+      try {
+        const refused = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(refused).toBeInstanceOf(ConnectionError);
+        expect(refused).not.toBeInstanceOf(TimeoutError);
+        expect((refused as ConnectionError).message).toMatch(
+          /^No connection of the pool came free or opened within \d+(?:\.\d)? seconds?, so the statement was not sent: every connection may be in use, or the server may not be answering\.$/,
+        );
+        expect((refused as ConnectionError).cause).toBeInstanceOf(TimeoutError);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(refused, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.CONNECTION_ERROR,
+          statusCode: 503,
+          kind: "connection",
+          outcome: "not-sent",
+        });
+      } finally {
+        checkout.mockRestore();
+      }
+    });
+
+    test("a BEGIN the server refuses answers its mapped class with outcome unknown and releases the client", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      const release = spyOn(mockClient, "release");
+      mockQueryFn = async (sql: string) => {
+        if (/^\s*BEGIN/i.test(sql)) throw new Error("Connection terminated unexpectedly");
+        return defaultMockQuery(sql);
+      };
+      try {
+        const failed = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect(failed).not.toBeInstanceOf(ConnectionError);
+        expect((failed as DatabaseError).message).toContain("Connection terminated unexpectedly");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.DATABASE_ERROR,
+          statusCode: 500,
+          kind: "database",
+          outcome: "unknown",
+        });
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test("a COMMIT the server refuses for a deferred constraint answers QueryError with outcome unknown and holds no transaction", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const release = spyOn(mockClient, "release");
+      mockQueryFn = async (sql: string) => {
+        if (/^\s*COMMIT/i.test(sql)) {
+          throw Object.assign(new Error('duplicate key value violates unique constraint "orders_n_key"'), {
+            code: "23505",
+          });
+        }
+        return defaultMockQuery(sql);
+      };
+      try {
+        const failed = await provider.commitTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(QueryError);
+        expect((failed as QueryError).sqlstate).toBe("23505");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(release).toHaveBeenCalledTimes(1);
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.QUERY_ERROR,
+          statusCode: 400,
+          kind: "query",
+          outcome: "unknown",
+        });
+      } finally {
+        release.mockRestore();
+      }
+    });
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s whose connection is lost answers a DatabaseError with outcome unknown, not an internal error",
+      async (end) => {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        const release = spyOn(mockClient, "release");
+        mockQueryFn = async (sql: string) => {
+          if (/^\s*(COMMIT|ROLLBACK)/i.test(sql)) throw new Error("Connection terminated unexpectedly");
+          return defaultMockQuery(sql);
+        };
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect(failed).not.toBeInstanceOf(ConnectionError);
+          expect(errorOutcome(failed)).toBe("unknown");
+          expect(release).toHaveBeenCalledTimes(1);
+          expect(provider.isInTransaction()).toBe(false);
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          release.mockRestore();
+        }
+      },
+    );
 
     test("a BEGIN that fails releases the client it borrowed", async () => {
       provider = new PostgresProvider(makePgConfig());
@@ -3842,22 +4078,29 @@ describe("PostgresProvider", () => {
   // --------------------------------------------------------------------------
 
   describe("pool error events", () => {
-    test("an idle client error is logged and does not escalate past the provider", async () => {
+    test("an idle client error is heard on the pool and reported once, by the client's own listener", async () => {
       provider = new PostgresProvider(makePgConfig());
       await provider.connect();
-      const pool = lastPool;
+      const pool = lastPool!;
       const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+      const warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
 
       try {
-        // `pg` has already removed and destroyed the client by the time it emits on the
-        // POOL; with no listener that emit is an uncaught exception, i.e. a dead server.
-        expect(() => pool?.emit("error", new Error("Connection terminated unexpectedly"))).not.toThrow();
-        expect(errorSpy).toHaveBeenCalledTimes(1);
-        const logged = errorSpy.mock.calls[0].join(" ");
-        expect(logged).toContain("[Postgres]");
-        expect(logged).toContain("Connection terminated unexpectedly");
+        const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
+        const idle = new SessionClient(lastPoolConfig);
+        // What `pg-pool` attaches to an idle client: it removes and destroys the client, then emits
+        // the error on the POOL, where with no listener the emit would throw it.
+        idle.on("error", (error: Error) => pool.emit("error", error, idle));
+
+        expect(() => idle.emit("error", new Error("Connection terminated unexpectedly"))).not.toThrow();
+        const reported = warnSpy.mock.calls.filter(([message]) => message === SESSION_ERROR_LOG);
+        expect(reported).toEqual([
+          [SESSION_ERROR_LOG, { provider: "postgres", error: "Connection terminated unexpectedly", code: undefined }],
+        ]);
+        expect(errorSpy).not.toHaveBeenCalled();
       } finally {
         errorSpy.mockRestore();
+        warnSpy.mockRestore();
       }
     });
 
@@ -3868,6 +4111,304 @@ describe("PostgresProvider", () => {
       await provider.connect();
 
       expect(lastPool?.listenerCount("error")).toBe(1);
+    });
+  });
+
+  // --------------------------------------------------------------------------
+  // A session that ends while the provider holds its client
+  // --------------------------------------------------------------------------
+
+  describe("a session that ends while the provider holds its client", () => {
+    /** What `pg` answers a statement on a client whose connection has ended (`node_modules/pg/lib/client.js`). */
+    const NOT_QUERYABLE = "Client has encountered a connection error and is not queryable";
+
+    type HeldSession = EventEmitter & { dead: boolean };
+    let session: HeldSession | undefined;
+    let releases: (Error | undefined)[];
+    let warnSpy: ReturnType<typeof spyOn<typeof logger, "warn">>;
+
+    beforeEach(() => {
+      session = undefined;
+      releases = [];
+      mockTxStatus = "I";
+      mockWire = [];
+      warnSpy = spyOn(logger, "warn").mockImplementation(() => {});
+      // One session, built the way `pg-pool` builds one: from the `Client` the provider put in the
+      // pool config. While it is checked out it carries no listener of the pool's, which is the state
+      // this suite is about. A release with an error is the pool discarding it, so the next borrow
+      // builds a new one.
+      mockPooledClient = (pool) => {
+        if (session) return session;
+        const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
+        const built = new SessionClient(lastPoolConfig) as HeldSession;
+        built.dead = false;
+        session = Object.assign(built, {
+          query: async (sql: string | { text: string }, params?: unknown[]) => {
+            if (built.dead) throw new Error(NOT_QUERYABLE);
+            return mockClient.query(sql, params);
+          },
+          getTransactionStatus: mockClient.getTransactionStatus,
+          release: (error?: Error) => {
+            releases.push(error);
+            if (error !== undefined) session = undefined;
+            pool.emit("release", error, built);
+          },
+        });
+        return session;
+      };
+    });
+
+    afterEach(() => {
+      mockPooledClient = undefined;
+      warnSpy.mockRestore();
+    });
+
+    /** The session ends the way `pg` reports it: the client stops answering, then emits `error` on itself. */
+    function endSession(held: HeldSession, message: string, code?: string): Error {
+      const error = Object.assign(new Error(message), { code });
+      held.dead = true;
+      held.emit("error", error);
+      return error;
+    }
+
+    function sessionErrorsLogged(): unknown[][] {
+      return warnSpy.mock.calls.filter(([message]) => message === SESSION_ERROR_LOG);
+    }
+
+    const lostSentence = (cause: string) =>
+      `The transaction was lost: its database session ended (${cause}). The server rolls back what was still open in the session when it ended, but a COMMIT that had already reached the server stays committed, so check the data before running the work again. Begin a new transaction to continue.`;
+
+    test("every client the provider's pools build hears its own error from construction", async () => {
+      provider = new PostgresProvider(makePgConfig({ password: "pw-never-logged" }));
+      await provider.connect();
+      const SessionClient = lastPoolConfig.Client as new (config: unknown) => EventEmitter;
+      const built = new SessionClient(lastPoolConfig);
+
+      // Before any borrow, so no checkout, however it is written, can hold a client without one.
+      expect(built.listenerCount("error")).toBe(1);
+      expect(() =>
+        built.emit("error", Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" })),
+      ).not.toThrow();
+      expect(sessionErrorsLogged()).toEqual([
+        [SESSION_ERROR_LOG, { provider: "postgres", error: "read ECONNRESET", code: "ECONNRESET" }],
+      ]);
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain("pw-never-logged");
+      // Every pool any provider in this file built was given that same client class.
+      expect(mockPoolsMade.length).toBeGreaterThan(0);
+      for (const pool of mockPoolsMade) expect(pool.config.Client).toBe(SessionClient);
+    });
+
+    test("the provider builds every pool from its own pool config, which names that client class", () => {
+      const source = readFileSync(path.join(process.cwd(), "src/lib/db/providers/sql/postgres.ts"), "utf8");
+
+      // A pool built from any other config would hand out clients with no listener of their own.
+      expect(source.match(/new Pool\(.*?\);/g)).toEqual(["new Pool(poolConfig);", "new Pool(this.buildPoolConfig());"]);
+      expect(source).toContain("const poolConfig = this.buildPoolConfig();");
+      expect(source).not.toMatch(/new Client\(/);
+    });
+
+    test("a held transaction whose session timed out is reported lost, released with the error, and nothing is sent", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const held = session!;
+      // Only what happens to the held client from here on: connect() borrowed and returned it once already.
+      releases = [];
+
+      let cause: Error | undefined;
+      expect(() => {
+        cause = endSession(held, "terminating connection due to idle-in-transaction timeout", "25P03");
+      }).not.toThrow();
+      expect(sessionErrorsLogged()).toEqual([
+        [
+          SESSION_ERROR_LOG,
+          { provider: "postgres", error: "terminating connection due to idle-in-transaction timeout", code: "25P03" },
+        ],
+      ]);
+
+      mockWire = [];
+      const lost = await provider.queryInTransaction("SELECT 1").catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(TransactionLostError);
+      expect(lost).toBeInstanceOf(ConnectionError);
+      expect((lost as TransactionLostError).code).toBe(ApiErrorCode.TRANSACTION_LOST);
+      expect((lost as Error).message).toBe(lostSentence("terminating connection due to idle-in-transaction timeout"));
+      expect(mockWire).toEqual([]);
+      // Released with the error, so the pool discards the client instead of handing it out again.
+      expect(releases).toEqual([cause]);
+      expect(provider.isInTransaction()).toBe(false);
+      await expect(provider.commitTransaction()).rejects.toThrow(NO_ACTIVE_TRANSACTION);
+    });
+
+    test.each(["commitTransaction", "rollbackTransaction"] as const)(
+      "%s on a transaction whose session was terminated reports it lost instead of sending the statement",
+      async (end) => {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        releases = [];
+        const cause = endSession(session!, "terminating connection due to administrator command", "57P01");
+
+        mockWire = [];
+        const lost = await provider[end]().catch((error: unknown) => error);
+        expect(lost).toBeInstanceOf(TransactionLostError);
+        expect((lost as Error).message).toBe(lostSentence("terminating connection due to administrator command"));
+        expect(mockWire).toEqual([]);
+        expect(releases).toEqual([cause]);
+        expect(provider.isInTransaction()).toBe(false);
+      },
+    );
+
+    test.each(["queryInTransaction", "commitTransaction", "rollbackTransaction"] as const)(
+      "%s on a held transaction whose session already ended answers TRANSACTION_LOST with outcome not-sent and sends nothing",
+      async (call) => {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        await provider.beginTransaction();
+        endSession(session!, "terminating connection due to administrator command", "57P01");
+
+        mockWire = [];
+        const lost = await (call === "queryInTransaction"
+          ? provider.queryInTransaction("SELECT 1")
+          : provider[call]()
+        ).catch((error: unknown) => error);
+
+        expect(lost).toBeInstanceOf(TransactionLostError);
+        expect((lost as TransactionLostError).outcome).toBe("not-sent");
+        expect(mockWire).toEqual([]);
+        const response = createErrorResponse(lost, { route: "api/db/transaction" });
+        expect(response.status).toBe(503);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.TRANSACTION_LOST,
+          statusCode: 503,
+          kind: "transaction-lost",
+          outcome: "not-sent",
+        });
+      },
+    );
+
+    test("the first error a session reports is the cause named, and each event is logged once", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const held = session!;
+      // A session ended from another backend: the server's FATAL message, then the socket closing.
+      endSession(held, "terminating connection due to administrator command", "57P01");
+      endSession(held, "Connection terminated unexpectedly");
+
+      expect(sessionErrorsLogged()).toHaveLength(2);
+      await expect(provider.queryInTransaction("SELECT 1")).rejects.toThrow(
+        lostSentence("terminating connection due to administrator command"),
+      );
+    });
+
+    test("a transaction whose statement ended the session is reported lost without claiming nothing was committed", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      await provider.beginTransaction();
+      const held = session!;
+      // A text whose COMMIT ran before its next statement ended the session: the server answers the
+      // statement with its FATAL message, and only then does the socket close.
+      mockQueryFn = async (sql: string | { text: string }) => {
+        const text = typeof sql === "string" ? sql : sql.text;
+        if (text.startsWith("COMMIT;")) {
+          throw Object.assign(new Error("terminating connection due to administrator command"), { code: "57P01" });
+        }
+        return defaultMockQuery(text);
+      };
+
+      await expect(provider.queryInTransaction("COMMIT; SELECT 1")).rejects.toThrow(
+        "terminating connection due to administrator command",
+      );
+      endSession(held, "Connection terminated unexpectedly");
+
+      const lost = await provider.queryInTransaction("SELECT 1").catch((error: unknown) => error);
+      expect(lost).toBeInstanceOf(TransactionLostError);
+      expect((lost as Error).message).toBe(lostSentence("Connection terminated unexpectedly"));
+      expect((lost as Error).message).not.toContain("nothing in it was committed");
+      expect((lost as Error).message).toContain("a COMMIT that had already reached the server stays committed");
+    });
+
+    test("a transaction begun after a loss is not expired at the lost transaction's deadline", async () => {
+      // TX_TIMEOUT_MS is read at beginTransaction(), so the lost transaction gets a short deadline
+      // and the next one a long one; the lost one's timer must not outlive it.
+      const providerStatics = PostgresProvider as unknown as { TX_TIMEOUT_MS: number };
+      const originalTimeout = providerStatics.TX_TIMEOUT_MS;
+      try {
+        provider = new PostgresProvider(makePgConfig());
+        await provider.connect();
+        providerStatics.TX_TIMEOUT_MS = 20;
+        await provider.beginTransaction();
+        endSession(session!, "terminating connection due to administrator command", "57P01");
+        await expect(provider.queryInTransaction("SELECT 1")).rejects.toBeInstanceOf(TransactionLostError);
+
+        providerStatics.TX_TIMEOUT_MS = 60_000;
+        await provider.beginTransaction();
+        await new Promise((resolve) => setTimeout(resolve, 80));
+
+        expect(provider.isInTransaction()).toBe(true);
+        await provider.rollbackTransaction();
+      } finally {
+        providerStatics.TX_TIMEOUT_MS = originalTimeout;
+      }
+    });
+
+    test("a statement whose session ends while it runs fails with the session's error", async () => {
+      provider = new PostgresProvider(makePgConfig());
+      await provider.connect();
+      // The statement's answer, handed to the test once the statement is on the wire.
+      const inFlight = Promise.withResolvers<(error: Error) => void>();
+      mockQueryFn = async (sql: string) => {
+        if (sql === "SELECT pg_sleep(60)") return new Promise((_, reject) => inFlight.resolve(reject));
+        return defaultMockQuery(sql);
+      };
+
+      const running = provider.query("SELECT pg_sleep(60)").catch((error: unknown) => error);
+      const fail = await inFlight.promise;
+      let cause: Error | undefined;
+      expect(() => {
+        cause = endSession(session!, "terminating connection due to administrator command", "57P01");
+      }).not.toThrow();
+      fail(cause!);
+
+      const failed = await running;
+      expect(failed).toBeInstanceOf(DatabaseError);
+      expect((failed as Error).message).toContain("terminating connection due to administrator command");
+      expect(sessionErrorsLogged()).toHaveLength(1);
+    });
+
+    test("the agent read-only path whose session ends mid-statement rejects and discards the client", async () => {
+      // The user's statement arrives as the profile's extended-protocol config, everything else as text.
+      mockQueryFn = async (sql: string | { text: string }) => {
+        const text = typeof sql === "string" ? sql : sql.text;
+        if (text.includes("is_superuser")) {
+          return {
+            rows: [
+              { is_superuser: false, reads_server_files: false, writes_server_files: false, executes_programs: false },
+            ],
+          };
+        }
+        if (text === "SELECT pg_terminate_backend(pg_backend_pid())") {
+          throw endSession(session!, "terminating connection due to administrator command", "57P01");
+        }
+        return defaultMockQuery(text);
+      };
+      provider = new PostgresProvider(makePgConfig(), {}, { readOnly: true });
+      await provider.connect();
+      releases = [];
+
+      const failed = await provider
+        .queryReadOnly("SELECT pg_terminate_backend(pg_backend_pid())", {
+          statementTimeoutMs: 4500,
+          maxResultRows: 100,
+          maxResultBytes: 1_000_000,
+        })
+        .catch((error: unknown) => error);
+
+      expect((failed as Error).message).toContain("terminating connection due to administrator command");
+      // Its ROLLBACK met a dead client, so the client went back with that error and was discarded.
+      expect(releases).toHaveLength(1);
+      expect(releases[0]?.message).toBe(NOT_QUERYABLE);
+      expect(sessionErrorsLogged()).toHaveLength(1);
     });
   });
 
@@ -4174,6 +4715,15 @@ describe("PostgresProvider", () => {
       // The rest of the vocabulary is still the base default, not a local copy.
       expect(labels.entityName).toBe("Table");
       expect(labels.analyzeGlobalLabel).toBe("Run Analyze");
+    });
+
+    // The Queries tab used to show this sentence as its default on every engine, which
+    // told BigQuery users to install a PostgreSQL extension. It is PostgreSQL's advice,
+    // so PostgreSQL declares it, and the tab's default is neutral.
+    test("declares the pg_stat_statements advice as its slow-query empty state", () => {
+      const labels = new PostgresProvider(makePgConfig()).getLabels();
+
+      expect(labels.slowQueriesEmptyState).toBe("Enable pg_stat_statements extension to see query stats.");
     });
   });
 
@@ -4895,9 +5445,11 @@ describe("PostgresProvider", () => {
     test("enforces the row budget result-side", async () => {
       engine.selectRows = [{ id: 1 }, { id: 2 }, { id: 3 }];
 
-      await expect(provider.queryReadOnly("SELECT id FROM t", roBudget({ maxResultRows: 2 }))).rejects.toThrow(
-        /row budget/i,
-      );
+      const refused = await provider
+        .queryReadOnly("SELECT id FROM t", roBudget({ maxResultRows: 2 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/row budget/i);
+      expect(errorKind(refused)).toBe("row-budget-refusal");
       expect(engine.statements.at(-1)?.text).toBe("DISCARD ALL");
       expect(releaseSpy).toHaveBeenCalledTimes(1);
     });
@@ -4905,10 +5457,14 @@ describe("PostgresProvider", () => {
     test("enforces the byte budget result-side", async () => {
       engine.selectRows = [{ blob: "x".repeat(64) }];
 
-      // The whole sentence, numbers in order: [{"blob":"<64 x>"}] is 77 bytes as JSON (D367).
-      await expect(provider.queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))).rejects.toThrow(
+      // The whole sentence, numbers in order: [{"blob":"<64 x>"}] is 77 bytes as JSON.
+      const refused = await provider
+        .queryReadOnly("SELECT blob FROM t", roBudget({ maxResultBytes: 16 }))
+        .catch((caught: unknown) => caught);
+      expect((refused as Error).message).toContain(
         "Read-only execution exceeded the byte budget: 77 bytes > 16 allowed",
       );
+      expect(errorKind(refused)).toBe("byte-budget-refusal");
       expect(engine.statements.at(-1)?.text).toBe("DISCARD ALL");
     });
 
@@ -5500,7 +6056,9 @@ describe("PostgresProvider result columns", () => {
 
     // The byte budget is measured on the keyed rows, which are what the agent receives.
     const tight = { statementTimeoutMs: 4500, maxResultRows: 10, maxResultBytes: 60 } as ReadOnlyStatementBudget;
-    await expect(provider.queryReadOnly(JOIN_SQL, tight)).rejects.toThrow("exceeded the byte budget");
+    const refused = await provider.queryReadOnly(JOIN_SQL, tight).catch((caught: unknown) => caught);
+    expect((refused as Error).message).toContain("exceeded the byte budget");
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
     await provider.disconnect();
   });
 

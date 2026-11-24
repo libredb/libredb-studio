@@ -12,7 +12,7 @@
  * the seed loader and `resolveConnection` are the real ones, so a seed resolves to the record the
  * product builds. Each request carries only the fields its route checks before opening a provider.
  */
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,8 +20,13 @@ import * as actualDb from "@/lib/db";
 import * as actualFactory from "@/lib/db/factory";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { resetCache as resetSeedCache } from "@/lib/seed";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest } from "../../helpers/mock-next";
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
@@ -31,6 +36,10 @@ const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
 const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;
+});
+const mockReadProviderDeclarations = mock(async (...args: unknown[]) => {
+  void args;
+  return { capabilities: mockProvider.getCapabilities(), labels: mockProvider.getLabels(), supportsQueryCancel: false };
 });
 const mockFindOpenSingleWriterProvider = mock((...args: unknown[]) => {
   void args;
@@ -54,11 +63,13 @@ mock.module("@/lib/db", () => ({
   ...actualDb,
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
 }));
 mock.module("@/lib/db/factory", () => ({
   ...actualFactory,
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mockCreateDatabaseProvider,
+  readProviderDeclarations: mockReadProviderDeclarations,
   findOpenSingleWriterProvider: mockFindOpenSingleWriterProvider,
   isSingleWriterFileOpen: mock(() => false),
 }));
@@ -108,8 +119,21 @@ const EXTRA: Record<string, Record<string, unknown>> = {
 /** The routes refused to every role but admin before any provider is opened. */
 const ADMIN_ONLY = new Set(["maintenance", "maintenance/preview"]);
 
+/**
+ * The routes that run the request's statement through the host core this file installs, `query` through its
+ * execute and `multi-query` through the end of its script's scope, so each answers 200 as in production rather
+ * than 500 on a missing core.
+ */
+const RUNS_TO_ITS_SCOPE_END = new Set(["query", "multi-query"]);
+
 /** The routes that build their own provider rather than take a cached one. */
-const BUILDS_ITS_OWN = new Set(["provider-meta", "statement/analyze", "test-connection"]);
+const BUILDS_ITS_OWN = new Set(["test-connection"]);
+
+/**
+ * The routes that read a provider's declarations without connecting it (FND-2 slice 5): `readProviderDeclarations`
+ * takes the execution context as its second argument.
+ */
+const READS_DECLARATIONS = new Set(["provider-meta", "statement/analyze"]);
 
 const workDir = mkdtempSync(join(tmpdir(), "libredb-duckdb-posture-routes-"));
 const seedConfigFile = join(workDir, "seed-connections.json");
@@ -137,11 +161,16 @@ const INLINE = {
   connection: { id: "inline-duck", name: "Inline", type: "duckdb", database: join(workDir, "inline.duckdb") },
 };
 
-/** What the route handed the factory as its third argument, the execution context. */
+/** What the route handed the factory as the execution context. */
 async function postureFrom(route: string, target: Record<string, unknown>): Promise<unknown> {
-  await handlers[route](
+  const response = await handlers[route](
     createMockRequest(`/api/db/${route}`, { method: "POST", body: { ...target, ...EXTRA[route] } }) as never,
   );
+  if (RUNS_TO_ITS_SCOPE_END.has(route)) expect(response.status).toBe(200);
+  if (READS_DECLARATIONS.has(route)) {
+    expect(mockReadProviderDeclarations.mock.calls.length).toBeGreaterThan(0);
+    return mockReadProviderDeclarations.mock.calls[0]?.[1];
+  }
   const calls = BUILDS_ITS_OWN.has(route) ? mockCreateDatabaseProvider.mock.calls : mockGetOrCreateProvider.mock.calls;
   expect(calls.length).toBeGreaterThan(0);
   return calls[0]?.[2];
@@ -152,6 +181,7 @@ beforeEach(() => {
   resetSeedCache();
   mockGetOrCreateProvider.mockClear();
   mockCreateDatabaseProvider.mockClear();
+  mockReadProviderDeclarations.mockClear();
   mockFindOpenSingleWriterProvider.mockClear();
 });
 

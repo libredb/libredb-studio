@@ -26,6 +26,7 @@ import { createNodeTransport, type NodeRequest } from "@/lib/db/http/node-transp
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const PORT = Number(process.env.MTCONNECT_AGENT_PORT ?? "17393");
 const PUT_PORT = Number(process.env.MTCONNECT_AGENT_PUT_PORT ?? "17394");
@@ -51,16 +52,21 @@ function provider(port: number, readOnly: boolean): MTConnectProvider {
     host: "127.0.0.1",
     port,
   } as DatabaseConnection;
-  return new MTConnectProvider(connection, {}, readOnly ? { readOnly: true, sendsStatements: true } : {}, (options) => {
-    const transport = createNodeTransport(options);
-    return {
-      request: (request) => {
-        sent.push(requestLine(request));
-        return transport.request(request);
-      },
-      close: () => transport.close(),
-    };
-  });
+  return new MTConnectProvider(
+    connection,
+    {},
+    { ...(readOnly ? { readOnly: true, sendsStatements: true } : {}), egress: egressDecision() },
+    (options) => {
+      const transport = createNodeTransport(options);
+      return {
+        request: (request) => {
+          sent.push(requestLine(request));
+          return transport.request(request);
+        },
+        close: () => transport.close(),
+      };
+    },
+  );
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));

@@ -13,6 +13,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { errorKind } from "@/lib/db/error-record";
 import { boundedAgentClient } from "@/lib/db/providers/industrial/opcua/agent-read";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import { OPCUA_READ_ATTRIBUTES, OPCUA_WALK_ATTRIBUTES } from "@/lib/db/providers/industrial/opcua/constants";
@@ -210,11 +211,14 @@ describe("the agent's client", () => {
     const client = boundedAgentClient(session, { deadlineAt: 10, timeoutMs: 10, now: () => now });
     await client.limits();
     now = 10;
-    const refused = await client.read(["i=2256"]).then(
-      () => "answered",
-      (error: Error) => error.message,
+    const error = await client.read(["i=2256"]).then(
+      () => undefined,
+      (caught: unknown) => caught,
     );
-    expect(refused).toStartWith("Read-only execution exceeded the time budget: the read did not finish within 10ms");
+    expect((error as Error).message).toStartWith(
+      "Read-only execution exceeded the time budget: the read did not finish within 10ms",
+    );
+    expect(errorKind(error)).toBe("time-budget-refusal");
     expect(asked).toEqual(["limits"]);
     expect(client.requests()).toBe(1);
     // The walk meets the same deadline and is not counted against the answer's bound.

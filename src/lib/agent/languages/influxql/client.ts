@@ -3,22 +3,19 @@
  * hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on InfluxDB 1.x and 2.x: the boundary is the principal. Before every statement the server is asked to
  * refuse it an administrator's read and a no-op write on every database it lists, so only a principal that reads is
  * ever sent a statement. The deadline is the request's: dropping it ends the server's work.
  */
-function influxqlReadsPosture(bounds: StatementBudgets): AgentPosture {
+function influxqlReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `${rows} rows and ${seconds} s per statement, enforced by a principal proved read-only`,
     title: "Agent mode reads, as a principal the server proves cannot write",
     body: `Agent mode runs InfluxQL reads it wrote itself, a SELECT, a SHOW of the catalog or an EXPLAIN of a SELECT, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Before every statement Studio has the server prove the connection's principal reads only: it must be refused an administrator's read and a no-op write on every database it lists, so an administrator, a token that writes or a server with authentication off is refused. Studio's reader refuses INTO, every write and SHOW QUERIES before anything is sent. Nothing reaches your editor.`,
@@ -74,7 +71,6 @@ export const INFLUXQL_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: influxqlReadsPosture,
-    widened: influxqlReadsPosture,
     handoverTerms: () =>
       "An InfluxDB answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

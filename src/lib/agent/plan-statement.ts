@@ -44,7 +44,7 @@
 
 import { type AgentStatementViolation, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import type { ProviderCapabilities } from "@/lib/db/types";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { readSqlSpan, type SqlSpanKind } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 import { addressableObjects } from "./inventory-objects";

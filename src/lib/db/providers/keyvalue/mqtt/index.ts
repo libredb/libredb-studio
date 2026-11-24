@@ -21,7 +21,7 @@
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { plaintextSecretRefusal } from "@/lib/db/http/endpoint";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   Container,
   DatabaseObject,
@@ -38,7 +38,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -110,7 +110,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly openTransport?: MqttTransportFactory,
   ) {
     super(config, options);
@@ -216,6 +216,9 @@ export class MqttProvider extends BaseDatabaseProvider {
     // `ssl.mode` is the connection's own SSL / TLS panel; "disable" is the only value that means plain TCP.
     const mode = config.ssl?.mode;
     const tls = mode !== undefined && mode !== "disable";
+    // WHETHER A TUNNEL CARRIES THE CONNECTION IS READ FROM THE FAR END core hands on when it opened one, as every other
+    // provider reads it, and never from the record's request for one: core decides the tunnel before any provider is
+    // built, and refuses one that is on and was not opened, or whose switch is not a boolean (FND-2 slice 5).
     const farEnd = config[TUNNEL_FAR_END];
     const user = config.user === undefined || config.user === "" ? undefined : config.user;
     const password = config.password === undefined || config.password === "" ? undefined : config.password;
@@ -227,7 +230,7 @@ export class MqttProvider extends BaseDatabaseProvider {
     // is the reader's informed consent, not a default.
     const plaintext = plaintextSecretRefusal({
       host,
-      tunnelled: config.sshTunnel?.enabled === true,
+      tunnelled: farEnd !== undefined,
       tls,
       hasSecret: password !== undefined,
     });
@@ -259,6 +262,7 @@ export class MqttProvider extends BaseDatabaseProvider {
       // The connection's Database field carries the discovery filter, as Oxia's carries a namespace.
       ...(filter === "" ? {} : { filter }),
       ...(this.openTransport === undefined ? {} : { openTransport: this.openTransport }),
+      ...(this.execution.egress === undefined ? {} : { egress: this.execution.egress }),
     };
   }
 

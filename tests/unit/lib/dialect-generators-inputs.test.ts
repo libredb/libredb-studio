@@ -29,10 +29,10 @@ describe("an address with no segments", () => {
   test("is refused before any dialect spells it, by both generators, for every dialect", () => {
     for (const dialect of ["libredb", "redis", "kafka", "etcd"] as const) {
       const caps = makeCaps({ queryDialect: dialect });
-      expect(() => generateTableQuery([], caps, COLUMNS)).toThrow(
+      expect(() => generateTableQuery([], dialect, caps, COLUMNS)).toThrow(
         "Cannot generate a query: the object address has no segments.",
       );
-      expect(() => generateSelectQuery([], COLUMNS, caps)).toThrow(
+      expect(() => generateSelectQuery([], COLUMNS, dialect, caps)).toThrow(
         "Cannot generate a query: the object address has no segments.",
       );
     }
@@ -43,13 +43,13 @@ describe("a host declaring a dialect this release has no record for", () => {
   test("gets the statement its language gives, as before the registry", () => {
     for (const dialect of ["a-later-engine", "constructor", "__proto__"]) {
       const caps = makeCaps({ queryDialect: dialect as ProviderCapabilities["queryDialect"] });
-      expect(JSON.parse(generateTableQuery(["orders"], caps, COLUMNS))).toEqual({
+      expect(JSON.parse(generateTableQuery(["orders"], "mongodb", caps, COLUMNS))).toEqual({
         collection: "orders",
         operation: "find",
         filter: {},
         options: { limit: 50 },
       });
-      expect(generateTableQuery(["orders"], { ...caps, queryLanguage: "sql", defaultPort: 5432 })).toBe(
+      expect(generateTableQuery(["orders"], "postgres", { ...caps, queryLanguage: "sql", defaultPort: 5432 })).toBe(
         "SELECT * FROM orders;",
       );
     }
@@ -61,13 +61,13 @@ describe("a host declaring a dialect that is not a string", () => {
     // An own-key lookup would read `["redis"]` as `redis` and write `TYPE orders` where MongoDB's document stood.
     for (const dialect of [{ toString: 0 }, ["redis"], ["etcd"], 42, true]) {
       const caps = makeCaps({ queryDialect: dialect as unknown as ProviderCapabilities["queryDialect"] });
-      expect(JSON.parse(generateTableQuery(["orders"], caps, COLUMNS))).toEqual({
+      expect(JSON.parse(generateTableQuery(["orders"], "mongodb", caps, COLUMNS))).toEqual({
         collection: "orders",
         operation: "find",
         filter: {},
         options: { limit: 50 },
       });
-      expect(JSON.parse(generateSelectQuery(["orders"], COLUMNS, caps)).collection).toBe("orders");
+      expect(JSON.parse(generateSelectQuery(["orders"], COLUMNS, "mongodb", caps)).collection).toBe("orders");
     }
   });
 });

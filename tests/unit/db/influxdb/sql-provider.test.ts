@@ -59,12 +59,14 @@ import {
   quoteObjectPath,
 } from "@/lib/query-generators";
 import type { ColumnSchema } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import {
   type RecordedInfluxRequest,
   recordingInfluxTransport,
   type ScriptedAnswer,
 } from "../../../helpers/influxdb-transport";
+import { errorKind } from "@/lib/db/error-record";
 
 const CONNECTION: DatabaseConnection = {
   id: "influxdb3-unit",
@@ -147,7 +149,12 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDB3Provider({ ...CONNECTION, ...config }, options, execution, factory),
+    provider: new InfluxDB3Provider(
+      { ...CONNECTION, ...config },
+      options,
+      { ...execution, egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    ),
     requests: wire.requests,
     closed: () => closed,
     built: () => made,
@@ -291,8 +298,8 @@ describe("declarations (spec 6.3)", () => {
       { name: "room", type: "tag", nullable: true, isPrimary: false },
       { name: "temp", type: "float", nullable: true, isPrimary: false },
     ];
-    expect(generateTableQuery(["home"], capabilities)).toBe(PREVIEW);
-    expect(generateSelectQuery(["home"], columns, capabilities)).toBe(
+    expect(generateTableQuery(["home"], "influxdb3", capabilities)).toBe(PREVIEW);
+    expect(generateSelectQuery(["home"], columns, "influxdb3", capabilities)).toBe(
       `${PREVIEW}\n` +
         "-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n" +
         '-- One row per minute: SELECT date_bin(INTERVAL \'1 minute\', "time") AS minute, avg("temp") FROM "home" WHERE "time" >= now() - INTERVAL \'1 hour\' GROUP BY 1 ORDER BY 1\n' +
@@ -305,12 +312,12 @@ describe("declarations (spec 6.3)", () => {
 
   test("R41: double-always quotes every name, so the Count of a$b passes the policy", () => {
     const capabilities = harness([]).provider.getCapabilities();
-    expect(quoteIdentifier("time", capabilities)).toBe('"time"');
-    expect(quoteObjectPath(["home"], capabilities)).toBe('"home"');
-    const count = generateCountQuery(["a$b"], capabilities) as string;
+    expect(quoteIdentifier("time", "influxdb3", capabilities)).toBe('"time"');
+    expect(quoteObjectPath(["home"], "influxdb3", capabilities)).toBe('"home"');
+    const count = generateCountQuery(["a$b"], "influxdb3", capabilities) as string;
     expect(count).toBe('SELECT COUNT(*) AS row_count\nFROM "a$b"');
     expect(evaluateInfluxSql(count).allowed).toBe(true);
-    expect(evaluateInfluxSql(generateTableQuery(['we"ird name;x'], capabilities)).allowed).toBe(true);
+    expect(evaluateInfluxSql(generateTableQuery(['we"ird name;x'], "influxdb3", capabilities)).allowed).toBe(true);
   });
 
   test("the labels are the InfluxDB 3 labels, as a copy", () => {
@@ -524,10 +531,11 @@ describe("connect (spec 6.2, 5.8)", () => {
   });
 
   test("a connection refused by its options sends nothing and builds no client", async () => {
-    const made = harness([], { user: "admin" });
+    // A token holding a line break, which no header can carry.
+    const made = harness([], { password: `${crypto.randomUUID()}\n` });
     const error = await rejection(made.provider.connect());
     expect(error).toBeInstanceOf(DatabaseConfigError);
-    expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.influxdb3User);
+    expect(error.message).toBe(INFLUX_CONNECTION_SENTENCES.malformed("Token"));
     expect(made.requests).toHaveLength(0);
     expect(made.built()).toBe(0);
     const empty = harness([], { host: "" });
@@ -1070,6 +1078,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const error = await rejection(made.provider.queryReadOnly("SELECT i FROM t", BUDGET));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("a cell-budget overflow is refused, never truncated", async () => {
@@ -1078,12 +1087,14 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const made = await agent([jsonl([wide, wide])]);
     const error = await rejection(made.provider.queryReadOnly("SELECT * FROM wide", budget));
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    expect(errorKind(error)).toBe("row-budget-refusal");
   });
 
   test("rows past the byte budget are refused", async () => {
     const made = await agent([jsonl([{ v: "x".repeat(1_200) }])]);
     const error = await rejection(made.provider.queryReadOnly("SELECT v FROM t", BUDGET));
     expect(error.message).toBe("Read-only execution exceeded the byte budget: 1210 bytes > 1000 allowed");
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("the request's response cap is taken from the byte budget, and an answer past it is the byte refusal", async () => {
@@ -1101,6 +1112,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     expect(error.message).toBe(
       `Read-only execution exceeded the byte budget: ${3_000 + 64 * 1024 + 1} bytes > 1000 allowed`,
     );
+    expect(errorKind(error)).toBe("byte-budget-refusal");
   });
 
   test("a statement past its deadline is the time refusal", async () => {
@@ -1108,6 +1120,7 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const made = await agent([], hang);
     const error = await rejection(made.provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 20 }));
     expect(error.message).toBe("Read-only execution exceeded the time budget: no answer within 20ms");
+    expect(errorKind(error)).toBe("time-budget-refusal");
   });
 
   test("a write the planner refuses reaches the caller as a statement refusal in the server's words", async () => {

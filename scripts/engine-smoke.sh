@@ -88,8 +88,9 @@ check_absent() { # check_absent <description> <haystack> <needle>
 }
 
 # Isolate the launcher cache and force the zero-config path: HOME points into
-# the temp dir and no auth/storage env leaks in from the CI job environment.
-LAUNCH_ENV=(env -u JWT_SECRET -u ADMIN_PASSWORD -u USER_PASSWORD -u AUTH_BOOTSTRAP -u STORAGE_PROVIDER -u STORAGE_SQLITE_PATH -u HOSTNAME "HOME=$WORK")
+# the temp dir and no auth/storage env leaks in from the CI job environment,
+# and no inherited SEED_ASSETS_DIR, so the launcher's own value is the one used.
+LAUNCH_ENV=(env -u JWT_SECRET -u ADMIN_PASSWORD -u USER_PASSWORD -u AUTH_BOOTSTRAP -u STORAGE_PROVIDER -u STORAGE_SQLITE_PATH -u HOSTNAME -u SEED_ASSETS_DIR "HOME=$WORK")
 
 start_server() { # start_server <log> <port> [extra env KEY=VALUE...]
   local log=$1 port=$2
@@ -129,6 +130,37 @@ if [ -z "$PASSWORD" ]; then
 fi
 LOGIN_BODY=$(login "$BASE" "$PASSWORD" "$WORK/cookies.txt")
 check "zero-config login succeeds" "$LOGIN_BODY" '"success":true'
+
+# The LibreDB sample is copied asynchronously at boot, like the SQLite one: wait
+# until the managed connections route lists no sample still pending, then
+# require that none is unavailable. A copy that failed also leaves nothing
+# pending, so it fails here at once with the body, which names its reason, and
+# the server log, which names the path.
+SAMPLES_READY=false
+for _ in $(seq 1 30); do
+  MANAGED_BODY=$(curl -s -b "$WORK/cookies.txt" "$BASE/api/connections/managed")
+  case "$MANAGED_BODY" in
+    *'"pendingSeeds":[]'*) ;;
+    *)
+      sleep 1
+      continue
+      ;;
+  esac
+  case "$MANAGED_BODY" in
+    *'"unavailableSamples":[]'*)
+      SAMPLES_READY=true
+      break
+      ;;
+  esac
+  echo "FAIL: an embedded sample is unavailable: $MANAGED_BODY" >&2
+  cat "$LOG" >&2
+  exit 1
+done
+if [ "$SAMPLES_READY" != "true" ]; then
+  echo "FAIL: the embedded samples were still pending after 30s: $MANAGED_BODY" >&2
+  cat "$LOG" >&2
+  exit 1
+fi
 
 SAMPLE_BODY=$(curl -s -b "$WORK/cookies.txt" -X POST "$BASE/api/db/query" -H "Content-Type: application/json" \
   -d '{"connectionId":"seed:libredb-embedded-sample","sql":"prefix users:"}')

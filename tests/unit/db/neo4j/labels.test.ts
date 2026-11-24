@@ -35,10 +35,9 @@ describe("neo4jLabels", () => {
     expect(named).toEqual([...NEO4J_POLICY_PROFILE.readPolicy.allowedProcedures]);
   });
 
-  test("words the empty monitoring panels and the table statistics in Neo4j's terms", () => {
-    expect(labels.slowQueriesEmptyState).toBe(
-      "Neo4j Community keeps no query log, and this version does not read the Enterprise query log.",
-    );
+  test("words the empty Sessions panel and the table statistics in Neo4j's terms", () => {
+    // No slow-query sentence: Neo4j does not offer the Queries panel, so nothing would draw one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
     expect(labels.sessionsEmptyState).toBe("No transaction is running.");
     expect(labels.tableStatsCaption).toBe("Node counts per label, from the count store.");
   });

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { copyFileSync, mkdtempSync, rmSync, unlinkSync } from "fs";
+import { copyFileSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "fs";
 import * as fsPromises from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
@@ -90,7 +90,45 @@ describe("the SEED_CONFIG_PATH source", () => {
     expect(result.entries[3]?.connection.environment).toBe("production");
     // Unresolved: the loader resolves, not the source.
     expect(result.entries[0]?.connection.password).toBe("${TEST_PG_PASSWORD}");
-    expect(callsOf(info, LOADED)).toEqual([[LOADED, { route: "seed/sources/file", connectionCount: 4 }]]);
+    expect(callsOf(info, LOADED)).toEqual([
+      [LOADED, { route: "seed/sources/file", connectionCount: 4, unavailableCount: 0 }],
+    ]);
+    expect(result.unavailable).toEqual([]);
+  });
+
+  it("hands such an entry back apart from the connections", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "libredb-file-source-"));
+    try {
+      const file = path.join(dir, "seed-connections.json");
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: "1",
+          defaults: { environment: "staging" },
+          connections: [
+            { id: "acme", name: "Acme Store", type: "acmefoo", host: "acme.example", password: "CANARY", roles: ["*"] },
+            { id: "pg", name: "PG", type: "postgres", host: "db", roles: ["admin"] },
+          ],
+        }),
+      );
+      process.env.SEED_CONFIG_PATH = file;
+
+      const result = await load();
+
+      expect(result.status).toEqual({ state: "ok" });
+      expect(result.entries.map((entry) => entry.connection.id)).toEqual(["pg"]);
+      expect(result.unavailable).toEqual([
+        {
+          entry: { id: "acme", name: "Acme Store", type: "acmefoo", roles: ["*"], environment: "staging" },
+          origin: file,
+        },
+      ]);
+      expect(callsOf(info, LOADED)).toEqual([
+        [LOADED, { route: "seed/sources/file", connectionCount: 1, unavailableCount: 1 }],
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("reads a .json path as JSON", async () => {
@@ -127,7 +165,7 @@ describe("the SEED_CONFIG_PATH source", () => {
   it("reports an explicit path that does not exist as missing", async () => {
     process.env.SEED_CONFIG_PATH = "/nonexistent/path/config.yaml";
 
-    expect(await load()).toEqual({ entries: [], skips: [], notes: [], status: { state: "missing" } });
+    expect(await load()).toEqual({ entries: [], unavailable: [], skips: [], notes: [], status: { state: "missing" } });
   });
 
   it("reports the absent default file as empty, unset or empty alike", async () => {

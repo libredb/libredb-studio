@@ -65,6 +65,28 @@ No file at the default path means no seed connections and no error.
 In [governance mode](#governance-mode) no seed file is read, not even at the default path.
 A file named explicitly in `SEED_CONFIG_PATH` that does not exist also leaves Studio running without seed connections, and the [Seed sources card](#diagnostics) reports it as "Not found" with the path.
 Any other read error, a parse error or a schema error fails the whole list (see [Error Handling](#error-handling)).
+The one schema error that refuses only its own entry is a type that has the shape of a type id and names no provider this Studio has: it is listed as unavailable and the rest of the file loads (see [A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)).
+
+### A connection whose type this Studio has no provider for
+
+A seed entry can name a type this Studio has no provider for: an engine a newer Studio ships, or one not installed here.
+This applies to a type that is text, is not exactly a type id, and has the shape a type id can take: at most 64 ASCII letters, digits, `.`, `_`, `-` and spaces.
+A type that is missing, empty or not text names no provider anywhere and still fails the whole file, as any invalid field does.
+So does text of any other shape, a connection URL put in `type` by mistake say, because the type of an unavailable entry is repeated as written wherever the entry is listed; the error names `connections.<n>.type` and never quotes the value.
+
+Only the fields Studio reads from such an entry are checked, each as for any other entry: `id`, `name`, `roles`, `environment`, `group`, `color` and `mcp`.
+Every other field, `host`, `password`, `managed` and every engine field included, is neither checked nor resolved nor listed, because Studio cannot validate a field for an engine it does not have and must not hand an unvalidated credential to a browser.
+Once a provider for the type is installed, the entry is checked whole with the file at the next read, as usual, so a field that type refuses then fails the file.
+A repeated id, a custom role and the role rules apply to it as to any entry.
+
+The entry is listed by `GET /api/connections/managed` for the roles it names, after the file's other connections and before discovered connections, with its type as written, `managed: true` whatever the file says, and none of the fields above.
+The studio shows it Unavailable with the reason, as [STORAGE.md](./STORAGE.md#connections-whose-type-this-studio-has-no-provider-for) describes for a stored connection, and with the lock a managed connection gets.
+No route opens it: every request that names its `seed:` id is answered `400 PROVIDER_UNKNOWN` with the sentence that quotes its type, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`, after the role check, so a caller its roles exclude gets the same answer as for any seed: 403, or 404 with the Kubernetes access review on.
+With `mcp: true`, MCP lists it with `unavailable` set to that sentence, and every MCP tool refuses it with that sentence ([MCP.md](./MCP.md)).
+Each read of the file logs it once at warn, `Seed connection listed as unavailable: no provider for its type`, with its id, the file and the quoted type, and the [Seed sources card](#diagnostics) lists it with the reason.
+A discovered connection whose id it declares is dropped, as for any operator entry.
+
+Release 1.3.0 refused the whole file for such an entry.
 
 ### Literal values
 
@@ -165,9 +187,9 @@ No `user` field and no `readOnly`: Spark Connect takes a bearer token, and Spark
 ### Diagnostics
 
 The admin Overview page (`/admin/overview`) shows a Seed sources card, fed by `GET /api/admin/seed-sources` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#get-apiadminseed-sources)).
-For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it skipped with their reasons, and the names it ignored.
+For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it lists as unavailable because their type names no provider, each with the reason, the connections it skipped with their reasons, and the names it ignored.
 A connection skipped for an undefined `${ENV_VAR}` is listed with the variable in its reason, and the endpoint's record of the skip also names the field.
-Every message names files, variables, fields and ids only, never a value, and never quotes a seed file.
+Every message names files, variables, fields and ids only, never a value, and never quotes a seed file, with one exception: an entry listed as unavailable is shown with its type as written, in its type and in the reason sentence.
 The card hides itself when every source is empty with nothing skipped or ignored, which is an install with no seed file, and it refreshes once a minute.
 `GET /api/connections/managed` carries no status, because every role can read it.
 
@@ -373,7 +395,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type, where a type this Studio has no provider for lists the entry as unavailable ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)): `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
@@ -415,8 +437,8 @@ connections:
 | `connections[].serverCertificateThumbprint` | No | absent | OPC UA only: the SHA-256 thumbprint the server's certificate must present, 64 hexadecimal characters (colons and spaces are ignored), which is `openssl x509 -fingerprint -sha256`. Without it, the trust list decides, and the library's default trusts a server on first sight and keeps trusting a replacement certificate after that server is rebuilt. Not a secret: the server publishes it |
 | `connections[].hostKeyFingerprint` | No | absent | NETCONF only: the device's SSH host key pin, `SHA256:` and base64 as `ssh-keygen -lf` prints it. The provider refuses an empty pin, so a NETCONF seed without one never opens. Not a secret: the device publishes its host key, so it is a literal and never resolved from a reference |
 | `connections[].registerMap` | No | absent | Modbus only: the register map, the JSON document the provider parses (a list of points, each naming a unit, a table, a zero-based PDU address and a type), kept byte for byte. Without it a Modbus seed lists no point and has none to read by name, which says nothing about what the device holds ([providers/modbus.md](providers/modbus.md), section 3.2). Not a secret: Modbus TCP defines no authentication, so it is a literal and never resolved from a reference |
-| `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair |
-| `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file |
+| `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair. Never listed by `GET /api/connections/managed`, and refused on a connection supplied inline |
+| `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file. Each path is resolved against the working directory when the provider is built and refused by name when it names one of Studio's own storage files. Never listed by `GET /api/connections/managed`, and refused on a connection supplied inline |
 | `connections[].authSource` | No | - | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error. A seed for MongoDB agent mode names the read user's own database here: [the agent's user](providers/mongodb.md#setting-up-the-agents-user) has the whole entry |
 | `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, Firestore, Modbus or NETCONF connection refuses `mcp: true` when the file loads: MCP is not offered for it. An S3 connection with `mcp: true` and no agent credential is refused too, since MCP reads S3 only under an agent read key of its own ([An agent credential](#an-agent-credential)), and so is an OPC UA connection with `mcp: true` and no `agentReadRoots`, since MCP reads OPC UA only beneath read roots its seed declares ([An OPC UA connection's read roots](#an-opc-ua-connections-read-roots)). An etcd connection with `mcp: true` whose effective MCP principal is `root`, its `agentUser` where it sets one and its `user` otherwise, is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
 | `connections[].agentUser` | No | absent | The principal every agent execution profile and every MCP call on this connection signs in as, in the engine's own user field: a database role, an etcd user, an S3 access key ID. Set with `agentPassword` on an engine that takes a user and a password, and never on one that takes the agent's secret alone. Resolved like `user`. Public, as `user` is ([An agent credential](#an-agent-credential)) |
@@ -481,7 +503,7 @@ The load refuses, naming the connection and the field and never the value:
 On S3, MCP reads only under the agent credential: an S3 connection with `mcp: true` and no `agentUser` and `agentPassword` is refused at load, naming `mcp`, and a connection that reaches MCP without one past the load is refused when a tool opens it, so MCP never reads S3 under the connection's own key ([providers/s3.md](providers/s3.md), section 15.7).
 A refused entry fails the whole file, as any invalid field does, so one such entry takes every connection of that file off the list until it is fixed.
 A reference is unknown at load, so a field written as one passes there, and the factory checks the resolved credential against the engine's form when the connection opens, before it connects.
-One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a sealed secret and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE`, where the same text as `password` opens.
+One limit of the resolved value: an `agentPassword` whose text before the first colon is `v` and digits, such as `v2:x`, is read as a storage envelope and refused at open with `AGENT_CREDENTIAL_UNRESOLVABLE` without being opened, because a value the server store sealed opens only in that store, for the record and field it was sealed for; the same text as `password` opens.
 
 ### An OPC UA connection's read roots
 
@@ -520,6 +542,7 @@ Whether a root is on the server is decided on every read's own session, never fr
 
 Read roots are kept from the browser: `GET /api/connections/managed` never lists them, so a Duplicate never copies them into a connection of the user's own, and an agent run on the editable copy of an unmanaged seed resolves the seed's own roots on the server.
 A connection a browser or an API client supplies inline that carries `agentReadRoots` is refused with 400, since only the operator's seed file declares what agent mode and MCP read.
+The same holds for OPC UA's `securityPolicyUri`, `clientCertificatePath` and `clientPrivateKeyPath`: `GET /api/connections/managed` never lists them, and a connection supplied inline that carries one is refused with 400 naming the field.
 A governed connection carries none: the control plane's definition has no such key, so a governed OPC UA connection runs no agent read and is never opted in to MCP.
 
 What the roots bound: every agent read and every MCP read on the connection answers only nodes proved beneath them, on the read's own session, and every other node id answers as one the server does not hold, with nothing sent for it ([providers/opcua.md](providers/opcua.md#143-what-agent-mode-reads-the-read-roots)).
@@ -654,6 +677,7 @@ Resolving a reference in such a file would hand Studio's own environment to whoe
 A platform user who names a database user `${JWT_SECRET}` would have Studio send its session signing secret, as that user name, to a database the platform user runs, and read it back from that database's log.
 With the secret, that user could sign a Studio admin session.
 Literal mode removes the resolution itself, so no value a platform user controls can make Studio read its environment or its Vault, including a value the platform failed to filter out.
+In such a file a connection with an empty password never signs in with the server's own cloud identity: BigQuery and Firestore refuse it even when `BIGQUERY_SERVER_CREDENTIALS` or `FIRESTORE_SERVER_CREDENTIALS` is `true`, because the empty field is a platform user's choice, not the operator's grant ([providers/bigquery.md](providers/bigquery.md), [providers/firestore.md](providers/firestore.md)).
 
 Turn the mode on only for a file in which every value is meant literally: a file written by hand that relies on `${ENV_VAR}` or `${vault:...}` references stops resolving them.
 Keep such a file `managed: true`, the default, so its passwords stay on the server, and mount it read-only from a directory other users on the host cannot enter.
@@ -822,6 +846,7 @@ with connection.roles projected to only include roles the caller holds
 
 ### `managed: false`
 
+- An entry whose type names no provider this Studio has is listed managed whatever this field says, and never copied ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)); a user who deleted their copy of it does not see it again while its type names no provider
 - On first load, the connection is **copied to the user's local storage** with credentials
 - User **can edit or delete** their copy
 - Once copied, the connection belongs to the user — admin changes to the seed config won't affect existing copies
@@ -926,7 +951,7 @@ A connection the user chooses while the link is pending cancels it, so a later r
 If the first refresh one seed-cache lifetime (`SEED_CACHE_TTL_MS`) after the load does not list it either, the editor shows a notice that reads the same whatever the cause: an id that does not exist, a seed whose `roles` leave the user out, or a connection of the user's own while [Custom Connections](#custom-connections) are switched off.
 The notice therefore does not reveal which seed ids exist for other roles.
 When the managed list cannot be loaded at all, the notice says so instead, and the link opens only a connection the browser holds itself.
-The parameter belongs to the standalone editor page: the embeddable `StudioWorkspace` component takes its connections and its selection from its host and ignores the address bar.
+The parameter belongs to the standalone editor page: the embeddable `StudioWorkspace` component takes its connections from its host, chooses the open one itself as [STORAGE.md](./STORAGE.md#connections-whose-type-this-studio-has-no-provider-for) describes, and ignores the address bar.
 
 ---
 
@@ -1454,7 +1479,8 @@ It carries a role reserved for the review, which the role filter never selects, 
 - The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
 - This is the identity Rancher impersonates on a downstream cluster, the Rancher user id with its group principals, so for the same Secret the review never allows more than Rancher does, and denies a Secret Rancher grants only through `system:authenticated` or `system:cattle:authenticated` (below).
   A Rancher user with no role in the cluster gets no reviewed connection.
-- Every error, timeout, answer that is not 2xx and answer that is malformed or for another user denies.
+- Every error, timeout, answer that is not 2xx and answer that is malformed, for another user or does not echo the asked attributes denies.
+  A `101` that switches the connection to another protocol, to the review or to the platform check below, denies at once as a network failure, and the next review asks again.
 - A session without an identity provider subject or a groups record is denied without a request.
 - Opening one the review denies answers with the same body as an id that does not exist: `404 CONNECTION_NOT_FOUND`.
   With the review on, so does a seed the caller's role may not see, which answers 403 otherwise; each miss is audited as `permission_denied` on the target `kubernetes-access/connection`.
@@ -1603,6 +1629,7 @@ With `NEXT_PUBLIC_AUTH_PROVIDER=openshift` ([OPENSHIFT.md](./OPENSHIFT.md)) the 
 - The token is read from the session's server-side record before every decision, cached or not, and an answer is kept per session and the uid of its user for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 15 by default in this mode, so two sessions never share an answer, a session handle reused for another user inherits none, and none outlives its session.
   It goes only to `OPENSHIFT_API_URL`, trusting `OPENSHIFT_API_CA_FILE` only, with no environment proxy and no redirect, and never into a log, a response, a URL, a cookie or storage.
 - Every error, timeout, answer that is not 2xx, and answer that is malformed or does not echo the asked attributes denies.
+  A `101` that switches the connection to another protocol denies at once as a network failure, and is never kept.
   A 403 means the token lacks `user:check-access`, which sign-in should have refused; it denies and is logged as an error.
 - A 401 means the API server no longer takes the token, for example after it was deleted or expired: the session's record ends, the rest of that list is denied without a request, and the session signs in again from its next request, through the OpenShift login page.
   The request that met the 401 keeps the uniform answers, a row omitted or a 404, so it tells nothing about which ids exist.
@@ -1640,6 +1667,8 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 | Config file unreadable (for example the path is a directory) | Endpoint returns a generic 500 with `reason: "seed-config-unreadable"`; the Seed sources card shows Failed with code `unreadable`. |
 | `Failed to parse seed config at <path>: TAG_RESOLVE_FAILED at line L, column C` | A value YAML reads as a tag: it starts with `!`, or carries a tag such as `!!int` on text. Quote the value. Studio refuses the file as `unparseable` instead of loading the value as empty or as other text, and never prints the line; earlier versions loaded such a file with the value changed. |
 | `connectionString` on a type whose provider does not read it | The whole file fails like any invalid config, and the error names the connection and the type ([The connection string refusal](#the-connection-string-refusal)). |
+| A connection whose type is text shaped as a type id and names no provider this Studio has | That connection is listed as unavailable, with the reason, and every route that names it answers `400 PROVIDER_UNKNOWN`. The other connections load. ([A connection whose type this Studio has no provider for](#a-connection-whose-type-this-studio-has-no-provider-for)) |
+| A connection whose type is missing, empty or not text, or text not shaped as a type id | The whole file fails like any invalid config, and the error names `connections.<n>.type` and lists every type id, without quoting the value. |
 | Two connections with the same id in the seed file | The whole file fails like any invalid config, and the error names the repeated id, for example `connections.1.id: Connection id "pg" is declared more than once`. |
 | Two operator sources declaring the same id | The whole list fails, and the error names the id and both origins. |
 | Invalid YAML/JSON | `GET /api/connections/managed` returns a generic 500 with `reason: "seed-config-unreadable"` and logs the details server-side. `GET /api/admin/seed-sources` returns the parse message to an admin, and the Seed sources card shows it with code `unparseable`; a YAML error names its code and, where the parser has one, its line and column, and a JSON error says the file is not valid JSON; neither quotes a value. |
@@ -1675,7 +1704,12 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 
 **Design principle:** a problem in the seed configuration fails the whole operator list, so a file read in part never lists a subset that looks complete.
 A parse error, a schema error in any one connection, or two operator connections with one id make `GET /api/connections/managed` answer 500, and the Seed sources card shows the error.
-The one exception is an undefined `${ENV_VAR}`: it skips only the connection that names it, and the card lists the skip.
+The checks across the file, a repeated id and a `readOnly` or agent credential on an unmanaged connection, run once every connection's own fields are valid, so a field error in one connection can hide such a refusal of another until it is fixed.
+A connection refused only by its engine's rules, a `readOnly` its engine does not enforce say, does not hide them.
+There are two exceptions.
+An undefined `${ENV_VAR}` skips only the connection that names it, and the card lists the skip.
+A connection whose type has the shape of a type id and names no provider this Studio has is listed as unavailable and opened by no route, and the card lists it with the reason ([the shape](#a-connection-whose-type-this-studio-has-no-provider-for)).
+A type that is absent, not text, or text of any other shape fails the whole list.
 Discovered connections are validated one by one, and a bad one never fails the list.
 
 ---
@@ -1716,7 +1750,7 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_CONFIG_PATH` | `/app/config/seed-connections.yaml` | Path to config file |
 | `SEED_CACHE_TTL_MS` | `60000` | Cache TTL in milliseconds |
 | `ALLOW_CUSTOM_CONNECTIONS` | `true` | `false`, `0`, `off` or `no` refuses every connection that is not a seed, and so does any unrecognised value; see [Custom Connections](#custom-connections) |
-| `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
+| `SEED_LITERAL_VALUES` | unset | `true`, `1`, `on` or `yes` (trimmed, any case) reads every seed value as written: no `${ENV_VAR}` or `${vault:...}` reference is resolved and the plaintext-password warning is not logged, and a keyless BigQuery or Firestore row never uses the server's own Google identity. `false`, `0`, `off`, `no` or empty keep references resolved, and so does any other value, with one warning ([Literal values written by a platform](#literal-values-written-by-a-platform)) |
 | `SEED_DISCOVERY_PATH` | unset (off) | Path of the discovery export file inside the Studio container; see [Platform discovery (CapRover)](#platform-discovery-caprover) |
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `SEED_KUBERNETES_DISCOVERY_PATH` | unset (off) | Path of the Kubernetes discovery export file, the `export.json` of the mounted export Secret; see [Platform discovery (Kubernetes)](#platform-discovery-kubernetes) |
@@ -1729,22 +1763,80 @@ The exporter's own variables (`DISCOVERY_*` and `DOCKER_SOCKET`) are read by `do
 The Kubernetes exporter's (`KUBERNETES_DISCOVERY_*`) are read by `docker/discover-kubernetes.mjs` only, and are listed there too.
 `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` is inlined at build time like `NEXT_PUBLIC_MANAGED_POLL_MS` (see [Built-in Sample Connections](#built-in-sample-connections)), so it is not in `.env.example` and setting it on a running container has no effect.
 
-These are unrelated to the embedded sample connection described below, which uses its own `LIBREDB_EMBEDDED_SAMPLE` / `LIBREDB_EMBEDDED_SAMPLE_PATH` variables.
+These are unrelated to the built-in sample connections described below, which use their own `LIBREDB_EMBEDDED_SAMPLE`, `SQLITE_EMBEDDED_SAMPLE`, their `_PATH` overrides and `SEED_ASSETS_DIR`.
 
 ---
 
 ## Built-in Sample Connections
 
-Standalone deployments also get automatic, code-defined seed connections (none of this has any effect when embedded in libredb-platform — it is not part of the published `@libredb/studio` package surface):
+Standalone deployments also get two built-in sample connections.
+None of this has any effect when embedded in libredb-platform: it is not part of the published `@libredb/studio` package surface.
+The samples are one table, `SAMPLES` in `src/lib/seed/samples.ts`, listed in its order:
 
-- **Sample (LibreDB)** — on first startup, `src/lib/seed/libredb-sample.ts` creates an embedded LibreDB file (default `<data dir>/sample.libredb`, alongside the SQLite storage DB) and seeds it with example data — a `users` table, an `articles` document collection, and a couple of KV entries — one per LibreDB lens. Seeded synchronously during boot.
-- **Sample (Employees)** — `src/lib/seed/sqlite-sample.ts` copies the vendored employees SQLite database (`seed-assets/sqlite/employee.db`, from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db); see `seed-assets/sqlite/ATTRIBUTION.md`) to `<data dir>/sample-employees.db`. Seeded **asynchronously and fail-open**: boot never waits for the copy; while it is in flight `GET /api/connections/managed` lists the seed id in `pendingSeeds` and the client polls (1s, max 30 attempts; the interval constant is inlined at build time — `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
+- **Sample (Employees)**, a SQLite database: the employees sample from [bytebase/employee-sample-database](https://github.com/bytebase/employee-sample-database) `dataset_small`, originally [datacharmer/test_db](https://github.com/datacharmer/test_db) (see `seed-assets/sqlite/ATTRIBUTION.md`), copied to `<data dir>/sample-employees.db`.
+- **Sample (LibreDB)**, a LibreDB database with a `users` table, an `articles` document collection and two key-value entries, one per LibreDB lens, copied to `<data dir>/sample.libredb`.
 
-`getManagedConnections()` appends each sample to the managed-connections list once its file exists (`managed: false`). LibreDB is offered to all roles (`roles: ["*"]`); SQLite is offered only to administrators (`roles: ["admin"]`) because its adapters cannot confine statement-level file access. Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
+The SQLite sample is listed first, because a client with no saved active connection opens the first one listed, and the SQLite sample offers every agent workflow.
+An operator's own seed connections are listed before both.
+
+### How a sample is created
+
+Each sample is a committed file in the seed assets directory, `SEED_ASSETS_DIR`.
+Every launcher sets it to the `seed-assets` directory its payload ships beside `server.js`, and in a source checkout `bun dev` and `bun start` set it to the checkout's own ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)).
+The server never takes it from its working directory: with `SEED_ASSETS_DIR` unset or blank, an enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset`, and one whose file is already there is listed as usual.
+Each file is the output of a committed script, held by a test that reruns it, and the sample table pins its size and SHA-256 digest; `seed-assets/README.md` lists them.
+At boot, `src/lib/seed/sample-copy.ts` copies each enabled sample's file into the data directory and opens no database:
+
+- a target that already exists is never touched, so a user's edits survive every restart;
+- the asset's size is checked before a byte is written, and its bytes are hashed while they are copied into a temporary file beside the target, opened exclusively under a name of this copy's own (`<target>.<pid>.<random UUID>.seeding`), so two copies never share one, not even two replicas that each run the server as pid 1 on one shared volume;
+- a file that is not the pinned one is refused, and nothing is published;
+- the temporary file is flushed to disk after its last write and renamed onto the target, so a published sample is always complete;
+- a temporary file that a crashed copy left behind is never touched, and stays until it is removed by hand.
+
+Both copies are asynchronous: boot never waits for them.
+While a copy is in flight, `GET /api/connections/managed` lists the sample's seed id in `pendingSeeds`, and the client polls (1s, max 30 attempts; the interval constant is inlined at build time, so `NEXT_PUBLIC_MANAGED_POLL_MS` only affects source builds and tests, not packaged artifacts) so the connection appears without a page refresh.
+The SQLite sample is committed in WAL journal mode, so the first opens of a fresh sample, made by several requests at once, have no journal switch to race ([`docs/providers/sqlite.md` §4.1](providers/sqlite.md#41-embedded-sample-database-standalone-mode)).
+
+### Who sees a sample
+
+`getManagedConnections()` appends each sample boot admitted to the managed-connections list once its file exists (`managed: false`); whether the file exists is checked on every request.
+A sample whose file was in place and is then removed, or whose path the server can no longer check, is listed unavailable as `target-lost` from that request on, and logged once ([A sample that could not be created](#a-sample-that-could-not-be-created)); it is listed again once its file is back.
+The SQLite sample is offered only to administrators (`roles: ["admin"]`), because its engine cannot confine statement-level file access; the LibreDB sample is offered to all roles (`roles: ["*"]`).
+Both behave like other unmanaged seeds: editable, and if deleted they go to the dismissed list rather than reappearing.
 Neither sample is ever visible to an MCP client, because neither carries `mcp: true`.
-In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
-With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
-The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
+
+One rule decides whether a sample is on, for both:
+
+- In [governance mode](#governance-mode) neither sample is created or listed, whatever `LIBREDB_EMBEDDED_SAMPLE` and `SQLITE_EMBEDDED_SAMPLE` say.
+- A sample is neither created nor listed when `LIBREDB_ENABLED_PROVIDERS` is set and does not name its engine, or holds a value the provider factory refuses as a whole, since no open of it could then succeed.
+- Otherwise its switch decides: only the exact value `false` turns it off.
+- With the [Kubernetes access review](#kubernetes-access-review) on, the LibreDB sample is off unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`: it is offered to all roles and names no Secret, so no review gates it, and an operator who wants every signed-in person to see it opts in.
+  The SQLite sample keeps its own default there, because it is offered only to administrators, and with the review on only the review makes an administrator.
+
+The server applies this rule, and decides each sample's path and whether it is admitted, once, at boot, and keeps that decision until it stops.
+A change to any of these variables, or to a `_PATH` override, takes effect at the next restart.
+
+### A sample that could not be created
+
+A sample whose copy fails, or whose target is refused, is logged once as the warning `Embedded sample unavailable` with its reason, the target path and the seed assets directory (`null` when `SEED_ASSETS_DIR` is unset or blank), and boot continues.
+So is a sample whose file a request finds lost after boot.
+`GET /api/connections/managed` then answers it in `unavailableSamples`, for the roles the sample is offered to, with one of these reasons and a sentence that names no path:
+
+| Reason | What happened |
+|--------|---------------|
+| `asset-directory-unset` | `SEED_ASSETS_DIR` is unset or blank, so the server has no seed assets directory to copy the sample from; it never uses its working directory instead |
+| `asset-missing` | The sample's file is not in the seed assets directory |
+| `asset-unreadable` | The sample's file in the seed assets directory could not be read; the sentence names the error code, such as `EACCES` or `EIO` |
+| `digest-mismatch` | The file in the seed assets directory is not the one this release ships |
+| `copy-failed` | The copy into the data directory failed; the sentence names the error code, such as `EACCES` or `ENOSPC` |
+| `copy-defect` | The copy failed with an error the copy does not know, a defect, which the server log shows again as an unhandled rejection |
+| `target-unreadable` | The sample's path could not be checked before any copy; the sentence names the error code, such as `EACCES`, `ENOTDIR` or `ELOOP` |
+| `target-reserved` | The sample's path, or one of its sidecar files, names one of the server's own storage files, in any letter case or Unicode normalization form |
+| `target-conflict` | The sample's path is another sample's, or differs from it only in letter case or Unicode normalization form, so only the first one is created |
+| `target-lost` | The sample's file was in place, and a later request could not find it or check its path; the sentence names the error code, such as `ENOENT` or `EACCES` |
+
+The sidebar shows each one as a row with the Unavailable marker, whose title is the sentence, and no action.
+It is never a connection: no picker, route or MCP tool can reach a sample that has no file.
 
 This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own:
 
@@ -1754,9 +1846,9 @@ This is separate from the `SEED_CONFIG_PATH` file and needs no config of its own
 | `LIBREDB_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample.libredb` | Override the LibreDB sample file's location |
 | `SQLITE_EMBEDDED_SAMPLE` | `true` | Set to `false` (exact match) to disable the SQLite sample |
 | `SQLITE_EMBEDDED_SAMPLE_PATH` | `<data dir>/sample-employees.db` | Override the SQLite sample file's location |
-| `SQLITE_EMBEDDED_SAMPLE_TEMPLATE` | `<cwd>/seed-assets/sqlite/employee.db` | Override the vendored template's location |
+| `SEED_ASSETS_DIR` | None: every launcher sets it to its payload's `seed-assets`, and `bun dev` and `bun start` to the checkout's ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)) | The directory both samples are copied from; a relative value is resolved against the working directory. Unset or blank, a sample not yet copied is listed unavailable as `asset-directory-unset`, and the working directory is never used instead |
 
-The sample files are only created if they don't already exist — the seeding is idempotent and never overwrites a user's edits.
+`SEED_ASSETS_DIR` replaces `SQLITE_EMBEDDED_SAMPLE_TEMPLATE`, which is no longer read.
 
 ---
 
@@ -1770,6 +1862,43 @@ The sample files are only created if they don't already exist — the seeding is
 3. Verify the YAML is valid: `cat seed-connections.yaml | python3 -c "import yaml,sys; yaml.safe_load(sys.stdin)"`
 4. Check if `${ENV_VAR}` values are set: connections with unresolvable vars are skipped
 5. `${vault:...}` references do not stop a connection appearing, but opening it fails with the Vault error. Check `VAULT_ADDR`, that the path is the KV v2 shape (`<mount>/data/<name>`) and that the token has a read policy on it. See [Secret Rotation](#secret-rotation) for how long a cached value can outlive a change in Vault.
+
+### A connection shows Unavailable
+
+Its type names no provider this Studio has: the seed file names an engine of a newer Studio, or one not installed here, or the type is misspelled.
+Hover the marker, or read the Seed sources card on the admin Overview, for the type it names.
+Correct the type, or run a Studio that has the provider; until then no route opens the connection, and the file's other connections work as usual.
+
+### A sample shows Unavailable
+
+The built-in sample could not be created at boot, or its file was lost after boot ([A sample that could not be created](#a-sample-that-could-not-be-created)).
+Hover the marker for the reason, and find the warning `Embedded sample unavailable` in the server log, which names the path:
+
+- `asset-directory-unset`: the server was started with `SEED_ASSETS_DIR` unset or blank, so it has no seed assets directory, and it never uses its working directory instead.
+  Start it through its launcher, which sets it ([DISTRIBUTION.md](DISTRIBUTION.md#built-in-sample-assets)); when you start `server.js` yourself, set `SEED_ASSETS_DIR` to the `seed-assets` directory beside it, then restart.
+- `asset-missing`: the seed assets directory does not hold the sample's file.
+  Point `SEED_ASSETS_DIR` at the `seed-assets` directory of this release, then restart.
+- `asset-unreadable`: the server could not read the sample's file in the seed assets directory.
+  Give the server read access to `SEED_ASSETS_DIR` and the files in it (`EACCES`), or check the volume it is on (`EIO`), then restart.
+- `digest-mismatch`: the file there is not this release's.
+  Use the `seed-assets` directory of the same release as the server; never edit the files in it.
+- `copy-failed`: the data directory could not take the copy.
+  Give the server write access to it (`EACCES`, `EROFS`) or free space (`ENOSPC`), then restart.
+- `copy-defect`: the copy met an error it does not know, which is a defect in Studio, not in your setup.
+  The server log shows it as an unhandled rejection with its stack; report it with that log, and restart to try the copy again.
+- `target-unreadable`: the server could not check the sample's path.
+  A `_PATH` override, or the data directory, names a directory the server cannot search (`EACCES`), a path through a regular file (`ENOTDIR`) or a symlink loop (`ELOOP`); correct it, then restart.
+  On Windows a path through a regular file reads as absent, so it is not refused here: its copy fails instead, as `copy-failed` with `EEXIST`.
+- `target-reserved`: a `_PATH` override names the storage database, a sidecar of it or the bootstrap credentials file, in any letter case or Unicode normalization form.
+  Point it elsewhere.
+- `target-conflict`: a `_PATH` override names another sample's file, its default one included, or a sidecar of it.
+  Two paths that differ only in letter case conflict on every OS, because on macOS and Windows they name one file.
+  Two paths that differ only in Unicode normalization form, such as a precomposed `ü` against a `u` followed by a combining diaeresis (NFC against NFD), conflict on every OS too, because on macOS they name one file.
+  Give each sample its own.
+- `target-lost`: the sample's file was in place, and a later request could not find it (`ENOENT`) or could not check its path (`EACCES`, `ENOTDIR`).
+  Give the server back access to the path, or restart it, which copies a removed sample again when `SEED_ASSETS_DIR` is set; without it the sample is listed as `asset-directory-unset`.
+
+A restart retries the copy and reads the variables again; a sample whose file exists is never copied again.
 
 ### "Access denied" error when querying
 
@@ -1865,8 +1994,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
         │         │                                        │  else admin; literal, Secret marker
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
-        ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
-        │         │ sqlite-sample.ts)                      │  sample file exists
+        ├─────────┤ Built-in samples (samples.ts, copied   │  Appended if boot admitted it and
+        │         │ at boot by sample-copy.ts)             │  its file exists on this request
         │         └───────────────────────────────────────┘
   ┌─────▼───────────────────────┐
   │ GET /api/connections/managed │  Auth + strip credentials for managed:true
@@ -1899,9 +2028,9 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `vault-client.ts` | HashiCorp Vault KV v2 reads: env config, Kubernetes auth, per-path TTL cache |
 | `connection-filter.ts` | Role filter, and `mergeDefaults`, which each operator source applies to its own connections (`sources/config-text.ts`) |
 | `resolve-connection.ts` | Shared utility for all API routes |
-| `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
-| `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
-| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
+| `samples.ts` | The built-in samples: the `SAMPLES` table, enablement, targets and their admission, the seed assets directory, the seed state and `startSampleSeeding()` |
+| `sample-copy.ts` | The verified copy of one pinned sample asset to its target |
+| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getUnavailableSamples()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
 | `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against; `KUBERNETES_REVIEWED_ROLE`, the role reserved for Kubernetes-discovered connections while the access review is on, which the role filter never selects |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |

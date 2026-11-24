@@ -16,6 +16,7 @@ import { MIB_TABLES } from "@/lib/db/providers/network/snmp/mib-objects";
 import { MAX_VARBINDS_PER_REQUEST, StatementError } from "@/lib/db/providers/network/snmp/statement";
 import type { DatabaseConnection } from "@/lib/types";
 import { startFakeAgent, text } from "../../../helpers/snmp-fake-agent";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 /**
  * The provider against an agent, both ends asserted.
@@ -156,7 +157,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
    * empty device rather than an absent one.
    */
   test("connecting to an address with no agent fails, and names the address", async () => {
-    const dead = new SnmpProvider(connectionTo(9));
+    const dead = new SnmpProvider(connectionTo(9), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await expect(dead.connect()).rejects.toThrow(/127\.0\.0\.1:9/);
     await expect(dead.connect()).rejects.toThrow(/no agent at that address or the wrong community/);
   });
@@ -164,7 +165,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
   test("connecting asks the agent one question before it reports success", async () => {
     const seen: Seen[] = [];
     const port = await listeningAgent(seen, new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     expect(seen).toHaveLength(1);
     expect(seen[0].oids).toEqual([SYS_UPTIME.join(".")]);
@@ -175,7 +176,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       seen,
       new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("a test agent") }]]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     await opened.query(`get ${SYS_DESCR.join(".")}`);
 
@@ -195,7 +196,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       [],
       new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("a test agent") }]]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`get ${SYS_DESCR.join(".")}`);
 
@@ -214,7 +215,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       [],
       new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(0, 0x98, 0x96, 0x80) }]]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`get ${SYS_UPTIME.join(".")}`);
 
@@ -233,7 +234,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
         [`${base}.3.0`, { tag: 0x44, bytes: Uint8Array.of(0xde, 0xad) }],
       ]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`get ${base}.1.0 ${base}.2.0 ${base}.3.0`);
     const shown = result.rows.map((row) => String(row.value));
@@ -253,7 +254,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
         [SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(0, 0x98, 0x96, 0x80) }],
       ]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`get ${SYS_DESCR.join(".")} ${SYS_UPTIME.join(".")}`);
 
@@ -273,7 +274,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       seen,
       new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("x") }]]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     await opened.query(`get ${SYS_DESCR.join(".")}`);
     await opened.query(`get ${SYS_DESCR.join(".")}`);
@@ -290,7 +291,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
   test("a refused statement opens no socket and sends no datagram", async () => {
     const seen: Seen[] = [];
     const port = await listeningAgent(seen, new Map());
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     await expect(opened.query("set sysName.0 x")).rejects.toThrow(StatementError);
     // One datagram, and it is the connect probe. The refused statement added nothing.
@@ -300,7 +301,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
 
   test("an object the agent does not have comes back as no row, not as an empty one", async () => {
     const port = await listeningAgent([], new Map());
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`get ${SYS_DESCR.join(".")}`);
     expect(result.rowCount).toBe(0);
@@ -319,7 +320,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
         [SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(0, 0x98, 0x96, 0x80) }],
       ]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const overview = await opened.getOverview();
     expect(overview.version).toBe("Linux agent 6.1");
@@ -337,7 +338,9 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
    * stop. A notice repeated on every read is a notice an operator stops reading.
    */
   test("an overview needs an open connection", async () => {
-    await expect(new SnmpProvider(connectionTo(1)).getOverview()).rejects.toThrow(DatabaseConfigError);
+    await expect(new SnmpProvider(connectionTo(1), {}, { egress: ALLOWS_PRIVATE_HOSTS }).getOverview()).rejects.toThrow(
+      DatabaseConfigError,
+    );
   });
 
   test("an overview whose answer leaves sysUpTime out says it has no figure rather than an empty one", async () => {
@@ -349,7 +352,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       ]),
       { omit: new Set([SYS_UPTIME.join(".")]) },
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const overview = await opened.getOverview();
     expect(overview.version).toBe("Linux agent 6.1");
@@ -362,7 +365,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
    */
   test("an overview whose agent answers noSuchObject says it has no figure, not an empty string", async () => {
     const port = await listeningAgent([], new Map());
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const overview = await opened.getOverview();
     expect(overview.version).toBe(SNMP_NO_COUNT);
@@ -375,7 +378,11 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("Linux agent 6.1") }]]),
     );
     // A short deadline, so a platform that reports no refusal for a UDP datagram ends the read by silence.
-    opened = new SnmpProvider({ ...connectionTo(port), queryTimeout: 500 } as DatabaseConnection);
+    opened = new SnmpProvider(
+      { ...connectionTo(port), queryTimeout: 500 } as DatabaseConnection,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     await opened.connect();
     // The agent goes away after the connect probe: on Linux loopback the next datagram is refused at once.
     agent?.close();
@@ -390,7 +397,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
       [],
       new Map([[SYS_DESCR.join("."), { tag: 0x04, bytes: new TextEncoder().encode("x") }]]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const first = await opened.query(`get ${SYS_DESCR.join(".")}`);
     const second = await opened.query(`get ${SYS_DESCR.join(".")}`);
@@ -411,7 +418,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     ]);
     const seen: Seen[] = [];
     const port = await walkingAgent(seen, values);
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`table ${TABLE.join(".")}`);
     expect(result.rowCount).toBe(2);
@@ -435,7 +442,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     ]);
     const seen: Seen[] = [];
     const port = await walkingAgent(seen, values);
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`walk ${TABLE.join(".")}`);
     // The probe that opens the connection is a Get; the walk's own datagram is the one after it.
@@ -456,7 +463,7 @@ describe("a statement reaches a real agent and its answer reaches the caller", (
     ]);
     const seen: Seen[] = [];
     const port = await walkingAgent(seen, values);
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const result = await opened.query(`walk ${TABLE.join(".")}`);
     expect(result.rowCount).toBe(1);
@@ -530,7 +537,11 @@ describe("our own fault is not reported as the agent's silence", () => {
     const port = await rawAgent(() => Uint8Array.of(0x30, 0x02, 0x99, 0x99));
     // A short deadline on purpose: the point is which SENTENCE comes back, and waiting the
     // default five seconds to read it would make this test measure the clock.
-    const exchange = new SnmpProvider({ ...connectionTo(port), queryTimeout: 300 });
+    const exchange = new SnmpProvider(
+      { ...connectionTo(port), queryTimeout: 300 },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+    );
     // The probe draws the malformed answer, so connect is what reports it.
     await expect(exchange.connect()).rejects.toThrow(/No SNMP agent answered/);
   });
@@ -542,7 +553,7 @@ describe("our own fault is not reported as the agent's silence", () => {
    */
   test("the same listener answering properly opens the connection", async () => {
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await expect(opened.connect()).resolves.toBeUndefined();
   });
 });
@@ -574,7 +585,7 @@ describe("health is read from the agent, and claims nothing the agent did not sa
         [SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(0, 0x98, 0x96, 0x80) }],
       ]),
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const health = await opened.getHealth();
     // The probe at connect, then the health read and nothing else.
@@ -594,7 +605,7 @@ describe("health is read from the agent, and claims nothing the agent did not sa
 
   test("an object the agent does not serve is said to be missing, not rendered as a value", async () => {
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const health = await opened.getHealth();
     expect(health.uptime).toBe("1");
@@ -605,7 +616,7 @@ describe("health is read from the agent, and claims nothing the agent did not sa
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]), {
       omit: new Set([SYS_DESCR.join(".")]),
     });
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     const health = await opened.getHealth();
     expect(health.uptime).toBe("1");
@@ -624,7 +635,7 @@ describe("health is read from the agent, and claims nothing the agent did not sa
       // The connect probe is the first request and is answered normally; the health read gets genErr.
       { errorStatus: (requestNumber) => (requestNumber === 2 ? 5 : 0) },
     );
-    opened = new SnmpProvider(connectionTo(port));
+    opened = new SnmpProvider(connectionTo(port), {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     await expect(opened.getHealth()).rejects.toThrow(
       "The agent refused the health read: the agent answered error-status 5",
@@ -633,7 +644,7 @@ describe("health is read from the agent, and claims nothing the agent did not sa
 
   test("an agent that stops answering fails the health read rather than reporting a healthy nothing", async () => {
     const port = await listeningAgent([], new Map([[SYS_UPTIME.join("."), { tag: 0x43, bytes: Uint8Array.of(1) }]]));
-    opened = new SnmpProvider({ ...connectionTo(port), queryTimeout: 300 });
+    opened = new SnmpProvider({ ...connectionTo(port), queryTimeout: 300 }, {}, { egress: ALLOWS_PRIVATE_HOSTS });
     await opened.connect();
     agent?.close();
     agent = undefined;
@@ -648,11 +659,15 @@ describe("a get naming more objects than 256 is answered whole, on the console a
     test(`${count} objects`, async () => {
       const fake = await startFakeAgent(new Map([["1.3.6.1.2.1.1.5.0", text("box")]]));
       const config = { id: "big", name: "big", type: "snmp", host: "127.0.0.1", port: fake.port, password: "c" };
-      const editor = new SnmpProvider({ ...config, queryTimeout: 2_000 } as unknown as DatabaseConnection);
+      const editor = new SnmpProvider(
+        { ...config, queryTimeout: 2_000 } as unknown as DatabaseConnection,
+        {},
+        { egress: ALLOWS_PRIVATE_HOSTS },
+      );
       const reader = new SnmpProvider(
         config as unknown as DatabaseConnection,
         { queryTimeout: 2_000 },
-        { readOnly: true, sendsStatements: true },
+        { readOnly: true, sendsStatements: true, egress: ALLOWS_PRIVATE_HOSTS },
       );
       try {
         await editor.connect();

@@ -8,8 +8,8 @@
  * and cut after 64 characters in prose. A name inside a request a sentence quotes is never cut, because a cut name
  * addresses another stream.
  *
- * An error built here is registered as the provider's own, and `rabbitmqBoundary` passes through only those and the
- * shared egress refusal; anything else becomes a fixed sentence and its original value is dropped, because the query
+ * An error built here is registered as the provider's own, and `rabbitmqBoundary` passes through only those, the
+ * shared egress refusal and the missing egress decision's refusal; anything else becomes a fixed sentence and its original value is dropped, because the query
  * route sends an error's message to the client and history keeps it. docs/providers/rabbitmq.md prints the table.
  */
 import {
@@ -20,7 +20,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
+import { EGRESS_DECISION_MISSING, EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
 import { isTlsFailureCode, TransportError } from "@/lib/db/http/node-transport";
 import {
   RABBITMQ_BODY_CEILING_BYTES,
@@ -125,20 +125,6 @@ export function endpointText(host: string, port: number): string {
 // =====================================================================================================================
 // Connection: fields, TLS and what is refused before any socket
 // =====================================================================================================================
-
-export const TUNNEL_REFUSED =
-  "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.";
-
-const FIELD_LABELS = { database: "Database", namespaces: "Namespaces", tlsServerName: "TLS server name" } as const;
-
-/** The refusal of a field RabbitMQ does not offer, set from a seed or the API, naming the field and never its value. */
-export function fieldNotOffered(field: "database" | "namespaces" | "tlsServerName"): string {
-  const reason =
-    field === "tlsServerName"
-      ? "the certificate is always checked against Host"
-      : "Studio discovers the virtual hosts from the management API";
-  return `RabbitMQ connections take no ${FIELD_LABELS[field]}: ${reason}. Clear the field; nothing was sent.`;
-}
 
 export const PATH_PREFIX_NO_SLASH = "Path prefix starts with /, for example /rabbitmq.";
 export const PATH_PREFIX_DOT_SEGMENT = "Path prefix may not contain an empty, . or .. segment.";
@@ -542,14 +528,16 @@ export interface BoundaryContext {
 }
 
 /**
- * The one boundary every public method and every path of a read ends in. An own error and the shared egress
- * refusal pass through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
+ * The one boundary every public method and every path of a read ends in. An own error, the shared egress
+ * refusal and the refusal of a provider built outside Studio's factory without an egress decision, at connect() or at
+ * a dial, pass through unchanged; a TransportError the client did not map becomes its row by kind; anything else,
  * a SyntaxError, a TypeError or a DOMException included, becomes the unexpected-answer sentence. The original value is never the message,
  * the detail or the cause.
  */
 export function rabbitmqBoundary(error: unknown, context: BoundaryContext): Error {
   if (isOwnError(error)) return error as Error;
   if (error instanceof DatabaseConfigError && EGRESS_REFUSAL_SENTENCES.has(error.message)) return error;
+  if (error instanceof DatabaseConfigError && error.message === EGRESS_DECISION_MISSING) return error;
   if (error instanceof TransportError) {
     switch (error.kind) {
       case "aborted":

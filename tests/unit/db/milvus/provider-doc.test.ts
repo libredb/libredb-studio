@@ -9,9 +9,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import {
@@ -206,9 +205,9 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
   test("the monitoring labels are the provider's", () => {
     const monitoring = sectionOf(DOC, "## 7. Monitoring & health");
     expect(monitoring).toContain(`\n${labels.tableStatsCaption}\n`);
-    expect(monitoring).toContain(`> ${labels.slowQueriesEmptyState}`);
-    expect(monitoring).toContain(`> ${labels.sessionsEmptyState}`);
-    expect(labels.slowQueriesEmptyState).toContain("9091");
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+    expect(monitoring).toContain("declare no empty-state sentence");
   });
 
   test("the maintenance rows are the declared specs", () => {
@@ -288,7 +287,7 @@ const E23_FRAGMENTS: readonly string[] = [
   "REST `entities/get` and `entities/delete` by a VarChar id holding a quote differ from Studio's template on 3.0.2.",
   "A vendor address pasted into the connection-string box instead of the Host box still selects ClickHouse.",
   "Zilliz users should prefer a cluster-scoped user or key to a project-wide key",
-  "Studio withholds only the forms it sends.",
+  "Studio withholds only the forms it lists.",
   "The management port 9091 answers without authentication on 3.0.2, so the operator keeps it off the network.",
 ];
 

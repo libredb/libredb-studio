@@ -73,6 +73,11 @@ export function openShiftAuthEnvProblems(): string[] {
       );
     }
   }
+  if ((process.env.OIDC_ALLOWED_EMAIL_DOMAINS ?? "").trim()) {
+    problems.push(
+      "OIDC_ALLOWED_EMAIL_DOMAINS is set: openshift sign-in admits whoever the cluster authenticates, and the list has no claim to read there, so unset it",
+    );
+  }
   for (const [name, feature] of [
     ["LIBREDB_MCP_ENABLED", "MCP"],
     ["LIBREDB_AGENT_ENABLED", "the agent"],

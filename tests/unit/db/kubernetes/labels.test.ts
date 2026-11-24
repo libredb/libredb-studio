@@ -3,8 +3,8 @@
  * the parser takes, and each example a statement the parser runs.
  */
 import { describe, expect, test } from "bun:test";
-import { KUBECTL_COMMAND_TABLE } from "@/lib/db/providers/platform/kubernetes/console/commands";
-import { kubectlRefusal } from "@/lib/db/providers/platform/kubernetes/console/guard";
+import { KUBECTL_COMMAND_TABLE } from "@/lib/languages/kubectl/commands";
+import { kubectlRefusal } from "@/lib/languages/kubectl/guard";
 import {
   KUBECTL_STATEMENT_EXAMPLES,
   KUBERNETES_LABELS,

@@ -3,21 +3,18 @@
  * bundle may hold. Client-safe: it reads only the leaf `workflow-tool-sets.ts`.
  */
 import type { AgentVariantRequirement } from "../../agent-manifest";
-import type { AgentPosture } from "../../posture";
 import type { AgentToolName } from "../../tools";
 import { OPERATIONS_VARIANT } from "../../workflow-tool-sets";
-import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
+import type { AgentLanguageClientPack, AgentPostureCopy, StatementBudgets } from "../pack";
 
 /**
  * Agent mode on Firestore: the boundary is the provider's structural closed table, a client that holds three reads
  * over a request table that admits reads only. Its answers carry collection ids, counts, flags and times only.
  */
-function fsqueryReadsPosture(bounds: StatementBudgets): AgentPosture {
+function fsqueryReadsPosture(bounds: StatementBudgets): AgentPostureCopy {
   const rows = bounds.maxResultRows;
   const seconds = bounds.statementTimeoutMs / 1000;
   return {
-    tone: "reads",
-    headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per read, each read charged to the run's read allowance, over a client that holds only collection id listings, whole-collection counts and named-document times`,
     title:
       "Agent mode reads Firestore collection ids, whole-collection counts and named documents' times, never a document id, a field or a value",
@@ -66,7 +63,6 @@ export const FSQUERY_CLIENT_PACK = Object.freeze({
   requirements: Object.freeze({}),
   posture: Object.freeze({
     reads: fsqueryReadsPosture,
-    widened: fsqueryReadsPosture,
     handoverTerms: () =>
       "A Firestore answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
   }),

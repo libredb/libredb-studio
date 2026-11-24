@@ -9,7 +9,7 @@ MCP and agent mode, Studio's in-app agent, are separate features that share one 
 MCP needs neither agent mode nor an LLM provider: it runs with `LIBREDB_AGENT_ENABLED` set to `false` and no `LLM_*` variable set.
 The shared core is the statement languages under `src/lib/agent/languages/`, each of which declares its MCP tool, or none yet, in `AGENT_LANGUAGE_MCP_FACETS`, the read profiles `agent-read-only` and `agent-operations`, and the seed fields `agentUser`, `agentPassword` and `agentReadRoots`, so those names keep the word agent.
 In the rest of this guide, `agent-read-only` is Studio's least-privilege read profile, under which every statement tool opens its connection, and `agent-operations` is the profile `inspect_schema` opens under, which sends no statement.
-`agentUser` and `agentPassword` are a seed's read credential of its own, `agentReadRoots` an OPC UA seed's read roots, and `AGENT_EXECUTION_ENGINES` the engines the shared core runs statements on.
+`agentUser` and `agentPassword` are a seed's read credential of its own, `agentReadRoots` an OPC UA seed's read roots, and `AGENT_EXECUTION_ENGINES` Studio's review record of the engines the shared core runs statements on.
 
 ## What it is
 
@@ -21,6 +21,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.
     `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` and every statement tool refuse that connection with it as soon as the connection resolves, before anything is acquired.
     A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).
+    A seed whose type names no provider this Studio has carries it too, with `engine` set to its type as written, and lists no `database`.
     A connection's `database` is left out on MQTT and Sparkplug B, where that setting is a stored value, the discovery topic filter or the group id, as the language's facet declares (`withholdsDatabase`).
   - `inspect_schema` lists one connection's tables with their columns and, on request, their indexes.
     It works on the same engines as `list_connections`: it lists every object kind the engine reads rows from, such as views beside tables, MongoDB collections, Redis keyspaces and search indexes, and `kind` names which one each entry is.
@@ -54,12 +55,13 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   - `run_read_query` runs one read-only SQL statement.
     A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.
     Runs on the engines listed below with the forms each takes; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
-    It serves an engine only where `AGENT_EXECUTION_ENGINES` in `src/lib/agent/engine-support.ts` lists it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins `AGENT_EXECUTION_ENGINES` stays closed here until a change of its own opens it.
+    It serves an engine only where `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` lists it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins `AGENT_EXECUTION_ENGINES` stays closed here until a change of its own opens it.
+    The acquisition and the core read path refuse an engine off the record again, by name, even one whose provider implements a read-only statement path.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
     A connection that carries `unavailable` gets that sentence instead, from every statement tool, naming no tool.
     Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.
     CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.
-    Each engine takes these, as its row in `src/lib/db/providers/sql/read-query-forms.ts` names them:
+    Each engine takes these, as its row in `src/lib/sql/read-query-forms.ts` names them:
     - PostgreSQL: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     - SQLite: a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN`.
     - DuckDB: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
@@ -218,6 +220,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   Those engines are the rows of `MCP_METADATA_READ_CHANGES_STATE` in `src/lib/db/compatibility.ts` that are true, one per engine, so a self-hosted Databend server, which bills nothing, is marked too.
   No tool sets `idempotentHint`, which a client reads only beside `readOnlyHint: false`, where a repeated call extends the lock's idle time or the billed run.
   A statement tool whose read has an effect of the server's own bookkeeping stays read-only, and its description says so: a Redis read can delete an expired key and publish an event about it, and an MQTT or Sparkplug B read opens broker sessions; `inspect_schema` also stays read-only on Redis and Sparkplug B, with what a call does there stated in its entry above.
+- No MCP tool reaches provider installation, update, removal, enablement, reload, trust or grants: every tool is a metadata tool or a statement language's read-only statement tool, which `tests/unit/no-provider-management-tools.test.ts` holds.
 - Read-only is the database's own enforcement, not a filter over statement text: every statement tool takes the connection under Studio's least-privilege read profile (`agent-read-only`) and runs through the provider's read-only statement path, and each engine enforces it as follows:
   - PostgreSQL: by a read-only transaction, and refuses a login that could do more than read.
   - SQLite: by a read-only open.
@@ -251,8 +254,17 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   - OPC UA: by the provider's read-only client, which holds Browse, BrowseNext, Read and HistoryRead alone over a session opened for each read, so no Write, Call, HistoryUpdate, node change or subscription can be sent, and by the seed's read roots, beneath which alone a read answers; the session's identity decides only what the server shows ([opcua.md](./providers/opcua.md#15-mcp-read)).
   - S3-compatible object storage: by the provider's read client, which holds six metadata reads alone over a transport that sends GET and HEAD only, so no object read, key listing, write, delete or presigned URL can be sent, with every answer projected to names, counts and flags; the grants of the seed's separate read key, which MCP requires, decide which buckets it reads ([s3.md](./providers/s3.md#157-mcp-read)).
   A statement check runs first as defence in depth.
-- A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
-- A profile refusal raised by the statement call itself, where the provider checks its principal before every statement, as Oracle's does, names objects and roles any user of the database may have named (functions, views, policies, roles), so it is answered in the tool's sentence behind that notice; a profile refusal at the open carries no notice.
+- A result that carries database content, rows or an engine error, starts with a text block naming the provider that relayed the content, for example "PostgreSQL provider, bundled with Studio", and telling the model to treat what follows as untrusted data.
+  A tool's description carries the same notice without a provider, since it serves every engine its tool serves.
+- A refusal a provider wrote comes after a notice naming the provider that wrote it, for example "PostgreSQL provider, bundled with Studio", and is untrusted text too: a profile refusal the provider raises at the open or by the statement call (where the provider checks its principal before every statement, as Oracle's does, and may name objects and roles any user of the database chose), a statement it refused before sending, and an offset or a database it would not open.
+  Studio's own refusals carry no notice and read in Studio's words.
+- An error answer built from a failure (an engine error, a provider's refusal, a too large, timeout or not sent answer, a profile refusal) carries `structuredContent` `{ "error": { ... } }`, the failure's error record: `kind`, `code`, `outcome` and, when the driver reported one and its text was not withheld, `sqlState` ([API reference](API_DOCS.md#error-kind-and-outcome)).
+  A refusal Studio makes with no failure behind it, and the answer to the call's own deadline, carry none.
+  The record holds closed vocabularies and the SQLSTATE only, never the failure's text.
+  This `structuredContent` is not the tool's output schema: the MCP TypeScript SDK's client and server check `structuredContent` against that schema only on a result that is not an error.
+  A client that checks an error result's `structuredContent` against the tool's output schema too would not accept the record.
+- Every provider text in an answer and in the server log, an engine error, a note, a refusal, is withheld whole when it holds a credential the seed's provider receives, or any form of one (its base64 at any byte offset, its URL-encoded form, or any of those JSON-escaped or with control characters between its characters), before it is redacted and cut.
+  That is the seed's read credential of its own, `agentPassword`, in place of its password where the seed sets one, a Vault-resolved one included, and never the SSH tunnel's secrets, which no provider receives.
 
 ## Enabling it
 
@@ -339,6 +351,9 @@ The built-in sample connections are never visible to an MCP client.
 A `${vault:...}` reference in an opted-in seed is read from Vault when a tool opens the connection, as the editor reads it, and never when `list_connections` lists it ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#vault-references)).
 A reference Vault cannot answer refuses the call with an error that names the connection and gives no cause; the cause goes to the server log.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
+A seed entry whose type names no provider this Studio has, such as an engine of a newer Studio, keeps its opt-in ([`docs/SEED_CONNECTIONS.md`](SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for)).
+`list_connections` lists it with `engine` as written, `read_tool: null` and `unavailable` set to the sentence that names its type, such as `No provider for the connection type "acmefoo" is installed in this LibreDB Studio.`
+`inspect_schema` and every statement tool refuse it with that sentence before anything is acquired, and no statement tool is listed for it.
 
 Where an engine's line under "Read-only is the database's own enforcement" above says it refuses a login that could do more than read, an opted-in seed for that engine needs a least-privilege principal.
 On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.
@@ -379,7 +394,7 @@ Neo4j proves its user only for a connection that sends statements, so `inspect_s
 It lists the labels and relationship types the seed's user may traverse, with the properties it may read; a user without `SHOW INDEX` is listed them too, and with `include_indexes` each one's indexes are answered unavailable in the server's words.
 MongoDB proves its principal only for a connection that sends statements, so `inspect_schema` opens a MongoDB connection unverified, as the editor does, and no principal check refuses it there (`tests/integration/mcp/inspect-schema.test.ts` lists the collections of the admin seed, of a server without authorization and of FerretDB).
 A LibreDB file has no user, so a LibreDB seed proves no principal and carries none: `run_libredb_read` reads every key of the one file the seed's `database` names, and nothing else.
-Studio's own storage database, its `-wal` and `-shm` files and its `auth-bootstrap.json` are refused as a LibreDB target before anything is opened, compared by resolved path and by file identity, so a symbolic or hard link to one is refused too, a file that is no LibreDB file is refused by the engine's own format check and left as it was, and a missing file is refused by `run_libredb_read` and `inspect_schema` alike, which create neither it nor its lock ([libredb.md](./providers/libredb.md#158-mcp-run_libredb_read)).
+Studio's own storage database, its `-wal` and `-shm` files and its `auth-bootstrap.json` are refused as a LibreDB target before anything is opened, compared by resolved path with letter case and Unicode normalization folded and by file identity, so another letter case's spelling of one, or a symbolic or hard link to one, is refused too, a file that is no LibreDB file is refused by the engine's own format check and left as it was, and a missing file is refused by `run_libredb_read` and `inspect_schema` alike, which create neither it nor its lock ([libredb.md](./providers/libredb.md#158-mcp-run_libredb_read)).
 So opt in a seed whose file holds only what the roles it names may read.
 A Weaviate seed's `password` is the API key every MCP call on it reads as, and `run_weaviate_read` has the server prove it before every read, at the open and again before each request: the key must name at least one role and no OIDC group, and every action of every role must be one of the built-in `viewer` role's read actions, so the root key, an administrator's key, a role that also writes, a key on a server with RBAC off and a seed with no key are refused ([weaviate.md](./providers/weaviate.md) section 15.2).
 A custom role of viewer actions scoped to some collections, tenants and aliases passes that proof and narrows what the tool reads, since the server filters the schema, tenant and alias lists by it and refuses a read outside it.
@@ -422,7 +437,8 @@ No S3 key can be proven read-only from a client, so the provider's read client i
 Measured on Silo `RELEASE.2026-09-16T00-00-00Z`, Garage `v2.4.1` and RustFS `1.0.1`, a read key without `s3:ListAllMyBuckets` is answered only its granted buckets, where the connection's own broad key lists every bucket; the server lists every bucket name to one holding it on Silo and RustFS, and the bucket list still names only the buckets whose HEAD the server answers that key, one ListBuckets and one HEAD per listed bucket, counting the rest in a note ([s3.md](./providers/s3.md#155-what-a-keys-grants-reach)); a bucket it is granted nothing on answers exactly as one that does not exist, and RustFS applies a public bucket policy to every signed key, so a public bucket's name and totals are in every read key's reach there ([s3.md](./providers/s3.md#157-mcp-read)).
 
 A PostgreSQL seed with an empty `database` reaches every database its role can CONNECT to (#1530, [`docs/providers/postgres.md` §4.1.1](providers/postgres.md#411-server-level-connections-an-empty-database-1530)).
-On such a connection both `inspect_schema` and `run_read_query` take a `database` argument naming the one to read, and a call without it is answered, in Studio's words, with the databases it could name (at most fifty), rather than run in whichever came first.
+On such a connection both `inspect_schema` and `run_read_query` take a `database` argument naming the one to read, and a call without it is refused rather than run in whichever came first.
+The refusal is Studio's sentence, holding no database name, then the notice naming the provider that relayed the names, then the databases the call could name as one JSON list, at most fifty, with Studio's count of the rest in its sentence.
 On every other connection `database` is refused, because the connection names its own.
 The answer echoes the `database` it read.
 
@@ -651,9 +667,18 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
 
 - Authentication is a static bearer token that Studio mints: there is no OAuth and no protected resource metadata document, so a client needs its `Authorization` header configured.
 - `run_read_query` reads at most 1000 rows and 1 MiB from the database, and answers at most `max_rows` rows (default 100, at most 500) and 32 KiB; `truncated`, `truncated_by`, `pagination.hasMore` and `pagination.nextOffset` say what was cut and where the next page starts.
+  The provider refuses a result past 1000 rows or 1 MiB, and Studio checks every statement tool's answer against both again, each row's UTF-8 JSON bytes summed, before it is cut to `max_rows` and 32 KiB, so a result past either is refused as too large rather than cut.
+  `run_read_query` and every statement tool decide a refusal by its error kind: a row, byte, cut-value or serialised budget refusal, Studio's or the provider's, is answered as too large, and a time budget refusal as the timeout answer, whatever the refusal's words; any other failure is answered as the engine's.
+  A provider's `TimeoutError` that settles before the call's deadline is the engine's too, since its class says some timeout fired but not that it was `timeout_ms` (a Cassandra coordinator's own read timeout, a connection's configured query timeout), and its text says which; any failure at or after the deadline is the timeout answer.
 - On an engine that bills every read, one statement call may spend at most 2000 billed reads (`MCP_CALL_READ_ALLOWANCE`), and each call gets its own allowance; a read past it is refused before it is sent. No engine served by MCP bills its reads yet.
-- A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, never as the database's error.
-- A NaN, Infinity or -Infinity cell in a `run_read_query` answer is the string `"NaN"`, `"Infinity"` or `"-Infinity"`; it used to be `null`, which a client could not tell from SQL NULL. A text cell holding one of those words looks the same.
+- A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, never as the database's error.
+- Every cell of a statement tool's `rows` is plain JSON, or a tagged value `{"$": tag, "v": payload}` as `@libredb/provider-sdk/values` writes it, and the output schema's `rows` states the same.
+  `i64` carries a 64-bit integer as its decimal digits, `bytes` binary data as standard padded base64, `ts` an instant as ISO 8601 UTC text, `nf` NaN, Infinity or -Infinity as that word, and `obj` a value whose own keys are exactly `$` and `v`, as that object.
+  They replace MCP's own forms: digits, `"[Blob: n bytes]"`, ISO text and the non-finite words as plain strings a text cell could also hold, and an unwrapped object with keys `$` and `v` that read as a tag.
+  A binary cell carries its bytes, so a row with a wide one can pass 32 KiB and is refused as any wide row is.
+  An object member whose value is undefined is left out.
+  A value outside the codec, such as a class instance, a typed array other than bytes, an invalid date or a cell nested inside more than 254 arrays and objects (the codec's bound is 256, and the answer's rows and each row take two), refuses the whole answer with "The result holds a value this server cannot answer:" and the place it stood; selecting that column as text, or leaving it out, answers.
+  Only the rows an answer can carry, the first `max_rows`, are read for this.
 - A query with its own `LIMIT` or `TOP`, and `VALUES`, `TABLE` or `EXPLAIN`, cannot be paged with `offset`; the answer says how to page it in that engine's SQL.
 - `inspect_schema` and `list_connections` fit each page to 32 KiB, and `has_more` and `next_offset` say where the next page starts.
 - Every `POST` spends one slot of the same per-user budget the database routes use (`RATE_LIMIT_QUERY_MAX`, 120 a minute by default), so a session and an MCP token of one person share it.

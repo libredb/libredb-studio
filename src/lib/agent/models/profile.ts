@@ -275,6 +275,14 @@ export interface AgentNotices {
    * of 36 turns unspent, while the same cell's longest PASSING run took 183 seconds.
    */
   readonly turnCutOff: string;
+  /**
+   * A turn the ENDPOINT stopped at its output limit, on a run with turns and time left.
+   *
+   * The other half of the pair above and not the same sentence: that one asks the model to take a
+   * shorter move in the same amount of time, this one asks for less writing. A model told only
+   * "you were cut off" writes the same essay again, which is how the turn is lost twice.
+   */
+  readonly modelOutputLimit: string;
   /** An answer-presenting run about to report a result it read but never presented. */
   readonly presentBeforeReport: string;
   /** A run that stopped without calling anything, having asked for what it could have read. */

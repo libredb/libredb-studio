@@ -1,17 +1,20 @@
 import { NextResponse } from "next/server";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import type { AgentRunService, AgentRunStatusReport } from "@/lib/agent/run-service";
-import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { getAgentRunService } from "@/lib/agent/runtime";
+import type { ApiErrorResponse } from "@/lib/api/error-body";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 import { guardRoute } from "@/lib/api/require-session";
 import type { UserPayload } from "@/lib/auth";
+import { logger } from "@/lib/logger";
 
 /**
  * The one gate every per-run route passes through (#329 T9): session, availability,
  * existence and ownership, answered once so three routes cannot drift apart.
  *
  * Ownership is decided against the run's PERSISTED actor, which is the same
- * authority a tool call is authorized by. Two consequences are deliberate:
+ * authority a tool call is authorized by. Three consequences are deliberate:
  *
  *  - **An admin is not exempt.** A run is not an administrative object; it is one
  *    session's investigation, and its ledger cites data that session was allowed to
@@ -20,6 +23,13 @@ import type { UserPayload } from "@/lib/auth";
  *  - **Somebody else's run answers exactly like a run that does not exist.** A 403
  *    would confirm the run id, which is the one thing a caller guessing ids learns
  *    from.
+ *  - **A run this build cannot read is named to its owner alone.** A ledger whose
+ *    header names a statement language, workflow or goal rule this Studio does not
+ *    have is refused by the store with the header's persisted actor, so on these
+ *    session routes the owner is answered 409 `AGENT_RUN_UNAVAILABLE` with the
+ *    refusal's sentence and anyone else the 404 below. Nothing of such a run is
+ *    resolved, built or replayed. The drive route has no session: it answers the
+ *    same 409 to the holder of the drive credential that names the run.
  */
 
 export type AgentRunAccess =
@@ -33,6 +43,27 @@ export type AgentRunAccess =
 /** Deliberately identical for "no such run", "not yours" and "runtime is off". */
 function notFound(): NextResponse {
   return NextResponse.json({ error: "No such agent run" }, { status: 404 });
+}
+
+/**
+ * The answer to a caller entitled to a run this build cannot read: its owner on the session routes, and the holder of
+ * the drive credential that names the run on the drive route. 409 `AGENT_RUN_UNAVAILABLE` with the refusal's sentence,
+ * logged once at warn. The log names the field and the reason, not the id, which the ledger keeps.
+ */
+export function agentRunUnavailableResponse(
+  error: AgentRunUnavailableError,
+  route: string,
+): NextResponse<ApiErrorResponse> {
+  logger.warn("Agent run unavailable", {
+    route,
+    runId: error.runId,
+    field: error.refusal.field,
+    reason: error.refusal.reason,
+  });
+  return NextResponse.json(
+    { error: error.refusal.sentence, code: ApiErrorCode.AGENT_RUN_UNAVAILABLE, statusCode: 409 },
+    { status: 409 },
+  );
 }
 
 export async function accessAgentRun(opts: {
@@ -62,6 +93,10 @@ export async function accessAgentRun(opts: {
   } catch (error) {
     if (error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID") {
       return { response: notFound() };
+    }
+    if (error instanceof AgentRunUnavailableError) {
+      if (error.actor.sessionId !== guard.session.username) return { response: notFound() };
+      return { response: agentRunUnavailableResponse(error, opts.route) };
     }
     throw error;
   }

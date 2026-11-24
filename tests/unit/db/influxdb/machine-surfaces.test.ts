@@ -12,7 +12,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { type AgentToolContext, readObjectInventoryForGrounding } from "@/lib/agent/tools";
@@ -26,6 +26,7 @@ import type { DatabaseConnection, DatabaseProvider, QueryResult } from "@/lib/db
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import type { ManagedConnection } from "@/lib/seed/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../../helpers/mcp-fixtures";
@@ -165,7 +166,7 @@ async function connectedInfluxql(version: Line): Promise<Connected> {
       : [loadInfluxCapture(version, "ping-auth"), loadInfluxCapture(version, "show-databases-admin")];
   const wire = recordingInfluxTransport([...connect, ...repeat(influxqlServer(version))]);
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
-  const provider = new InfluxDBProvider(INFLUXQL_CONNECTION, {}, {}, factory);
+  const provider = new InfluxDBProvider(INFLUXQL_CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, factory);
   await provider.connect();
   providers.push(provider);
   wire.requests.length = 0;
@@ -179,7 +180,7 @@ async function connectedSql(): Promise<Connected> {
     ...repeat(sqlServer),
   ]);
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
-  const provider = new InfluxDB3Provider(SQL_CONNECTION, {}, {}, factory);
+  const provider = new InfluxDB3Provider(SQL_CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, factory);
   await provider.connect();
   providers.push(provider);
   wire.requests.length = 0;

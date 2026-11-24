@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { TUNNEL_FAR_END } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd } from "@/lib/types";
+import { providerConnection } from "@/lib/db/provider-connection";
+import { TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
+import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
 
 /**
  * The base connection every case below varies by exactly one field.
@@ -96,7 +97,7 @@ describe("connectionFingerprint", () => {
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, port: 2222 } })));
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, username: "mallory" } })));
     // A DISABLED tunnel is not the same route as an enabled one to the same bastion, because
-    // the `sshTunnel?.enabled` branch of `getOrCreateProvider` in `factory.ts` tests exactly that flag and only the
+    // the `decideTunnel` call in `getOrCreateProvider` in `factory.ts` reads exactly that flag and only the
     // enabled arm rewrites the endpoint.
     expect(ours).not.toBe(await connectionFingerprint(vary({ sshTunnel: { ...BASTION, enabled: false } })));
     // And the tunnel's SECRETS are out, on the rule the database password already follows: rotating
@@ -326,14 +327,14 @@ describe("the maps the WithTunnelFarEnd docblock calls exhaustive over keyof Dat
  * This test file cites `factory.ts`, and a citation by a hand-copied line number rots in silence: any insertion above
  * the cited line invalidates it from a hand nowhere near this file. It happened here, when a commit inserted
  * thirty-four lines above the tunnel branch and the pointers left behind named an unrelated line. So the prose names
- * the code instead, `getOrCreateProvider`, its `sshTunnel?.enabled` branch and its `tunnelledConnection` call, and
+ * the code instead, `getOrCreateProvider`, its `decideTunnel` call and its `tunnelledConnection` call, and
  * these tests hold that each name exists in `factory.ts` and that the prose names it.
  *
  * SCOPE IS THE TWO CONNECTION-FINGERPRINT FILES, on purpose; the repository-wide ban on a line-number citation is
  * `tests/unit/no-source-line-citations.test.ts`.
  */
 const FACTORY = "src/lib/db/factory.ts";
-const CITED_FACTORY_NAMES = ["getOrCreateProvider", "sshTunnel?.enabled", "tunnelledConnection"];
+const CITED_FACTORY_NAMES = ["getOrCreateProvider", "decideTunnel", "tunnelledConnection"];
 
 describe("the factory.ts citations in the fingerprint module and its test", () => {
   const repoRoot = join(import.meta.dir, "../../../..");
@@ -353,5 +354,102 @@ describe("the factory.ts citations in the fingerprint module and its test", () =
   test("this file's prose names each of them", () => {
     const self = readFileSync(join(repoRoot, "tests/unit/lib/db/connection-fingerprint.test.ts"), "utf8");
     for (const name of CITED_FACTORY_NAMES) expect(self).toContain(`\`${name}\``);
+  });
+});
+
+/**
+ * Golden digests computed on main before FND-2 slice 5 changed anything, written out by hand: moving the tunnel
+ * decisions into core must not change what any seal answers, so every tunnelled edit plan sealed before the change
+ * still verifies after it.
+ */
+describe("the seal answers the digest main answered for a tunnel that is on, off and absent (FND-2 slice 5)", () => {
+  const GOLDEN_BASE: DatabaseConnection = {
+    id: "conn-1",
+    name: "Primary",
+    type: "postgres",
+    host: "db.internal",
+    port: 5432,
+    database: "app",
+    user: "libredb",
+    createdAt: new Date("2026-09-13T00:00:00.000Z"),
+  };
+  const GOLDEN_TUNNEL: SSHTunnelConfig = {
+    enabled: true,
+    host: "bastion.example",
+    port: 22,
+    username: "jump",
+    authMethod: "password",
+  };
+
+  test("a tunnel that is on, off and absent answers the digest main answered", async () => {
+    expect(await connectionFingerprint({ ...GOLDEN_BASE, sshTunnel: GOLDEN_TUNNEL })).toBe(
+      "c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194",
+    );
+    expect(await connectionFingerprint({ ...GOLDEN_BASE, sshTunnel: { ...GOLDEN_TUNNEL, enabled: false } })).toBe(
+      "a56aedd6841c87b1e66be46ce88ab71dff6ad77f0901dd01ff69d6011bc190a2",
+    );
+    expect(await connectionFingerprint(GOLDEN_BASE)).toBe(
+      "0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568",
+    );
+  });
+
+  test("an opened tunnel's provider connection answers the record's digest", async () => {
+    // The copy a provider is built from (FND-2 slice 5b): the local endpoint, the far end, and the route under core's
+    // marker in place of `sshTunnel`.
+    const opened: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      host: "127.0.0.1",
+      port: 40000,
+      [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 },
+      [TUNNEL_ROUTE]: "4:true15:bastion.example2:224:jump",
+    };
+    expect(Object.hasOwn(opened, "sshTunnel")).toBe(false);
+    expect(await connectionFingerprint(opened)).toBe(
+      "c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194",
+    );
+  });
+
+  test("a connection carrying core's route marker and no sshTunnel answers the digest main answered, on and off", async () => {
+    const on: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "4:true15:bastion.example2:224:jump",
+    };
+    const off: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "5:false15:bastion.example2:224:jump",
+    };
+    expect(await connectionFingerprint(on)).toBe("c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194");
+    expect(await connectionFingerprint(off)).toBe("a56aedd6841c87b1e66be46ce88ab71dff6ad77f0901dd01ff69d6011bc190a2");
+  });
+
+  test("the connection a provider is built from answers the digest main answered, for a tunnel that is on and opened, off and absent", async () => {
+    const opened: DatabaseConnection & WithTunnelFarEnd = {
+      ...GOLDEN_BASE,
+      sshTunnel: { ...GOLDEN_TUNNEL, password: crypto.randomUUID() },
+      host: "127.0.0.1",
+      port: 40000,
+      [TUNNEL_FAR_END]: { host: "db.internal", port: 5432 },
+    };
+    expect(await connectionFingerprint(providerConnection(opened))).toBe(
+      "c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194",
+    );
+    expect(
+      await connectionFingerprint(
+        providerConnection({ ...GOLDEN_BASE, sshTunnel: { ...GOLDEN_TUNNEL, enabled: false } }),
+      ),
+    ).toBe("a56aedd6841c87b1e66be46ce88ab71dff6ad77f0901dd01ff69d6011bc190a2");
+    expect(await connectionFingerprint(providerConnection(GOLDEN_BASE))).toBe(
+      "0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568",
+    );
+  });
+
+  test("a route marker naming another bastion is another digest", async () => {
+    const elsewhere: DatabaseConnection & WithTunnelRoute = {
+      ...GOLDEN_BASE,
+      [TUNNEL_ROUTE]: "4:true16:bastion.internal2:224:jump",
+    };
+    const digest = await connectionFingerprint(elsewhere);
+    expect(digest).not.toBe("c38eb156db750aba03eef3f457eb93bb2be1d68e8341c43eeedde4ee66a46194");
+    expect(digest).not.toBe("0a6ad0c796153f04028d037f3008e2192fc193c18225f1ff4bd3d82ecb754568");
   });
 });

@@ -30,6 +30,7 @@ import {
   testOptions,
   transportHarness,
 } from "../../../helpers/databend-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FIRST = idsOf(1);
 const P = pathsOf(FIRST.queryId);
@@ -116,6 +117,9 @@ describe("the headers (design 3.2)", () => {
     expect(built.origin).toEqual(options.origin);
     expect(built.tls).toBeNull();
     expect(built.maxSockets).toBe(DATABEND_MAX_SOCKETS);
+    // The egress decision the connection options were built with, by identity.
+    expect(built.egress).toBe(options.egress);
+    expect(built.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(built.requestHeaderNames).toEqual([...DATABEND_REQUEST_HEADER_NAMES]);
     expect(built.headers).toEqual({
       authorization: `Basic ${Buffer.from(`${TEST_USER}:${TEST_PASSWORD}`).toString("base64")}`,

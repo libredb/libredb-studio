@@ -31,6 +31,7 @@ import { QDRANT_ROUTE_FIXTURE } from "../../helpers/qdrant-routes";
 import { recordedLineAnswer, SEEDED_COLLECTIONS, surfaceCapture } from "../../helpers/qdrant-surface-fixtures";
 import { recordingQdrantTransport } from "../../helpers/qdrant-transport";
 import { agentAnswer, agentCapture } from "../../helpers/qdrant-agent";
+import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 
 const CONNECTION: DatabaseConnection = {
   id: "qdrant-integration",
@@ -44,7 +45,10 @@ const CONNECTION: DatabaseConnection = {
 function recordedServer(execution: ProviderExecutionContext = {}) {
   const wire = recordingQdrantTransport((request, line) => recordedLineAnswer(line, request.body ?? null));
   const factory: QdrantClientFactory = (options, routes) => createRestQdrantClient(options, routes, wire.factory);
-  return { provider: new QdrantProvider(CONNECTION, {}, execution, factory), wire };
+  return {
+    provider: new QdrantProvider(CONNECTION, {}, { ...execution, egress: ALLOWS_PRIVATE_HOSTS }, factory),
+    wire,
+  };
 }
 
 /** The 17 routes as `METHOD /path` patterns, each parameter matching one encoded segment. */

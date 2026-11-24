@@ -30,16 +30,13 @@ const createSSHTunnel = mock(async () => {
 mock.module("@/lib/ssh/tunnel", () => ({
   createSSHTunnel,
   closeSSHTunnel: mock(async () => {}),
-  hasTunnel: () => false,
+  releaseUnopenedTunnel: mock(async () => {}),
+  tunnelProviderOpened: mock(() => {}),
 }));
 
-const {
-  enabledProviderTypes,
-  createDatabaseProvider,
-  getOrCreateProvider,
-  acquireExecutionProfileProvider,
-  withOneShotTunnel,
-} = await import("@/lib/db/factory");
+const { createDatabaseProvider, getOrCreateProvider, acquireExecutionProfileProvider, withOneShotTunnel } =
+  await import("@/lib/db/factory");
+const { enabledProviderTypes, readEnabledProviders } = await import("@/lib/db/enabled-providers");
 
 const VSCODE_LIST = "postgres,mssql,mysql,mongodb";
 
@@ -75,6 +72,27 @@ describe("enabledProviderTypes", () => {
   test("a set value with no entry throws", () => {
     process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
     expect(() => enabledProviderTypes()).toThrow(/LIBREDB_ENABLED_PROVIDERS/);
+  });
+});
+
+describe("readEnabledProviders, the one reading enabledProviderTypes and the SQLite sample share", () => {
+  test("unset or blank is every provider", () => {
+    expect(readEnabledProviders()).toEqual({ kind: "every" });
+    process.env.LIBREDB_ENABLED_PROVIDERS = "  \t ";
+    expect(readEnabledProviders()).toEqual({ kind: "every" });
+  });
+  test("a list is the types it names, as enabledProviderTypes answers them", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = " postgres , ,mssql,postgres";
+    expect(readEnabledProviders()).toEqual({ kind: "listed", types: ["postgres", "mssql"] });
+  });
+  test("a value that cannot be read is refused with the error enabledProviderTypes throws, not thrown", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite,postgresql";
+    const read = readEnabledProviders();
+    expect(read.kind).toBe("refused");
+    expect(read.kind === "refused" ? read.error : undefined).toBeInstanceOf(DatabaseConfigError);
+    expect(read.kind === "refused" ? read.error.message : "").toMatch(/LIBREDB_ENABLED_PROVIDERS names "postgresql"/);
+    process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
+    expect(readEnabledProviders().kind).toBe("refused");
   });
 });
 

@@ -1,4 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { composeCatalogRead, composeStatisticsAvailabilityProbe } from "@/lib/agent/composed-sql";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -8,6 +10,7 @@ import {
   packSchemaStatistics,
   readSchemaStatistics,
 } from "@/lib/agent/schema-stats";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { type AgentToolContext, readStatisticsForGrounding } from "@/lib/agent/tools";
 import type { AgentInventory, AgentInventoryObject, AgentRunMode } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
@@ -16,6 +19,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operations/statement-guard";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
 import type { DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
@@ -601,6 +605,31 @@ describe("readSchemaStatistics: the profile it reads under", () => {
 
     expect(await readSchemaStatistics(context)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
   });
+
+  test("a read refused at the time it was granted counts against the run's concurrency until its provider call settles, and the run's next call waits for it", async () => {
+    let settle: () => void = () => {};
+    const late = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const statistics = answerSqlite(true);
+    const answers = [(sql: string) => late.then(() => statistics(sql)), statistics];
+    const h = harness("libsql", (sql) => (answers.shift() as (sql: string) => Promise<QueryResult>)(sql));
+    const context = { ...h.context, deadline: new AgentRunDeadline(250, frozenClock) };
+
+    const probe = await readStatisticsForGrounding(context, "availability");
+    expect(probe.kind).toBe("refused");
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+
+    // maxConcurrentExecutions is 1 and the probe's provider call is still running, so the next read waits for it.
+    const next = readStatisticsForGrounding(context, "estimates");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(h.statements()).toHaveLength(1);
+
+    settle();
+    expect(await next).toMatchObject({ kind: "completed" });
+    expect(h.statements()).toHaveLength(2);
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 0, executedStatements: 2 });
+  });
 });
 
 describe("readStatisticsForGrounding", () => {
@@ -617,7 +646,7 @@ describe("readStatisticsForGrounding", () => {
     const labelOf = async (h: Harness): Promise<string | undefined> => {
       const outcome = await readStatisticsForGrounding(h.context, "estimates");
       if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+      return /CONTENT: (.+), \d+ row\(s\); relayed by /.exec(outcome.modelText)?.[1];
     };
     const operations = harness("mssql", answerMssql);
     const readOnly = harness("mssql", answerMssql, "agent", "sql");
@@ -635,7 +664,7 @@ describe("readStatisticsForGrounding", () => {
     const labelOf = async (h: Harness): Promise<string | undefined> => {
       const outcome = await readStatisticsForGrounding(h.context, "availability");
       if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
-      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+      return /CONTENT: (.+), \d+ row\(s\); relayed by /.exec(outcome.modelText)?.[1];
     };
     const operations = harness("libsql", answerSqlite(true));
     const readOnly = harness("libsql", answerSqlite(true), "agent", "sql");
@@ -647,6 +676,23 @@ describe("readStatisticsForGrounding", () => {
     expect(operationsLabel).toBe("statistics availability");
     expect(operationsLabel).toBe(await labelOf(readOnly));
     expect(readOnly.profiles()).toEqual(["agent-read-only"]);
+  });
+});
+
+describe("the statistics read's own time limit", () => {
+  test("the statistics read that outlasts its time is recorded as Studio's refusal", async () => {
+    const h = harness("mssql", () => new Promise<QueryResult>(() => {}));
+    // A run with 300ms left grants the read 300ms; the double never answers.
+    const context = { ...h.context, deadline: new AgentRunDeadline(300, frozenClock) };
+
+    const outcome = await readStatisticsForGrounding(context, "estimates");
+
+    if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") {
+      throw new Error(`expected a database error, got ${JSON.stringify(outcome)}`);
+    }
+    expect(outcome.refusal.message).toBe("the statistics read did not answer in time");
+    expect(outcome.refusal.refusedBy).toBe("studio");
+    expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
   });
 });
 
@@ -691,6 +737,16 @@ async function statisticsOf(h: Harness): Promise<AgentSchemaStatistics> {
 }
 
 describe("packSchemaStatistics", () => {
+  test("the statistics block is fenced naming the provider of the connection that read them", async () => {
+    const statistics = await statisticsOf(harness("mssql", answerMssql));
+
+    const packed = packSchemaStatistics(TABLES, statistics);
+
+    expect(packed).toContain(
+      "[UNTRUSTED DATABASE CONTENT: estimated table statistics; relayed by the SQL Server provider, bundled with Studio; operation agent/schema-stats; reference mssql engine estimates]",
+    );
+  });
+
   test("lists a table the engine holds no statistics for AS holding none", async () => {
     const statistics = await statisticsOf(harness("postgres", answerPostgres));
 
@@ -930,5 +986,43 @@ describe("packSchemaStatistics", () => {
       "rest nothing on how large a table is",
     );
     expect(packSchemaStatistics(TABLES, statistics)).toContain("do not write a statement whose correctness depends");
+  });
+});
+
+describe("the statistics read under the operations profile and the statement guard", () => {
+  /**
+   * Under the operations profile the statistics read sends its statements through `provider.query`, after the statement
+   * guard admits each one as `sql.query.read`'s input contract would. So every statement a shipped engine sends there
+   * has to be one the guard admits, or the read would be refused on an engine that reads statistics today. The engine
+   * set is computed from the registries: a SQL-family engine whose dialect reads statistics and supplies no catalog
+   * capture, which is the dialect that grounds under the operations profile in plan mode and in the operations workflow.
+   */
+  const engines = (Object.entries(AGENT_STATEMENT_LANGUAGE) as [DatabaseType, string | null][])
+    .filter(([, language]) => language === "sql")
+    .map(([type]) => type)
+    .filter((type) => {
+      const dialect = engineServerDialect(type);
+      return dialect.statistics !== "unsupported" && dialect.catalogCapture === "unsupported";
+    });
+
+  test("every statement the statistics read sends under the operations profile passes the statement guard", () => {
+    expect(engines.length).toBeGreaterThan(0);
+    for (const type of engines) {
+      const catalogRead = engineServerDialect(type).catalogRead;
+      if (catalogRead === "unsupported") throw new Error(`${type} reads statistics with no catalog read`);
+      const probe = composeStatisticsAvailabilityProbe(type);
+      if (probe !== null) {
+        expect({ type, admitted: agentQueryReadSqlInput.safeParse({ sql: probe }).success }).toEqual({
+          type,
+          admitted: true,
+        });
+      }
+      const estimates = composeCatalogRead(type, { kind: "statistics" });
+      const input =
+        catalogRead.commandShaped === true
+          ? { sql: estimates, composed: admitComposedStatement(estimates) }
+          : { sql: estimates };
+      expect({ type, admitted: agentQueryReadSqlInput.safeParse(input).success }).toEqual({ type, admitted: true });
+    }
   });
 });

@@ -8,7 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { isStaleSession } from "@/lib/db/providers/industrial/opcua/errors";
+import { isStaleSession, OpcuaUnansweredError } from "@/lib/db/providers/industrial/opcua/errors";
 import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaSessionPool } from "@/lib/db/providers/industrial/opcua/session-pool";
 
@@ -322,5 +322,174 @@ describe("a session the server no longer has", () => {
     // And the two shapes that ARE the server reporting one still are, which is the control.
     expect(isStaleSession(new Error("BadSessionIdInvalid: the session is no longer valid"))).toBe(true);
     expect(isStaleSession(new Error("The server answered BadConnectionClosed: the connection closed."))).toBe(true);
+  });
+});
+
+/**
+ * A SESSION WHOSE CHANNEL BROKE IS REPLACED. A channel that left a request unanswered cannot be trusted with the next
+ * one, and the request that went unanswered is the only sign that reaches the pool, so that is what it acts on: the
+ * session is dropped and a new one opened before the failure is reported, and the request itself is not run again.
+ */
+describe("a request the server never answered", () => {
+  const unanswered = () =>
+    new OpcuaUnansweredError("A read got no answer from the server: Transaction has timed out ( timeout = 15000 ms ).");
+
+  test("the session is replaced, and the request reports its own failure rather than running again", async () => {
+    const record = { opened: 0, closed: 0 };
+    const pool = new OpcuaSessionPool(async () => fakeClient(record));
+    const first = await pool.acquire();
+    let attempts = 0;
+    const failure = await pool
+      .withSession(async () => {
+        attempts += 1;
+        throw unanswered();
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(attempts).toBe(1);
+    // The unanswered session closed, its replacement already open, and the connection open throughout.
+    expect(record.closed).toBe(1);
+    expect(record.opened).toBe(2);
+    expect(pool.isOpen()).toBe(true);
+    const next = await pool.withSession(async (client) => client);
+    expect(next).not.toBe(first);
+    expect(record.opened).toBe(2);
+  });
+
+  test("two requests unanswered on one session replace it once", async () => {
+    const record = { opened: 0, closed: 0 };
+    const pool = new OpcuaSessionPool(async () => fakeClient(record));
+    const broken = await pool.acquire();
+    const failures = await Promise.all(
+      [1, 2].map(() =>
+        pool
+          .withSession(async (client) => {
+            if (client === broken) throw unanswered();
+            return "row";
+          })
+          .then(
+            () => undefined,
+            (error: unknown) => error,
+          ),
+      ),
+    );
+    expect(failures.every((error) => error instanceof OpcuaUnansweredError)).toBe(true);
+    expect(record.closed).toBe(1);
+    expect(record.opened).toBe(2);
+    expect(await pool.withSession(async () => "row")).toBe("row");
+  });
+
+  test("a request unanswered on the session that replaced a stale one replaces that one too", async () => {
+    const record = { opened: 0, closed: 0 };
+    const pool = new OpcuaSessionPool(async () => fakeClient(record));
+    let attempts = 0;
+    const failure = await pool
+      .withSession(async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("BadSessionIdInvalid");
+        throw unanswered();
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(failure).toBeInstanceOf(OpcuaUnansweredError);
+    expect(attempts).toBe(2);
+    // The stale session and the unanswered one both closed, and a third open for the next request.
+    expect(record.closed).toBe(2);
+    expect(record.opened).toBe(3);
+    expect(pool.isOpen()).toBe(true);
+  });
+
+  test("a replacement that cannot be opened is reported, and the connection then reads as closed", async () => {
+    const record = { opened: 0, closed: 0 };
+    let refuse = false;
+    const pool = new OpcuaSessionPool(async () => {
+      if (refuse) throw new Error("This connection could not be opened to opc.tcp://plant:4840: ECONNREFUSED");
+      return fakeClient(record);
+    });
+    await pool.acquire();
+    refuse = true;
+    const failure = await pool
+      .withSession(async () => {
+        throw unanswered();
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    expect(String((failure as Error).message)).toMatch(/could not be opened/);
+    expect(record.closed).toBe(1);
+    expect(pool.isOpen()).toBe(false);
+  });
+
+  test("a replacement refused with a stale-session code is reported as it is, and the request is not run again", async () => {
+    const record = { opened: 0, closed: 0 };
+    let refuse = false;
+    let asked = 0;
+    const pool = new OpcuaSessionPool(async () => {
+      asked += 1;
+      if (refuse) throw new Error("The server answered BadServerNotConnected: the server is not connected.");
+      return fakeClient(record);
+    });
+    await pool.acquire();
+    refuse = true;
+    let attempts = 0;
+    const failure = await pool
+      .withSession(async () => {
+        attempts += 1;
+        throw unanswered();
+      })
+      .then(
+        () => "resolved",
+        (error: unknown) => error,
+      );
+    expect(String((failure as Error).message)).toBe(
+      "The server answered BadServerNotConnected: the server is not connected.",
+    );
+    // One run, and one replacement asked for: the refusal is not read as a stale session to open a third for.
+    expect(attempts).toBe(1);
+    expect(asked).toBe(2);
+    expect(record.closed).toBe(1);
+    expect(pool.isOpen()).toBe(false);
+  });
+
+  /** Open throughout, as in the stale-session swap: `isConnected()` is derived from it, and the factory reads that. */
+  test("the pool reads as open while an unanswered session is being replaced", async () => {
+    const record = { opened: 0, closed: 0 };
+    let release: (value: unknown) => void = () => {};
+    let reached: (value: unknown) => void = () => {};
+    const inWindow = new Promise((resolve) => (reached = resolve));
+    let asked = 0;
+    const pool = new OpcuaSessionPool(async () => {
+      asked += 1;
+      if (asked === 2) {
+        reached(undefined);
+        await new Promise((resolve) => (release = resolve));
+      }
+      return fakeClient(record);
+    });
+    await pool.acquire();
+    const read = pool
+      .withSession(async () => {
+        throw unanswered();
+      })
+      .then(
+        () => undefined,
+        (error: unknown) => error,
+      );
+    await inWindow;
+    // Mid-swap: the unanswered session is closed and its replacement asked for and not yet handed over.
+    expect(record.closed).toBe(1);
+    expect(record.opened).toBe(1);
+    expect(pool.isOpen()).toBe(true);
+
+    release(undefined);
+    expect(await read).toBeInstanceOf(OpcuaUnansweredError);
+    expect(record.opened).toBe(2);
+    expect(pool.isOpen()).toBe(true);
   });
 });

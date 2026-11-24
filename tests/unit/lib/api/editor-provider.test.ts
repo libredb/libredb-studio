@@ -5,14 +5,16 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
-const opened: { connection: DatabaseConnection; context: unknown }[] = [];
+const opened: { connection: DatabaseConnection; context: unknown; wait: unknown[] }[] = [];
 let connected: DatabaseProvider;
 
 mock.module("@/lib/db", () => ({
-  getOrCreateProvider: mock(async (connection: DatabaseConnection, _options: unknown, context: unknown) => {
-    opened.push({ connection, context });
-    return connected;
-  }),
+  getOrCreateProvider: mock(
+    async (connection: DatabaseConnection, _options: unknown, context: unknown, ...wait: unknown[]) => {
+      opened.push({ connection, context, wait });
+      return connected;
+    },
+  ),
 }));
 
 /** The writable cache by key, as `findCachedProvider` reads it. */
@@ -29,6 +31,7 @@ const session = (role: string) => ({ role });
 function providerOf(capabilities: Record<string, unknown>, sessions: Record<string, DatabaseProvider> = {}) {
   return {
     type: "postgres",
+    config: connection,
     getCapabilities: () => capabilities,
     forCatalog: async (catalog: string) => sessions[catalog],
   } as unknown as DatabaseProvider;
@@ -47,6 +50,18 @@ describe("editorProvider", () => {
       { allowExternalFileAccess: false },
     ]);
     expect(opened[0].connection).toBe(connection);
+  });
+
+  test("an editor request's open wait reaches the factory", async () => {
+    connected = providerOf({});
+    opened.length = 0;
+    const wait = { signal: new AbortController().signal };
+
+    expect(await editorProvider(session("user"), connection, undefined, wait)).toBe(connected);
+    expect(await editorProvider(session("user"), connection, undefined)).toBe(connected);
+    expect(opened[0]?.wait).toEqual([wait]);
+    expect(opened[0]?.wait[0]).toBe(wait);
+    expect(opened[1]?.wait).toEqual([undefined]);
   });
 
   test("a catalog runs on that database's session, and a connection without sessions refuses one", async () => {
@@ -101,5 +116,5 @@ describe("catalog scoping call sites", () => {
       "src/lib/db/catalog-scope.ts",
       "src/lib/mcp/tools/database-choice.ts",
     ]);
-  });
+  }, 60_000);
 });

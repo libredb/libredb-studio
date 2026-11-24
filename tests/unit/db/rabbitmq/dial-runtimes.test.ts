@@ -5,7 +5,8 @@
  * itself: metadata.test with 169.254.169.254, and pinned.test with 127.0.0.1, a name no resolver knows, so a dial that
  * reaches the listener by it proves the address dialled is the checked lookup's answer.
  *
- * Covered on every runtime: the egress literal and lookup refusals with the flag on and off, the dialled address, the
+ * Covered on every runtime: the egress literal and lookup refusals with a blocking and an allowing decision, each handed
+ * to the dial as a provider built by the factory hands it (FND-2 slice 2b-2), the dialled address, the
  * server name for a DNS host only, a host with a trailing dot dialled with the identity `connection-options.ts` gives it
  * (the dot taken off), an IPv6 literal without brackets, the client certificate presented to a server that asks for one,
  * R-S8's three TLS failures, each one connection with no plain retry and each by its kind (the certificate twice, TLS
@@ -17,9 +18,10 @@ import { type AddressInfo, createServer, type Server, type Socket } from "node:n
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { createServer as createTlsServer, type TLSSocket } from "node:tls";
-import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
+import { BLOCKED_HOST, LINK_LOCAL_HOST } from "@/lib/db/http/egress-policy";
 import type { dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import { makeCertificates } from "../../../helpers/node-transport-fixtures";
+import type { EgressDecision } from "@/lib/db/types";
 
 const DIAL = join(
   import.meta.dir,
@@ -36,6 +38,7 @@ const DIAL = join(
   "amqp",
   "dial.ts",
 );
+const EGRESS_DECISIONS = join(import.meta.dir, "..", "..", "..", "helpers", "egress-decisions.ts");
 
 interface Plan {
   readonly plain: number;
@@ -63,16 +66,19 @@ interface Outcome {
  */
 async function runCases(
   dial: typeof dialAmqp,
+  decisions: { readonly blocks: EgressDecision; readonly allows: EgressDecision },
   plan: Plan,
 ): Promise<{ runtime: string; outcomes: Record<string, Outcome> }> {
   const outcomes: Record<string, Outcome> = {};
+  /** The decision the next dials are handed. */
+  let egress = decisions.allows;
   const tls = (identity: string, ca: string) => ({ rejectUnauthorized: true, ca: Buffer.from(ca), identity });
   type Material = ReturnType<typeof tls> & { readonly cert?: Buffer; readonly key?: Buffer };
   /** With `answered`, the case waits for the server's one-word answer and records it as `message`. */
   const record = async (name: string, host: string, port: number, material: Material | null, answered = false) => {
     try {
       const socket = await dial(
-        { host, port, tls: material, username: "u", password: "p", display: `${host}:${port}` },
+        { host, port, tls: material, username: "u", password: crypto.randomUUID(), display: `${host}:${port}`, egress },
         new AbortController().signal,
       );
       const answer = answered
@@ -96,11 +102,10 @@ async function runCases(
       };
     }
   };
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
   await record("plain literal", "127.0.0.1", plan.plain, null);
   await record("name answered by the checked lookup", "pinned.test", plan.plain, null);
-  await record("link-local answer, flag off", "metadata.test", plan.plain, null);
-  await record("link-local literal, flag off", "169.254.169.254", plan.plain, null);
+  await record("link-local answer, allowing decision", "metadata.test", plan.plain, null);
+  await record("link-local literal, allowing decision", "169.254.169.254", plan.plain, null);
   await record("tls by name", "localhost", plan.local, tls("localhost", plan.ca));
   // The identity connection-options.ts gives a host with a trailing dot: the host without it.
   await record("tls by name with a trailing dot", "localhost.", plan.local, tls("localhost", plan.ca));
@@ -119,11 +124,10 @@ async function runCases(
   await record("tls wrong name", "localhost", plan.farName, tls("localhost", plan.ca));
   await record("tls to a plain AMQP port", "localhost", plan.amqp, tls("localhost", plan.ca));
   await record("tls 1.2 refused without a client certificate", "localhost", plan.refusing, tls("localhost", plan.ca));
-  process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
-  await record("flag on, private literal", "127.0.0.1", plan.plain, null);
-  await record("flag on, name", "pinned.test", plan.plain, null);
-  await record("flag on, name over tls", "pinned.test", plan.local, tls("pinned.test", plan.ca));
-  delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+  egress = decisions.blocks;
+  await record("blocking decision, private literal", "127.0.0.1", plan.plain, null);
+  await record("blocking decision, name", "pinned.test", plan.plain, null);
+  await record("blocking decision, name over tls", "pinned.test", plan.local, tls("pinned.test", plan.ca));
   return { runtime: typeof Bun === "undefined" ? process.version : `bun ${Bun.version}`, outcomes };
 }
 
@@ -281,9 +285,11 @@ beforeAll(async () => {
     [
       'import { readFileSync } from "node:fs";',
       `import { dialAmqp } from ${JSON.stringify(DIAL)};`,
+      `import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from ${JSON.stringify(EGRESS_DECISIONS)};`,
       `const runCases = ${runCases.toString()};`,
       'const plan = JSON.parse(readFileSync(process.argv[2], "utf8"));',
-      "const report = await runCases(dialAmqp, plan);",
+      "const decisions = { blocks: BLOCKS_PRIVATE_HOSTS, allows: ALLOWS_PRIVATE_HOSTS };",
+      "const report = await runCases(dialAmqp, decisions, plan);",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",
       "",
@@ -351,21 +357,31 @@ describe("the AMQP dial on Bun and every listed Node", () => {
     for (const run of runs.slice(1)) expect(["24", "26"]).toContain(run.runtime.slice(1).split(".")[0]);
   });
 
-  test("egress: literals and lookup answers, flag on and off; the dialled address is the hook's answer", () => {
+  test("egress: literals and lookup answers, with a blocking and an allowing decision; the dialled address is the hook's answer", () => {
     for (const { runtime, outcomes } of runs) {
       expect({ runtime, outcomes }).toMatchObject({
         runtime,
         outcomes: {
           "plain literal": { ok: true },
           "name answered by the checked lookup": { ok: true },
-          "link-local answer, flag off": { ok: false, errorName: "DatabaseConfigError" },
-          "link-local literal, flag off": { ok: false, errorName: "DatabaseConfigError" },
-          "flag on, private literal": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
-          "flag on, name": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
-          "flag on, name over tls": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
+          "link-local answer, allowing decision": {
+            ok: false,
+            errorName: "DatabaseConfigError",
+            message: LINK_LOCAL_HOST,
+          },
+          "link-local literal, allowing decision": {
+            ok: false,
+            errorName: "DatabaseConfigError",
+            message: LINK_LOCAL_HOST,
+          },
+          "blocking decision, private literal": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
+          "blocking decision, name": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
+          "blocking decision, name over tls": { ok: false, errorName: "DatabaseConfigError", message: BLOCKED },
         },
       });
-      expect(outcomes["link-local answer, flag off"]?.message).toBe(outcomes["link-local literal, flag off"]?.message);
+      expect(outcomes["link-local answer, allowing decision"]?.message).toBe(
+        outcomes["link-local literal, allowing decision"]?.message,
+      );
     }
   });
 

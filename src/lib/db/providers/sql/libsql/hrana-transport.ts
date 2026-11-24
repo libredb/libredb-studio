@@ -35,7 +35,7 @@ import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { keyRowsByPosition } from "@/lib/db/utils/positional-rows";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { isSQLiteInt64Digits } from "../sqlite-int64";
@@ -466,11 +466,14 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   private readonly origin: HttpOrigin;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(config: DatabaseConnection) {
+  constructor(config: DatabaseConnection, egress: EgressDecision) {
+    this.egress = egress;
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
     const port = config.port ?? (secure ? DEFAULT_TLS_PORT : DEFAULT_PORT);
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port);
+    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, port, egress);
     this.authorization = authorizationFor(config);
   }
 
@@ -523,12 +526,16 @@ export class LibSQLHranaTransport implements LibSQLTransport {
 
   public async serverVersion(): Promise<string | null> {
     try {
-      const response = await httpTransportFetch(endpointUrl(this.origin, VERSION_PATH), {
-        method: "GET",
-        headers: this.headers(),
-        // Not followed, like every other request: a 3xx is one more "no version".
-        redirect: "manual",
-      });
+      const response = await httpTransportFetch(
+        endpointUrl(this.origin, VERSION_PATH),
+        {
+          method: "GET",
+          headers: this.headers(),
+          // Not followed, like every other request: a 3xx is one more "no version".
+          redirect: "manual",
+        },
+        this.egress,
+      );
       if (!response.ok) return null;
       const text = (await response.text()).trim();
       return text === "" ? null : text;
@@ -560,14 +567,18 @@ export class LibSQLHranaTransport implements LibSQLTransport {
     const signal = timeoutMs === undefined ? undefined : AbortSignal.timeout(timeoutMs);
     let response: Response;
     try {
-      response = await httpTransportFetch(url, {
-        method: "POST",
-        headers: this.headers(),
-        body,
-        // A followed redirect would carry the token to wherever it points.
-        redirect: "manual",
-        signal,
-      });
+      response = await httpTransportFetch(
+        url,
+        {
+          method: "POST",
+          headers: this.headers(),
+          body,
+          // A followed redirect would carry the token to wherever it points.
+          redirect: "manual",
+          signal,
+        },
+        this.egress,
+      );
     } catch (cause) {
       if (cause instanceof DatabaseConfigError) throw cause;
       throw failedRequest(cause, url, signal, timeoutMs);

@@ -96,7 +96,7 @@ describe("statementLanguage", () => {
 });
 
 describe("the other labels", () => {
-  test("the entity words, the panel captions and the empty states", () => {
+  test("the entity words and the panel caption, and no empty state for a panel Qdrant does not offer", () => {
     expect(QDRANT_LABELS).toMatchObject({
       entityName: "Collection",
       entityNamePlural: "Collections",
@@ -104,9 +104,7 @@ describe("the other labels", () => {
       tableStatsCaption:
         'The first 200 collections. Point counts are Qdrant\'s approximate points_count; POST /collections/{collection_name}/points/count with "exact": true is exact.',
     });
-    expect(QDRANT_LABELS.slowQueriesEmptyState).toContain(
-      "manage-only route that returns other clients' request bodies",
-    );
-    expect(QDRANT_LABELS.sessionsEmptyState).toContain("Prometheus server that scrapes Qdrant's /metrics");
+    expect(QDRANT_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(QDRANT_LABELS.sessionsEmptyState).toBeUndefined();
   });
 });

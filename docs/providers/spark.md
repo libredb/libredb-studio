@@ -18,6 +18,7 @@ LibreDB Studio has no affiliation with and is not endorsed by The Apache Softwar
 | **Connection string**  | Not stored: a pasted `sc://` address is decomposed into fields                                   |
 | **EXPLAIN**            | `spark-text`: `EXPLAIN FORMATTED`, which plans the statement and runs nothing                    |
 | **Write reach** | open: the editor sends every statement as written, and the server is the boundary; the confirmation gate asks before Spark's replacing and code-loading forms |
+| **Failed statement outcome** | unknown: the provider opens its Spark Connect session (`sessions.forScope()`) before it sends the statement, and that failure answers `unknown` like every other |
 | **Transactions**       | None                                                                                             |
 | **Maintenance**        | None                                                                                             |
 | **Query parameters**   | Not supported: Studio sends no bound parameters                                                  |
@@ -80,12 +81,12 @@ Every refusal is raised before any socket opens, and none repeats the value it r
 A Catalog that is not blank is trimmed before it is checked, because Spark looks the name up literally in `SET CATALOG`; Host and Namespace are checked and used as written.
 
 There is no User field: every Studio request uses one fixed Spark Connect identity ([section 10](#10-security)), and Token is the credential.
-A seed or an API call that sets `user` is refused with `Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.`
+A seed or an API call that sets `user`, whatever its value but empty, is refused before the provider is built with `Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.`, so the provider never receives it.
 
 There is no Read-only toggle: Spark has no engine-side read-only mode, so a `readOnly: true` connection is refused before anything is dialled ([section 10](#10-security)).
 
 The SSH tunnel and the SSL / TLS panel are both offered.
-An enabled tunnel that did not open is refused with `This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Apache Spark was not dialled directly: the tunnel opens only when both Host and Port are set.`
+An enabled tunnel that was not opened is refused by Studio before the provider is built, so Apache Spark is never dialled past it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
 The query timeout defaults to 60,000 ms, and a value outside its range is refused with `Query timeout must be a whole number between 1 and 2147483647 milliseconds.`
 
 ### 2.2 Token and TLS
@@ -196,7 +197,7 @@ connections:
     roles: ["admin", "user"]
 ```
 
-A seed that sets `connectionString` or `readOnly: true` for `spark` is refused when the file loads; one that sets `user` loads, and its connection is refused at connect with the User sentence of [section 2.1](#21-fields).
+A seed that sets `connectionString` or `readOnly: true` for `spark` is refused when the file loads; one that sets `user` loads, and its connection is refused before the provider is built with the User sentence of [section 2.1](#21-fields).
 
 ### Connection string
 
@@ -489,16 +490,39 @@ No plan is requested beside an ordinary run.
 | Overview | The version, start time and uptime from the metadata session, and the table count of the current namespace with a "counted from" line that names it; no size and no connection count |
 | Health | One AnalyzePlan round trip; size and cache ratio "N/A" |
 | Performance | Nothing |
-| Slow queries | Empty: `Spark keeps finished statements in the driver's web UI, which Studio does not read in this version.` |
-| Sessions | Empty: `Spark Connect sessions are listed in the driver's web UI, which Studio does not read in this version. Studio's own sessions last one request each, except the one for the tree and the panels, which Studio keeps while the connection is open.` |
+| Slow queries | Not offered, so not drawn: Spark keeps finished statements in the driver's web UI, which Studio does not read in this version |
+| Sessions | Not offered, so not drawn: Spark Connect sessions are listed in the driver's web UI, which Studio does not read in this version |
 | Tables | Refused: `Spark keeps table statistics only where its catalog stores them, and Studio does not read them in this version.` |
 | Indexes | Empty: no Spark SQL statement lists indexes |
 | Storage | Refused: `Spark reports no storage figure Studio can read in this version.` |
 
+Only the overview is offered in Spark's `ENGINE_FACETS` row (Engine facets below), so `getMonitoringData` reads none of the six other panels and the dashboard draws the Overview tab and the pool view only; the rows above for those panels are what each method answers when called directly.
 A catalog with no current namespace, which Spark spells as an empty name, shows a table count of 0 and no "counted from" line.
 The overview's version is the server's text as the version sentences of [section 2.4](#24-test-connection) quote it: withheld whole when it holds the token, and otherwise cut to 64 characters.
 
 The 60 s connection pulse sends one AnalyzePlan on the metadata session, which also keeps that session from idling out.
+
+#### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `spark` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/spark/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` refuses with `SPARK_MONITORING_LABELS.tablesRefused` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` refuses with `SPARK_MONITORING_LABELS.storageRefused` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ### 8.3 Plan mode and agent operations
 

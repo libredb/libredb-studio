@@ -7,18 +7,15 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
-import {
-  WEAVIATE_OPS,
-  type WeaviateOp,
-  type WeaviateRequest,
-  type WeaviateRouteTemplates,
-} from "@/lib/db/providers/vector/weaviate/client";
+import { WEAVIATE_OPS, type WeaviateOp } from "@/lib/languages/weaviateapi/ops";
+import type { WeaviateRequest, WeaviateRouteTemplates } from "@/lib/db/providers/vector/weaviate/client";
 import { buildWeaviateConnectionOptions } from "@/lib/db/providers/vector/weaviate/connection-options";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
-import { WEAVIATE_CLIENT_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CLIENT_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import type { DatabaseConnection } from "@/lib/types";
 import { expectCalls } from "../../../helpers/call-log";
 import { okAnswer, type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -34,7 +31,7 @@ const OPTIONS = buildWeaviateConnectionOptions(
     password: TEST_PASSWORD,
     createdAt: new Date(0),
   } as unknown as DatabaseConnection,
-  { executionReadOnly: false, queryTimeout: 30_000 },
+  { executionReadOnly: false, queryTimeout: 30_000, egress: ALLOWS_PRIVATE_HOSTS },
 );
 
 const signal = () => new AbortController().signal;
@@ -103,10 +100,13 @@ describe("what the client hands the transport", () => {
         origin: { scheme: "http", host: "127.0.0.1", port: 8080 },
         tls: null,
         maxSockets: 4,
+        egress: ALLOWS_PRIVATE_HOSTS,
         headers: { authorization: `Bearer ${TEST_PASSWORD}` },
         reportsUnreachable: true,
       },
     ]);
+    // The egress decision the connection options were built with, by identity.
+    expect(wire.built[0].egress).toBe(ALLOWS_PRIVATE_HOSTS);
   });
 
   test("a request carries the caller's signal, the response cap and the body as written", async () => {

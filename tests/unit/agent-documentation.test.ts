@@ -30,14 +30,15 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { operatorCopyViolations } from "../../scripts/sync-chart-version.mjs";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
+import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_HISTORY_MAX_CONVERSATIONS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import * as engineClientResolvers from "@/lib/agent/languages/engines/client";
 import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
+import { runHeaderRefusal } from "@/lib/agent/run-ledger-ids";
 import { getDBConfig } from "@/lib/db-ui-config";
-import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { DatabaseType } from "@/lib/types";
@@ -610,7 +611,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
    * DuckDB and SQL Server joined, which no test could see. Every line break is joined away first,
    * with the comment marker that continues it, if any, and the indentation around it, so a
    * sentence may wrap where the file wraps: in a docblock, in a # comment, or in a block comment
-   * whose lines carry no marker at all, as the seed loader's does.
+   * whose lines carry no marker at all.
    */
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
@@ -630,10 +631,6 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
 
   test("the factory's profile comment states it", () => {
     expect(prose("src/lib/db/factory.ts")).toContain(`implement that: ${list} (`);
-  });
-
-  test("the seed loader's sample comment states it", () => {
-    expect(prose("src/lib/seed/index.ts")).toContain(`Agent mode executes statements on ${list};`);
   });
 
   test("each engine on the list has its read-only provider file, and the map has no other key", () => {
@@ -720,19 +717,27 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     );
   });
 
-  test.each([...ENGINE_CLAIM_FILES, ...ENGINE_CLAIM_SCANNED, "src/lib/agent/engine-support.ts"])(
-    "%s counts no engines",
-    (file) => {
-      // The Rancher file's editorial notes date old copy by its engine count, so only its submitted copy is held.
-      const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
-      // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
-      expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
-    },
-  );
+  test.each([
+    ...ENGINE_CLAIM_FILES,
+    ...ENGINE_CLAIM_SCANNED,
+    "src/lib/agent/engine-support.ts",
+    "src/lib/db/compatibility.ts",
+  ])("%s counts no engines", (file) => {
+    // The Rancher file's editorial notes date old copy by its engine count, so only its submitted copy is held.
+    const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
+    // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
+    expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
+  });
 
   test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
     const body = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body;
     expect(read("docs/API_DOCS.md")).toContain(`"error": "${body}"`);
+  });
+
+  test("docs/API_DOCS.md quotes the sentence a run recorded in a statement language this Studio does not have is refused with", () => {
+    const sentence = runHeaderRefusal({ mode: "agent", statementLanguage: "cobol" })?.sentence;
+    expect(sentence).toBeDefined();
+    expect(read("docs/API_DOCS.md")).toContain(`"error": ${JSON.stringify(sentence)}`);
   });
 });
 

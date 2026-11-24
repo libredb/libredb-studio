@@ -39,7 +39,7 @@ import {
   WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS,
   weaviateapiAgentReadInput,
 } from "@/lib/db/operations/weaviateapi-admission";
-import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/languages/weaviateapi/metadata-request";
 import {
   admitQdrantapiStatement,
   QDRANTAPI_AGENT_MAX_STATEMENT_CHARS,
@@ -69,7 +69,7 @@ import {
   OXIACLI_AGENT_MAX_STATEMENT_CHARS,
   oxiacliAgentReadInput,
 } from "@/lib/db/operations/oxiacli-admission";
-import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import { OXIA_AGENT_SENTENCES } from "@/lib/languages/oxiacli/agent-statement";
 import {
   admitRabbitreadStatement,
   RABBITREAD_AGENT_MAX_STATEMENT_CHARS,
@@ -81,7 +81,7 @@ import {
   KAFKAREAD_AGENT_MAX_STATEMENT_CHARS,
   kafkareadAgentReadInput,
 } from "@/lib/db/operations/kafkaread-admission";
-import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/languages/kafkaread/agent-statement";
 import {
   admitS3apiStatement,
   S3API_AGENT_MAX_STATEMENT_CHARS,
@@ -100,8 +100,8 @@ import {
   snmpgetAgentReadInput,
 } from "@/lib/db/operations/snmpget-admission";
 import { SNMP_AGENT_SENTENCES } from "@/lib/db/providers/network/snmp/agent-statement";
-import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
-import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/languages/influxql/agent-statement";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/languages/influxql/policy";
 
 /**
  * kubectl's server half: the repair ledger's identity of one read, and the row-cap advice written in the command's

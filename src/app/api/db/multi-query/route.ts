@@ -9,17 +9,26 @@ import { bridgeAbortToCancel } from "@/lib/api/abort-cancel";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { supportsQueryCancel } from "@/lib/db/query-cancel";
 import { QueryCancelledError } from "@/lib/db/errors";
+import {
+  type ProviderTextScrub,
+  providerTextScrub,
+  withholdProviderError,
+  withScrubbedWarnings,
+} from "@/lib/db/operations/provider-text";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
-import { endsOpenQueryTransactions, newQueryCallScope } from "@/lib/db/types";
+import { newQueryCallScope } from "@/lib/db/types";
+import { endEditorScope } from "@/lib/api/editor-query";
 import type { DatabaseProvider, OpenQueryTransactionOutcome } from "@/lib/db/types";
 import { rowsWithNonFiniteWords } from "@/lib/non-finite";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
+import { gateRun } from "@/lib/api/run-confirmation";
+import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
   type QueryEventRequest,
@@ -99,9 +108,9 @@ function boundedText(
 }
 
 /**
- * What a unit's result shows. A batch that produced several result sets shows the last one
- * with rows (#1312), the rule the response applies across a script's statements below, so a
- * plain `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
+ * What a unit's result shows. A batch that produced several result sets shows the last one,
+ * empty or not (#2286) - the same rule a script's statements follow since #2271, so a plain
+ * `SELECT * FROM a; SELECT * FROM b` shows what it showed when the two were separate
  * requests. A unit that produced one set shows it.
  *
  * The count is the shown set's own rows in a batch of several statements: the engine's
@@ -116,7 +125,7 @@ function shownSet(result: QueryResult, unit: ExecutionUnit) {
     const rowCount = batch && result.fields.length > 0 ? result.rows.length : result.rowCount;
     return { rows: result.rows, fields: result.fields, rowCount, columnTypes: result.columnTypes };
   }
-  const set = [...sets].reverse().find((candidate) => candidate.rows.length > 0) ?? sets[sets.length - 1];
+  const set = sets[sets.length - 1];
   return { rows: set.rows, fields: set.fields, rowCount: set.rows.length, columnTypes: set.columnTypes };
 }
 
@@ -130,6 +139,16 @@ interface UnitEvents {
   readonly correlationId: string;
 }
 
+/**
+ * A unit's statement error as the script answers it: the message of what core's scrub answers for it, so an error
+ * whose text holds a credential of the connection answers the withheld sentence, and anything else that is not an
+ * `Error` answers "Unknown error".
+ */
+function statementError(scrub: ProviderTextScrub, error: unknown): string {
+  const answered = withholdProviderError(scrub, error);
+  return answered instanceof Error ? answered.message : "Unknown error";
+}
+
 async function runStatement(
   provider: DatabaseProvider,
   stmt: ExecutionUnit,
@@ -140,6 +159,7 @@ async function runStatement(
   scope: string,
   queryId: string | undefined,
   events: UnitEvents,
+  scrub: ProviderTextScrub,
 ): Promise<StatementResult> {
   const startTime = performance.now();
   const started = queryEventStart();
@@ -184,7 +204,8 @@ async function runStatement(
       // (`src/lib/non-finite.ts`). The main result reuses this array, so it carries them too.
       rows: rowsWithNonFiniteWords(shown.rows),
       executionTime: Math.round(performance.now() - startTime),
-      ...carriedChannels({ warnings: result.warnings, columnTypes }),
+      // A warning field that holds a credential of the connection is withheld; the main result reuses these.
+      ...carriedChannels({ warnings: withScrubbedWarnings(scrub, result).warnings, columnTypes }),
     };
   } catch (error) {
     // The last statement's bound, when an error names it, is said to be Studio's (`noteAppendedBound`).
@@ -194,7 +215,7 @@ async function runStatement(
       ...identity,
       status: "error",
       executionTime: Math.round(performance.now() - startTime),
-      error: error instanceof Error ? error.message : "Unknown error",
+      error: statementError(scrub, error),
     };
   }
 }
@@ -284,11 +305,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
 
+    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"), over the whole submitted
+    // script: after every field check, and before the admission gate and any provider, so a request it answers opens
+    // nothing, runs nothing and records no query event.
+    const gate = await gateRun({
+      route: "multi-query",
+      issuer: runConfirmationIssuerForSession(guard.session),
+      connection,
+      catalog: requestCatalog(body),
+      sql,
+      params: undefined,
+      confirmation: body.confirmation,
+      explain: false,
+    });
+    if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+
     // Before the provider: a request the gate refuses opens nothing and runs nothing.
     admitting = true;
     admitQueryExecution();
     admitting = false;
     const unitEvents: UnitEvents = { request: events, connection, correlationId: uuidv7() };
+    // Core's scrub of the providers this connection builds, over every provider text the script answers.
+    const scrub = providerTextScrub(connection, "any");
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
     // A request already gone, before or while the provider was acquired, starts nothing.
@@ -326,6 +364,12 @@ export async function POST(req: NextRequest) {
     // rolling a concurrent script's and an interactive session's work away. The `scope`
     // above is this request's own, and nothing it did not run on can be ended here.
     //
+    // It ends through the host: `endEditorScope` sends the scope to the legacy bridge's
+    // `console.endScope` through the host core's endScope call, under a cleanup context of
+    // its own that the request's leaving does not end, and waits for it at most 10 s
+    // (docs/providers/CONTRACT.md, clause C-60). A provider that ends nothing of its query
+    // path is not offered the facet and is asked nothing.
+    //
     // What it is NOT: a guard on the word BEGIN. The same shape arrives from a BEGIN
     // inside a statement the splitter cannot see through, so the leak is the missing
     // rollback and not the keyword. And it is not an unconditional ROLLBACK either:
@@ -344,6 +388,7 @@ export async function POST(req: NextRequest) {
           scope,
           bound,
           unitEvents,
+          scrub,
         );
         totalExecutionTime += outcome.executionTime;
         results.push(outcome);
@@ -353,27 +398,27 @@ export async function POST(req: NextRequest) {
       }
     } finally {
       release();
-      if (endsOpenQueryTransactions(provider)) {
-        openTransaction = await provider.endOpenQueryTransaction(scope);
-      }
+      const ended = await endEditorScope(provider, scope, req.signal, "api/db/multi-query");
+      if (ended.offered) openTransaction = ended.openTransaction;
     }
 
-    // Return the last successful result with rows as the main result (for ResultsGrid)
-    const lastResultWithRows = [...results]
-      .reverse()
-      .find((r) => r.status === "success" && r.rows && r.rows.length > 0);
+    // Return the last successful result as the main result (for ResultsGrid). A statement
+    // that succeeded with no rows - an empty SELECT or a write - is the script's own
+    // outcome (#2271); requiring rows here resurrected an earlier statement's data and
+    // dropped the final one's columns.
+    const activeResult = [...results].reverse().find((r) => r.status === "success");
     const hasError = results.some((r) => r.status === "error");
 
     return NextResponse.json({
       // Main result (for backward compatibility with ResultsGrid)
-      rows: lastResultWithRows?.rows || [],
-      fields: lastResultWithRows?.fields || [],
-      rowCount: lastResultWithRows?.rowCount || 0,
+      rows: activeResult?.rows ?? [],
+      fields: activeResult?.fields ?? [],
+      rowCount: activeResult?.rowCount ?? 0,
       executionTime: totalExecutionTime,
       // The main result shows one statement's rows, so it carries that statement's
       // notices and declared types and no others. Merging every statement's
       // warnings here would attribute one run's notice to another run's rows.
-      ...carriedChannels(lastResultWithRows),
+      ...carriedChannels(activeResult),
       // Multi-statement metadata
       multiStatement: true,
       // Present only when there was a transaction to end, following the same rule as the
@@ -384,11 +429,16 @@ export async function POST(req: NextRequest) {
       executedCount: results.length,
       hasError,
       statements: results,
+      ...(gate.unconfirmed && { confirmation: "unconfirmed" }),
     });
   } catch (error) {
     if (admitting || (resolved === undefined && error instanceof SeedConnectionError)) {
       recordRefusedRequest(events, { requestedId, connection: resolved, statement: submitted, started, error });
     }
-    return createErrorResponse(error, { route: "api/db/multi-query" });
+    // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
+    return createErrorResponse(error, {
+      route: "api/db/multi-query",
+      scrub: resolved === undefined ? undefined : providerTextScrub(resolved, "any"),
+    });
   }
 }

@@ -7,15 +7,15 @@
  * again for every review, so a rotated projected token is used at once and nothing about them is kept in memory.
  *
  * The answer is a trust boundary: an allowed review opens a database's credentials to a person. So it is `allowed` only
- * for a 2xx `SubjectAccessReview` that echoes the asked user and says `allowed: true` without `denied: true`, and every
- * other outcome is `failed`, which every caller treats as a deny: a setting, token or CA that cannot be used (a CA
- * file without a PEM certificate included, so no runtime falls back to its public roots), a
+ * for a 2xx `SubjectAccessReview` that echoes the asked user and attributes and says `allowed: true` without
+ * `denied: true`, and every other outcome is `failed`, which every caller treats as a deny: a setting, token or CA that
+ * cannot be used (a CA file without a PEM certificate included, so no runtime falls back to its public roots), a
  * connection or TLS failure, the two-second deadline, a status that is not 2xx (a redirect is never followed), and a
- * body that is not JSON, too large, of another kind or for another user. A failure names its reason and, for a status,
- * the status, and never the token, the groups or the object. Before its first review in a process, and again five
- * minutes after a 404, it asks whether the cluster serves config.openshift.io/v1 (platform-check.ts), and on such a
- * cluster every review fails with `platform`: there a SubjectAccessReview cannot assert the cluster's user name for an
- * OIDC subject.
+ * body that is not JSON, too large, of another kind, for another user or does not echo the asked attributes. A failure
+ * names its reason and, for a status, the status, and never the token, the groups or the object. Before its first review
+ * in a process, and again five minutes after a 404, it asks whether the cluster serves config.openshift.io/v1
+ * (platform-check.ts), and on such a cluster every review fails with `platform`: there a SubjectAccessReview cannot
+ * assert the cluster's user name for an OIDC subject.
  *
  * openshift sign-in has a second backend, the self review: a SelfSubjectAccessReview sent with the signed-in user's own
  * scoped token, so the answer is that user's own RBAC and the review names nothing of Studio's choosing about the
@@ -151,8 +151,9 @@ export interface ServiceAccountCall {
 /**
  * Sends one request of the ServiceAccount backend under the API URL's path, with the pod's token and the CA file as
  * the only trust, and collects the answer, up to the size cap and the deadline. A redirect is an answer, never
- * followed. Each request is a fresh one with `agent: false`, so no global agent and no environment proxy can carry the
- * pod token. Never throws: a failure on the way is a failed outcome.
+ * followed, and a 101 that switches the connection to another protocol fails as `network` at once. Each request is a
+ * fresh one with `agent: false`, so no global agent and no environment proxy can carry the pod token. Never throws: a
+ * failure on the way is a failed outcome.
  */
 export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer | FailedReview> {
   const { url, token, ca, body } = call;
@@ -202,6 +203,13 @@ export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer 
         },
       );
       outgoing.on("error", (error) => settle(transportFailure(error, signal)));
+      // node:http hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event, never
+      // to the response callback, and without a listener it emits no error either, so the call would never settle. The
+      // switched socket is no longer the request's, so it is destroyed here.
+      outgoing.on("upgrade", (_answer, socket) => {
+        socket.destroy();
+        settle(failed("network"));
+      });
       outgoing.end(body);
     } catch (error) {
       settle(transportFailure(error, signal));
@@ -317,5 +325,5 @@ export async function requestAccessReview(
   const answer = await serviceAccountCall({ url, method: "POST", path: REVIEW_PATH, token, ca, body, timeoutMs });
   if ("kind" in answer) return answer;
   if (answer.status < 200 || answer.status > 299) return failed("status", answer.status);
-  return judge(answer.text, "SubjectAccessReview", (spec) => spec.user === subject.user);
+  return judge(answer.text, "SubjectAccessReview", (spec) => spec.user === subject.user && echoes(spec, attributes));
 }

@@ -5,7 +5,6 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { getAppVersion } from "@/lib/app-version";
-import { tunnelRoute } from "@/lib/db/connection-fingerprint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { authLatchKey } from "@/lib/db/providers/sql/databend/auth-latch";
 import {
@@ -21,8 +20,11 @@ import {
   DATABEND_STATEMENT_BYTES,
   DATABEND_SURFACE_TIMEOUT_MS,
 } from "@/lib/db/providers/sql/databend/connection-options";
+import { TUNNEL_ROUTE_MISSING } from "@/lib/db/utils/require-tunnel-route";
 import { secretForms } from "@/lib/db/utils/server-text";
-import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END } from "@/lib/types";
+import { type DatabaseConnection, type SSHTunnelConfig, TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { setEgressFlag } from "../../../helpers/egress-flag";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -33,8 +35,7 @@ const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const originalFlag = process.env[FLAG];
 
 afterEach(() => {
-  if (originalFlag === undefined) delete process.env[FLAG];
-  else process.env[FLAG] = originalFlag;
+  setEgressFlag(originalFlag);
 });
 
 const BROWSER_WORDS = ["Mozilla", "Chrome", "Firefox", "Safari", "Edge", "worksheet"];
@@ -63,12 +64,20 @@ function connection(overrides: Record<string, unknown> = {}): DatabaseConnection
 }
 
 const build = (overrides: Record<string, unknown> = {}, queryTimeout = QUERY_TIMEOUT) =>
-  buildDatabendConnectionOptions(connection(overrides), { queryTimeout, appVersion: VERSION });
+  buildDatabendConnectionOptions(connection(overrides), {
+    queryTimeout,
+    appVersion: VERSION,
+    egress: ALLOWS_PRIVATE_HOSTS,
+  });
 
-function tunnelled(overrides: Record<string, unknown>, farEnd: { host: string; port: number }) {
+/** The route of `BASTION`, as core hands it under `TUNNEL_ROUTE`, written out by hand. */
+const BASTION_ROUTE = "4:true12:bastion.test2:224:jump";
+
+/** A connection as Studio's factory builds it through a tunnel: the local forward, the far end and the route, no sshTunnel. */
+function tunnelled(overrides: Record<string, unknown>, farEnd: { host: string; port: number }, route = BASTION_ROUTE) {
   return buildDatabendConnectionOptions(
-    Object.assign(connection({ sshTunnel: BASTION, ...overrides }), { [TUNNEL_FAR_END]: farEnd }),
-    { queryTimeout: QUERY_TIMEOUT, appVersion: VERSION },
+    Object.assign(connection(overrides), { [TUNNEL_FAR_END]: farEnd, [TUNNEL_ROUTE]: route }),
+    { queryTimeout: QUERY_TIMEOUT, appVersion: VERSION, egress: ALLOWS_PRIVATE_HOSTS },
   );
 }
 
@@ -177,8 +186,12 @@ describe("refusals before any socket", () => {
     }
   });
 
-  test("a tunnel that is on but did not open", () => {
-    expect(refusal(() => build({ sshTunnel: BASTION })).message).toBe(DATABEND_CONNECTION_SENTENCES.tunnelNotOpened);
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no tunnel decision: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [BASTION, { enabled: "yes" }, { enabled: false }, null, "on", []]) {
+      expect(build({ sshTunnel }).origin).toEqual(build().origin);
+    }
   });
 
   test.each([
@@ -186,9 +199,6 @@ describe("refusals before any socket", () => {
     ["password", { password: 7 }, "a string"],
     ["warehouse", { warehouse: 7 }, "a string"],
     ["database", { database: 7 }, "a string"],
-    ["sshTunnel", { sshTunnel: "on" }, "an object"],
-    ["sshTunnel", { sshTunnel: [] }, "an object"],
-    ["sshTunnel.enabled", { sshTunnel: { enabled: "yes" } }, "true or false"],
   ])("a %s of the wrong type is refused by name", (field, overrides, expected) => {
     expect(refusal(() => build(overrides)).message).toBe(DATABEND_CONNECTION_SENTENCES.wrongType(field, expected));
   });
@@ -273,21 +283,30 @@ describe("the connection headers (design 3.2, I10, I15)", () => {
 
   test("the user-agent carries no browser word, with or without a version", () => {
     for (const appVersion of [VERSION, null]) {
-      const agent = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT, appVersion }).headers[
-        "user-agent"
-      ];
+      const agent = buildDatabendConnectionOptions(connection(), {
+        queryTimeout: QUERY_TIMEOUT,
+        appVersion,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      }).headers["user-agent"];
       for (const word of BROWSER_WORDS) expect(agent.toLowerCase()).not.toContain(word.toLowerCase());
     }
   });
 
   test("the user-agent is the bare product when no version is known", () => {
-    const options = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT, appVersion: null });
+    const options = buildDatabendConnectionOptions(connection(), {
+      queryTimeout: QUERY_TIMEOUT,
+      appVersion: null,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(options.headers["user-agent"]).toBe("libredb-studio");
   });
 
   test("the version defaults to getAppVersion()", () => {
     const version = getAppVersion();
-    const options = buildDatabendConnectionOptions(connection(), { queryTimeout: QUERY_TIMEOUT });
+    const options = buildDatabendConnectionOptions(connection(), {
+      queryTimeout: QUERY_TIMEOUT,
+      egress: ALLOWS_PRIVATE_HOSTS,
+    });
     expect(options.headers["user-agent"]).toBe(version === null ? "libredb-studio" : `libredb-studio/${version}`);
   });
 
@@ -421,7 +440,7 @@ describe("the latch key [X03]", () => {
         scheme: "http",
         host: "databend.test",
         port: 8000,
-        route: tunnelRoute(BASTION),
+        route: BASTION_ROUTE,
         user: TEST_USER,
         password: TEST_PASSWORD,
       }),
@@ -431,11 +450,59 @@ describe("the latch key [X03]", () => {
   test("differs for another bastion route", () => {
     const farEnd = { host: "databend.test", port: 8000 };
     const first = tunnelled({ host: "127.0.0.1", port: 41001 }, farEnd);
-    const second = tunnelled(
-      { host: "127.0.0.1", port: 41001, sshTunnel: { ...BASTION, host: "bastion2.test" } },
-      farEnd,
-    );
+    const second = tunnelled({ host: "127.0.0.1", port: 41001 }, farEnd, "4:true13:bastion2.test2:224:jump");
     expect(first.latchKey).not.toBe(second.latchKey);
+  });
+
+  test("the latch key frames core's route marker and reads no sshTunnel (FND-2 slice 5b)", () => {
+    const farEnd = { host: "databend.test", port: 8000 };
+    const planted = { ...BASTION, host: "elsewhere.test", password: crypto.randomUUID() };
+    const options = tunnelled({ host: "127.0.0.1", port: 41001, password: TEST_PASSWORD, sshTunnel: planted }, farEnd);
+    expect(options.latchKey).toBe(
+      authLatchKey({
+        scheme: "http",
+        host: "databend.test",
+        port: 8000,
+        route: BASTION_ROUTE,
+        user: TEST_USER,
+        password: TEST_PASSWORD,
+      }),
+    );
+    expect(options.latchKey).toBe(
+      tunnelled({ host: "127.0.0.1", port: 41001, password: TEST_PASSWORD }, farEnd).latchKey,
+    );
+  });
+
+  test("a tunnel far end without core's route marker is refused by name (FND-2 slice 5b)", () => {
+    const unrouted = Object.assign(connection({ host: "127.0.0.1", port: 41001, sshTunnel: BASTION }), {
+      [TUNNEL_FAR_END]: { host: "databend.test", port: 8000 },
+    });
+    const refused = refusal(() =>
+      buildDatabendConnectionOptions(unrouted, {
+        queryTimeout: QUERY_TIMEOUT,
+        appVersion: VERSION,
+        egress: ALLOWS_PRIVATE_HOSTS,
+      }),
+    );
+    expect(refused.message).toBe(TUNNEL_ROUTE_MISSING);
+    expect(refused.message).not.toContain("bastion.test");
+  });
+
+  test("without a far end the route is empty, a marker or not (FND-2 slice 5b)", () => {
+    const plain = build({ password: TEST_PASSWORD, host: "127.0.0.1" });
+    expect(build({ password: TEST_PASSWORD, host: "127.0.0.1", [TUNNEL_ROUTE]: BASTION_ROUTE }).latchKey).toBe(
+      plain.latchKey,
+    );
+    expect(plain.latchKey).toBe(
+      authLatchKey({
+        scheme: "http",
+        host: "127.0.0.1",
+        port: 8000,
+        route: "",
+        user: TEST_USER,
+        password: TEST_PASSWORD,
+      }),
+    );
   });
 
   test("differs from the untunnelled connection to the same far end", () => {

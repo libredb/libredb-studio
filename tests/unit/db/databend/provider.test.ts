@@ -52,6 +52,7 @@ import {
   transportDeps,
   wireIds,
 } from "../../../helpers/databend-node-transport";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 // ============================================================================
 // A fake query server
@@ -268,6 +269,7 @@ function build(fake: FakeServer, overrides: Record<string, unknown> = {}, queryT
   const provider = new DatabendProvider(
     testConnection(overrides),
     { queryTimeout },
+    { egress: ALLOWS_PRIVATE_HOSTS },
     { ...time.deps, createNodeTransport: fake.factory },
   );
   opened.push({ provider, time });

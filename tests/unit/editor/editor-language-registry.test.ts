@@ -19,7 +19,7 @@ import type { EditorCompletionContext, EditorLanguageContribution } from "@/lib/
 import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { MILVUS_CONSOLE, MILVUS_ROUTES } from "@/lib/db/providers/vector/milvus/routes";
 import { QDRANT_CONSOLE, QDRANT_ROUTES as QDRANT_ROUTES_REAL } from "@/lib/db/providers/vector/qdrant/routes";
-import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import type { EditorLanguage as TabEditorLanguage } from "@/lib/editor/tab-language";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";

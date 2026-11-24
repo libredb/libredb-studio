@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { editorCacheKey, removeProvider } from "@/lib/db/factory";
 import { createErrorResponse } from "@/lib/api/errors";
+import { UnknownProviderError } from "@/lib/db/errors";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
@@ -78,9 +79,11 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    // A refusal of the connection the request names, such as a custom connection while they are off, keeps its own
-    // status and code, as on every route that resolves one.
-    if (error instanceof SeedConnectionError) return createErrorResponse(error, { route: "api/db/disconnect" });
+    // A refusal of the connection the request names, such as a custom connection while they are off, or a type that
+    // names no provider (FND-1), keeps its own status and code, as on every route that resolves one.
+    if (error instanceof SeedConnectionError || error instanceof UnknownProviderError) {
+      return createErrorResponse(error, { route: "api/db/disconnect" });
+    }
     logger.error("[DB] Error disconnecting provider", error, { route: "POST /api/db/disconnect" });
     return NextResponse.json({ success: false, error: "Failed to disconnect" }, { status: 500 });
   }

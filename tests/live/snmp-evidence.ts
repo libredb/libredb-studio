@@ -25,6 +25,7 @@ import { SnmpProvider } from "@/lib/db/providers/network/snmp/index";
 import type { DatabaseConnection } from "@/lib/types";
 import { FIXTURE_COMMUNITY } from "../fixtures/snmp/identity";
 import { keyOf, readRequest } from "../helpers/snmp-capture";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const STATEMENTS = [
   "get 1.3.6.1.2.1.1.5.0",
@@ -78,7 +79,7 @@ const connection = {
   updatedAt: new Date().toISOString(),
 } as unknown as DatabaseConnection;
 
-const provider = new SnmpProvider(connection, {});
+const provider = new SnmpProvider(connection, {}, { egress: egressDecision() });
 await provider.connect();
 const notes: string[] = [];
 for (const statement of STATEMENTS) {

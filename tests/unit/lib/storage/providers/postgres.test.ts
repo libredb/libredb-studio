@@ -1,4 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import type { ServerStorageProvider } from "@/lib/storage/types";
 import { logger } from "@/lib/logger";
@@ -50,7 +51,10 @@ mock.module("pg", () => ({
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
+import { VERSION_TWO_NOT_RECORDED } from "@/lib/storage/envelope-settings";
+import { closeStorageProvider } from "@/lib/storage/factory";
 import { PostgresStorageProvider } from "@/lib/storage/providers/postgres";
+import { resealStoreAtBoot } from "@/lib/storage/reseal-at-boot";
 import {
   AccountWriteConflict,
   LastAdminError,
@@ -76,12 +80,17 @@ describe("PostgresStorageProvider", () => {
     await provider.close();
   });
 
+  /** Every statement the pool and its clients received, in order. */
+  const statements = (): string[] => (mockQuery.mock.calls as unknown[][]).map((call) => String(call[0]));
+  /** The one statement initialize creates the tables with. */
+  const tableDdl = (): string => statements().find((sql) => sql.includes("CREATE TABLE IF NOT EXISTS user_storage"))!;
+
   test("initialize creates table", async () => {
     await provider.initialize();
-    // The tables, then the lookup of missing passkey indexes, which finds none here.
-    expect(mockQuery).toHaveBeenCalledTimes(2);
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toContain("CREATE TABLE IF NOT EXISTS user_storage");
+    // One transaction (BEGIN, the lock, the check for existing tables, the tables, the marker of a store created from
+    // nothing, COMMIT), then the lookup of missing passkey indexes, which finds none here.
+    expect(mockQuery).toHaveBeenCalledTimes(7);
+    expect(tableDdl()).toContain("CREATE TABLE IF NOT EXISTS user_storage");
   });
 
   test("initialize disables SSL for localhost when no ssl params", async () => {
@@ -422,8 +431,7 @@ describe("PostgresStorageProvider", () => {
 
   test("initialize creates the accounts table", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
-    expect(sql).toContain("CREATE TABLE IF NOT EXISTS accounts");
+    expect(tableDdl()).toContain("CREATE TABLE IF NOT EXISTS accounts");
   });
 
   test("lists and reads accounts", async () => {
@@ -698,7 +706,7 @@ describe("PostgresStorageProvider", () => {
 
   test("initialize creates the passkey tables after accounts, with ON DELETE CASCADE and a BIGINT counter", async () => {
     await provider.initialize();
-    const sql = (mockQuery.mock.calls as unknown[][])[0][0] as string;
+    const sql = tableDdl();
     const order = [
       "CREATE TABLE IF NOT EXISTS accounts",
       "CREATE TABLE IF NOT EXISTS passkey_users",
@@ -721,43 +729,84 @@ describe("PostgresStorageProvider", () => {
       "SELECT index_name FROM unnest($1::text[]) AS wanted(index_name) WHERE to_regclass(index_name) IS NULL";
     const indexes = ["passkey_credentials_account", "passkey_spent_challenges_expiry"];
 
+    /** The index lookup and the index DDL initialize sends, with the lookup answering `missing`. */
+    async function afterTables(missing: string[]): Promise<unknown[][]> {
+      mockQuery.mockClear();
+      mockQuery.mockImplementation(async (sql: string) =>
+        sql === lookup ? { rows: missing.map((index_name) => ({ index_name })) } : { rows: [] },
+      );
+      const initialized = new PostgresStorageProvider("postgresql://localhost:5432/test");
+      try {
+        await initialized.initialize();
+      } finally {
+        await initialized.close();
+        mockQuery.mockImplementation(async () => ({ rows: [] }));
+      }
+      const calls = mockQuery.mock.calls as unknown[][];
+      return calls.filter((call) => call[0] === lookup || String(call[0]).startsWith("CREATE INDEX"));
+    }
+
     // A DBA-managed schema that already has both: nothing but the lookup after the tables.
-    await provider.initialize();
-    const present = mockQuery.mock.calls as unknown[][];
-    expect(present).toHaveLength(2);
-    expect(present[1]).toEqual([lookup, [indexes]]);
+    expect(await afterTables([])).toEqual([[lookup, [indexes]]]);
 
     // A schema missing one creates exactly that one.
-    mockQuery.mockClear();
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: [{ index_name: "passkey_spent_challenges_expiry" }] });
-    const partial = new PostgresStorageProvider("postgresql://localhost:5432/test");
-    await partial.initialize();
-    await partial.close();
-    expect((mockQuery.mock.calls as unknown[][]).map((call) => call[0])).toEqual([
-      expect.stringContaining("CREATE TABLE IF NOT EXISTS user_storage"),
+    expect((await afterTables(["passkey_spent_challenges_expiry"])).map((call) => call[0])).toEqual([
       lookup,
       "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
     ]);
 
     // A fresh schema creates both, in order.
-    mockQuery.mockClear();
-    mockQuery.mockResolvedValueOnce({ rows: [] });
-    mockQuery.mockResolvedValueOnce({ rows: indexes.map((index_name) => ({ index_name })) });
-    const fresh = new PostgresStorageProvider("postgresql://localhost:5432/test");
-    await fresh.initialize();
-    await fresh.close();
-    expect((mockQuery.mock.calls as unknown[][]).slice(2).map((call) => call[0])).toEqual([
+    expect((await afterTables(indexes)).map((call) => call[0])).toEqual([
+      lookup,
       "CREATE INDEX IF NOT EXISTS passkey_credentials_account ON passkey_credentials (account_email)",
       "CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON passkey_spent_challenges (expires_at)",
     ]);
   });
 
+  test("initialize looks up and creates the missing passkey indexes inside the advisory-lock transaction, so replicas starting together create them one at a time", async () => {
+    const missing = ["passkey_credentials_account", "passkey_spent_challenges_expiry"];
+    mockQuery.mockImplementation(async (sql: string) =>
+      sql.includes("to_regclass(index_name) IS NULL")
+        ? { rows: missing.map((index_name) => ({ index_name })) }
+        : { rows: [] },
+    );
+    try {
+      await provider.initialize();
+    } finally {
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+    }
+    const sql = statements();
+    const lock = sql.findIndex((statement) => statement.startsWith("SELECT pg_advisory_xact_lock("));
+    const lookup = sql.findIndex((statement) => statement.includes("to_regclass(index_name) IS NULL"));
+    const created = sql.flatMap((statement, at) => (statement.startsWith("CREATE INDEX") ? [at] : []));
+    const commit = sql.indexOf("COMMIT");
+    expect(created).toHaveLength(2);
+    expect(lock).toBeLessThan(sql.indexOf(tableDdl()));
+    expect(sql.indexOf(tableDdl())).toBeLessThan(lookup);
+    expect(lookup).toBeLessThan(created[0]);
+    expect(created[1]).toBeLessThan(commit);
+    // Nothing runs after the transaction commits, so the lock covers every statement that creates an object.
+    expect(commit).toBe(sql.length - 1);
+  });
+
   test("a missing privilege during initialize names the tables, the privileges and the manual DDL", async () => {
     const denied = Object.assign(new Error("permission denied for schema public"), { code: "42501" });
     const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+    /** The pool answers `failure` to the first statement that contains `needle`, the lookup `missing`, and [] else. */
+    const failOn = (needle: string, failure: Error, missing: string[] = []) => {
+      let failed = false;
+      mockQuery.mockImplementation(async (sql: string) => {
+        if (!failed && sql.includes(needle)) {
+          failed = true;
+          throw failure;
+        }
+        return sql.includes("to_regclass(index_name) IS NULL")
+          ? { rows: missing.map((index_name) => ({ index_name })) }
+          : { rows: [] };
+      });
+    };
     try {
-      mockQuery.mockRejectedValueOnce(denied);
+      failOn("CREATE TABLE", denied);
       const failure = await provider.initialize().then(
         () => null,
         (error: unknown) => error as Error,
@@ -773,9 +822,7 @@ describe("PostgresStorageProvider", () => {
 
       // Creating a missing index on a table the user does not own is the same refusal.
       const notOwner = Object.assign(new Error("must be owner of table passkey_credentials"), { code: "42501" });
-      mockQuery.mockResolvedValueOnce({ rows: [] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ index_name: "passkey_credentials_account" }] });
-      mockQuery.mockRejectedValueOnce(notOwner);
+      failOn("CREATE INDEX", notOwner, ["passkey_credentials_account"]);
       const indexFailure = await new PostgresStorageProvider("postgresql://localhost:5432/test").initialize().then(
         () => null,
         (error: unknown) => error as Error,
@@ -785,10 +832,11 @@ describe("PostgresStorageProvider", () => {
 
       // Any other driver error is rethrown as it came.
       const other = Object.assign(new Error("relation is broken"), { code: "XX000" });
-      mockQuery.mockRejectedValueOnce(other);
+      failOn("CREATE TABLE", other);
       await expect(new PostgresStorageProvider("postgresql://localhost:5432/test").initialize()).rejects.toBe(other);
     } finally {
       errorSpy.mockRestore();
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
     }
   });
 
@@ -913,6 +961,321 @@ describe("PostgresStorageProvider", () => {
     expect(backend.release).toHaveBeenCalledTimes(1);
     expect(backend.release).toHaveBeenCalledWith(undefined);
     expect(backend.client.listenerCount("error")).toBe(0);
+  });
+
+  // ── The credential envelope state and the operator re-seal ──
+
+  const LABEL = "pre-reseal-20261122T053000Z";
+  const BACKED_UP = [
+    "storage_meta",
+    "user_storage",
+    "accounts",
+    "passkey_users",
+    "passkey_credentials",
+    "passkey_spent_challenges",
+  ];
+
+  test("initialize creates storage_meta with the other tables", async () => {
+    await provider.initialize();
+    expect(tableDdl()).toMatch(
+      /CREATE TABLE IF NOT EXISTS storage_meta \(\s*key\s+TEXT PRIMARY KEY,\s*value\s+TEXT NOT NULL,/,
+    );
+  });
+
+  test("initialize takes a transaction-scoped advisory lock before the table DDL, so replicas starting together create the tables one at a time", async () => {
+    await provider.initialize();
+    const sql = statements();
+    // The lock is taken inside the transaction that creates the tables, so it is held until every table is committed.
+    const order = [
+      sql.indexOf("BEGIN"),
+      sql.findIndex((statement) => statement.startsWith("SELECT pg_advisory_xact_lock(")),
+      sql.indexOf(tableDdl()),
+      sql.indexOf("COMMIT"),
+    ];
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+  });
+
+  const PRESENCE = "WHERE to_regclass(table_name) IS NOT NULL";
+
+  test("initialize decides inside the advisory lock that a store is created from nothing, and records v2 in the same transaction", async () => {
+    await provider.initialize();
+
+    const sql = statements();
+    const at = (needle: string) => sql.findIndex((statement) => statement.includes(needle));
+    const order = [
+      at("BEGIN"),
+      at("SELECT pg_advisory_xact_lock("),
+      at(PRESENCE),
+      at("CREATE TABLE IF NOT EXISTS storage_meta"),
+      at("INSERT INTO storage_meta"),
+      at("COMMIT"),
+    ];
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const calls = mockQuery.mock.calls as unknown[][];
+    expect(calls[at(PRESENCE)][1]).toEqual([BACKED_UP]);
+    expect(calls[at("INSERT INTO storage_meta")][1]).toEqual(["credential_envelope", "v2"]);
+  });
+
+  test("initialize records no row on a store whose tables existed before, so version 1 stays accepted there", async () => {
+    mockQuery.mockImplementation(async (sql: string) =>
+      sql.includes(PRESENCE) ? { rows: [{ table_name: "user_storage" }] } : { rows: [] },
+    );
+    try {
+      await provider.initialize();
+    } finally {
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+    }
+
+    expect(statements().some((statement) => statement.includes("INSERT INTO storage_meta"))).toBe(false);
+    expect(statements()).toContain("COMMIT");
+  });
+
+  test("readEnvelopeState answers v1-accepted without a row and v1-retired for v2, and refuses any other value by name", async () => {
+    await provider.initialize();
+    const read = "SELECT value FROM storage_meta WHERE key = $1";
+
+    mockQuery.mockResolvedValueOnce({ rows: [] });
+    expect(await provider.readEnvelopeState()).toBe("v1-accepted");
+    mockQuery.mockResolvedValueOnce({ rows: [{ value: "v2" }] });
+    expect(await provider.readEnvelopeState()).toBe("v1-retired");
+    mockQuery.mockResolvedValueOnce({ rows: [{ value: "v3" }] });
+    await expect(provider.readEnvelopeState()).rejects.toThrow('credential_envelope is "v3"');
+    expect((mockQuery.mock.calls as unknown[][]).slice(-3)).toEqual([
+      [read, ["credential_envelope"]],
+      [read, ["credential_envelope"]],
+      [read, ["credential_envelope"]],
+    ]);
+  });
+
+  test("rewriteStoredCredentials locks storage_meta, accounts and user_storage in that order, backs up every store table in its schema, rewrites and marks v2 in one transaction", async () => {
+    await provider.initialize();
+    const factor = randomUUID();
+    const client = scriptedClient((sql) => {
+      if (sql.startsWith("SELECT value FROM storage_meta")) return { rows: [] };
+      if (sql.startsWith("SELECT user_id, data")) {
+        return {
+          rows: [
+            { user_id: "alice", data: "[1]" },
+            { user_id: "bob", data: "[2]" },
+          ],
+        };
+      }
+      if (sql.startsWith("SELECT email, totp_secret")) {
+        return { rows: [{ email: "ada@example.com", totp_secret: factor, totp_pending: null }] };
+      }
+      return {};
+    });
+
+    const result = await provider.rewriteStoredCredentials(
+      {
+        connections: (owner, data) => (owner === "alice" ? `${data}!` : null),
+        factors: (row) => ({ totpSecret: `${row.totpSecret}!`, totpPending: row.totpPending }),
+        beforeRetire: () => {},
+      },
+      LABEL,
+    );
+
+    const suffix = "pre_reseal_20261122t053000z";
+    expect(result).toEqual({
+      kind: "rewritten",
+      backup: BACKED_UP.map((table) => `${table}_${suffix}`).join(", "),
+    });
+    expect(client.statements).toEqual([
+      { sql: "BEGIN", params: [] },
+      { sql: "LOCK TABLE storage_meta, accounts, user_storage IN EXCLUSIVE MODE", params: [] },
+      { sql: "SELECT value FROM storage_meta WHERE key = $1", params: ["credential_envelope"] },
+      ...BACKED_UP.map((table) => ({ sql: `CREATE TABLE ${table}_${suffix} AS TABLE ${table}`, params: [] })),
+      {
+        sql: "SELECT user_id, data FROM user_storage WHERE collection = 'connections' ORDER BY user_id",
+        params: [],
+      },
+      {
+        sql: "UPDATE user_storage SET data = $1 WHERE user_id = $2 AND collection = 'connections'",
+        params: ["[1]!", "alice"],
+      },
+      { sql: "SELECT email, totp_secret, totp_pending FROM accounts ORDER BY email", params: [] },
+      {
+        sql: "UPDATE accounts SET totp_secret = $1, totp_pending = $2 WHERE email = $3",
+        params: [`${factor}!`, null, "ada@example.com"],
+      },
+      {
+        sql: expect.stringContaining("INSERT INTO storage_meta (key, value, updated_at) VALUES ($1, $2, NOW())"),
+        params: ["credential_envelope", "v2"],
+      },
+      { sql: "COMMIT", params: [] },
+    ]);
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  test("a failure part way rolls back and rethrows", async () => {
+    await provider.initialize();
+    const failure = new Error("rewrite failed");
+    const client = scriptedClient((sql) => {
+      if (sql.startsWith("SELECT user_id, data")) return { rows: [{ user_id: "alice", data: "[1]" }] };
+      return {};
+    });
+
+    await expect(
+      provider.rewriteStoredCredentials(
+        {
+          connections: () => {
+            throw failure;
+          },
+          factors: () => null,
+          beforeRetire: () => {},
+        },
+        LABEL,
+      ),
+    ).rejects.toBe(failure);
+
+    expect(client.sql().at(-1)).toBe("ROLLBACK");
+    expect(client.sql()).not.toContain("COMMIT");
+  });
+
+  test("beforeRetire runs after every row and account and before the marker, and its throw rolls the transaction back", async () => {
+    await provider.initialize();
+    const order: string[] = [];
+    const client = scriptedClient((sql) => {
+      order.push(sql.split(/\s+/).slice(0, 3).join(" "));
+      if (sql.includes("FROM user_storage WHERE collection")) return { rows: [{ user_id: "alice", data: "[]" }] };
+      if (sql.includes("SELECT email, totp_secret")) {
+        return { rows: [{ email: "ada@example.com", totp_secret: null, totp_pending: null }] };
+      }
+      return { rows: [] };
+    });
+    const refusal = new Error("refused before retiring");
+
+    await expect(
+      provider.rewriteStoredCredentials(
+        {
+          connections: () => "[1]",
+          factors: () => ({ totpSecret: "x", totpPending: null }),
+          beforeRetire: () => {
+            order.push("beforeRetire");
+            throw refusal;
+          },
+        },
+        LABEL,
+      ),
+    ).rejects.toBe(refusal);
+
+    const sql = client.sql();
+    expect(sql.some((statement) => statement.includes("INSERT INTO storage_meta"))).toBe(false);
+    expect(sql.at(-1)).toBe("ROLLBACK");
+    const retire = order.indexOf("beforeRetire");
+    expect(retire).toBe(order.length - 2);
+    expect(order[retire - 1]).toStartWith("UPDATE accounts SET");
+  });
+
+  test("a retired store commits with no backup", async () => {
+    await provider.initialize();
+    const client = scriptedClient((sql) =>
+      sql.startsWith("SELECT value FROM storage_meta") ? { rows: [{ value: "v2" }] } : {},
+    );
+
+    const result = await provider.rewriteStoredCredentials(
+      { connections: () => null, factors: () => null, beforeRetire: () => {} },
+      LABEL,
+    );
+
+    expect(result).toEqual({ kind: "already-retired" });
+    expect(client.sql()).toEqual([
+      "BEGIN",
+      "LOCK TABLE storage_meta, accounts, user_storage IN EXCLUSIVE MODE",
+      "SELECT value FROM storage_meta WHERE key = $1",
+      "COMMIT",
+    ]);
+  });
+
+  test("a backup label that is not letters, digits and dashes is refused before anything runs", async () => {
+    await provider.initialize();
+    const client = scriptedClient();
+
+    await expect(
+      provider.rewriteStoredCredentials(
+        { connections: () => null, factors: () => null, beforeRetire: () => {} },
+        "pre-reseal; DROP",
+      ),
+    ).rejects.toThrow("backup label");
+    expect(client.statements).toEqual([]);
+  });
+
+  /**
+   * The boot step over this provider, through the storage factory, with both envelope settings set and a store whose
+   * tables exist; `marker` is the credential_envelope row the store holds, if any.
+   */
+  async function bootWithBothSettings(marker: string | undefined) {
+    const keys = [
+      "STORAGE_PROVIDER",
+      "STORAGE_POSTGRES_URL",
+      "STORAGE_ENCRYPTION_RESEAL",
+      "STORAGE_ENCRYPTION_REQUIRE_V2",
+    ] as const;
+    const saved = keys.map((key) => process.env[key]);
+    process.env.STORAGE_PROVIDER = "postgres";
+    process.env.STORAGE_POSTGRES_URL = "postgresql://localhost:5432/test";
+    process.env.STORAGE_ENCRYPTION_RESEAL = "true";
+    process.env.STORAGE_ENCRYPTION_REQUIRE_V2 = "true";
+    mockQuery.mockImplementation(async (sql: string) => {
+      if (sql.includes(PRESENCE)) return { rows: BACKED_UP.map((table_name) => ({ table_name })) };
+      if (sql.startsWith("SELECT value FROM storage_meta"))
+        return { rows: marker === undefined ? [] : [{ value: marker }] };
+      return { rows: [] };
+    });
+    const originalExit = process.exit;
+    const exits: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exits.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const result = await resealStoreAtBoot();
+      return {
+        result,
+        exits,
+        banner: errorSpy.mock.calls.flat().join("\n"),
+        warned: warn.mock.calls.map((call) => String(call[0])),
+      };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      warn.mockRestore();
+      mockQuery.mockImplementation(async () => ({ rows: [] }));
+      await closeStorageProvider();
+      keys.forEach((key, index) => {
+        if (saved[index] === undefined) delete process.env[key];
+        else process.env[key] = saved[index];
+      });
+    }
+  }
+
+  /** The statements that read or write credentials, back the store up, or take the re-seal's lock. */
+  const credentialWork = () =>
+    statements().filter((sql) =>
+      ["FROM user_storage", "FROM accounts", "pre_reseal", "LOCK TABLE", "UPDATE ", "INSERT INTO storage_meta"].some(
+        (needle) => sql.includes(needle),
+      ),
+    );
+
+  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, the start is refused by name on a store with no credential_envelope row, reading or writing no stored credential and backing nothing up", async () => {
+    const { result, exits, banner } = await bootWithBothSettings(undefined);
+
+    expect(credentialWork()).toEqual([]);
+    expect(result).toBe(false);
+    expect(exits).toEqual([1]);
+    expect(banner).toContain(VERSION_TWO_NOT_RECORDED);
+  });
+
+  test("with STORAGE_ENCRYPTION_RESEAL and STORAGE_ENCRYPTION_REQUIRE_V2 both set, a store that records the re-seal starts and nothing is done", async () => {
+    const { result, exits, warned } = await bootWithBothSettings("v2");
+
+    expect(credentialWork()).toEqual([]);
+    expect(result).toBe(true);
+    expect(exits).toEqual([]);
+    expect(warned.filter((line) => line.startsWith("STORAGE_ENCRYPTION_RESEAL"))).toHaveLength(2);
   });
 
   test("updateAccount is conditional on the version it read", async () => {
@@ -1240,6 +1603,7 @@ describe("PostgresStorageProvider", () => {
   // ── STORAGE_POSTGRES_SCHEMA ──────────────────────────────────────────────────
 
   const STORAGE_TABLES = [
+    "storage_meta",
     "user_storage",
     "accounts",
     "passkey_users",
@@ -1266,7 +1630,9 @@ describe("PostgresStorageProvider", () => {
       mockQuery.mockImplementation(async (sql: string) => {
         if (sql.includes("pg_namespace")) return { rows: [{ role: "libredb_studio", present: true }] };
         // A fresh schema: both indexes are missing, so initialize() creates them.
-        if (sql.includes("to_regclass")) return { rows: qualifiedIndexes.map((index_name) => ({ index_name })) };
+        if (sql.includes("to_regclass(index_name) IS NULL")) {
+          return { rows: qualifiedIndexes.map((index_name) => ({ index_name })) };
+        }
         return { rows: [], rowCount: 1 };
       });
       const qualified = new PostgresStorageProvider("postgresql://localhost:5432/test");
@@ -1308,6 +1674,16 @@ describe("PostgresStorageProvider", () => {
         purgeSpentBefore: PURGE_BEFORE,
       });
       await qualified.renamePasskey(ACCOUNT.email, PASSKEY.id, "Laptop");
+      await qualified.readEnvelopeState();
+      expect(
+        await qualified.rewriteStoredCredentials(
+          { connections: () => null, factors: () => null, beforeRetire: () => {} },
+          "pre-reseal-x",
+        ),
+      ).toEqual({
+        kind: "rewritten",
+        backup: STORAGE_TABLES.map((table) => `"studio".${table}_pre_reseal_x`).join(", "),
+      });
       await qualified.deletePasskey({
         email: ACCOUNT.email,
         id: PASSKEY.id,
@@ -1333,8 +1709,11 @@ describe("PostgresStorageProvider", () => {
         "SELECT quote_ident(current_user) AS role, EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1) AS present",
         ["studio"],
       ]);
-      expect(poolCalls[2][1]).toEqual([qualifiedIndexes]);
-      expect(poolCalls.slice(3, 5).map((call) => call[0])).toEqual([
+      const presence = poolCalls.find((call) => String(call[0]).includes("to_regclass(table_name) IS NOT NULL"))!;
+      expect(presence[1]).toEqual([STORAGE_TABLES.map((table) => `"studio".${table}`)]);
+      const lookup = poolCalls.findIndex((call) => String(call[0]).includes("to_regclass(index_name) IS NULL"));
+      expect(poolCalls[lookup][1]).toEqual([qualifiedIndexes]);
+      expect(poolCalls.slice(lookup + 1, lookup + 3).map((call) => call[0])).toEqual([
         'CREATE INDEX IF NOT EXISTS passkey_credentials_account ON "studio".passkey_credentials (account_email)',
         'CREATE INDEX IF NOT EXISTS passkey_spent_challenges_expiry ON "studio".passkey_spent_challenges (expires_at)',
       ]);

@@ -2,7 +2,8 @@
 //!
 //! Everything the server needs arrives through the environment - the standalone
 //! payload reads no config files - so the wrapper's whole contract with the
-//! server is [`sidecar_env`] plus the data directory it points at.
+//! server is [`sidecar_env`] plus the data directory and the payload's
+//! `seed-assets` directory it points at.
 
 use std::collections::VecDeque;
 use std::io::{self, BufRead, BufReader};
@@ -14,8 +15,14 @@ use std::time::{Duration, Instant};
 
 use crate::layout::Layout;
 
-/// How long a SIGTERM'd sidecar gets to exit before it is killed outright.
-pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+/// How long a SIGTERM'd sidecar gets to exit before it is killed outright: it
+/// covers the 25 s Studio's shutdown handler may take, with 5 s over
+/// (docs/DISTRIBUTION.md, "Stopping the server").
+pub const SHUTDOWN_GRACE: Duration = Duration::from_secs(30);
+
+/// The payload's directory of the built-in samples' assets, which the server reads from
+/// `SEED_ASSETS_DIR` (docs/DISTRIBUTION.md, "Built-in sample assets").
+const SEED_ASSETS: &str = "seed-assets";
 
 /// Lines of sidecar output kept for the failure dialog.
 const LOG_TAIL_LINES: usize = 200;
@@ -46,7 +53,7 @@ pub const CLEARED_VARS: &[&str] = &[
 /// which persists both in `auth-bootstrap.json` (mode 0600) next to the storage
 /// database - so sessions survive restarts and the file stays the documented
 /// fallback if the automatic handoff ever fails.
-pub fn sidecar_env(port: u16, storage_db: &Path) -> Vec<(String, String)> {
+pub fn sidecar_env(port: u16, storage_db: &Path, seed_assets: &Path) -> Vec<(String, String)> {
     vec![
         ("NODE_ENV".to_string(), "production".to_string()),
         ("NEXT_TELEMETRY_DISABLED".to_string(), "1".to_string()),
@@ -58,6 +65,10 @@ pub fn sidecar_env(port: u16, storage_db: &Path) -> Vec<(String, String)> {
         ("STORAGE_SQLITE_PATH".to_string(), storage_db.display().to_string()),
         // The server binds to loopback only, so kubectl proxy (plain HTTP to this machine) may be reached.
         ("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT".to_string(), "true".to_string()),
+        ("SEED_ASSETS_DIR".to_string(), seed_assets.display().to_string()),
+        // The sidecar runs on the bundled Node.js, so Studio's shutdown handler
+        // ends it (docs/DISTRIBUTION.md, "Stopping the server").
+        ("NEXT_MANUAL_SIG_HANDLE".to_string(), "true".to_string()),
     ]
 }
 
@@ -74,7 +85,7 @@ pub fn build_command(layout: &Layout, port: u16, storage_db: &Path) -> Command {
     for name in CLEARED_VARS {
         command.env_remove(name);
     }
-    command.envs(sidecar_env(port, storage_db));
+    command.envs(sidecar_env(port, storage_db, &layout.payload_dir.join(SEED_ASSETS)));
     // A SIGKILLed (or SIGTERMed) shell never runs its exit handler, so the
     // kernel-level parent-death signal is the only thing that stops the server
     // from outliving the window and holding the storage database open.
@@ -144,8 +155,9 @@ impl Sidecar {
 
     /// Ask the sidecar to exit, then make sure it did.
     ///
-    /// SIGTERM first so Next.js can close listeners and better-sqlite3 can
-    /// finalize; SIGKILL only after the grace period. Returns true when the
+    /// SIGTERM first so Studio's shutdown handler can drain the requests in
+    /// flight, run its shutdown hooks and close its providers; SIGKILL only
+    /// after the grace period. Returns true when the
     /// process was still alive and had to be signalled.
     pub fn shutdown(&mut self, grace: Duration) -> bool {
         if !self.is_running() {
@@ -238,7 +250,11 @@ mod tests {
 
     #[test]
     fn env_pins_loopback_sqlite_storage_and_the_chosen_port() {
-        let env = sidecar_env(41234, Path::new("/data/libredb-storage.db"));
+        let env = sidecar_env(
+            41234,
+            Path::new("/data/libredb-storage.db"),
+            Path::new("/app/lib/payload/seed-assets"),
+        );
         let lookup = |key: &str| {
             env.iter()
                 .find(|(name, _)| name == key)
@@ -250,11 +266,31 @@ mod tests {
         assert_eq!(lookup("STORAGE_SQLITE_PATH"), Some("/data/libredb-storage.db"));
         assert_eq!(lookup("NODE_ENV"), Some("production"));
         assert_eq!(lookup("KUBERNETES_ALLOW_LOOPBACK_PLAINTEXT"), Some("true"));
+        assert_eq!(lookup("SEED_ASSETS_DIR"), Some("/app/lib/payload/seed-assets"));
+    }
+
+    #[test]
+    fn env_gives_studios_shutdown_handler_the_exit() {
+        let env = sidecar_env(
+            3000,
+            Path::new("/data/libredb-storage.db"),
+            Path::new("/app/lib/payload/seed-assets"),
+        );
+        let lookup = |key: &str| {
+            env.iter()
+                .find(|(name, _)| name == key)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(lookup("NEXT_MANUAL_SIG_HANDLE"), Some("true"));
     }
 
     #[test]
     fn env_leaves_credentials_to_the_servers_zero_config_bootstrap() {
-        let env = sidecar_env(3000, Path::new("/data/libredb-storage.db"));
+        let env = sidecar_env(
+            3000,
+            Path::new("/data/libredb-storage.db"),
+            Path::new("/app/lib/payload/seed-assets"),
+        );
         for key in ["JWT_SECRET", "ADMIN_PASSWORD", "AUTH_BOOTSTRAP"] {
             assert!(!env.iter().any(|(name, _)| name == key), "{key} must not be set");
         }
@@ -268,6 +304,16 @@ mod tests {
         let args: Vec<_> = command.get_args().collect();
         assert_eq!(args, vec![OsStr::new("/app/lib/payload/server.js")]);
         assert_eq!(command.get_current_dir(), Some(Path::new("/app/lib/payload")));
+    }
+
+    #[test]
+    fn command_points_the_samples_at_the_payloads_seed_assets() {
+        let command = build_command(&layout(), 3210, Path::new("/data/libredb-storage.db"));
+        let seed_assets = command
+            .get_envs()
+            .find(|(name, _)| *name == OsStr::new("SEED_ASSETS_DIR"))
+            .and_then(|(_, value)| value);
+        assert_eq!(seed_assets, Some(OsStr::new("/app/lib/payload/seed-assets")));
     }
 
     #[test]

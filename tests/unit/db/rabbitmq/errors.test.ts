@@ -11,7 +11,7 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
+import { EGRESS_DECISION_MISSING, EGRESS_REFUSAL_SENTENCES } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
 import * as E from "@/lib/db/providers/stream/rabbitmq/errors";
 
@@ -74,9 +74,6 @@ describe("names in sentences", () => {
 
 describe("connection sentences", () => {
   test("the fixed sentences, word for word", () => {
-    expect(E.TUNNEL_REFUSED).toBe(
-      "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.",
-    );
     expect(E.PATH_PREFIX_NO_SLASH).toBe("Path prefix starts with /, for example /rabbitmq.");
     expect(E.PATH_PREFIX_DOT_SEGMENT).toBe("Path prefix may not contain an empty, . or .. segment.");
     expect(E.PATH_PREFIX_NOT_PLAIN).toBe("Path prefix takes a plain path: no %, ? or #.");
@@ -95,16 +92,6 @@ describe("connection sentences", () => {
     );
     expect(E.AMQP_PORT_EMPTY_CAUTION).toBe(
       "AMQP port is empty, so this connection browses streams but cannot read their messages; set AMQP port to read them.",
-    );
-  });
-
-  test("a field not offered is named, never its value", () => {
-    expect(E.fieldNotOffered("database")).toBe(
-      "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
-    );
-    expect(E.fieldNotOffered("namespaces")).toContain("take no Namespaces:");
-    expect(E.fieldNotOffered("tlsServerName")).toBe(
-      "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
     );
   });
 
@@ -425,6 +412,11 @@ describe("the boundary", () => {
       const egress = new DatabaseConfigError(sentence);
       expect(E.rabbitmqBoundary(egress, at)).toBe(egress);
     }
+  });
+
+  test("the missing egress decision passes through unchanged, so a provider built outside the factory is refused by name", () => {
+    const missing = new DatabaseConfigError(EGRESS_DECISION_MISSING);
+    expect(E.rabbitmqBoundary(missing, at)).toBe(missing);
   });
 
   test("anything else becomes the unexpected-answer sentence, and the original is not its message or cause", () => {

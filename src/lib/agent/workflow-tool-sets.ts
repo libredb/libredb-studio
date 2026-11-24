@@ -22,7 +22,7 @@ export const READ_CLASS_TOOLS: readonly AgentToolName[] = Object.freeze<AgentToo
  * Its tools are not built on the read-class four. All three of the read-class tools it leaves out,
  * `inspect_schema`, `run_read_query` and `inspect_plan`, reach the database under the `agent-read-only` profile,
  * which the factory grants only to a provider with `queryReadOnly`, and only the engines `AGENT_EXECUTION_ENGINES`
- * (`engine-support.ts`) names implement it. Offering any of them here would reintroduce, tool by tool, the exact
+ * (`src/lib/db/compatibility.ts`) names implement it. Offering any of them here would reintroduce, tool by tool, the exact
  * engine restriction this workflow exists to escape: the run would open on an engine with no read-only statement
  * path, be offered a tool, call it, and be answered by an acquisition that refuses the engine. `inspect_schema` was
  * checked rather than assumed: it is answered under that profile too (a composed catalog statement through
@@ -39,6 +39,7 @@ export const OPERATIONS_VARIANT: AgentWorkflowVariant = Object.freeze({
     "Your objective is how this database is RUNNING right now: what is connected to it, what it is spending its time on, what is blocked, and where its space and its indexes are going.",
   planDeliverable: Object.freeze({ kind: "prose" }),
   canAutoExecute: false,
-  requires: Object.freeze<AgentVariantRequirement[]>([]),
+  // An engine that offers agent mode no curated reading would hand this workflow a reading tool with nothing to offer.
+  requires: Object.freeze<AgentVariantRequirement[]>(["agent-readings"]),
   verifier: "agent-operations.2",
 });

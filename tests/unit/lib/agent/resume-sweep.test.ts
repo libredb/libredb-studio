@@ -2,11 +2,11 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createLocalWorld } from "@workflow/world-local";
+import { createLocalWorld, type LocalWorld } from "@workflow/world-local";
 import { logger } from "@/lib/logger";
 import { agentResumeSweepIntervalMs, agentStaleRunAfterMs } from "@/lib/agent/config";
 import { AgentRunService } from "@/lib/agent/run-service";
-import { AgentRunStore } from "@/lib/agent/run-store";
+import { AgentRunStore, AgentRunStoreError, ledgerStreamName } from "@/lib/agent/run-store";
 import {
   isStaleRun,
   listLocalAgentRunIds,
@@ -46,12 +46,13 @@ function fakeClock(startAt = 1_700_000_000_000): { read: () => number; set: (val
   };
 }
 
-function harness(clock?: () => number): { service: AgentRunService; dataDir: string } {
+function harness(clock?: () => number): { service: AgentRunService; dataDir: string; world: LocalWorld } {
   const dataDir = freshDataDir();
-  const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }), clock });
+  const world = createLocalWorld({ dataDir, recoverActiveRuns: false });
+  const store = new AgentRunStore({ world, clock });
   const tracker = new ExecutionBudgetTracker();
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 20 });
-  return { service: new AgentRunService({ store, resources: { tracker, artifacts }, clock }), dataDir };
+  return { service: new AgentRunService({ store, resources: { tracker, artifacts }, clock }), dataDir, world };
 }
 
 afterEach(() => {
@@ -168,7 +169,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([runId]);
     // The drive released durably: a fresh claim succeeds after the sweep.
     await h.service.claimDrive(runId);
@@ -195,7 +196,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 1 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 1, unavailable: 0 });
     await h.service.releaseDrive(runId);
   });
 
@@ -220,8 +221,88 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 1 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 1, unavailable: 0 });
     expect(driven).toEqual([second]);
+  });
+
+  test("a run whose ledger names an id this build does not hold is counted unavailable, never driven, and a later run is still swept", async () => {
+    const clock = fakeClock();
+    const h = harness(clock.read);
+    const { runId: unreadable } = await h.service.start({ ...START_INPUT, statementLanguage: "cobol" as never });
+    const { runId: stale } = await h.service.start({ ...START_INPUT, objective: "another question" });
+    await h.service.markRunning(stale);
+    clock.set(clock.read() + 60_001);
+
+    const driven: string[] = [];
+    const outcome = await sweepStaleRuns({
+      service: h.service,
+      drive: async (id) => {
+        driven.push(id);
+      },
+      runIds: [unreadable, stale],
+      now: clock.read,
+      staleAfterMs: 60_000,
+    });
+
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 1 });
+    expect(driven).toEqual([stale]);
+  });
+
+  test("a run this build cannot read is reported at warn once per process, however many passes leave it", async () => {
+    const h = harness();
+    const { runId } = await h.service.start({ ...START_INPUT, statementLanguage: "cobol" as never });
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const pass = () =>
+        sweepStaleRuns({
+          service: h.service,
+          drive: async () => {
+            throw new Error("an unavailable run must not be driven");
+          },
+          runIds: [runId],
+          staleAfterMs: 60_000,
+        });
+      expect(await pass()).toEqual({ claimed: 0, skipped: 0, unavailable: 1 });
+      expect(await pass()).toEqual({ claimed: 0, skipped: 0, unavailable: 1 });
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]).toEqual([
+        "agent resume sweep left a run it cannot read as it is",
+        { route: "agent-resume-sweep", runId, field: "statementLanguage", reason: "unknown" },
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("any other refusal of a status read still ends the pass, and nothing is driven (B174)", async () => {
+    const clock = fakeClock();
+    const h = harness(clock.read);
+    const { runId: broken } = await h.service.start(START_INPUT);
+    await h.world.writeToStream(ledgerStreamName(broken), broken, "not json\n");
+    const { runId: stale } = await h.service.start({ ...START_INPUT, objective: "another question" });
+    await h.service.markRunning(stale);
+    clock.set(clock.read() + 60_001);
+
+    const driven: string[] = [];
+    let caught: unknown;
+    try {
+      await sweepStaleRuns({
+        service: h.service,
+        drive: async (id) => {
+          driven.push(id);
+        },
+        runIds: [broken, stale],
+        now: clock.read,
+        staleAfterMs: 60_000,
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(AgentRunStoreError);
+    expect((caught as AgentRunStoreError).reasonCode).toBe("MALFORMED_LEDGER");
+    expect(driven).toEqual([]);
   });
 
   test("ignores run ids it does not know", async () => {
@@ -234,7 +315,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 60_000,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
   });
 
   test("a terminal run is never swept, even with a claim still recorded", async () => {
@@ -256,7 +337,7 @@ describe("sweepStaleRuns", () => {
       staleAfterMs: 1,
     });
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([]);
   });
 });
@@ -280,7 +361,7 @@ describe("sweepOnce", () => {
       listRunIds: async () => [runId],
     });
 
-    expect(outcome).toEqual({ claimed: 1, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 1, skipped: 0, unavailable: 0 });
     expect(driven).toEqual([runId]);
   });
 });
@@ -317,7 +398,7 @@ describe("runResumeSweepOnce", () => {
       },
     );
 
-    expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+    expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
   });
 
   test("drives a sweep and logs when something was claimed or skipped", async () => {
@@ -327,11 +408,16 @@ describe("runResumeSweepOnce", () => {
       const outcome = await runResumeSweepOnce(
         async () => ({ driveAgentRun: async () => {}, getAgentRunService: async () => h.service }),
         () => true,
-        async () => ({ claimed: 1, skipped: 1 }),
+        async () => ({ claimed: 1, skipped: 1, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 1, skipped: 1 });
-      expect(info).toHaveBeenCalled();
+      expect(outcome).toEqual({ claimed: 1, skipped: 1, unavailable: 0 });
+      expect(info).toHaveBeenCalledWith("agent resume sweep finished", {
+        route: "agent-resume-sweep",
+        claimed: 1,
+        skipped: 1,
+        unavailable: 0,
+      });
     } finally {
       info.mockRestore();
     }
@@ -344,10 +430,26 @@ describe("runResumeSweepOnce", () => {
       const outcome = await runResumeSweepOnce(
         async () => ({ driveAgentRun: async () => {}, getAgentRunService: async () => h.service }),
         () => true,
-        async () => ({ claimed: 0, skipped: 0 }),
+        async () => ({ claimed: 0, skipped: 0, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+      expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
+      expect(info).not.toHaveBeenCalled();
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("stays quiet for a sweep that only left unavailable runs, which each run reports once on its own", async () => {
+    const info = spyOn(logger, "info");
+    try {
+      const outcome = await runResumeSweepOnce(
+        async () => ({ driveAgentRun: async () => {}, getAgentRunService: async () => harness().service }),
+        () => true,
+        async () => ({ claimed: 0, skipped: 0, unavailable: 2 }),
+      );
+
+      expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 2 });
       expect(info).not.toHaveBeenCalled();
     } finally {
       info.mockRestore();
@@ -362,10 +464,10 @@ describe("runResumeSweepOnce", () => {
           throw new Error("world unavailable");
         },
         () => true,
-        async () => ({ claimed: 0, skipped: 0 }),
+        async () => ({ claimed: 0, skipped: 0, unavailable: 0 }),
       );
 
-      expect(outcome).toEqual({ claimed: 0, skipped: 0 });
+      expect(outcome).toEqual({ claimed: 0, skipped: 0, unavailable: 0 });
       expect(error).toHaveBeenCalled();
     } finally {
       error.mockRestore();

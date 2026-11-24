@@ -7,6 +7,7 @@ Tests: [`tests/unit/db/influxdb/`](../../tests/unit/db/influxdb/) and [`tests/in
 | | |
 |---|---|
 | **Write reach** | none: the SQL policy, `evaluateInfluxSql`, refuses every statement that does not lead with a read keyword before any request, and the route table reaches no write endpoint; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -126,7 +127,7 @@ The fence refuses any name `system` followed by a `.` unless `influxdb_schema` f
 The server also reads a string before a `.` as a name (`'system'.queries` answers the rows of `system.queries`), so the fence refuses any string followed by a `.`, whatever it holds.
 What the read policy or the fence refuses is a `RefusedBeforeSendError`, since nothing was sent, so the agent rail shows it as refused before the database, in Studio's words, never as the server's error.
 The request's deadline is the budget's, and its response cap is three times the byte budget plus 64 KiB, since a jsonl line is at most three times the bytes of the row it becomes (a character outside ASCII written as a `\uXXXX` escape); an answer past the cap is refused as over the byte budget.
-The answer is shaped in the strict mode of `shapeJsonlBody`: a row past the row budget, or a row that takes the answer past the 250,000-cell budget, throws the shared row refusal of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), naming every row the answer holds and the rows the bound admits, and the shaped rows are held to the byte budget, all before anything is returned.
+The answer is shaped in the strict mode of `shapeJsonlBody`: a row past the row budget, or a row that takes the answer past the 250,000-cell budget, throws the shared row refusal of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts), naming every row the answer holds and the rows the bound admits, and the shaped rows are held to the byte budget, all before anything is returned.
 A statement past its deadline is refused as over the time budget; the server's query is not cancelled (section 5.10).
 
 #### Boundary record
@@ -208,7 +209,7 @@ The connection-string box is not offered, because it reads `http://` and `https:
 
 The token travels as one header, `Authorization: Bearer <token>`, on every request, and never in a URL, a body, an error or a log line.
 A Token left empty sends no header, which only a server started with `--without-auth` accepts.
-A user name from a seed file or the API is refused when the connection opens:
+A user name from a seed file or the API is refused before the provider is built, whatever its value but empty, so the provider never receives one:
 
 > InfluxDB 3 has no user name: clear User and put the token in Token.
 
@@ -289,6 +290,10 @@ The TLS recipes of InfluxDB 1.x and 2.x are in [influxdb.md](./influxdb.md).
 ### 4.7 SSH tunnel
 
 A tunnel is offered; through it, the plaintext rule judges and the TLS identity is the tunnel's far end, never its local forward.
+
+### 4.8 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
 
 ### Connection string
 
@@ -510,15 +515,33 @@ Health is `GET /ping`, reachability only, never evidence of what the token may r
 The overview's version names the server and the session database, `InfluxDB 3 Core 3.12.0, database home` on the tested server, because no tree node names the database.
 Its table count is the session database's tables; past the listing cap it is a floor, counted from "the first 2,000 tables the session database's table listing returned".
 Uptime, size and the connection limit read "N/A" or 0, because no route Studio reads reports them.
-Slow queries are not read:
-
-> InfluxDB 3 records queries in a server-wide table that shows other users' statements and marks a streamed query finished early, so Studio does not read it.
-
-Sessions are not read either:
-
-> InfluxDB has no session list: every request stands alone.
+Slow queries are not read: InfluxDB 3 records queries in a server-wide table that shows other users' statements and marks a streamed query finished early, so Studio does not read it.
+Sessions are not read either: InfluxDB has no session list, and every request stands alone.
+Neither panel is offered, so the dashboard draws neither, and the labels declare no empty-state sentence for them.
 
 Performance, storage, table and index statistics are empty, and `/metrics` is never read ([D200](../BACKLOG.md)).
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `influxdb3` offers is its row in `ENGINE_FACETS`, declared in [`influxdb3-engine-facets.ts`](../../src/lib/db/providers/timeseries/influxdb/influxdb3-engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `health`.
 
 ## 8. Maintenance
 

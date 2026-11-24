@@ -12,9 +12,8 @@ import { QueryError } from "@/lib/db/errors";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import { ACCEPT_TABLE } from "../client";
 import { KubernetesResponseTooLargeError, type KubernetesRequestContext, watchEventFailure } from "../errors";
+import { KUBERNETES_MAX_STATEMENT_ROWS, KUBERNETES_PAGE_SIZE } from "@/lib/languages/kubectl/constants";
 import {
-  KUBERNETES_MAX_STATEMENT_ROWS,
-  KUBERNETES_PAGE_SIZE,
   KUBERNETES_TYPE,
   KUBERNETES_WATCH_WINDOW_BYTES,
   KUBERNETES_WATCH_WINDOW_SECONDS,

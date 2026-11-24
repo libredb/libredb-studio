@@ -1,3 +1,11 @@
 [test]
 preload = ["./tests/setup-dom.ts", "./tests/helpers/strict-to-be-null.ts", "./tests/setup.ts", "./tests/helpers/mock-sonner.ts", "./tests/helpers/mock-navigation.ts"]
 root = "tests"
+
+# A root package.json with "workspaces" makes bun 1.4.4 install with its isolated linker
+# (packages under node_modules/.bun) as soon as one workspace package exists, a different
+# layout from the hoisted one Studio builds, tests and ships with. Hoisted keeps that layout
+# and links each workspace package at node_modules/<name> (packages/README.md, "Install").
+# Each Dockerfile copies this file into its deps stage for the same reason.
+[install]
+linker = "hoisted"

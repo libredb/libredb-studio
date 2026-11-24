@@ -38,9 +38,8 @@ import type {
   OpcuaReadOnlyClient,
   OpcuaServerLimits,
 } from "./client";
-import { OPCUA_PKI_ROOT_ENV } from "./pki";
-import type { OpcuaConnectionOptions } from "./connection";
-import { errorForStatus, messageOf } from "./errors";
+import type { OpcuaConnectionOptions, OpcuaSessionOptions } from "./connection";
+import { errorForStatus, messageOf, OpcuaUnansweredError } from "./errors";
 import { effectiveTokenPolicy, pinRefusal, plaintextIdentityRefusal } from "./security";
 
 /**
@@ -83,9 +82,9 @@ interface LibrarySession {
 /** What `openSession` needs of the library, so a test can stand in for it without a server. */
 export interface OpcuaLibraryBridge {
   /** GetEndpoints, before any session: what the server offers and the certificate it presents. */
-  readEndpoints(options: OpcuaConnectionOptions): Promise<readonly OpcuaEndpoint[]>;
+  readEndpoints(options: OpcuaSessionOptions): Promise<readonly OpcuaEndpoint[]>;
   /** Connect and activate a session, with the strict certificate manager and the given PKI root. */
-  openSession(options: OpcuaConnectionOptions): Promise<LibrarySession>;
+  openSession(options: OpcuaSessionOptions): Promise<LibrarySession>;
   /** The server's published operation limits, read once. */
   readLimits(session: LibrarySession): Promise<OpcuaServerLimits>;
   /** Shape the library's own answers into this provider's, which is where decoding lives. */
@@ -114,7 +113,7 @@ export interface OpcuaLibraryBridge {
  * `BadIdentityTokenRejected`, `BadCertificateUntrusted`, `BadSecurityChecksFailed` - could never be
  * produced by this provider at all.
  */
-async function openGuarded(bridge: OpcuaLibraryBridge, options: OpcuaConnectionOptions) {
+async function openGuarded(bridge: OpcuaLibraryBridge, options: OpcuaSessionOptions) {
   try {
     return await bridge.openSession(options);
   } catch (error) {
@@ -133,7 +132,7 @@ async function openGuarded(bridge: OpcuaLibraryBridge, options: OpcuaConnectionO
  * A 500 reads as "Studio broke"; this is a connection that was typed wrong, which is a 400 with an
  * address in it.
  */
-async function endpointsGuarded(bridge: OpcuaLibraryBridge, options: OpcuaConnectionOptions) {
+async function endpointsGuarded(bridge: OpcuaLibraryBridge, options: OpcuaSessionOptions) {
   try {
     return await bridge.readEndpoints(options);
   } catch (error) {
@@ -150,14 +149,14 @@ async function endpointsGuarded(bridge: OpcuaLibraryBridge, options: OpcuaConnec
  * a read-only parent - so the `EACCES` arrives here, with the endpoint in hand and the directory
  * only in the library's own text, and the reader was told "This connection could not be opened to
  * opc.tcp://... Check the endpoint URL" about a server that was listening. The default root is
- * inside the data directory (`pki.ts`), so this is what a read-only data mount, or a host directory
+ * inside the data directory (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`), so this is what a read-only data mount, or a host directory
  * owned by another uid, produces on the first connect of an installation.
  *
  * BOTH HALVES ARE REQUIRED, so an unrelated `EACCES` - a socket the kernel refuses, a tunnel key
  * that cannot be read - is not relabelled as a directory fault: the message must carry a filesystem
  * code AND this connection's own PKI root.
  */
-function pkiRefusal(message: string, options: OpcuaConnectionOptions): Error | undefined {
+function pkiRefusal(message: string, options: OpcuaSessionOptions): Error | undefined {
   if (!/\b(EACCES|EPERM|EROFS|ENOSPC|ENOTDIR)\b/.test(message)) return undefined;
   /*
    * BOTH SIDES FLATTENED THE SAME WAY. The message reaching here has had every whitespace run
@@ -170,7 +169,7 @@ function pkiRefusal(message: string, options: OpcuaConnectionOptions): Error | u
   return new DatabaseConfigError(
     `The OPC UA client's certificate directory could not be prepared at ${options.pkiRoot}: ${message}. Studio ` +
       "writes its own key pair and its trust list there, so a connection cannot be opened without it. Make that " +
-      `directory writable by this process, or point ${OPCUA_PKI_ROOT_ENV} at one that is.`,
+      "directory writable by this process, or point LIBREDB_OPCUA_PKI_ROOT at one that is.",
     OPCUA_TYPE,
   );
 }
@@ -184,7 +183,7 @@ function pkiRefusal(message: string, options: OpcuaConnectionOptions): Error | u
  * dial failed - but it is flattened to one line, because a newline in a JSON error field is read by
  * nothing that draws it.
  */
-function dialRefusal(error: unknown, options: OpcuaConnectionOptions): Error {
+function dialRefusal(error: unknown, options: OpcuaSessionOptions): Error {
   /*
    * `\s+`, NOT `\s*\n\s*`, and the difference is measured rather than stylistic. `\s` already
    * matches a newline, so in `\s*\n\s*` the first group eats a whole whitespace run, fails to find
@@ -212,10 +211,21 @@ function dialRefusal(error: unknown, options: OpcuaConnectionOptions): Error {
   );
 }
 
+/**
+ * The refusal of a connection that reaches the session with no PKI root: its provider was built without Studio's
+ * provider factory, which decides the root (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`).
+ */
+export const OPCUA_PKI_ROOT_MISSING =
+  "This OPC UA connection has no PKI root: Studio's provider factory decides where the client's key pair and trust list live, so build the provider with createDatabaseProvider";
+
 export async function openReadOnlySession(
   bridge: OpcuaLibraryBridge,
-  options: OpcuaConnectionOptions,
+  connection: OpcuaConnectionOptions,
 ): Promise<OpcuaReadOnlyClient> {
+  // Before the library is asked for anything: without a root it would have to guess a directory for the client's key.
+  const pkiRoot = connection.pkiRoot;
+  if (pkiRoot === undefined) throw new DatabaseConfigError(OPCUA_PKI_ROOT_MISSING, OPCUA_TYPE);
+  const options: OpcuaSessionOptions = { ...connection, pkiRoot };
   const endpoints = await endpointsGuarded(bridge, options);
   /**
    * The endpoint this connection asks for: its mode, and its policy where the reader named one.
@@ -308,6 +318,17 @@ export async function openReadOnlySession(
       // The root travels with the refusal here too: a secured session that is refused by the trust
       // list names the directory the reader has to act in (`errors.ts`).
       if (code !== undefined) throw errorForStatus(code, options.pkiRoot);
+      /*
+       * NO ANSWER AT ALL IS ITS OWN FACT, and the session pool acts on it. A secure channel can break in a way the
+       * library does not report, and a request with no answer is the only sign of it that reaches Studio. The pool
+       * replaces the session on this class, and `library.ts` closes it without waiting for an answer to its
+       * CloseSession.
+       */
+      if (LIBRARY_TRANSACTION_TIMEOUT.test(message))
+        throw new OpcuaUnansweredError(
+          `${what} got no answer from the server: ${message}. The session it was sent on is closed without waiting ` +
+            "for the server any longer, and a new session is opened for the next request.",
+        );
       /*
        * A THROW WITH NOTHING IN IT STILL HAS TO SAY SOMETHING. Measured: a node id the library
        * rejected while building the request threw an Error whose `message` was the empty string,
@@ -440,6 +461,14 @@ export async function openReadOnlySession(
     },
   };
 }
+
+/**
+ * How the library reports a request it stopped waiting for: `Transaction has timed out ( timeout = 15000 ms , request
+ * = ReadRequest)`. It carries no status code, since no answer arrived to carry one, so the library's own words are
+ * what is matched, at the start of the message only; `tests/integration/db/opcua-server.test.ts` holds this to the
+ * library by making a real request go unanswered.
+ */
+const LIBRARY_TRANSACTION_TIMEOUT = /^Transaction has timed out\b/;
 
 /** The client's own message ceiling, named here so a bridge can set it on the transport. */
 export const OPCUA_TRANSPORT_SETTINGS = Object.freeze({

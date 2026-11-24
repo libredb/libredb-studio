@@ -11,8 +11,8 @@ import {
   serverClassName,
   weaviateClassNameRefusal,
   weaviateTenantNameRefusal,
-} from "@/lib/db/providers/vector/weaviate/request";
-import { WEAVIATE_RUNS } from "@/lib/db/providers/vector/weaviate/routes";
+} from "@/lib/languages/weaviateapi/request";
+import { WEAVIATE_RUNS } from "@/lib/languages/weaviateapi/routes";
 import { bodyText, plan, refused, refusalOf, searchOf } from "../../../helpers/weaviate-request-fixtures";
 
 describe("the grammar", () => {

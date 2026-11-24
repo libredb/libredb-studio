@@ -37,9 +37,10 @@ export type StatementCapture = RuntimeSettingValues["queryLog.statementCapture"]
 
 /**
  * Where an interactive transaction stood after the unit: `open` for a statement run inside it, and the outcome that
- * ended it for the one terminal event. An open vocabulary in the contract, like `source`.
+ * ended it for the one terminal event, `unknown` when Studio saw the end after a session state it could not tell
+ * (docs/GOVERNANCE.md#query-events). An open vocabulary in the contract, like `source`.
  */
-export type TransactionOutcome = "open" | "committed" | "rolled-back" | "timed-out";
+export type TransactionOutcome = "open" | "committed" | "rolled-back" | "timed-out" | "unknown";
 
 /** The level of the credential the unit ran with: the caller's grant level, or `read` where a path always reads. */
 export type AccessLevel = "read" | "write";

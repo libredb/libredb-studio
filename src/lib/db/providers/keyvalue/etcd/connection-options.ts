@@ -42,14 +42,7 @@ import {
   grpcTlsIdentity,
   readGrpcTlsPanel,
 } from "@/lib/db/grpc/tls";
-import {
-  type DatabaseConnection,
-  type DatabaseType,
-  type SSHTunnelConfig,
-  TUNNEL_FAR_END,
-  type TunnelFarEnd,
-  type WithTunnelFarEnd,
-} from "@/lib/types";
+import { type DatabaseConnection, type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import type { EtcdErrorConnection } from "./errors";
 import type { ReadOnlySource } from "./write-policy";
 
@@ -117,8 +110,6 @@ const CREDENTIAL_NEEDS_TLS =
   "A User or Password needs TLS on etcd: choose an SSL mode under SSL / TLS, or clear them. A plaintext etcd with password authentication cannot be connected.";
 const CREDENTIAL_PAIR =
   "A User and a Password go together on etcd: enter both, or clear both to sign in with the client certificate under SSL / TLS or with no credential.";
-const TUNNEL_NOT_OPENED =
-  "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so etcd was not dialled directly: the tunnel opens only when both Host and Port are set.";
 const READ_ONLY_NOT_BOOLEAN = "readOnly must be true or false.";
 const QUERY_TIMEOUT_RANGE = "Query timeout must be a whole number between 1 and 2147483647 milliseconds.";
 
@@ -127,7 +118,7 @@ export function buildEtcdConnectionOptions(
   config: DatabaseConnection & WithTunnelFarEnd,
   context: { readonly executionReadOnly: boolean; readonly queryTimeout: number },
 ): EtcdConnectionOptions {
-  const farEnd = tunnelFarEnd(config);
+  const farEnd = config[TUNNEL_FAR_END];
   const targetHost = grpcEndpointHost(config.host, WORDS);
   const targetPort = shared(() => validatePort(config.port ?? ETCD_DEFAULT_PORT));
   const endpoint =
@@ -169,21 +160,6 @@ export function etcdErrorConnection(options: EtcdConnectionOptions): EtcdErrorCo
     receiveCapBytes: options.receiveCapBytes,
     timeoutMs: options.callTimeoutMs,
   };
-}
-
-/**
- * The far end the factory's tunnel reaches, or undefined when no tunnel carries the connection. The
- * factory opens a tunnel only when `sshTunnel.enabled`, `host` and `port` are all set, and otherwise
- * hands the connection on untouched (`withOneShotTunnel`, `getOrCreateProvider` and
- * `acquireExecutionProfileProvider` in src/lib/db/factory.ts), so a tunnel that is on and arrived with
- * no far end would have etcd dialled directly, past the tunnel: refused (spec E3).
- */
-function tunnelFarEnd(config: DatabaseConnection & WithTunnelFarEnd): TunnelFarEnd | undefined {
-  const tunnel = optionalObject<keyof SSHTunnelConfig>(config.sshTunnel, "sshTunnel");
-  const enabled = optionalBoolean(tunnel?.enabled, "sshTunnel.enabled") === true;
-  const farEnd = config[TUNNEL_FAR_END];
-  if (enabled && farEnd === undefined) throw configError(TUNNEL_NOT_OPENED);
-  return farEnd;
 }
 
 /** The shared validators refuse with a DatabaseConfigError that names no provider; re-raised as etcd's, the message unchanged. */
@@ -269,24 +245,10 @@ function callTimeout(queryTimeout: number): number {
   return queryTimeout;
 }
 
-/** A field that holds an object when it is present, never an array; null reads as absent (the file header). */
-function optionalObject<Key extends string>(value: unknown, field: string): Partial<Record<Key, unknown>> | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "object" || Array.isArray(value)) throw wrongType(field, "an object");
-  return value as Partial<Record<Key, unknown>>;
-}
-
 /** A field that holds a string when it is present; null and the empty string read as absent (the file header). */
 function optionalText(value: unknown, field: string): string | undefined {
   if (value === undefined || value === null || value === "") return undefined;
   if (typeof value !== "string") throw wrongType(field, "a string");
-  return value;
-}
-
-/** A field that holds a boolean when it is present; null reads as absent (the file header). */
-function optionalBoolean(value: unknown, field: string): boolean | undefined {
-  if (value === undefined || value === null) return undefined;
-  if (typeof value !== "boolean") throw wrongType(field, "true or false");
   return value;
 }
 

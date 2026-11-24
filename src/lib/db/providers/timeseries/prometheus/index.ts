@@ -60,7 +60,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -70,7 +70,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { noWritePath } from "@/lib/db/write-reach";
 import { projectAgentTransport } from "./agent-projection";
@@ -89,6 +89,8 @@ import {
   TSDB_TOP_METRICS,
 } from "./monitoring";
 import { type ObjectsTransport, PROMETHEUS_OBJECT_KINDS, PrometheusObjects } from "./objects";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
+import type { EgressDecision } from "@/lib/db/types";
 import { createSendRequest, type SendRequest, tlsMaterialFor } from "./request";
 import { MATRIX_SAMPLE_BUDGET, RESULT_BYTE_BUDGET, type ShapeLimits, shapeQueryResult } from "./results";
 import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransportError } from "./transport";
@@ -100,10 +102,11 @@ import { type PrometheusQueryOptions, type PrometheusTransport, PrometheusTransp
 export interface PrometheusProviderDeps {
   /**
    * Builds the endpoint from the connection. Default: the shared validated builder of
-   * src/lib/db/http/endpoint.ts (#1086), adapted to this port; unit tests inject their own.
+   * src/lib/db/http/endpoint.ts (#1086), adapted to this port and built with the egress decision the provider was
+   * built with; unit tests inject their own, which needs no decision, as an injected `send` needs none.
    */
   readonly endpoint?: (config: DatabaseConnection, secure: boolean) => PrometheusEndpoint;
-  /** How a request leaves the process. Default: `createSendRequest(tlsMaterialFor(config.ssl))`. */
+  /** How a request leaves the process. Default: `createSendRequest(tlsMaterialFor(config.ssl), <the built decision>)`. */
   readonly send?: SendRequest;
   /** The clock the inventory window is read against. Default: `Date.now`, read at each call. */
   readonly now?: () => number;
@@ -191,10 +194,11 @@ function withQuerySlots(transport: PrometheusTransport, limiter: QueryLimiter): 
  * `endpointUrl` then builds each request URL and checks its hostname, port and path again before
  * handing it back. Nothing is validated here: a second copy of the rule is the drift the shared module exists
  * to end. The one adaptation is the return type, a `URL` where the shared builder answers a string.
- * The port falls back to the one this provider declares, for either scheme; no host is defaulted.
+ * The port falls back to the one this provider declares, for either scheme; no host is defaulted. `egress` is the
+ * decision the provider was built with, which `httpOrigin` checks an address literal against.
  */
-function sharedEndpoint(config: DatabaseConnection, secure: boolean): PrometheusEndpoint {
-  const origin = httpOrigin(secure ? "https" : "http", config.host, config.port ?? PROMETHEUS_DEFAULT_PORT);
+function sharedEndpoint(config: DatabaseConnection, secure: boolean, egress: EgressDecision): PrometheusEndpoint {
+  const origin = httpOrigin(secure ? "https" : "http", config.host, config.port ?? PROMETHEUS_DEFAULT_PORT, egress);
   return { url: (pathname, query) => new URL(endpointUrl(origin, pathname, query)) };
 }
 
@@ -215,7 +219,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     deps: PrometheusProviderDeps = {},
   ) {
     super(config, options);
@@ -309,11 +313,6 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       searchPlaceholder: "Search metrics or labels...",
       // Read by the agent's planning contract, which then asks for a statement "in PromQL".
       statementLanguage: "PromQL",
-      // Both panels can only ever be empty here (#1085 6.2), and their default sentence would read
-      // as "nothing is running right now".
-      slowQueriesEmptyState: "Prometheus exposes no query log over its HTTP API, so there are no slow queries to read.",
-      sessionsEmptyState:
-        "Prometheus exposes no session list over its HTTP API: every request is a separate, stateless call.",
       // The Tables list is the top of the TSDB status's ranking, not every metric (#1085 6.2). "At most",
       // because a head that holds fewer metrics lists fewer.
       tableStatsCaption: `The metrics with the most head series, at most ${TSDB_TOP_METRICS}`,
@@ -366,8 +365,12 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       const built = createHttpTransport(
         { user: this.config.user, password: this.config.password },
         {
-          send: this.deps.send ?? createSendRequest(tls),
-          endpoint: (this.deps.endpoint ?? sharedEndpoint)(this.config, tls !== null),
+          // An injected sender is a test's; the real one follows the egress decision the factory built this provider with.
+          send: this.deps.send ?? createSendRequest(tls, requireEgressDecision(this.execution.egress)),
+          endpoint:
+            this.deps.endpoint === undefined
+              ? sharedEndpoint(this.config, tls !== null, requireEgressDecision(this.execution.egress))
+              : this.deps.endpoint(this.config, tls !== null),
           requestTimeoutMs: this.queryTimeout,
           maxResponseBytes: RESPONSE_BYTE_CAP,
         },
@@ -582,13 +585,13 @@ export class PrometheusProvider extends BaseDatabaseProvider {
     return Promise.resolve({});
   }
 
-  /** Empty: the HTTP API returns no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: the HTTP API returns no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
     if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.slowQueries);
     return Promise.resolve([]);
   }
 
-  /** Empty: the HTTP API publishes no session list. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: the HTTP API publishes no session list, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public getActiveSessions(): Promise<ActiveSessionDetails[]> {
     if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.sessions);
     return Promise.resolve([]);

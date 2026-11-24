@@ -55,6 +55,8 @@ function sandboxWith(fixture: string): string {
   sandboxes.push(sandbox);
   cpSync(path.join(root, "tests/run-tests.ts"), path.join(sandbox, "tests/run-tests.ts"));
   cpSync(path.join(root, "tests/runner"), path.join(sandbox, "tests/runner"), { recursive: true });
+  // Discovery reads the workspace package layout from this module (packages/README.md).
+  cpSync(path.join(root, "scripts/workspace-packages.mjs"), path.join(sandbox, "scripts/workspace-packages.mjs"));
   mkdirSync(path.join(sandbox, "tests/unit"), { recursive: true });
   // writeFileSync, not Bun.write: Bun.write returns a promise, and leaving it
   // unawaited let the runner start against a file that was still empty. bun then
@@ -372,6 +374,23 @@ describe("the test runner, end to end", () => {
 
     expect(exitCode).toBe(2);
     expect(stderr).toContain("--parallel");
+  });
+
+  test("a workspace package's test runs with the root's, and the run names both roots", () => {
+    const sandbox = sandboxWith('import { expect, test } from "bun:test";\ntest("root", () => expect(1).toBe(1));\n');
+    mkdirSync(path.join(sandbox, "packages/planted/tests"), { recursive: true });
+    writeFileSync(path.join(sandbox, "packages/planted/package.json"), '{ "name": "@libredb/planted" }\n');
+    writeFileSync(
+      path.join(sandbox, "packages/planted/tests/a.test.ts"),
+      'import { expect, test } from "bun:test";\ntest("package", () => expect(2).toBe(2));\n',
+    );
+
+    const { exitCode, stdout } = runInSandbox(sandbox, []);
+
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("2 files from tests/ and packages/*/tests/");
+    expect(stdout).toContain("packages/planted/tests/a.test.ts");
+    expect(stdout).toContain("2 files: 2 passed");
   });
 
   test("a failing test file makes the runner exit 1 and prints the child's own failure output", () => {

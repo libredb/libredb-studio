@@ -7,7 +7,6 @@
  */
 import { describe, expect, test } from "bun:test";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
-import { isAbsolute } from "node:path";
 import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
 import type {
   OpcuaDataValue,
@@ -16,10 +15,10 @@ import type {
   OpcuaReference,
 } from "@/lib/db/providers/industrial/opcua/client";
 import { OpcuaProvider } from "@/lib/db/providers/industrial/opcua/index";
-import { OPCUA_PKI_ROOT_ENV } from "@/lib/db/providers/industrial/opcua/pki";
 import type { DatabaseConnection } from "@/lib/types";
 
-const ENV = { [OPCUA_PKI_ROOT_ENV]: "/app/data/opcua-pki" } as const;
+/** The PKI root Studio's provider factory would decide (`opcuaPkiRoot`), handed to the provider as it hands it. */
+const PKI_ROOT = "/app/data/opcua-pki";
 
 function connection(over: Record<string, unknown> = {}): DatabaseConnection {
   return {
@@ -91,13 +90,13 @@ async function open(
   values: Readonly<Record<string, OpcuaDataValue>> = {},
   record = fresh(),
 ): Promise<{ provider: OpcuaProvider; record: ReturnType<typeof fresh> }> {
-  const provider = new OpcuaProvider(connection(over), {}, {}, async () => fakeServer(tree, values, record), ENV);
+  const provider = new OpcuaProvider(connection(over), {}, {}, async () => fakeServer(tree, values, record), PKI_ROOT);
   await provider.connect();
   return { provider, record };
 }
 
 describe("the declarations", () => {
-  const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
+  const provider = new OpcuaProvider(connection(), {}, {}, undefined, PKI_ROOT);
 
   test("read-only is declared true, and it is structural rather than a setting", () => {
     expect(summarizeWriteReach(provider.getCapabilities().writeReach)).toBe("none");
@@ -151,21 +150,22 @@ describe("connecting", () => {
       async () => {
         throw new Error("should not have been reached");
       },
-      ENV,
+      PKI_ROOT,
     );
     await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
     expect(provider.isConnected()).toBe(false);
   });
 
   /**
-   * NO PKI VARIABLE REACHES THE DIAL NOW, with Studio's own data directory as the root: refusing
-   * here is what made the engine unusable until a reader found an environment variable, which a
-   * browser run measured. A RELATIVE variable is still refused before the dial, which is the half
-   * that has to stay - a relative root resolves against whatever directory the server started in.
+   * THE ROOT IS THE ONE THE PROVIDER WAS BUILT WITH. Studio's provider factory decides it (`opcuaPkiRoot` in
+   * `src/lib/db/provider-files.ts`: the variable, or `opcua-pki` under Studio's data directory, a relative variable
+   * refused before the provider is built) and hands it over, so nothing the process's environment says at connect
+   * reaches the dial (FND-2 slice 3).
    */
-  test("no PKI variable reaches the dial, and a relative one is refused before it", async () => {
-    const reached: string[] = [];
-    const withoutVariable = new OpcuaProvider(
+  test("the session is opened with the PKI root the provider was built with, and LIBREDB_OPCUA_PKI_ROOT at connect changes nothing", async () => {
+    const reached: (string | undefined)[] = [];
+    const built = "/srv/studio/opcua-pki-built";
+    const provider = new OpcuaProvider(
       connection(),
       {},
       {},
@@ -173,22 +173,21 @@ describe("connecting", () => {
         reached.push(options.pkiRoot);
         throw new Error("BadConnectionClosed");
       },
-      {},
+      built,
     );
-    await expect(withoutVariable.connect()).rejects.toThrow(/BadConnectionClosed|connection closed/);
-    expect(reached).toHaveLength(1);
-    expect(isAbsolute(reached[0] ?? "")).toBe(true);
-
-    const relative = new OpcuaProvider(
-      connection(),
-      {},
-      {},
-      async () => {
-        throw new Error("should not have been reached");
-      },
-      { [OPCUA_PKI_ROOT_ENV]: "pki" },
-    );
-    await expect(relative.connect()).rejects.toThrow(/absolute path/);
+    const original = process.env.LIBREDB_OPCUA_PKI_ROOT;
+    process.env.LIBREDB_OPCUA_PKI_ROOT = "/elsewhere/opcua-pki";
+    try {
+      const outcome = await provider.connect().then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(String(outcome)).toMatch(/BadConnectionClosed|connection closed/);
+    } finally {
+      if (original === undefined) delete process.env.LIBREDB_OPCUA_PKI_ROOT;
+      else process.env.LIBREDB_OPCUA_PKI_ROOT = original;
+    }
+    expect(reached).toEqual([built]);
   });
 
   test("disconnect closes the session, and once", async () => {
@@ -445,7 +444,7 @@ describe("a server that publishes a limit below Studio's own bound", () => {
       {},
       {},
       async () => tightServer({ maxNodesPerRead: 30 }, record),
-      ENV,
+      PKI_ROOT,
     );
     await provider.connect();
     const result = await provider.query(JSON.stringify({ read: WIDE }));
@@ -470,7 +469,7 @@ describe("a server that publishes a limit below Studio's own bound", () => {
       {},
       {},
       async () => tightServer({ maxNodesPerBrowse: 3 }, record),
-      ENV,
+      PKI_ROOT,
     );
     await provider.connect();
     const page = await provider.scanKeysPage?.({
@@ -490,7 +489,7 @@ describe("a server that publishes a limit below Studio's own bound", () => {
       readBatches: [] as number[],
       browseBatches: [] as number[],
     };
-    const provider = new OpcuaProvider(connection(), {}, {}, async () => tightServer({}, record), ENV);
+    const provider = new OpcuaProvider(connection(), {}, {}, async () => tightServer({}, record), PKI_ROOT);
     await provider.connect();
     await provider.query(JSON.stringify({ read: WIDE }));
     expect(record.readBatches).toEqual([9]);
@@ -603,7 +602,7 @@ describe("surfaces a server does not have", () => {
 
 describe("a build with no transport wired in", () => {
   test("says so rather than failing as a network error", async () => {
-    const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
+    const provider = new OpcuaProvider(connection(), {}, {}, undefined, PKI_ROOT);
     await expect(provider.connect()).rejects.toThrow(QueryError);
     await expect(provider.connect()).rejects.toThrow(/no OPC UA transport/);
   });
@@ -644,17 +643,16 @@ describe("every surface a server does not have", () => {
     await provider.disconnect();
   });
 
-  test("slow queries and sessions answer empty, and the labels say why in this engine's words", async () => {
+  test("slow queries and sessions answer empty, and the labels carry no copy for those panels", async () => {
     const { provider } = await open();
     expect(await provider.getSlowQueries()).toEqual([]);
     expect(await provider.getActiveSessions()).toEqual([]);
     expect(await provider.getPerformanceMetrics()).toEqual({});
 
     const labels = provider.getLabels();
-    // The defaults are written for a SQL server: measured in a browser, the Queries panel told an
-    // OPC UA reader to install `pg_stat_statements` and Sessions said "No active sessions found."
-    expect(labels.slowQueriesEmptyState).toMatch(/keeps no query log/);
-    expect(labels.sessionsEmptyState).toMatch(/session COUNT/);
+    // Neither panel is offered on OPC UA, so nothing would draw a sentence explaining an empty one.
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
     await provider.disconnect();
   });
 

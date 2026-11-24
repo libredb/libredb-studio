@@ -61,7 +61,15 @@ import {
   type ObjectPathShapeEngine,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, RefusedBeforeSendError } from "../../errors";
+import {
+  ByteBudgetRefusal,
+  DatabaseConfigError,
+  ConnectionError,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
 import { assertRegularFilesOrMissing } from "../../utils/regular-file";
@@ -71,7 +79,7 @@ import {
   measureRowBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import { type LibreDBReadCommand, readLibreDBReadCommand, tokenizeLibreDBCommand } from "./libredb-command";
 import {
   LibreDBNotAStoreError,
@@ -80,7 +88,7 @@ import {
 } from "./libredb-read-only-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
-import { isReservedStoragePath } from "@/lib/data-dir";
+import { requireAdmittedFile } from "@/lib/db/utils/admitted-file";
 import * as path from "path";
 
 /** SQLite's in-memory database name, which LibreDB does not have (#1450). */
@@ -520,9 +528,6 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // says in words what `tablesAreDerivedGroupings` says in a flag.
       statementLanguage:
         "LibreDB's own command grammar - exactly one command on one line, in one of the five forms `get <key>`, `put <key> <value>`, `delete <key>`, `prefix <p>` or `range <start> <end>` - and NOT SQL and not a shell: every key is matched EXACTLY, with no glob and no wildcard, so `get users:*` looks up a key literally named `users:*` and answers nothing; the inventory's `prefix:*` rows are groupings this engine summarised, not keys, so reach every entry under one with `prefix users:` and a single entry by its real name",
-      // `getSlowQueries()` answers `[]` unconditionally, so the monitoring Queries
-      // panel is ALWAYS empty here - and it used to name a PostgreSQL extension (#463).
-      slowQueriesEmptyState: "LibreDB keeps no statistics about finished statements in this version.",
     };
   }
 
@@ -550,31 +555,19 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * Validate and resolve the configured file path, mirroring the SQLite provider
-   * (sql/sqlite.ts): resolve to an absolute, normalized path and reject
-   * traversal / null-byte inputs. Centralizing this guards every filesystem use
-   * (open, statSync) behind one barrier, so an untrusted connection config
-   * cannot open unexpected locations.
+   * The file this connection opens, an absolute path, as Studio's provider factory admitted it
+   * (`admittedFileConnection` in `src/lib/db/provider-files.ts`): `database` resolved against the working directory
+   * when the provider was built, with a NUL byte and Studio's own storage files refused there. Every filesystem use
+   * (open, statSync) reads it here, and nothing resolves the configured path again, so the working directory at connect
+   * cannot move it. A provider built without the factory holds no admitted file and is refused by name.
    */
-  private resolveDatabasePath(): string {
-    // `connect` runs `validate()` first, and that refuses an absent or empty path.
-    const configured = this.config.database as string;
-    const resolved = path.resolve(configured);
-    if (resolved !== path.normalize(resolved) || configured.includes("\0")) {
-      throw new DatabaseConfigError("Invalid database path: path traversal is not allowed", "libredb");
-    }
-    if (isReservedStoragePath(resolved)) {
-      throw new DatabaseConfigError(
-        "This path is reserved for the server's own storage and cannot be opened as a connection",
-        "libredb",
-      );
-    }
-    return resolved;
+  private admittedDatabasePath(): string {
+    return requireAdmittedFile(this.config, "libredb");
   }
 
   public async connect(): Promise<void> {
     this.validate(); // throws DatabaseConfigError if database path is missing
-    const dbPath = this.resolveDatabasePath(); // resolves + rejects traversal/null-byte
+    const dbPath = this.admittedDatabasePath();
     // The kernel opens its `.lock` sidecar first, so a missing directory surfaced as an ENOENT
     // about a `.lock` file the user never named (#1450). Said in the user's terms instead; the
     // directory is not created, because a connection setting should not make directories.
@@ -618,7 +611,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   private describeOpenError(lib: LibreDBModule, error: unknown): string {
     // Only an agent profile's open can meet a missing file: the editor's open creates it.
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return `The LibreDB file ${this.resolveDatabasePath()} does not exist. The agent opens an existing file only and creates none.`;
+      return `The LibreDB file ${this.admittedDatabasePath()} does not exist. The agent opens an existing file only and creates none.`;
     }
     if (error instanceof LibreDBNotAStoreError) return LIBREDB_NOT_A_DATABASE;
     if (error instanceof lib.LibreDbError) {
@@ -881,7 +874,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         this.readForAgent(reading.command, budget, statement),
       );
       if (executionTime > budget.statementTimeoutMs) {
-        throw new QueryError(
+        throw new TimeBudgetRefusal(
           `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
           "libredb",
           statement,
@@ -911,7 +904,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       for (const { key, value } of this.agentScan(store, command)) {
         if (this.isReserved(key)) continue;
         if (rows.length === budget.maxResultRows) {
-          throw new QueryError(
+          throw new RowBudgetRefusal(
             `${rowBudgetSentence(rows.length + 1, budget.maxResultRows)}; the read stops one key past the budget, so at least ${rows.length + 1} keys match and the total is not known: narrow the prefix or the range`,
             "libredb",
             statement,
@@ -920,7 +913,7 @@ export class LibreDBProvider extends BaseDatabaseProvider {
         const row = { key, value: this.renderValue(value) };
         bytes += measureRowBytes(row);
         if (bytes > budget.maxResultBytes) {
-          throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "libredb", statement);
+          throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "libredb", statement);
         }
         rows.push(row);
       }
@@ -1457,10 +1450,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   /**
    * Empty, and it reads nothing: there is no log of finished statements to read.
    *
-   * The one always-empty panel that stays empty. `QueriesTab` renders
-   * `ProviderLabels.slowQueriesEmptyState` in place of an empty list and this provider
-   * declares one (`getLabels()` above), so LibreDB's own sentence already reaches the
-   * user here - which is the thing an absent panel exists to deliver.
+   * The Queries panel is not offered (`ENGINE_FACETS`), so core never reads this and
+   * nothing draws it.
    */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     return [];

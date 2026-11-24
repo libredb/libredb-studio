@@ -8,7 +8,8 @@ import {
   unitIsModuleBody,
 } from "@/lib/sql/statement-splitter";
 import type { SplitStatement } from "@/lib/sql/statement-splitter";
-import { DEFAULT_SQL_GRAMMAR, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 

@@ -11,6 +11,7 @@ import {
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { snowflakeEndpoint } from "@/lib/db/providers/sql/snowflake/account";
 import { SnowflakeError } from "@/lib/db/providers/sql/snowflake/errors";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 describe("readSnowflakeAccount accepts", () => {
   test.each([
@@ -186,11 +187,19 @@ describe("the host test and the hint", () => {
 
 describe("snowflakeEndpoint", () => {
   test("builds https on 443 from the reading", () => {
-    expect(snowflakeEndpoint("myorg-myacct")).toEqual({
+    expect(snowflakeEndpoint("myorg-myacct", ALLOWS_PRIVATE_HOSTS)).toEqual({
       origin: { scheme: "https", host: "myorg-myacct.snowflakecomputing.com", port: 443 },
       host: "myorg-myacct.snowflakecomputing.com",
       accountClaim: "MYORG-MYACCT",
     });
+  });
+
+  test("builds the same endpoint under a blocking and an allowing egress decision, since the account rule admits no address literal", () => {
+    for (const account of ["myorg-myacct", "https://xy12345.cn-north-1.snowflakecomputing.cn"]) {
+      expect(snowflakeEndpoint(account, BLOCKS_PRIVATE_HOSTS)).toEqual(
+        snowflakeEndpoint(account, ALLOWS_PRIVATE_HOSTS),
+      );
+    }
   });
 
   test.each([
@@ -198,7 +207,7 @@ describe("snowflakeEndpoint", () => {
     ["https://xy12345.cn-north-1.snowflakecomputing.cn", "xy12345.cn-north-1.snowflakecomputing.cn"],
     ["https://app.snowflake.com/myorg/myacct/worksheets", "myorg-myacct.snowflakecomputing.com"],
   ])("accepts %p", (account, host) => {
-    expect(snowflakeEndpoint(account).origin).toEqual({ scheme: "https", host, port: 443 });
+    expect(snowflakeEndpoint(account, ALLOWS_PRIVATE_HOSTS).origin).toEqual({ scheme: "https", host, port: 443 });
   });
 
   test.each([
@@ -223,7 +232,7 @@ describe("snowflakeEndpoint", () => {
   ])("refuses %p before any socket", (account, sentence) => {
     let thrown: unknown;
     try {
-      snowflakeEndpoint(account);
+      snowflakeEndpoint(account, ALLOWS_PRIVATE_HOSTS);
     } catch (error) {
       thrown = error;
     }
@@ -232,11 +241,13 @@ describe("snowflakeEndpoint", () => {
   });
 
   test("a refused token-bearing URL does not echo the token", () => {
-    expect(() => snowflakeEndpoint("https://myorg-a.snowflakecomputing.com/?token=SECRET-S")).toThrow(SnowflakeError);
+    const marker = crypto.randomUUID();
+    const account = `https://myorg-a.snowflakecomputing.com/?token=${marker}`;
+    expect(() => snowflakeEndpoint(account, ALLOWS_PRIVATE_HOSTS)).toThrow(SnowflakeError);
     try {
-      snowflakeEndpoint("https://myorg-a.snowflakecomputing.com/?token=SECRET-S");
+      snowflakeEndpoint(account, ALLOWS_PRIVATE_HOSTS);
     } catch (error) {
-      expect(String(error)).not.toContain("SECRET-S");
+      expect(String(error)).not.toContain(marker);
     }
   });
 });
@@ -274,7 +285,7 @@ describe("the Account hint, the dialog's check and connect() agree on every text
   test.each(texts)("%p", (text) => {
     let endpointRefusal: string | undefined;
     try {
-      snowflakeEndpoint(text);
+      snowflakeEndpoint(text, ALLOWS_PRIVATE_HOSTS);
     } catch (error) {
       endpointRefusal = (error as Error).message;
     }

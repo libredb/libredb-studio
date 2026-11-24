@@ -28,7 +28,7 @@ const ALLOWED = new Set([
   "@/lib/db/sql-writing/export-shared",
 ]);
 const TYPE_ONLY_ALLOWED = new Set(["@/lib/types"]);
-const NAMED_SPECS = ["@/lib/db/sql-writing/no-connection", "@/lib/db/sql-writing/unknown-type"];
+const NAMED_SPECS = ["@/lib/db/sql-writing/no-connection"];
 
 interface ImportRef {
   readonly specifier: string;

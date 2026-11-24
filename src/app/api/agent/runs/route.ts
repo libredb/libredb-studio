@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { notReviewedSentence, persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
 import { admitAgentModel } from "@/lib/agent/capability-gate";
 import { isAgentRuntimeEnabled, isThreadContextEnabled } from "@/lib/agent/config";
 import { connectionIdentity } from "@/lib/agent/context-snapshot";
@@ -12,7 +12,7 @@ import { decodeHistoryCursor, type AgentHistoryCursor } from "@/lib/agent/histor
 import { threadContextMaxCharsFor } from "@/lib/agent/models";
 import { agentPosture } from "@/lib/agent/posture";
 import type { AgentRunStatusReport } from "@/lib/agent/run-service";
-import { AgentRunStoreError } from "@/lib/agent/run-store";
+import { AgentRunStoreError, AgentRunUnavailableError } from "@/lib/agent/run-store";
 import { driveAgentRun, getAgentRunService } from "@/lib/agent/runtime";
 import { threadContextFor } from "@/lib/agent/thread-context";
 import {
@@ -28,8 +28,8 @@ import {
   type AgentThreadHeader,
 } from "@/lib/agent/types";
 import { createErrorResponse } from "@/lib/api/errors";
-import { createDatabaseProvider, getOrCreateProvider } from "@/lib/db";
-import { catalogSessionConnection } from "@/lib/db/catalog-scope";
+import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
+import { catalogChoice, catalogChoiceBound, catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { resolveConfig } from "@/lib/llm/utils/config";
@@ -37,6 +37,7 @@ import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { logger } from "@/lib/logger";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
@@ -79,7 +80,8 @@ import type { DatabaseConnection } from "@/lib/types";
  *    has no read-only statement path**, from the connection's own type and before a run
  *    id exists (#512). It is the one refusal here that is about the
  *    DATABASE rather than the request's own consistency, and it is narrowed by the
- *    workflow: `operations` sends no statement, so it opens on every engine.
+ *    workflow: `operations` sends no statement, so it opens on every engine that offers
+ *    agent mode a curated reading.
  *  - **Auto-execute is fixed at start, and that is the reason it is a run field at
  *    all.** It is what the run may hand to the editor to RUN, on a path with none of
  *    the agent's own bounds, so it is decided once by the request that opens the run
@@ -197,13 +199,18 @@ export async function GET(req: Request) {
   }
 }
 
-/** Whether the connection reaches a whole server (#1530); a record that cannot be built declares nothing. */
-async function reachesWholeServer(connection: DatabaseConnection): Promise<boolean> {
-  try {
-    return (await createDatabaseProvider(connection)).getCapabilities().catalogSessions === true;
-  } catch {
-    return false;
-  }
+/**
+ * Whether Studio honours a caller's choice of database on the connection (#1530): `catalogChoice` (M-57) over the
+ * capabilities read through `readProviderDeclarations` without connecting and without opening the connection's tunnel
+ * (FND-2 slice 5). A record that cannot be built declares nothing; `catalogChoice` runs outside that catch, so its own
+ * refusal of a type that names no provider is never read as a declaration.
+ */
+async function catalogChoiceOn(connection: DatabaseConnection) {
+  const capabilities = await readProviderDeclarations(connection).then(
+    (declarations) => declarations.capabilities,
+    () => null,
+  );
+  return capabilities === null ? "not-declared" : catalogChoice(connection, capabilities);
 }
 
 export async function POST(req: Request) {
@@ -217,6 +224,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "The agent runtime is not enabled on this server" }, { status: 404 });
   }
 
+  // Set once the connection resolves: from then on a provider may be built (the database the run reads, through
+  // `editorProvider`, on the connection's own credential), so a failure answered below passes core's scrub of every
+  // provider of that connection ("any") to `createErrorResponse`, which keeps the failure's own status, code, kind and
+  // outcome when its text is withheld.
+  let scrub: ProviderTextScrub | undefined;
   try {
     let body: Record<string, unknown>;
     try {
@@ -312,6 +324,7 @@ export async function POST(req: Request) {
     }
 
     const connection = await resolveConnection({ connectionId }, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     /*
       An engine whose provider implements no read-only statement path,
@@ -330,29 +343,37 @@ export async function POST(req: Request) {
 
        - **The MODE.** Plan mode drafts on every engine and executes nothing it drafts,
          so an unsupported engine is no reason to refuse one.
-       - **The WORKFLOW.** `operations` sends no statement at all, and refusing it would
-         withhold a workflow that runs on every engine over a claim that is not true of
-         it (#411) — which is the same reason the rail's amber pre-start card does not
-         gate Start. The workflow has to be known first, and under Automatic it is: the
-         rail classifies at `POST /api/agent/classify` and names the workflow in this
-         request, so the refusal lands after the classify call and before the open.
+       - **The WORKFLOW.** `operations` sends no statement at all, and refusing it for
+         want of a statement path would withhold a workflow over a claim that is not true
+         of it (#411), which is the same reason the rail's amber pre-start card does not
+         gate Start. It is refused only on an engine that offers agent mode no curated
+         reading, with the `agent-readings` requirement's sentence. The workflow has to be
+         known first, and under Automatic it is: the rail classifies at
+         `POST /api/agent/classify` and names the workflow in this request, so the
+         refusal lands after the classify call and before the open.
        - **The ENGINE'S LANGUAGE**, from `AGENT_STATEMENT_LANGUAGE`, keyed by type-id
          and held by `tests/unit/lib/agent/agent-manifest.test.ts` to every provider
-         that has `queryReadOnly`, the factory's own gate. Read here rather than probed
+         that has `queryReadOnly`. Read here rather than probed
          off a constructed provider, because a construction is not free on the engines
          this refusal is about: on a single-writer file the second handle throws rather
          than opening (B49), and it is the same record the rail and the safety strip
          read, so the notice and the refusal cannot disagree about which engines they
          are talking about.
+       - **The REVIEW RECORD**, `AGENT_EXECUTION_ENGINES`, the record the provider
+         factory's statement profiles and the core read path read again at run time. An
+         engine whose language would open the run but which the record does not list is
+         answered with `notReviewedSentence`, naming it. Read after the language, so an
+         engine with neither keeps the posture's sentence below.
        - **The VARIANT and what it requires.** A language may have no variant of the
          workflow, or a variant whose tools need a reading this engine does not serve;
          either is refused with the manifest's own sentence.
 
       An engine with no language is answered with the posture's sentence, which is the one
       the rail's own amber card shows as its reason: it names the engines that DO have
-      such a path, that `operations` runs here, and that plan mode drafts here, so a
+      such a path, that `operations` runs here (every such engine offers a reading), and
+      that plan mode drafts here, so a
       refused user is told both ways forward rather than a third phrasing of the same
-      fact. The other two refusals carry the same marker, because they are the same kind
+      fact. The other three refusals carry the same marker, because they are the same kind
       of fact: the request has to change its workflow, its mode or its connection.
 
       Ahead of `admitAgentModel` on purpose: that gate probes the configured model,
@@ -376,7 +397,9 @@ export async function POST(req: Request) {
               engineLabel: getDBConfig(connection.type).label,
               handover: false,
             }).body
-          : availability.sentence,
+          : availability.cause === "not-reviewed"
+            ? notReviewedSentence(getDBConfig(connection.type).label)
+            : availability.sentence,
         // The only refusal here that a client can already be explaining for itself, so
         // the only one that carries a code (#513).
         "engine-unsupported",
@@ -387,7 +410,8 @@ export async function POST(req: Request) {
       declares none: refused here, before a run exists, for the reason the engine refusal above is. The provider would
       refuse the profile at its first acquisition, but an engine that declares no object kinds is grounded without one,
       so without this the run would open, take its first model turn and fail at its first read. Only a workflow that
-      sends statements in agent mode: plan mode and the operations workflow read nothing beneath roots, and open.
+      sends statements in agent mode: plan mode and the operations workflow read nothing beneath roots, and the roots
+      decide neither (the operations workflow opens where the engine offers agent mode a curated reading).
     */
     if (
       mode === "agent" &&
@@ -411,16 +435,27 @@ export async function POST(req: Request) {
       ON A SERVER-LEVEL CONNECTION A RUN READS ONE DATABASE (#1530), named in `catalog` and
       decided here, once: the connection itself names none, and a run that walked every
       database on the server to ground itself would open a session in each. Required exactly
-      when the declaration says so, read without connecting the way provider-meta reads it,
-      and a database the role cannot open is refused before the run exists rather than after
-      its first drive fails to connect.
+      where Studio honours the provider's catalog sessions (`catalogChoice`, M-57), read without
+      connecting the way provider-meta reads it, and refused elsewhere, saying why when the
+      provider declares sessions Studio does not honour. A database the role cannot open is
+      refused before the run exists rather than after its first drive fails to connect.
     */
-    const serverLevel = await reachesWholeServer(connection);
+    const choice = await catalogChoiceOn(connection);
+    const serverLevel = choice === "honoured";
     if (serverLevel !== (catalog !== undefined)) {
+      if (serverLevel) {
+        return badRequest(
+          "This connection reaches every database on its server: name the database the run reads in catalog",
+        );
+      }
+      if (choice === "not-declared") {
+        return badRequest(
+          "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+        );
+      }
+      const bound = catalogChoiceBound(choice, connection.type);
       return badRequest(
-        serverLevel
-          ? "This connection reaches every database on its server: name the database the run reads in catalog"
-          : "catalog names a database only on a connection that reaches a whole server, and this one names its own",
+        `catalog names a database only on a connection that reaches a whole server, and Studio does not read this one as one: ${bound}`,
       );
     }
     if (catalog !== undefined) {
@@ -505,8 +540,16 @@ export async function POST(req: Request) {
           // this server and says nothing about the id at all. Neither reaches the caller
           // as a distinction, and neither stops the run. Recorded rather than logged
           // because a fail-open decision has to carry its reason as data.
-          failed =
-            error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID" ? "unavailable" : "error";
+          // A ledger naming an id this Studio does not have is the owner's unreadable
+          // run, and anyone else's run that is not theirs: its persisted actor decides,
+          // so the 202 body tells no one else that such a run exists.
+          if (error instanceof AgentRunUnavailableError) {
+            failed = error.actor.sessionId === guard.session.username ? "error" : "unavailable";
+          } else if (error instanceof AgentRunStoreError && error.reasonCode === "INVALID_RUN_ID") {
+            failed = "unavailable";
+          } else {
+            failed = "error";
+          }
         }
         if (
           failed === null &&
@@ -559,9 +602,9 @@ export async function POST(req: Request) {
       // the request that predates the field, so a run that starts its own conversation
       // writes the same bytes a run opened before conversations existed did.
       ...(thread === undefined ? {} : { thread }),
-      // The language and the verifier the run was opened under, each written only where it
-      // differs from what its absence reads as, so an SQL run's header keeps its bytes.
-      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, availability),
+      // The connection's engine, and the language and the verifier the run was opened under,
+      // the last two written only where they differ from what their absence reads as.
+      ...persistedRunFacts(mode as AgentRunMode, requestedWorkflow, connection.type, availability),
       actor: { sessionId: guard.session.username, role: guard.session.role },
       connectionId: connection.id,
       // The database this run is ACTUALLY reading, written unconditionally - including
@@ -608,6 +651,6 @@ export async function POST(req: Request) {
       { status: 202 },
     );
   } catch (error) {
-    return createErrorResponse(error, { route: "api/agent/runs" });
+    return createErrorResponse(error, { route: "api/agent/runs", scrub });
   }
 }

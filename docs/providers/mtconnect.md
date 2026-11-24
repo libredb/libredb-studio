@@ -12,6 +12,7 @@ the date, the URL and the agent version recorded beside them.
 | | |
 |---|---|
 | **Write reach** | none: every route of the closed route table, `MTC_ROUTES`, is a `GET`; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 
 ## 1. Overview
 
@@ -223,6 +224,16 @@ Through an SSH tunnel the certificate is checked against the agent the user name
 The Path prefix is put in front of every route, so `/mtc` reads `/mtc/probe`, `/mtc/current` and so on.
 It is a path only: a query, a fragment, percent-encoding, a space or an empty, `.` or `..` segment is refused before any request.
 
+### 4.4 Where the connection may connect
+
+With `DB_HTTP_BLOCK_PRIVATE_HOSTS` on, a loopback, private or other non-public address is refused before any request, with the shared sentence: an IP literal when `connect()` builds the connection's origin, and a name at the lookup the request's socket dials through.
+A link-local address or AWS's IPv6 instance metadata address that the connection dials is never reached, whatever the variable says.
+Both refusals leave as the shared `DatabaseConfigError`, not as a `QueryError`: [section 10.1](#101-every-refusal-leaves-as-a-queryerror) is about this provider's own refusals.
+
+Through an SSH tunnel the request dials the local forward, a loopback address, and these rules are checked against that address.
+So with the variable on a tunnelled connection is refused, and with it off the forward is dialled.
+The agent at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
+
 ### Connection string
 
 `mtconnect` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/mtconnect/connection-string.ts)).
@@ -293,7 +304,7 @@ shown as the word the agent printed rather than as an empty cell.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/mtconnect/sql-grammar.ts`](../../src/lib/db/providers/industrial/mtconnect/sql-grammar.ts), the `mtconnect` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one request line in the agent's own URL grammar, so no span of it is SQL (#1722).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/industrial/mtconnect/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/mtconnectread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -338,6 +349,29 @@ none of that is the asset the plant holds.
 The Header of a read without `from` and `to`: `instanceId`, `firstSequence`, `lastSequence`,
 `nextSequence` and `bufferSize`. MEASURED: with `to` given, `firstSequence` is the request's own
 `from` rather than the buffer's start, so buffer facts come only from a read without either.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `mtconnect` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/mtconnect/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: none.
+`health` is not offered to agent mode: the agent handle refuses it with `MTCONNECT_AGENT_WITHHELD.health`.
 
 ## 8. Maintenance
 
@@ -554,7 +588,8 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `mtconnectread` family pack itself.
 The `mtconnectread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `mtconnectread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one request line, and the operations workflow; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one request line, and holds an operations variant; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on MTConnect: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read what the question names directly, a device's or a data item's current values or a window of its history, and to read `/probe` only for a data item neither the question nor the inventory names.
 Plan mode's safety strip is the shared one, which is true here: an agent-mode handle reads only the device model when it opens, and that one read grounds the plan; plan mode follows the provider's `statementLanguage` label, which names the console's request line, its routes and what is never drafted.
 The editor language id stays `mtconnect`, and the fence alias `mtconnectread` names this engine.

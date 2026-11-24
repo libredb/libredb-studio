@@ -95,8 +95,8 @@ export function statusSentence(code: string, pkiRoot?: string): string {
    * a reader to move a file from `rejected` into `trusted/certs` and never said WHERE those are -
    * measured in a browser, where the only answer a Sign or SignAndEncrypt connect gives is this
    * sentence, and the browser offers no way to move anything. The root is this connection's own
-   * (`pki.ts`: the variable, or `<data directory>/opcua-pki`), so the caller passes it where it has
-   * one; with no root in hand the sentence keeps the words it had.
+   * (`opcuaPkiRoot` in `src/lib/db/provider-files.ts`: the variable, or `<data directory>/opcua-pki`),
+   * so the caller passes it where it has one; with no root in hand the sentence keeps the words it had.
    */
   return `The server answered ${code}: ${sentence.replaceAll(PKI_ROOT_MARK, pkiRoot ?? "the PKI root")}`;
 }
@@ -180,4 +180,19 @@ export function isStaleSession(error: unknown): boolean {
  */
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message.trim() : String(error);
+}
+
+/**
+ * A request the client stopped waiting for: no answer arrived within the library's transaction timeout.
+ *
+ * ITS OWN CLASS BECAUSE THE SESSION POOL ACTS ON IT, and a status code cannot carry it: no answer means no code. A
+ * secure channel can break in a way the library does not report, so a session whose request went unanswered cannot be
+ * trusted with the next one (`OpcuaSessionPool.withSession`).
+ */
+export class OpcuaUnansweredError extends QueryError {
+  constructor(message: string) {
+    super(message, OPCUA_TYPE);
+    this.name = "OpcuaUnansweredError";
+    Object.setPrototypeOf(this, OpcuaUnansweredError.prototype);
+  }
 }

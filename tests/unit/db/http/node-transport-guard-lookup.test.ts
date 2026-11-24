@@ -11,6 +11,7 @@ import { afterEach, beforeAll, describe, expect, mock, test } from "bun:test";
 import type { LookupAddress } from "node:dns";
 import type { LookupFunction } from "node:net";
 import type { TransportCertificates } from "../../../helpers/node-transport-fixtures";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const realPolicy = { ...(await import("@/lib/db/http/egress-policy")) };
 const lookups: string[] = [];
@@ -49,10 +50,10 @@ afterEach(async () => {
 });
 
 function connect(scheme: "http" | "https", port: number, maxSockets = 4) {
-  const origin = httpOrigin(scheme, "guard.test", port);
+  const origin = httpOrigin(scheme, "guard.test", port, ALLOWS_PRIVATE_HOSTS);
   const tls =
     scheme === "https" ? nodeTlsMaterial({ mode: "verify-full", caCert: certificates.ca }, "guard.test") : null;
-  const transport = createNodeTransport({ origin, tls, maxSockets, headers: {} });
+  const transport = createNodeTransport({ origin, tls, maxSockets, egress: ALLOWS_PRIVATE_HOSTS, headers: {} });
   transports.push(transport);
   const request = () =>
     transport.request({

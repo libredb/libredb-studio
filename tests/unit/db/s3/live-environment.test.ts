@@ -43,6 +43,7 @@ import {
   scriptedS3Transport,
   signingInput,
 } from "../../../helpers/s3-wire";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { runS3Scenario, S3_LIVE_ONLY_ROWS, scenariosFor } from "../../../live/s3-evidence-plan";
 import {
   checkS3Step,
@@ -2091,6 +2092,7 @@ describe("the S3 captures and their harness", () => {
       origin: { scheme: "http", host: "127.0.0.1", port: 9010 },
       tls: null,
       maxSockets: 1,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {},
       ...(signed ? { signer: recording.signerWrapper(signer) } : {}),
     });

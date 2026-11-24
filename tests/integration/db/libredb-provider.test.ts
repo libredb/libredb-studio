@@ -12,8 +12,10 @@ import {
   LIBREDB_TABLE_STATS_TRUNCATED,
   LibreDBProvider,
 } from "@/lib/db/providers/embedded/libredb";
-import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { ADMITTED_FILE_MISSING } from "@/lib/db/utils/admitted-file";
 import { describeIf } from "../../helpers/posix-tools";
 import {
   CHILD_TEST_TIMEOUT_MS,
@@ -30,6 +32,7 @@ import { containerDepth, kindHasColumns, kindHasSource } from "@/lib/db/object-k
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { errorKind } from "@/lib/db/error-record";
 
 /** Remove a database file AND its 0.2.x exclusive-lock sidecar (`<path>.lock`). */
 function rmDbFile(file: string): void {
@@ -44,8 +47,18 @@ function rmDbFile(file: string): void {
 
 let tmpFile: string;
 
+/**
+ * A LibreDB connection as Studio's provider factory hands it to the provider: admitted by `admittedFileConnection`, so
+ * it carries the file core decided, resolved against the working directory now (FND-2 slice 3).
+ */
 function makeConn(database: string | undefined): DatabaseConnection {
-  return { id: "libredb-test", name: "LibreDB Test", type: "libredb", database, createdAt: new Date() };
+  return admittedFileConnection({
+    id: "libredb-test",
+    name: "LibreDB Test",
+    type: "libredb",
+    database,
+    createdAt: new Date(),
+  });
 }
 
 function seed(file: string): void {
@@ -116,10 +129,23 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
     expect(provider.isConnected()).toBe(false);
   });
 
-  test("connect() rejects a path containing a null byte (traversal guard)", async () => {
-    const provider = new LibreDBProvider(makeConn("/tmp/bad" + String.fromCharCode(0) + ".libredb"));
-    await expect(provider.connect()).rejects.toThrow(/traversal|invalid/i);
+  test("a provider built without the file Studio's factory admits refuses to connect by name and creates nothing", async () => {
+    const neverAdmitted = path.join(tmpDir, "never-admitted.libredb");
+    const provider = new LibreDBProvider({
+      id: "raw",
+      name: "raw",
+      type: "libredb",
+      database: neverAdmitted,
+      createdAt: new Date(),
+    });
+    const error = await provider.connect().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(ADMITTED_FILE_MISSING);
     expect(provider.isConnected()).toBe(false);
+    expect(fs.existsSync(neverAdmitted)).toBe(false);
   });
 
   // #1450: `path.resolve(":memory:")` named a file `:memory:` in the server's working directory,
@@ -303,11 +329,10 @@ describe("LibreDBProvider — lifecycle & metadata", () => {
   // The monitoring Queries panel is ALWAYS empty here - `getSlowQueries()` answers
   // `[]` unconditionally - and until #U12 it told the reader to enable a PostgreSQL
   // extension on the embedded engine.
-  test("getLabels() says the embedded engine keeps no statement statistics", () => {
+  test("getLabels() declares no slow-query sentence, because LibreDB offers no Queries panel to draw it", () => {
     const { slowQueriesEmptyState } = new LibreDBProvider(makeConn(tmpFile)).getLabels();
 
-    expect(slowQueriesEmptyState).toContain("LibreDB keeps no statistics");
-    expect(slowQueriesEmptyState).not.toContain("pg_stat_statements");
+    expect(slowQueriesEmptyState).toBeUndefined();
   });
 
   // `statementLanguage` is the sentence the agent's plan contract states verbatim
@@ -585,7 +610,9 @@ describe("LibreDBProvider — 0.2.x error mapping & locking", () => {
     fs.writeFileSync(tmpFile, bytes);
     const before = fs.readFileSync(tmpFile);
 
-    const provider = new LibreDBProvider(makeConn(tmpFile));
+    const provider = new LibreDBProvider(
+      admittedFileConnection({ id: "raw", name: "raw", type: "libredb", database: tmpFile, createdAt: new Date() }),
+    );
     const error = await provider.connect().then(
       () => null,
       (e: unknown) => e,
@@ -650,14 +677,11 @@ describe("LibreDBProvider — monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getSlowQueries stays empty - the label, not an error, carries LibreDB's sentence", async () => {
+  test("getSlowQueries stays empty, and the Queries panel is not offered, so nothing draws it", async () => {
     const provider = new LibreDBProvider(makeConn(tmpFile));
     await provider.connect();
-    // The one panel that is legitimately empty: `QueriesTab` renders
-    // `ProviderLabels.slowQueriesEmptyState` in place of an empty list, and this provider
-    // declares one, so LibreDB's own sentence already reaches the user here.
     expect(await provider.getSlowQueries()).toEqual([]);
-    expect(provider.getLabels().slowQueriesEmptyState).toMatch(/keeps no statistics/i);
+    expect(provider.getLabels().slowQueriesEmptyState).toBeUndefined();
     await provider.disconnect();
   });
 
@@ -731,7 +755,7 @@ describe("LibreDBProvider — monitoring", () => {
     await provider.disconnect();
   });
 
-  test("getMonitoringData leaves the two refused panels absent with their sentences", async () => {
+  test("getMonitoringData lists the two refused panels as not offered, with no sentence, and reads the tables", async () => {
     rmDbFile(tmpFile);
     seedWithCatalog(tmpFile);
     const provider = new LibreDBProvider(makeConn(tmpFile));
@@ -740,11 +764,10 @@ describe("LibreDBProvider — monitoring", () => {
     const data = await provider.getMonitoringData();
     expect(data.activeSessions).toBeUndefined();
     expect(data.indexes).toBeUndefined();
-    expect(data.errors?.activeSessions).toBe(LIBREDB_ACTIVE_SESSIONS_REFUSAL);
-    expect(data.errors?.indexes).toBe(LIBREDB_INDEX_STATS_REFUSAL);
+    expect(data.notOffered).toEqual(["performance", "slowQueries", "activeSessions", "indexes"]);
+    expect(data.errors).toBeUndefined();
     // The panel that fabricated zero tables on a database with tables now answers.
     expect(data.tables?.length).toBe(5);
-    expect(data.errors?.tables).toBeUndefined();
     await provider.disconnect();
   });
 
@@ -1785,6 +1808,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       expect((error as Error).message).toBe(
         "Read-only execution exceeded the row budget: 2 rows > 1 allowed; the read stops one key past the budget, so at least 2 keys match and the total is not known: narrow the prefix or the range",
       );
+      expect(errorKind(error)).toBe("row-budget-refusal");
       expect((await reader.queryReadOnly("prefix user:", { ...BUDGET, maxResultRows: 2 })).rowCount).toBe(2);
     } finally {
       await reader.disconnect();
@@ -1800,6 +1824,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
       expect((error as Error).message).toMatch(
         /^Read-only execution exceeded the byte budget: \d+ bytes > 20 allowed$/,
       );
+      expect(errorKind(error)).toBe("byte-budget-refusal");
     } finally {
       await reader.disconnect();
     }
@@ -1813,6 +1838,7 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     try {
       const error = await settle(reader.queryReadOnly("get user:1", { ...BUDGET, statementTimeoutMs: 10 }));
       expect((error as Error).message).toBe("Read-only execution exceeded the time budget: 50ms > 10ms allowed");
+      expect(errorKind(error)).toBe("time-budget-refusal");
     } finally {
       clock.mockRestore();
       await reader.disconnect();
@@ -1887,9 +1913,11 @@ describe("LibreDBProvider — the agent read-only profile", () => {
         const outcome = await runInChild(
           [
             `const { LibreDBProvider } = await import(${JSON.stringify(path.join(import.meta.dir, "../../../src/lib/db/providers/embedded/libredb.ts"))});`,
+            // The child builds its provider as the factory does: on the file `admittedFileConnection` admits.
+            `const { admittedFileConnection } = await import(${JSON.stringify(path.join(import.meta.dir, "../../../src/lib/db/provider-files.ts"))});`,
             `const { unlinkSync } = await import("node:fs");`,
             `const file = ${JSON.stringify(tmpFile)};`,
-            `const provider = new LibreDBProvider({ id: "fifo", name: "fifo", type: "libredb", database: file }, {}, { readOnly: true, sendsStatements: true });`,
+            `const provider = new LibreDBProvider(admittedFileConnection({ id: "fifo", name: "fifo", type: "libredb", database: file }), {}, { readOnly: true, sendsStatements: true });`,
             "await provider.connect();",
             "unlinkSync(file);",
             `const made = Bun.spawnSync(["mkfifo", "-m", "644", file]);`,

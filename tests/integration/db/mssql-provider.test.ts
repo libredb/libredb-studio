@@ -287,6 +287,7 @@ import type { DatabaseConnection } from "@/lib/types";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { errorKind, errorOutcome } from "@/lib/db/error-record";
 
 // ---------------------------------------------------------------------------
 // Default mock query implementation
@@ -656,15 +657,16 @@ describe("MSSQLProvider", () => {
       }).toThrow(DatabaseConfigError);
     });
 
-    test("connectionString bypasses host/database validation", () => {
+    test("a connection string does not stand in for host and database", () => {
+      // The provider builds from its own fields only: a connection string is not among the fields SQL Server takes
+      // (`CONNECTION_STRING_ACCEPTED`), so it neither replaces a missing host nor a missing database.
+      const connectionString = "Server=db.example;Database=app;";
       expect(() => {
-        new MSSQLProvider({
-          ...baseConfig,
-          host: undefined,
-          database: undefined,
-          connectionString: "Server=localhost;Database=testdb;User Id=sa;Password=test;",
-        } as unknown as DatabaseConnection);
-      }).not.toThrow();
+        new MSSQLProvider({ ...baseConfig, host: undefined, connectionString } as unknown as DatabaseConnection);
+      }).toThrow("Host is required for SQL Server");
+      expect(() => {
+        new MSSQLProvider({ ...baseConfig, database: undefined, connectionString } as unknown as DatabaseConnection);
+      }).toThrow("Database name is required for SQL Server");
     });
   });
 
@@ -836,6 +838,8 @@ describe("MSSQLProvider", () => {
         error: `Permission denied: ${message}`,
         code: ApiErrorCode.PERMISSION_DENIED,
         statusCode: 403,
+        kind: "permission",
+        outcome: "unknown",
       });
     });
 
@@ -1940,6 +1944,75 @@ describe("MSSQLProvider", () => {
       await provider.rollbackTransaction();
     });
 
+    /** A driver error of tedious's socket kind, as `mssql` wraps it on a transaction call. */
+    const socketLost = () =>
+      Object.assign(new Error("Connection lost - read ECONNRESET"), { name: "ConnectionError", code: "ESOCKET" });
+
+    test("a begin the driver refuses answers its mapped class with outcome unknown and holds no transaction", async () => {
+      await provider.connect();
+      mockTransactionHooks = {
+        begin() {
+          throw socketLost();
+        },
+        commit() {},
+        rollback() {},
+      };
+      try {
+        const failed = await provider.beginTransaction().catch((error: unknown) => error);
+
+        expect(failed).toBeInstanceOf(DatabaseError);
+        expect((failed as DatabaseError).message).toContain("Connection lost - read ECONNRESET");
+        expect(errorOutcome(failed)).toBe("unknown");
+        expect(provider.isInTransaction()).toBe(false);
+        const response = createErrorResponse(failed, { route: "api/db/transaction" });
+        expect(response.status).toBe(500);
+        expect(await response.json()).toMatchObject({
+          code: ApiErrorCode.DATABASE_ERROR,
+          statusCode: 500,
+          kind: "database",
+          outcome: "unknown",
+        });
+      } finally {
+        mockTransactionHooks = { begin() {}, commit() {}, rollback() {} };
+      }
+    });
+
+    test.each([
+      ["commitTransaction", "commit"],
+      ["rollbackTransaction", "rollback"],
+    ] as const)(
+      "%s the driver refuses answers its mapped class with outcome unknown, not an internal error",
+      async (end, hook) => {
+        await provider.connect();
+        await provider.beginTransaction();
+        mockTransactionHooks = {
+          begin() {},
+          commit() {},
+          rollback() {},
+          [hook]() {
+            throw socketLost();
+          },
+        };
+        try {
+          const failed = await provider[end]().catch((error: unknown) => error);
+
+          expect(failed).toBeInstanceOf(DatabaseError);
+          expect((failed as DatabaseError).message).toContain("Connection lost - read ECONNRESET");
+          expect(errorOutcome(failed)).toBe("unknown");
+          const response = createErrorResponse(failed, { route: "api/db/transaction" });
+          expect(response.status).toBe(500);
+          expect(await response.json()).toMatchObject({
+            code: ApiErrorCode.DATABASE_ERROR,
+            statusCode: 500,
+            kind: "database",
+            outcome: "unknown",
+          });
+        } finally {
+          mockTransactionHooks = { begin() {}, commit() {}, rollback() {} };
+        }
+      },
+    );
+
     test("queryInTransaction binds positional parameters as p1..pN inputs", async () => {
       await provider.connect();
       await provider.beginTransaction();
@@ -2740,12 +2813,13 @@ describe("MSSQLProvider declared column types", () => {
 
   // #1312: the editor sends a T-SQL batch as one request. A text with several result sets
   // still answers with its FIRST, as `EXEC sp_help` always did, and carries every set for the
-  // multi-statement route to choose from.
+  // multi-statement route to choose from. #2286: an empty last set keeps its own `fields` and
+  // `columnTypes`, so the route can show it as the batch's result.
   test("query() carries every result set of a batch and still answers with the first", async () => {
     const first = withColumns([{ a: 1 }], { a: { declaration: "int" } });
     const last = withColumns([{ doubled: 10 }, { doubled: 20 }], { doubled: { declaration: "int" } });
     const bare = Object.assign([{ z: 1 }], {});
-    const empty = Object.assign([] as Record<string, unknown>[], {});
+    const empty = withColumns([], { c: { declaration: "int" } });
     mockQueryFn = async () => ({ recordset: first, recordsets: [first, last, bare, empty], rowsAffected: [1, 2, 1] });
 
     await provider.connect();
@@ -2757,7 +2831,7 @@ describe("MSSQLProvider declared column types", () => {
       { rows: [{ a: 1 }], fields: ["a"], columnTypes: { a: "int" } },
       { rows: [{ doubled: 10 }, { doubled: 20 }], fields: ["doubled"], columnTypes: { doubled: "int" } },
       { rows: [{ z: 1 }], fields: ["z"] },
-      { rows: [], fields: [] },
+      { rows: [], fields: ["c"], columnTypes: { c: "int" } },
     ]);
   });
 
@@ -6410,7 +6484,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // 4 rows, and 4 only because the provider asked the SERVER to stop there: without it
     // a 20-million-row read is materialised in full and takes the process down.
-    await expect(rejection).rejects.toThrow(/exceeded the row budget: 4 rows > 3 allowed/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget: 4 rows > 3 allowed/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
     expect(engine.batches.map((batch) => batch.sql)).toContain("SET ROWCOUNT 4");
   });
 
@@ -6432,7 +6508,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 1024 }));
 
-    await expect(rejection).rejects.toThrow(/exceeded the byte budget: \d+ bytes > 1024 allowed/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the byte budget: \d+ bytes > 1024 allowed/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("the same rows under a byte budget that fits are served", async () => {
@@ -6481,7 +6559,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // 512 characters is 512 UTF-8 bytes, half the 1024-byte budget, so the byte cap cannot
     // fire: only the cut itself says what happened.
-    await expect(rejection).rejects.toThrow(/refused a value the server cut at the byte budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/refused a value the server cut at the byte budget/);
+    expect(errorKind(refused)).toBe("cut-value-refusal");
   });
 
   test("a value that merely fits is served, so the refusal above is the cut and not the size", async () => {
@@ -6522,7 +6602,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = settlesWithin(profiled.queryReadOnly(READ_SELECT.sql, budget({ statementTimeoutMs: 15 })), 5_000);
 
-    await expect(rejection).rejects.toThrow(/exceeded its time budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded its time budget/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
     // It hung on the COMPILE, so the execution was never reached.
     expect(engine.batches.map((batch) => batch.sql)).not.toContain("SET ROWCOUNT 201");
   });
@@ -6562,7 +6644,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 512 }), "estimate-plan");
 
-    await expect(rejection).rejects.toThrow(/could not hold this query plan/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/could not hold this query plan/);
+    expect(errorKind(refused)).toBe("byte-budget-refusal");
   });
 
   test("a data result of the same size is still refused as a row budget, so the exemption is the MODE and not the size", async () => {
@@ -6571,7 +6655,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultRows: 3 }));
 
-    await expect(rejection).rejects.toThrow(/exceeded the row budget/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded the row budget/);
+    expect(errorKind(refused)).toBe("row-budget-refusal");
   });
 
   test("a statement the deadline ended says so, rather than reporting the driver's word for any cancel", async () => {
@@ -6582,7 +6668,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     // tedious words every cancel "Canceled.", including a user pressing stop, and a model
     // handed that alone has nothing to repair.
-    await expect(rejection).rejects.toThrow(/exceeded its time budget: the statement was cancelled after 15 ms/);
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(/exceeded its time budget: the statement was cancelled after 15 ms/);
+    expect(errorKind(refused)).toBe("time-budget-refusal");
   });
 
   test("an admitted read that returns nothing answers no fields, and the declared types travel when the driver sends them", async () => {
@@ -6651,9 +6739,11 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     const rejection = profiled.queryReadOnly(READ_SELECT.sql, budget({ maxResultBytes: 1024 }));
 
-    await expect(rejection).rejects.toThrow(
+    const refused = await rejection.catch((caught: unknown) => caught);
+    expect((refused as Error).message).toMatch(
       /^Read-only execution refused a value the server cut at the byte budget: v \(2\) came back/,
     );
+    expect(errorKind(refused)).toBe("cut-value-refusal");
   });
 
   // -------------------------------------------------------------------------
@@ -6727,7 +6817,9 @@ describe("queryReadOnly() - the agent read-only execution profile (#328)", () =>
 
     for (const serialising of [READ_JSON_SELECT, READ_XML_SELECT]) {
       const rejection = profiled.queryReadOnly(serialising.sql, budget());
-      await expect(rejection).rejects.toThrow(/cannot bound a serialised result/);
+      const refused = await rejection.catch((caught: unknown) => caught);
+      expect((refused as Error).message).toMatch(/cannot bound a serialised result/);
+      expect(errorKind(refused)).toBe("serialised-result-refusal");
       // Refused BEFORE execution: the statement travelled once, compiled by the admission.
       expect(engine.batches.filter((batch) => batch.sql === serialising.sql)).toHaveLength(1);
     }

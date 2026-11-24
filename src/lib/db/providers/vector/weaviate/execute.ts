@@ -4,7 +4,8 @@ import { TransportError } from "@/lib/db/http/node-transport";
 import type { TaggedObject } from "@/lib/db/console/tagged-json";
 import type { ProviderLimiter, RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { QueryResult } from "@/lib/types";
-import type { WeaviateAnswer, WeaviateConsoleOp, WeaviateOp, WeaviateRequest, WeaviateSend } from "./client";
+import type { WeaviateAnswer, WeaviateRequest, WeaviateSend } from "./client";
+import type { WeaviateConsoleOp, WeaviateOp } from "@/lib/languages/weaviateapi/ops";
 import { answerFailure, graphqlFailure } from "./errors";
 import { encodeGraphql, encodeRest } from "./graphql";
 import {
@@ -13,10 +14,11 @@ import {
   type WeaviateSearchModel,
   weaviatePhase0,
   weaviatePhase1,
-} from "./request";
+} from "@/lib/languages/weaviateapi/request";
 import { weaviateResult } from "./results";
-import { WEAVIATE_BOUNDS } from "./routes";
-import { readWeaviateClass, type WeaviateCollectionFacts, weaviateCollectionFacts } from "./schema";
+import { WEAVIATE_BOUNDS } from "@/lib/languages/weaviateapi/routes";
+import { readWeaviateClass, weaviateCollectionFacts } from "./schema";
+import type { WeaviateCollectionFacts } from "@/lib/languages/weaviateapi/collection-facts";
 import {
   initialPath,
   serverHas,

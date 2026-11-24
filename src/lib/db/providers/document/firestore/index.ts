@@ -27,9 +27,11 @@
  * Source tab are refused, and every reading Firestore does not report answers its reason. MCP read stays closed on this
  * engine.
  */
+import { googleCredentialSecrets } from "@/lib/db/auth/google/credentials";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -47,9 +49,9 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
+  ProviderBuildContext,
   ProviderCapabilities,
   ProviderLabels,
-  ProviderExecutionContext,
   ProviderOptions,
   QueryResult,
   ReadOnlyStatementBudget,
@@ -145,15 +147,7 @@ interface Probed {
 export function sessionBase(auth: FirestoreAuth): CallBase {
   if (auth.mode === "emulator") return { credential: "emulator", secretForms: [] };
   const credentials = auth.credentials;
-  const secrets =
-    credentials.type === "access_token"
-      ? [credentials.token]
-      : credentials.type === "service_account"
-        ? [credentials.privateKey, ...(credentials.privateKeyId === undefined ? [] : [credentials.privateKeyId])]
-        : credentials.type === "authorized_user"
-          ? [credentials.clientSecret, credentials.refreshToken]
-          : [];
-  return { credential: credentials.type, secretForms: secretForms(secrets) };
+  return { credential: credentials.type, secretForms: secretForms(googleCredentialSecrets(credentials)) };
 }
 
 function closeSession(session: Pick<FirestoreSession, "client" | "lifetime">): void {
@@ -219,7 +213,7 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     seams: Partial<FirestoreSeams> = {},
   ) {
     super(config, options);
@@ -335,7 +329,10 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     this.validate();
     const auth = resolveFirestoreAuth(this.config, this.seams);
     const base = sessionBase(auth);
-    const client = createFirestoreClient(this.target(), auth, this.seams, { queryTimeoutMs: this.queryTimeout });
+    const client = createFirestoreClient(this.target(), auth, this.seams, {
+      queryTimeoutMs: this.queryTimeout,
+      egress: requireEgressDecision(this.execution.egress),
+    });
     const lifetime = new AbortController();
     let probed: Probed;
     try {

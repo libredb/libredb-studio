@@ -36,7 +36,14 @@
 FROM oven/bun:1.4.4-alpine AS deps
 WORKDIR /usr/src/app
 RUN apk add --no-cache python3 make g++
-COPY package.json bun.lock ./
+# patches/ holds the driver patches package.json's patchedDependencies names; bun install applies
+# them and refuses to run without them (docs/TOOLCHAIN.md, "Patched dependencies").
+# bunfig.toml carries the hoisted linker, and each workspace package's package.json gets its own
+# COPY line before the install; without either the install still exits 0, in another layout or
+# without the package (packages/README.md, "Docker").
+COPY package.json bun.lock bunfig.toml ./
+COPY patches ./patches
+COPY packages/provider-sdk/package.json ./packages/provider-sdk/
 RUN bun install --frozen-lockfile
 
 # Build with Node.js to avoid Bun/QEMU segfaults on ARM64.
@@ -57,7 +64,7 @@ RUN bun install --frozen-lockfile
 # to use 70 MB of them. The choice is made at RUNTIME by @duckdb/node-bindings
 # through detect-libc. Keeping every stage on musl is what makes the prune below
 # safe: the package this image keeps is the package this image loads.
-FROM node:26.13.0-alpine3.23 AS builder
+FROM node:26.13.1-alpine3.23 AS builder
 WORKDIR /usr/src/app
 # bash for scripts/lib/prune-standalone-payload.sh below: it is the deny-list the
 # release artifacts share, and it is a bash script (arrays), not a POSIX one.
@@ -163,6 +170,7 @@ RUN set -eux; \
     node -e "require('/usr/src/app/.next/standalone/node_modules/db2-node')"; \
     test -f .next/standalone/server.js; \
     test ! -e .next/standalone/src; \
+    test ! -e .next/standalone/packages; \
     test ! -e .next/standalone/Dockerfile.alpine; \
     echo "--- native payload surviving the prune ---"; \
     find node_modules .next/standalone/node_modules \( -name '*.node' -o -name '*.so' -o -name '*.so.*' \) | sort | xargs -r ls -lh | awk '{print $5, $9}'
@@ -170,7 +178,7 @@ RUN set -eux; \
 # Production image.
 # alpine3.23: musl must match the stage where the native payload was selected
 # (see builder).
-FROM node:26.13.0-alpine3.23 AS runner
+FROM node:26.13.1-alpine3.23 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
@@ -191,6 +199,12 @@ ENV NODE_OPTIONS="--max-old-space-size=384"
 # volume on — without that volume the run history still dies with the container,
 # which is the documented trade, not a silent one.
 ENV WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow
+
+# Studio's shutdown handler owns the exit on SIGTERM and SIGINT: it closes the
+# HTTP server, waits for the requests in flight, inserts the queued query events
+# and closes the providers before it exits (docs/DISTRIBUTION.md, "Stopping the
+# server"). Set it to the empty string to leave the exit to Next.js's handler.
+ENV NEXT_MANUAL_SIG_HANDLE=true
 
 # The app user, `gosu`, and the removal of the package manager, in one layer.
 #
@@ -270,11 +284,12 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/node_modules/detect-libc 
 # tarball does not carry (keep scripts/build-standalone-payload.sh in sync).
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/THIRD_PARTY_NOTICES.txt ./THIRD_PARTY_NOTICES.txt
 
-# Vendored sample database templates (the SQLite employees sample). Read at
-# runtime via fs relative to process.cwd() (/app), so output file tracing
-# never sees them — copy explicitly (keep scripts/build-standalone-payload.sh
-# in sync).
+# The built-in samples' committed assets (src/lib/seed/samples.ts). Output file
+# tracing never sees them, so they are copied explicitly (keep
+# scripts/build-standalone-payload.sh in sync), and SEED_ASSETS_DIR names them
+# for the server, so finding them does not depend on the working directory.
 COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
+ENV SEED_ASSETS_DIR=/app/seed-assets
 
 # Group 0 with the owner's bits on the two paths the app writes at run time, so
 # an arbitrary UID whose only group is 0 can write them, which is how

@@ -502,6 +502,22 @@ describe("buildQueryEvent", () => {
     });
   });
 
+  test("a transaction event may end unknown", () => {
+    const row = build(
+      input({
+        source: "transaction",
+        statement: null,
+        transactionId: "2f9d6c1e-0b7a-4e3d-8c5f-1a2b3c4d5e6f",
+        transactionOutcome: "unknown",
+        status: "cancelled",
+      }),
+    );
+
+    expect(row.transaction_outcome).toBe("unknown");
+    // The contract checks the column by format only, so an ending a newer Studio records fits contract v1.
+    expect(row.transaction_outcome).toMatch(/^[a-z][a-z-]{0,31}$/);
+  });
+
   test("bounded text columns are clamped to their manifest limits by character, so no execution is refused for length", () => {
     const row = build(
       input({

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, isJsonObject, readJsonObject } from "@/lib/api/json-object-body";
-import { createDatabaseProvider } from "@/lib/db";
+import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
+import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
@@ -67,8 +68,9 @@ function readAnalysisFields(body: Record<string, unknown>): AnalysisFields {
  * route it takes. The answer is `analyzeStatement`'s, whole, so the web editor and a client outside the browser read
  * one implementation of every decision; this route only reads the request and resolves the connection.
  *
- * IT RUNS NOTHING. The provider is built to read its capabilities, as `POST /api/db/provider-meta` builds it, and its
- * `connect()` is never called, so no socket, file or pool opens; resolving the connection may still read Vault for a
+ * IT RUNS NOTHING. The capabilities are read through `readProviderDeclarations`, as `POST /api/db/provider-meta`
+ * reads them: it builds the provider without connecting it, opens no SSH tunnel and hands back data, so no socket, file
+ * or pool opens; resolving the connection may still read Vault for a
  * `${vault:...}` seed and ask the Kubernetes API under the access review, as on every connection route. It records no
  * query event and asks no admission gate, because nothing runs. It logs no part of the text, of the statement or of
  * the refusal, which may quote a word of the text.
@@ -92,6 +94,9 @@ export async function POST(req: NextRequest) {
   const guard = await guardRoute({ route: "POST /api/db/statement/analyze", bucket: "query", request: req });
   if ("response" in guard) return guard.response;
 
+  // Core's scrub of the resolved connection, held out here for the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   try {
     const body = await readJsonObject(req);
     if (body === null) {
@@ -102,6 +107,7 @@ export async function POST(req: NextRequest) {
     // string, so the connection names a provider, and a name the analysis can read as the text a typed confirmation
     // expects.
     const connection = await resolveConnection(body, guard.session);
+    scrub = providerTextScrub(connection, "any");
 
     // Before any provider is built: a request this route cannot read costs no provider.
     const fields = readAnalysisFields(body);
@@ -109,8 +115,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: fields.error }, { status: fields.status });
     }
 
-    // The execution context, as every route that builds a provider passes it, although this one opens no handle.
-    const provider = await createDatabaseProvider(connection, {}, editorExecutionContext(guard.session, connection));
+    // The execution context, as every route that builds a provider passes it, although this one opens no handle: the
+    // factory refuses with it a connection the caller's posture could never open (SQLite under a denied one). The
+    // declarations are read without connecting and without opening the connection's tunnel (FND-2 slice 5).
+    const { capabilities } = await readProviderDeclarations(
+      connection,
+      editorExecutionContext(guard.session, connection),
+    );
 
     let analysis: StatementAnalysis;
     try {
@@ -119,8 +130,9 @@ export async function POST(req: NextRequest) {
         selection: fields.selection,
         cursor: fields.cursor,
         databaseType: connection.type,
-        capabilities: provider.getCapabilities(),
+        capabilities,
         connectionName: connection.name,
+        connectionEnvironment: connection.environment,
       });
     } catch (error) {
       // Offsets the run target cannot honour are the caller's, answered in the rule's own sentence, which names
@@ -131,6 +143,6 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json(analysis);
   } catch (error) {
-    return createErrorResponse(error, { route: "api/db/statement/analyze" });
+    return createErrorResponse(error, { route: "api/db/statement/analyze", scrub });
   }
 }

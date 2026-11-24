@@ -135,12 +135,14 @@ describe("the prompt texts", () => {
     expect(grounding.ungroundedPlanning).toBeUndefined();
   });
 
-  test("only the investigation and the operations workflow are offered, a plan is prose, and nothing auto-executes", () => {
+  test("only the investigation and the operations variants are held, the operations workflow opens nowhere here, a plan is prose, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.mqttread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.mqttread.investigation?.canAutoExecute).toBe(false);
     expect(planDeliverableOf("mqttread", "investigation")).toEqual({ kind: "prose" });
     expect(workflowAvailability("agent", "investigation", "mqtt").open).toBe(true);
-    expect(workflowAvailability("agent", "operations", "mqtt").open).toBe(true);
+    // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
+    // curated reading (its `ENGINE_FACETS` row's `agentReadings` is empty).
+    expect(workflowAvailability("agent", "operations", "mqtt").open).toBe(false);
     expect(workflowAvailability("agent", "data-analysis", "mqtt").open).toBe(false);
   });
 });

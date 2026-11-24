@@ -25,6 +25,7 @@ import type { NodeRequest, NodeResponse, NodeTransport } from "@/lib/db/http/nod
 import { MTConnectProvider } from "@/lib/db/providers/industrial/mtconnect/index";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 
 const FIXTURES = path.resolve(import.meta.dir, "..", "..", "..", "fixtures", "mtconnect");
 const capture = (name: string): string => readFileSync(path.join(FIXTURES, `${name}.xml`), "utf8");
@@ -178,7 +179,12 @@ function standIn(answers: Readonly<Record<string, string>>): NodeTransport {
 async function read(line: string, answer: string): Promise<readonly Readonly<Record<string, unknown>>[]> {
   const transport = standIn({ "/probe": capture("probe"), "/current": capture("current"), [line]: answer });
   const connection = { id: "mtc-gen", name: "mtconnect", type: "mtconnect", host: "127.0.0.1", port: 17322 };
-  const provider = new MTConnectProvider(connection as DatabaseConnection, {}, AGENT, () => transport);
+  const provider = new MTConnectProvider(
+    connection as DatabaseConnection,
+    {},
+    { ...AGENT, egress: ALLOWS_PRIVATE_HOSTS },
+    () => transport,
+  );
   await provider.connect();
   return (await provider.queryReadOnly(line, BUDGET)).rows;
 }

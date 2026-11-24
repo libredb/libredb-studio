@@ -1,20 +1,27 @@
-import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { Database } from "bun:sqlite";
+/**
+ * The built-in SQLite sample, through the sample service: its enablement, and a copy of its committed asset as the
+ * SQLite provider opens it. The copy opens nothing itself (src/lib/seed/sample-copy.ts); these cases prove that the
+ * published file needs no switch to WAL on its first opens, which the asset being committed in WAL mode guarantees.
+ */
+import { describe, test, expect, afterEach } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import {
-  isSqliteSampleEnabled,
-  resolveSqliteSamplePath,
-  resolveSqliteSampleTemplatePath,
-  seedSqliteSampleFile,
-  buildSqliteSampleConnection,
-  getSqliteSampleSeedState,
-  setSqliteSampleSeedState,
-  SQLITE_SAMPLE_SEED_ID,
-} from "@/lib/seed/sqlite-sample";
+import { Database } from "bun:sqlite";
+import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
+import { admittedFileConnection } from "@/lib/db/provider-files";
+import { copySampleAsset } from "@/lib/seed/sample-copy";
+import { SAMPLES, sampleAssetPath, sampleEnabled, type SampleSpec } from "@/lib/seed/samples";
 
+const ROOT = path.resolve(import.meta.dir, "../../..");
 const tmpDirs: string[] = [];
+
+function sqliteRow(): SampleSpec {
+  const spec = SAMPLES.get("sqlite");
+  if (spec === undefined) throw new Error("no SQLite sample row");
+  return spec;
+}
+
 function tmpPath(): string {
   // mkdtempSync atomically creates a unique 0700 dir — the secure-temp pattern
   // (avoids the predictable-name race CodeQL flags for os.tmpdir + Math.random).
@@ -23,158 +30,141 @@ function tmpPath(): string {
   return path.join(dir, "sample-employees.db");
 }
 
-beforeEach(() => {
-  setSqliteSampleSeedState("idle");
-});
+/** The sample as boot publishes it: the committed asset, copied and verified against its pin. */
+async function seededSample(): Promise<string> {
+  const spec = sqliteRow();
+  process.env.SEED_ASSETS_DIR = path.join(ROOT, "seed-assets");
+  const asset = sampleAssetPath(spec);
+  if (asset === null) throw new Error("SEED_ASSETS_DIR is set above, so the sample has an asset path");
+  const file = tmpPath();
+  expect(await copySampleAsset({ asset, sha256: spec.sha256, bytes: spec.bytes }, file)).toBe("copied");
+  return file;
+}
 
 afterEach(() => {
-  for (const d of tmpDirs) {
-    try {
-      fs.rmSync(d, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  }
-  tmpDirs.length = 0;
+  for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
   delete process.env.SQLITE_EMBEDDED_SAMPLE;
-  delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
-  delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
   delete process.env.GOVERNANCE_SOURCE;
-  setSqliteSampleSeedState("idle");
+  delete process.env.LIBREDB_SQLITE_WORKER;
+  delete process.env.LIBREDB_ENABLED_PROVIDERS;
+  delete process.env.SEED_ASSETS_DIR;
 });
 
-describe("sqlite-sample", () => {
-  test('isSqliteSampleEnabled: default on; only "false" disables', () => {
-    expect(isSqliteSampleEnabled()).toBe(true);
+/** A provider on the seeded sample, the way the server builds one for the seed connection. */
+function sampleProvider(file: string): SQLiteProvider {
+  return new SQLiteProvider(
+    admittedFileConnection({
+      id: "seed:sqlite-embedded-sample",
+      name: "Sample",
+      type: "sqlite",
+      database: file,
+      createdAt: new Date(0),
+    }),
+  );
+}
+
+describe("the SQLite sample", () => {
+  test('enabled by default; only "false" disables', () => {
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(true);
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
-    expect(isSqliteSampleEnabled()).toBe(false);
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
     process.env.SQLITE_EMBEDDED_SAMPLE = "true";
-    expect(isSqliteSampleEnabled()).toBe(true);
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(true);
   });
 
   // Governance mode offers no sample (docs/GOVERNANCE.md): the boot check refuses a sample switched on, and the
   // switch answers off under governance whatever the variable says, so a bypassed check seeds and lists no sample.
-  test("under governance isSqliteSampleEnabled() is false although SQLITE_EMBEDDED_SAMPLE is true", () => {
+  test("under governance it is off although SQLITE_EMBEDDED_SAMPLE is true", () => {
     process.env.SQLITE_EMBEDDED_SAMPLE = "true";
     process.env.GOVERNANCE_SOURCE = "postgres";
-    expect(isSqliteSampleEnabled()).toBe(false);
-    // Unset is on by default, and still off under governance.
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
     delete process.env.SQLITE_EMBEDDED_SAMPLE;
-    expect(isSqliteSampleEnabled()).toBe(false);
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
   });
 
-  test("resolveSqliteSamplePath: override wins; else derives from data dir", () => {
-    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = "/custom/employees.db";
-    expect(resolveSqliteSamplePath()).toBe("/custom/employees.db");
-    delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
-    expect(resolveSqliteSamplePath().endsWith(`${path.sep}sample-employees.db`)).toBe(true);
+  // The factory refuses every open of a type LIBREDB_ENABLED_PROVIDERS leaves out, so a server whose list leaves out
+  // sqlite neither seeds the sample nor lists one that could never open.
+  test("it is off when LIBREDB_ENABLED_PROVIDERS is set and does not name sqlite", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres,mysql";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "postgres, sqlite ,";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "  ";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(true);
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
   });
 
-  test("resolveSqliteSampleTemplatePath: override wins; else cwd-relative seed-assets", () => {
-    process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE = "/custom/template.db";
-    expect(resolveSqliteSampleTemplatePath()).toBe("/custom/template.db");
-    delete process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE;
-    expect(resolveSqliteSampleTemplatePath()).toBe(path.join(process.cwd(), "seed-assets", "sqlite", "employee.db"));
+  // The factory refuses every open under a value it cannot read, so the sample, which names sqlite there, is off too.
+  test("it is off when LIBREDB_ENABLED_PROVIDERS is a value the factory refuses as a whole", () => {
+    process.env.LIBREDB_ENABLED_PROVIDERS = "sqlite,postgresql";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
+    process.env.LIBREDB_ENABLED_PROVIDERS = " , ,";
+    expect(sampleEnabled("sqlite", sqliteRow())).toBe(false);
   });
 
-  test("seedSqliteSampleFile: copies the vendored template to a queryable SQLite file", async () => {
-    const file = tmpPath();
-    expect(await seedSqliteSampleFile(file)).toBe("seeded");
-    expect(fs.existsSync(file)).toBe(true);
-
-    const db = new Database(file, { readonly: true });
+  test("the copy is a queryable SQLite file in WAL mode, with no sidecar beside it", async () => {
+    const file = await seededSample();
+    expect([...fs.readFileSync(file).subarray(18, 20)]).toEqual([2, 2]);
+    expect(fs.readdirSync(path.dirname(file))).toEqual(["sample-employees.db"]);
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest), and the sample is published in WAL mode with no sidecar.
+    const db = new Database(file);
     try {
-      const row = db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number };
-      expect(row.n).toBeGreaterThan(0);
+      expect(db.query("SELECT COUNT(*) AS n FROM employee").get()).toEqual({ n: 1000 });
     } finally {
       db.close();
     }
   });
 
-  test("seedSqliteSampleFile: idempotent — reports skipped and does not modify an existing file", async () => {
-    const file = tmpPath();
-    fs.writeFileSync(file, "user data, not a sample");
-    expect(await seedSqliteSampleFile(file)).toBe("skipped");
-    expect(fs.readFileSync(file, "utf8")).toBe("user data, not a sample");
-  });
-
-  test("seedSqliteSampleFile: throws when the template is missing", async () => {
-    process.env.SQLITE_EMBEDDED_SAMPLE_TEMPLATE = path.join(path.dirname(tmpPath()), "missing-template.db");
-    const file = tmpPath();
-    await expect(seedSqliteSampleFile(file)).rejects.toThrow("template");
-    expect(fs.existsSync(file)).toBe(false);
-  });
-
-  test("seedSqliteSampleFile: discards a stale temp left by a crashed boot with the same pid", async () => {
-    const file = tmpPath();
-    const tempPath = `${file}.${process.pid}.seeding`;
-    fs.writeFileSync(tempPath, "partial junk from a crashed seed");
-
-    await seedSqliteSampleFile(file);
-
-    expect(fs.existsSync(file)).toBe(true);
-    expect(fs.existsSync(tempPath)).toBe(false);
-    const db = new Database(file, { readonly: true });
+  // A template in rollback-journal mode had every writable open switch the file to WAL, and two opens making that
+  // switch at once fail with "database is locked" whatever the busy timeout, because SQLite refuses the read lock's
+  // upgrade to the write lock the switch needs instead of waiting. The first page load opens the sample from several
+  // routes at once. The committed asset is already in WAL mode, so no open of the published sample has a switch to
+  // make.
+  test("an open of the fresh sample succeeds while another connection is reading it", async () => {
+    const file = await seededSample();
+    // Writable: Apple's system SQLite, which bun:sqlite uses on macOS, cannot open a WAL file read-only without its
+    // -shm file (SQLITE_CANTOPEN on macos-latest); a read transaction holds the same read lock either way.
+    const reader = new Database(file);
+    reader.exec("BEGIN");
     try {
-      expect((db.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("seedSqliteSampleFile: treats a rename race as success when another worker published first", async () => {
-    const file = tmpPath();
-    const realRename = fs.promises.rename;
-    const renameSpy = spyOn(fs.promises, "rename").mockImplementation((async (from: fs.PathLike, to: fs.PathLike) => {
-      if (to === file) {
-        fs.copyFileSync(from, file);
-        throw new Error("EEXIST: file already exists");
+      expect((reader.query("SELECT COUNT(*) AS n FROM employee").get() as { n: number }).n).toBeGreaterThan(0);
+      for (const worker of ["1", "0"]) {
+        process.env.LIBREDB_SQLITE_WORKER = worker;
+        const provider = sampleProvider(file);
+        try {
+          await provider.connect();
+          expect((await provider.listObjects([], "table")).length).toBeGreaterThan(0);
+        } finally {
+          await provider.disconnect();
+        }
       }
-      return realRename(from, to);
-    }) as typeof fs.promises.rename);
-    try {
-      await seedSqliteSampleFile(file);
     } finally {
-      renameSpy.mockRestore();
+      reader.exec("COMMIT");
+      reader.close();
     }
-    expect(fs.existsSync(file)).toBe(true);
-    expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
   });
 
-  test("seedSqliteSampleFile: rethrows a rename failure when nothing was published, leaving no temp", async () => {
-    const file = tmpPath();
-    const realRename = fs.promises.rename;
-    const renameSpy = spyOn(fs.promises, "rename").mockImplementation((async (from: fs.PathLike, to: fs.PathLike) => {
-      if (to === file) throw new Error("EACCES: simulated rename failure");
-      return realRename(from, to);
-    }) as typeof fs.promises.rename);
+  test("concurrent first opens of a freshly seeded sample all succeed", async () => {
+    const file = await seededSample();
+    const providers = Array.from({ length: 4 }, () => sampleProvider(file));
     try {
-      await expect(seedSqliteSampleFile(file)).rejects.toThrow("EACCES: simulated rename failure");
+      const opens = await Promise.allSettled(
+        providers.map(async (provider) => {
+          await provider.connect();
+          return (await provider.listObjects([], "table")).length;
+        }),
+      );
+      expect(opens.map((open) => (open.status === "fulfilled" ? "opened" : String(open.reason)))).toEqual([
+        "opened",
+        "opened",
+        "opened",
+        "opened",
+      ]);
     } finally {
-      renameSpy.mockRestore();
+      await Promise.all(providers.map((provider) => provider.disconnect()));
     }
-    expect(fs.existsSync(file)).toBe(false);
-    expect(fs.existsSync(`${file}.${process.pid}.seeding`)).toBe(false);
-  });
-
-  test("buildSqliteSampleConnection: editable sqlite seed pointing at the resolved path", () => {
-    const conn = buildSqliteSampleConnection();
-    expect(conn.seedId).toBe(SQLITE_SAMPLE_SEED_ID);
-    expect(conn.id).toBe(`seed:${SQLITE_SAMPLE_SEED_ID}`);
-    expect(conn.type).toBe("sqlite");
-    expect(conn.managed).toBe(false);
-    expect(conn.roles).toEqual(["admin"]);
-    expect(conn.name).toBe("Sample (Employees)");
-    expect(conn.database).toBe(resolveSqliteSamplePath());
-  });
-
-  test("seed state: idle by default, settable, readable across callers", () => {
-    expect(getSqliteSampleSeedState()).toBe("idle");
-    setSqliteSampleSeedState("seeding");
-    expect(getSqliteSampleSeedState()).toBe("seeding");
-    setSqliteSampleSeedState("done");
-    expect(getSqliteSampleSeedState()).toBe("done");
-    setSqliteSampleSeedState("failed");
-    expect(getSqliteSampleSeedState()).toBe("failed");
   });
 });

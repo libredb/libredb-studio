@@ -16,9 +16,14 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { DatabaseConfigError } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
-import type { MqttTransport, MqttTransportFactory } from "@/lib/db/providers/keyvalue/mqtt/session";
-import type { DatabaseConnection } from "@/lib/types";
+import type { MqttSessionOptions, MqttTransport, MqttTransportFactory } from "@/lib/db/providers/keyvalue/mqtt/session";
+import { TUNNEL_FAR_END, type DatabaseConnection } from "@/lib/types";
+
+/** A fabricated credential, so a test that checks where a password goes never carries a real one. */
+const CANARY = `canary-${crypto.randomUUID()}`;
 
 const CAPTURES = path.join(import.meta.dir, "..", "..", "fixtures", "mqtt", "captures");
 
@@ -202,4 +207,61 @@ describe("the mqtt provider over each broker's recorded wire", () => {
       });
     });
   }
+});
+
+/**
+ * Whether a tunnel carries the connection is read from the far end the factory hands on, as the other providers read it.
+ *
+ * Core decides the tunnel before any provider is built. A record with the tunnel on and no Port is refused there, so no
+ * provider exists to write a byte (FND-2 slice 5); a record that arrives with its far end is dialled at the local end
+ * and reads the capture as any other.
+ */
+describe("the mqtt provider and an SSH tunnel", () => {
+  const capture = loadCaptures().find((each) => each.broker === "mosquitto-2.1.2")!;
+  const BASTION = { enabled: true, host: "bastion.example.net", port: 22, username: "jump", authMethod: "password" };
+
+  test("a tunnel that is on and was not opened builds no provider, so nothing reaches the wire", async () => {
+    const record = {
+      ...connection(capture),
+      host: "broker.example.net",
+      port: undefined,
+      user: "sensor",
+      password: CANARY,
+      ssl: { mode: "disable" },
+      sshTunnel: BASTION,
+    } as unknown as DatabaseConnection;
+    const error = await createDatabaseProvider(record).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(DatabaseConfigError);
+    expect((error as Error).message).toBe(
+      "This connection's SSH tunnel is on, but the connection names no Host and Port for the tunnel to forward to, so no tunnel was opened and nothing was sent. Fill in Host and Port, or turn the tunnel off.",
+    );
+  });
+
+  test("a tunnel the factory opened reads the capture through its local end", async () => {
+    const written: Buffer[] = [];
+    const record = {
+      ...connection(capture),
+      user: "sensor",
+      password: CANARY,
+      ssl: { mode: "disable" },
+      sshTunnel: BASTION,
+      [TUNNEL_FAR_END]: { host: "broker.example.net", port: 1883 },
+    } as unknown as DatabaseConnection;
+    const dialled: MqttSessionOptions[] = [];
+    const replaying = replay(capture, written);
+    const provider = new MqttProvider(record, {}, {}, (options) => {
+      dialled.push(options);
+      return replaying(options);
+    });
+    await provider.connect();
+    expect(dialled).toHaveLength(1);
+    expect(dialled[0]).toMatchObject({ host: "127.0.0.1", port: 1883, tlsIdentity: "broker.example.net" });
+    const page = await provider.scanKeysPage!({ cursor: "0", count: 1000 });
+    expect([...page.keys].sort()).toEqual(EXPECTED[capture.broker]!.topics);
+    expect(writtenTypes(written)[0]).toBe(1);
+    await provider.disconnect();
+  });
 });

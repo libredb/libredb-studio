@@ -67,7 +67,22 @@ export class GeminiProvider extends BaseLLMProvider {
    * Create ReadableStream from Gemini stream result
    */
   private createStreamFromResult(result: GenerateContentStreamResult): ReadableStream<Uint8Array> {
-    return streamFromAsyncIterable(result.stream, (chunk) => {
+    // The SDK tees the parsed answer: `result.stream` is one branch, and `result.response` reads the
+    // other to its end to aggregate it. The provider owns both and reports one failure, as the body's
+    // error (`streamFromAsyncIterable`).
+    // When the answer fails after it started (a reset or cut connection, a line that is not JSON, bytes
+    // that are not UTF-8, an aborted request), both branches fail together, with the same error.
+    // A chunk can also parse as JSON yet be one the SDK cannot aggregate: the stream then ends
+    // normally and only `result.response` rejects. So the body awaits the aggregate once the stream
+    // ends, and errors with its failure. The handler below observes `result.response` from the start,
+    // so a rejection that lands while the stream is still read, or after the caller stopped reading,
+    // is not reported a second time as an unhandled rejection.
+    result.response.catch(() => {});
+    async function* chunksThenAggregate() {
+      yield* result.stream;
+      await result.response;
+    }
+    return streamFromAsyncIterable(chunksThenAggregate(), (chunk) => {
       try {
         const text = chunk.text();
         return text ? encodeText(text) : null;

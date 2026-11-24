@@ -44,6 +44,7 @@ import type { monitorEventLoopDelay } from "node:perf_hooks";
 import type { getHeapStatistics } from "node:v8";
 import type { gzipSync } from "node:zlib";
 import type { httpOrigin } from "@/lib/db/http/endpoint";
+import type { EgressDecision } from "@/lib/db/types";
 import type { patTokenSource } from "@/lib/db/providers/sql/snowflake/auth";
 import { SNOWFLAKE_ROWS_SENTENCES } from "@/lib/db/providers/sql/snowflake/rows";
 import type { createSnowflakeStatements } from "@/lib/db/providers/sql/snowflake/statements";
@@ -61,6 +62,8 @@ interface ChildDeps {
   readonly snowflakeProductionDeps: typeof snowflakeProductionDeps;
   readonly patTokenSource: typeof patTokenSource;
   readonly httpOrigin: typeof httpOrigin;
+  /** The decision the origin is built with, so it never refuses the local server. */
+  readonly allowsPrivateHosts: EgressDecision;
   readonly createServer: typeof createServer;
   readonly monitorEventLoopDelay: typeof monitorEventLoopDelay;
   readonly getHeapStatistics: typeof getHeapStatistics;
@@ -169,9 +172,9 @@ async function runCase(deps: ChildDeps, shape: string, bombFile: string, hold: s
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as { port: number };
   const production = deps.snowflakeProductionDeps();
-  const origin = deps.httpOrigin("http", "127.0.0.1", port);
+  const origin = deps.httpOrigin("http", "127.0.0.1", port, deps.allowsPrivateHosts);
   const transport = deps.createSnowflakeTransport(
-    { origin, tls: null, tokens: deps.patTokenSource("stand-in-pat") },
+    { origin, tls: null, tokens: deps.patTokenSource("stand-in-pat"), egress: deps.allowsPrivateHosts },
     production,
   );
   const statements = deps.createSnowflakeStatements({
@@ -260,8 +263,10 @@ beforeAll(async () => {
       `import { patTokenSource } from ${JSON.stringify(join(SOURCES, "providers/sql/snowflake/auth.ts"))};`,
       `import { createSnowflakeStatements } from ${JSON.stringify(join(SOURCES, "providers/sql/snowflake/statements.ts"))};`,
       `import { createSnowflakeTransport, snowflakeProductionDeps } from ${JSON.stringify(join(SOURCES, "providers/sql/snowflake/transport.ts"))};`,
+      `import { ALLOWS_PRIVATE_HOSTS } from ${JSON.stringify(join(import.meta.dir, "../../../helpers/egress-decisions.ts"))};`,
       `const runCase = ${runCase.toString()};`,
-      "const deps = { createSnowflakeTransport, createSnowflakeStatements, snowflakeProductionDeps, patTokenSource, httpOrigin, createServer, monitorEventLoopDelay, getHeapStatistics, gzipSync, readFileSync };",
+      "const allowsPrivateHosts = ALLOWS_PRIVATE_HOSTS;",
+      "const deps = { createSnowflakeTransport, createSnowflakeStatements, snowflakeProductionDeps, patTokenSource, httpOrigin, allowsPrivateHosts, createServer, monitorEventLoopDelay, getHeapStatistics, gzipSync, readFileSync };",
       "const report = await runCase(deps, process.argv[2], process.argv[3], process.argv[4]);",
       'process.stdout.write(JSON.stringify(report) + "\\n");',
       "process.exit(0);",

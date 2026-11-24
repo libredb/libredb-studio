@@ -165,7 +165,8 @@ const SHARED_ENTRIES = new Set(
  * - persisted ids: the `sql-catalog` and `sql-composers` requirements, whose engines are derived from the overlays,
  *   and the operation ids of the SQL arm runtime, which stays in the core. The one in `describePriorProgress` is
  *   temporary: it marks B127, and the B127 fix removes it;
- * - the execution gate, which the spec keeps in `AGENT_EXECUTION_ENGINES`;
+ * - the execution gate, whose review record `AGENT_EXECUTION_ENGINES` moved to `src/lib/db/compatibility.ts`, outside the
+ *   agent core, so it holds no entry here;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
  * - `libredb` as the MCP server's name in each client's configuration snippet, and as the first word of the MCP server's
  *   name, its token type and its VS Code input id, each of which names the product, not the engine.
@@ -233,7 +234,9 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#planObjectiveOf: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/agent-manifest.ts#sqlVerifier: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/agent-manifest.ts#persistedRunFacts: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
-  [`${AGENT}/workflow-classifier.ts#lines: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
+  // The reference variant record read for the workflows' order, which the classifier lists them in (F2).
+  [`${AGENT}/agent-manifest.ts#order: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
+  [`${AGENT}/workflow-classifier.ts#offered: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/workflow-classifier.ts#isWorkflowType: R5c DEFAULT_STATEMENT_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#fingerprint: R5c CURATED_CALL_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#advice: R5c CURATED_CALL_LANGUAGE`]: 1,
@@ -250,45 +253,6 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/tools.ts#outcome: R5e "sql.table.profile"`]: 1,
   [`${AGENT}/tools.ts#profileTableTool: R5e "sql.table.profile"`]: 2,
   [`${AGENT}/investigation.ts#describePriorProgress: R5e "sql.table.profile"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "postgres"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "sqlite"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "duckdb"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mssql"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mysql"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "kubernetes"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mongodb"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "clickhouse"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "libsql"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "influxdb3"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "elasticsearch"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "opensearch"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "oracle"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "db2"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "cassandra"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "couchbase"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "druid"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "libredb"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "influxdb"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "weaviate"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "qdrant"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "neo4j"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "milvus"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "redis"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "etcd"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "oxia"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "rabbitmq"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "kafka"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "s3"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "firestore"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "snmp"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "netconf"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "modbus"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "prometheus"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "opcua"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mtconnect"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mqtt"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "sparkplug"`]: 1,
-  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "trino"`]: 1,
   [`${AGENT}/config.ts#AgentDurableBackend: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#SANCTIONED_WORLD_TARGETS: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#resolveAgentAvailability: R8a "postgres"`]: 1,
@@ -1398,11 +1362,16 @@ describe("planted violations yield exactly their findings", () => {
     expect(scan("void languageServerPack(x).adapter;")).toEqual([]);
   });
 
-  test("an execution engine written twice fails R4 as a surplus", () => {
-    const support = `${AGENT}/engine-support.ts`;
-    const planted = { [support]: read(support).replace('  "postgres",\n', '  "postgres",\n  "postgres",\n') };
+  test("an engine id allowlisted once and written twice in its declaration fails R4 as a surplus", () => {
+    const config = `${AGENT}/config.ts`;
+    const planted = {
+      [config]: read(config).replace(
+        '  "@workflow/world-postgres": "postgres",\n',
+        '  "@workflow/world-postgres": "postgres",\n  other: "postgres",\n',
+      ),
+    };
     expect(boundaryFindings(planted)).toEqual([
-      `R4 surplus: ${support}#AGENT_EXECUTION_ENGINES: R8a "postgres" (found 2, allowed 1)`,
+      `R4 surplus: ${config}#SANCTIONED_WORLD_TARGETS: R8a "postgres" (found 2, allowed 1)`,
     ]);
   });
 

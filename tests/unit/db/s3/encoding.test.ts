@@ -4,8 +4,9 @@
  * the bucket rule refused before any request whatever the caller.
  */
 import { describe, expect, test } from "bun:test";
+import { compareEncodedPairs } from "@/lib/db/auth/aws/sigv4";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { compareEncodedPairs, objectPath, s3Query } from "@/lib/db/providers/objectstore/s3/encoding";
+import { objectPath, s3Query } from "@/lib/db/providers/objectstore/s3/encoding";
 import { sourceAddressSentence } from "@/lib/db/providers/objectstore/s3/names";
 
 describe("objectPath", () => {

@@ -199,6 +199,213 @@ container change should propagate - and treat any exposure, IPv4 or IPv6, as an 
 `LIBREDB_BIND=::` (or `LIBREDB_BIND=::1` for IPv6 loopback) for the wrapper channels, `HOSTNAME`
 for the rest. There is no probe and no auto-selection in those channels.
 
+## Uncaught errors and restarts
+
+An exception that no code catches stops the server.
+Such an exception comes from work outside a request's own handling, such as a timer, a socket or a driver callback; one thrown while a request is handled is still answered with a 500.
+Studio logs one line and exits with code 70, so whatever started the server can start a fresh process instead of one that goes on in an unknown state.
+Before that line, Next.js 16.4 prints the error as thrown, with its stack.
+That order comes from where Next.js 16.4 registers its own handler, which Next.js does not document, so a later release may leave the stack out, while Studio's line and the exit code stay.
+Requests in flight on that process end without an answer.
+
+The line names the exit code, the error's class with its `code` when that is a string, and its message with those of an `AggregateError`'s inner errors, with credentials redacted:
+
+```text
+[ERROR] [2026-11-20T16:34:36.188Z] {route=uncaught-exception} Uncaught exception, exiting with code 70: TypeError: connect failed for postgres://[REDACTED]@db.example:5432/app
+```
+
+Only Studio's line is redacted: the error Next.js prints before it is the error as thrown.
+The line carries no stack of its own, but a message that quotes one, as Node.js's `ERR_UNHANDLED_ERROR` does for an `error` event whose payload holds an Error, is logged as it is.
+Under governance, the query events still queued are not inserted on this exit, unlike at a shutdown Studio's handler owns ([Stopping the server](#stopping-the-server)), and the line counts them, for example `{route=uncaught-exception, queryEventsLost=12}` ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+The count includes an insert under way, whose rows may have landed, so the count is at most what was lost.
+
+Code 70 is `UNCAUGHT_EXCEPTION_EXIT_CODE` in [`src/lib/uncaught-exception.ts`](../src/lib/uncaught-exception.ts), the `EX_SOFTWARE` value of `sysexits.h`, "internal software error".
+No launcher gives it another meaning: 0 is a complete shutdown on SIGTERM or SIGINT, 143 and 130 a shutdown on that signal that did not complete or that Next.js's own handler ended ([Stopping the server](#stopping-the-server)), and 1 is a boot check that refused the configuration, a launcher's own failure, an exception that nothing caught before Next.js installed its own handler, which Node.js ends with its own 1, or, under npx, a server that a signal ended, such as the out-of-memory killer's SIGKILL.
+
+A promise rejection that nothing handles does not stop the server: Next.js logs it and keeps serving.
+That is Next.js's own choice: a server component may start a request early and drop its promise when the answer turns out not to be needed, and the rejection of such a promise is no fault.
+Node.js started with `--unhandled-rejections=strict`, for example through `NODE_OPTIONS`, is the one case where it does: Node.js then raises every unhandled rejection as an uncaught exception before Next.js's rejection handling sees it, so the server exits with 70 for it too, and the line begins `Unhandled rejection raised as an uncaught exception`.
+Whether Studio stops on an unhandled rejection too is open until such rejections have been counted in real sessions.
+How a provider's failure ends, by kind and by runtime, is the failure matrix of the provider contract ([C-34](providers/CONTRACT.md#c-34-informative-the-failure-matrix)).
+
+How each channel brings the server back after code 70:
+
+| Channel | What restarts it | Where the line and the code are |
+|---|---|---|
+| Helm chart, OpenShift operator | The kubelet restarts the container, waiting longer each time while it keeps exiting (`CrashLoopBackOff`) | `kubectl logs <pod> --previous`; the pod's `lastState.terminated.exitCode` |
+| [`docker-compose.example.yml`](../docker-compose.example.yml) | Its `restart: unless-stopped` | `docker logs libredb-studio`; once restarted the container shows exit code 0, so `docker events --since 1h --until 0s --filter container=libredb-studio --filter event=die` shows `exitCode=70`, and `docker inspect -f '{{.RestartCount}}' libredb-studio` counts the restarts |
+| `docker run` | Nothing, unless the container was started with a restart policy such as `--restart unless-stopped` | `docker logs <container>`; with a restart policy as above, and with none `docker inspect -f '{{.State.ExitCode}}' <container>` |
+| npx | Nothing: the launcher exits with 70 | the terminal |
+| .deb / .rpm and AUR (systemd) | The unit's `Restart=on-failure`, after 5 s | `journalctl -u libredb-studio` |
+| Snap | The daemon's `restart-condition: on-failure` | `sudo snap logs -n=all libredb-studio`, since the restarted process prints its own startup lines at once; `journalctl -u snap.libredb-studio.libredb-studio.service` also shows systemd's `status=70/SOFTWARE` |
+| Homebrew service | Nothing: the service is declared with `keep_alive false` | on macOS the service keeps no output, so run `libredb-studio` in a terminal to see the line; on Linux the user journal keeps it, `journalctl --user -u sh.brew.libredb-studio` (`homebrew.libredb-studio` on older Homebrew) |
+| Windows (winget, Chocolatey, Scoop, portable zip) | Nothing: `libredb-studio.exe` exits with 70 | the console |
+| Desktop app | The shell, after 1, 5 and 15 s, three times in one app session, then it shows the server's last lines | the failure page, and the `[server]` lines on the shell's stderr |
+
+Platforms not listed here apply their own policy to a container that exits with a non-zero code.
+The VS Code extension does not run this server: its backend child runs no Next.js, keeps Node.js's own handling of an uncaught exception, and is restarted by the extension ([VSCODE_EXTENSION.md](VSCODE_EXTENSION.md)).
+
+## Stopping the server
+
+On SIGTERM or SIGINT exactly one handler ends the server, and which one is decided by `NEXT_MANUAL_SIG_HANDLE` when the server starts.
+
+- `NEXT_MANUAL_SIG_HANDLE=true`: Next.js installs no signal handler, and Studio's shutdown handler ends the process.
+- `NEXT_MANUAL_SIG_HANDLE` unset or empty: Next.js's own handler ends the process, and Studio's handler only runs the shutdown hooks beside it.
+- Any other value: the server refuses to start with exit code 1 and a banner naming the variable.
+- `NEXT_MANUAL_SIG_HANDLE=true` with the server on Bun: the server refuses to start with exit code 1 and a banner naming the variable and the runtime, since the drain sees no request there.
+
+Set the variable in the environment that starts the server, never in a `.env` file.
+Next.js reads it before it loads `.env` files and Studio reads it after, so a value in `.env` would leave both handlers ending the process.
+The three images set `NEXT_MANUAL_SIG_HANDLE=true` from the first release after 1.3.0, so Studio's handler ends a container started from one.
+A container started from such an image with the variable set to the empty string, `docker run -e NEXT_MANUAL_SIG_HANDLE= ...`, leaves the exit to Next.js's handler.
+The Helm chart and the OpenShift operator run that image, so they take the variable from it once their `appVersion` names such a release; the chart writes none itself yet, and writing it in that release's chart bump is GOV33 in [docs/BACKLOG.md](BACKLOG.md#governance-follow-ups).
+Every launcher that starts the standalone server sets it too, where the server runs on Node.js:
+
+| Channel | What sets it | When |
+|---|---|---|
+| npx | `bin/studio.js` | On Node.js; on Bun it sets nothing |
+| `bun start` in a source checkout | `scripts/next-with-seed-assets.mjs` | On Node.js; on Bun it sets nothing, and `bun dev` never sets it |
+| Homebrew, run directly and under `brew services` | The `libredb-studio` wrapper | Always: it runs Homebrew's `node@24` |
+| .deb, .rpm and AUR, under systemd and run directly | `/usr/bin/libredb-studio` | Always: it runs the bundled Node.js, or the AUR package's `nodejs-lts-krypton` |
+| Snap | Its launcher | Always: it runs the bundled Node.js |
+| Windows (winget, Chocolatey, Scoop, portable zip) | `libredb-studio.exe` | Always: it runs the bundled Node.js |
+| Desktop app (AppImage, Debian package, FlatPark) | The shell | On every start |
+
+Every launcher but the desktop app sets it only when it is absent and keeps a value the operator set, the empty one included.
+So `NEXT_MANUAL_SIG_HANDLE=` where the server is started, a line in `/etc/libredb-studio/env` for the .deb, .rpm and AUR service or in the unit's drop-in for the Snap, leaves the exit to Next.js's handler, as the empty value does for a container.
+The formula's service block sets no `NEXT_MANUAL_SIG_HANDLE`, and `brew services` has no per-service setting for it.
+Under `brew services` the empty value reaches the wrapper only through the service manager's own environment: `launchctl setenv` on macOS, `systemctl --user set-environment` or an environment.d file on Linux.
+Run directly, the wrapper takes it from the shell, `NEXT_MANUAL_SIG_HANDLE= libredb-studio`.
+On Windows the empty value has to come from a parent that keeps an empty variable, such as PowerShell 7.5 or later: cmd.exe's `set NEXT_MANUAL_SIG_HANDLE=` and `$env:NEXT_MANUAL_SIG_HANDLE = ''` in PowerShell before 7.5 remove the variable, and the launchers then set `true`.
+The desktop app sets it on every start, as it does its storage path.
+npx and `bun start` start the server on their own runtime (`process.execPath`), so on Bun they add nothing and pass on a value the operator set, which the server refuses at boot when it is `true`.
+`bun start` stops with exit code 1, before it starts the Next.js CLI, when the variable is absent from its environment and a `.env` file Next.js loads for `start` sets it, since its own `true` would otherwise replace that value unseen; it names each such file.
+It does so on Bun as on Node.js: Bun loads no `.env` file into the environment of the `start` script it runs.
+A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, gets it only from whoever starts it: `NEXT_MANUAL_SIG_HANDLE=true node server.js` on Node.js.
+The variable needs the first Studio release after 1.3.0: 1.3.0 and earlier register their handler only once a route loads the provider factory, so with `NEXT_MANUAL_SIG_HANDLE=true` they have no SIGTERM listener until then and, as PID 1 in a container, ignore the signal until the platform's SIGKILL.
+Next.js 16.4.6 documents the variable only for the Pages Router, in its self-hosting guide's "Manual Graceful Shutdowns", while Studio uses the App Router.
+That `startServer` in `next/dist/server/lib/start-server.js` installs no handler while the variable is set holds for both routers, as read in Next.js 16.4.6, so the live check [`tests/live/shutdown-signal-live.ts`](../tests/live/shutdown-signal-live.ts) must pass on every Next.js upgrade.
+
+Studio's handler is installed when the server boots, by `register()` in [`src/instrumentation.ts`](../src/instrumentation.ts), right after the [uncaught-exception exit](#uncaught-errors-and-restarts); the module is [`src/lib/shutdown-handler.ts`](../src/lib/shutdown-handler.ts).
+On the first signal it logs one line naming the signal and the owner of the exit, then:
+
+1. Where Studio owns the exit, it first drains the HTTP server: it closes every HTTP server that has received a request since the boot to new connections, answers the last request in flight on each connection with `Connection: close` when its headers have not gone out, and moves that header to each request that starts behind it from then on, ends each kept-alive connection as its last response ends, and waits at most 5 s for the requests in flight, those that start meanwhile on a connection already open included, so the query events they record are queued before the hooks run.
+2. It runs the shutdown hooks, which insert the governance query events still queued and close the governance pool, all at once and for at most 5 s.
+3. Where Studio owns the exit, it then closes every cached database provider, all at once and for at most 15 s, logs one end line and exits with the code below.
+   Each provider, whether every caller shares it or it is one user's own, is torn down alike: an open transaction on it is rolled back within 5 s, then it is closed within 10 s, inside those 15 s ([C-45](providers/CONTRACT.md#c-45-normative-teardown-under-fixed-deadlines)).
+   A provider that did not close is logged at its own cut and named in the close's failure line by its connection, its author and Studio's version, for example `Providers not closed: seed:orders (PostgreSQL provider, bundled with Studio 1.4.0)`.
+   A provider still opening is closed as soon as it has connected and never kept.
+4. Where Next.js owns the exit, it closes no server and no provider and never exits: Next.js closes the HTTP server, waits for the connections open at the signal to end and exits, and the process takes the open connections with it.
+
+So a shutdown Studio owns takes 25 s at most.
+Where Studio owns the exit, its start line counts the servers the drain closes and the requests in flight at the signal, as `servers` and `inFlight`.
+A request still in flight at the drain's 5 s keeps running through the hooks and the closes and is cut by the exit; the end line counts it as `responsesCut`, and again as `responsesInFlightAtExit` when it is still running at the exit, and a query event it records after the flush is counted in `queryEventsLost`.
+The drain cuts no busy connection before that.
+A connection whose next request had begun at the drain, part of its headers or its first byte received, or whose request had been answered before all of its body arrived, is not idle, so the drain cannot end it: that one request is served, with `Connection: close`, even after the drain has ended, and on Node.js 24 so is the first request of a connection accepted that had sent nothing yet, which Node.js 26 closes at the drain.
+Such a request runs beside the hooks or the closes: its query event is inserted by the shutdown flush when it is recorded while the flush runs, or, where no flush ran, by the query event sink's own flush before the exit, and is otherwise counted in `queryEventsLost`; a provider it opens after the closes stays open until the exit, and when it is still running at the exit the end line counts it as `responsesInFlightAtExit`.
+A request pipelined behind an answer that has gone out or ended with the drain's `Connection: close` reaches its handler, but Node.js ends the connection after that answer and never sends one for it.
+The drain does not wait for such a request, which runs beside the hooks and the closes, and the end line counts it as `requestsUnanswered`.
+It does not see a request that reached the server before `register()` subscribed, in the first fraction of a second of the boot, and does not know a server that has received no request since then, which keeps accepting connections until the exit; under Kubernetes the probes reach every server.
+
+The drain learns the servers and the requests in flight from node:diagnostics_channel's `http.server.request.start` channel ([`src/lib/shutdown-drain.ts`](../src/lib/shutdown-drain.ts)), which Node.js 24 and 26 document as Stability 1 Experimental.
+[`tests/unit/lib/shutdown-drain-runtimes.test.ts`](../tests/unit/lib/shutdown-drain-runtimes.test.ts) holds the channel on Node 24 and on the images' Node release in the required CI job, so a Node release that changes it fails there by name.
+A release whose channel delivers another shape ends the process with 70 at its first request, naming the channel; a server whose start line shows `servers=0` after it has served requests has a channel that delivers nothing.
+npx and `bun start` run the server on the Node.js that runs them, any release from 24 on, and Homebrew and the AUR package on the newest 24.x their package manager installs, so such a release reaches them before CI sees it.
+`NEXT_MANUAL_SIG_HANDLE=` there leaves the exit to Next.js's handler, and then nothing reads the channel.
+Bun publishes nothing on the channel, so there the drain would see no server and no request.
+`bun start` and `bunx @libredb/studio` on a host without Node.js, and `bun --bun run start` or `bunx --bun` anywhere, run the server on Bun, and with `NEXT_MANUAL_SIG_HANDLE=true` it refuses to start there.
+npx and `bun start` set nothing there, so Next.js's handler ends the server; a value the operator sets is passed on, and the server refuses `true` at boot.
+A second SIGTERM or SIGINT during the shutdown starts nothing, does not cut it and does not change its exit code; npx delivers every Ctrl+C twice, once from the terminal and once from the launcher.
+In a source checkout, `bun dev` and `bun start` deliver it twice too, since `scripts/next-with-seed-assets.mjs` forwards SIGINT and SIGTERM to the Next.js CLI, which the terminal's Ctrl+C has already reached.
+`bin/studio.js` and `scripts/next-with-seed-assets.mjs` install that forwarding right before they spawn the server, so a SIGTERM or SIGINT never ends a launcher and leaves its server running: one that reaches the launcher while the spawn runs is forwarded as soon as the server exists.
+One that reaches the launcher earlier, while npx downloads, verifies or unpacks the payload or `bun start` and `bun dev` read the `.env` files, ends the launcher, which has started no server yet.
+On Windows neither forward is a second signal: Node.js ends the process it forwards to at once (child_process `subprocess.kill()` on Windows), so a Ctrl+C under npx, `bun dev` or `bun start` cuts the shutdown part way.
+The Windows launcher, `libredb-studio.exe`, forwards nothing and waits for the server.
+Next.js's own handler ignores a repeated signal too, so under neither handler does a second Ctrl+C force the exit.
+
+| Code | Meaning |
+|---|---|
+| 0 | Studio's handler ended the process, every request in flight ended within the drain's 5 s, none was in flight at the exit and none went unanswered, every hook and every provider close completed in time, and no query event was left unsent |
+| 143 | SIGTERM, and the shutdown did not complete, as the end line names: requests were still in flight at the drain's bound (`responsesCut`) or at the exit (`responsesInFlightAtExit`), requests pipelined behind an answer that ended their connection went unanswered (`requestsUnanswered`), a hook or a provider close was cut at its bound or failed, or query events were left unsent (`queryEventsLost`); or Next.js's own handler ended the process |
+| 130 | SIGINT, with the same meanings as 143 |
+| 70 | An uncaught exception, which ends the process at once, during a shutdown too ([Uncaught errors and restarts](#uncaught-errors-and-restarts)) |
+| 1 | A boot check refused the configuration, an unsupported `NEXT_MANUAL_SIG_HANDLE` among them, `true` on Bun included |
+
+143 and 130 are 128 plus the signal's number, the codes Next.js's own handler exits with.
+A provider close fails when a shared provider's disconnect rejects, or when an owned provider's rollback or disconnect fails or passes its own deadline ([GOVERNANCE.md](GOVERNANCE.md#per-user-providers)); the end line's `cacheClosesFailed` counts it, and the error line before it names the providers.
+Query events are left unsent when the flush could not insert them, or when a request recorded them after the flush had ended.
+The flush runs only when the process recorded a query event before the shutdown hooks started, which is the signal where Next.js's handler owns the exit and the end of the drain where Studio's does; it sends the events recorded while it runs, and then closes the query event sink, which sends nothing after it.
+Under systemd (the .deb, .rpm, AUR and Snap services) an exit with 143 or 130 is recorded as a failed unit, and only 0 as a clean stop.
+
+Where Next.js ends the process, the stop has no bound of its own.
+On an idle server it exits within milliseconds, while the hooks may still be running.
+Otherwise it waits for every request in flight without a limit, and serves a keep-alive connection open at the signal for as long as a client keeps sending requests on it, the unauthenticated `GET /health` included.
+A long response, such as an agent run's timeline stream, which stays open until the run ends, holds the stop as long.
+Such a stop ends only with the platform's SIGKILL, or a `kill -9`, which the table below times.
+When the process recorded a query event before the signal, the shutdown hooks closed the query event sink once their insert ended, so a statement run after that during the wait leaves a query event that is never inserted; with `queryLog.onSinkFailure` at `refuse` Studio refuses such a statement with 503 `AUDIT_UNAVAILABLE` instead, until the exit ([GOVERNANCE.md](GOVERNANCE.md#query-events)).
+Without such an event the sink stays open and inserts the events of the wait as it does while the server runs.
+Under governance, from the start of the shutdown hooks, which is the signal where Next.js's handler owns the exit and the end of the drain where Studio's does, this instance applies no further change of grants or sessions, a revocation included, until it exits: the hooks stop the governance listener and the reloads, so it keeps authorizing requests by the snapshot it held then ([GOVERNANCE.md](GOVERNANCE.md#operating-notes)).
+As the process exits, unless the platform's SIGKILL ends it, Studio's handler logs `Exiting with 143 after SIGTERM`, as a warning carrying `queryEventsLost` and `hooksRunning` when the exit leaves query events unsent or cuts a hook still running; Studio's start line, `Received SIGTERM: running the shutdown hooks; Next.js's handler ends the process`, shows that its handler ran.
+
+What each platform waits for before it kills the process, against the 25 s Studio's handler may take where it owns the exit; where Next.js owns it, the stop may last until this kill:
+
+| Platform | Grace before SIGKILL |
+|---|---|
+| Kubernetes (Helm chart, OpenShift operator) | 30 s, the default `terminationGracePeriodSeconds` |
+| `docker stop`, `docker compose stop` | 10 s by default; `docker run --stop-timeout 30` or `docker stop --timeout 30` gives a container 30 s, and the Compose files in this repository set `stop_grace_period: 30s` |
+| AWS, DigitalOcean and Azure virtual machine images | 30 s: their unit starts the container with `--stop-timeout 30` |
+| Fly.io (`fly.toml`) | 30 s: `kill_timeout = 30`, over Fly's default of 5 s |
+| Railway (`deploy/railway/template.json`) | 30 s: `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`, for which Railway documents no default |
+| Render (`render.yaml`) | 30 s, the default `maxShutdownDelaySeconds` |
+| systemd (.deb, .rpm, AUR) | The default `TimeoutStopSec`: 90 s on Ubuntu and Arch Linux, 45 s on Fedora 45 |
+| Snap | 30 s, snapd's default stop timeout |
+| Homebrew service | 30 s: `stop_timeout 30`, which `brew services` writes as launchd's `ExitTimeOut` and systemd's `TimeoutStopSec`; the formula needs Homebrew 6.0.13 or later, the first with `stop_timeout` |
+| Desktop app | 30 s |
+| npx, `bun start`, the Windows launcher | None: the launcher waits for the server |
+
+Every grace this repository sets is 30 s, 5 s over Studio's 25 s, and [`tests/unit/stop-grace.test.ts`](../tests/unit/stop-grace.test.ts) holds each against the bounds above.
+CapRover's one-click apps and Portainer's templates have no field for it, so Docker's and Docker Swarm's 10 s applies there, and Koyeb documents none.
+
+Limits:
+
+- `next dev` handles signals in its parent process, which kills the server `NEXT_EXIT_TIMEOUT_MS` after the signal, a variable Next.js does not document whose default is 100 ms in Next.js 16.4.6 (`next/dist/cli/next-dev.js`), and Next.js does not support manual signal handling there.
+- Windows delivers no SIGTERM; Ctrl+C reaches the server as SIGINT.
+- A signal in the first fraction of a second reaches no Studio handler, in one of two windows.
+  Before Next.js adds its own listener, or with `NEXT_MANUAL_SIG_HANDLE=true` before `register()` has run, Node.js's default for the signal applies: it ends the process, or, as PID 1 in a container, ignores the signal until the platform's SIGKILL.
+  With the variable unset, a signal after Next.js has added its listener but before `register()` has run ends the process through Next.js's handler with 143 or 130, and no Studio hook runs.
+
+The npm package and the VS Code extension's backend child run no Next.js server: importing `@libredb/studio` adds no signal listener, and an embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler ([ARCHITECTURE.md](ARCHITECTURE.md)).
+
+## Built-in sample assets
+
+The two built-in samples are copied at boot from the `seed-assets` directory every payload ships beside `server.js` ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#built-in-sample-connections)).
+The server finds that directory only through `SEED_ASSETS_DIR`, which every launcher sets to its own payload's `seed-assets` directory, as an absolute path.
+
+| Channel | What sets it | Where it points |
+|---|---|---|
+| Docker image, all three variants, and the Helm chart, the OpenShift operator and every catalog or template that runs it | The image's `ENV` | `/app/seed-assets` |
+| npx | `bin/studio.js` | `~/.libredb-studio/<version>/payload/seed-assets`, or `payload-local` in place of `payload` with `--archive` |
+| Homebrew, run directly and under `brew services` | The `libredb-studio` wrapper | The installed keg's `libexec/seed-assets` |
+| .deb, .rpm and AUR, under systemd and run directly | `/usr/bin/libredb-studio` | `/usr/lib/libredb-studio/seed-assets`, that is `$LIBREDB_STUDIO_HOME/seed-assets` |
+| Snap | Its launcher | `$SNAP/seed-assets` |
+| Windows (winget, Chocolatey, Scoop, portable zip) | `libredb-studio.exe` | The `seed-assets` directory beside it |
+| Desktop app (AppImage, Debian package, FlatPark) | The shell | The bundled payload's `seed-assets`, `/usr/lib/libredb-studio-desktop/payload/seed-assets` in the Debian package |
+
+Every launcher but the desktop app keeps a value the operator set, and an empty value counts as unset.
+The desktop app sets it on every start, as it does its storage path.
+In a source checkout, `bun dev` and `bun start` run Next.js through `scripts/next-with-seed-assets.mjs`.
+A `SEED_ASSETS_DIR` set in the shell, or in a `.env` file Next.js loads for the command, is kept, and Next.js reads it as it would without the launcher.
+Otherwise the launcher sets it to the checkout's own `seed-assets`, found from the script's location.
+The launcher learns this from Next.js's own loader, `@next/env`, run on the working directory for that command, so a file Next.js does not load for it, or cannot read, sets nothing, and Next.js still reports a file it cannot read.
+The launcher reads each of those files once before Next.js does, so a `.env` that is a named pipe has to serve every read.
+An inspector set in `NODE_OPTIONS`, such as `--inspect` or `--inspect-brk`, is taken by the launcher, which starts first.
+Under `bun start` the server then has no inspector, and under `bun dev` its server gets the next port, as before the launcher.
+Debug the server with `bun start --inspect` or `bun run dev --inspect`.
+A `server.js` that no launcher starts, such as the standalone tarball extracted and run by hand, needs it set by whoever starts it, for example from the extracted directory: `SEED_ASSETS_DIR="$PWD/seed-assets" node server.js`.
+The server never takes the directory from its working directory: with `SEED_ASSETS_DIR` unset or blank it starts as usual, and every enabled, admitted sample whose file is not at its target yet is listed unavailable as `asset-directory-unset` and logged once.
+A relative value is resolved against the server's working directory, as every other path setting is.
+A sample whose assets are not where it points is listed unavailable with its reason, and boot continues ([SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#a-sample-that-could-not-be-created)).
+
 ## Release artifact naming
 
 Release tags carry **no `v` prefix** (tag `0.9.41` == package.json version). Each release ships:
@@ -329,6 +536,7 @@ ships English-only ICU data — safe here because every server-side locale call 
 
 Oracle **Thick** mode needs Oracle Instant Client, which has no musl build, so it is reachable on
 the default tag only — see [providers/oracle.md](providers/oracle.md).
+The darwin-x64 standalone tarball, which `npx @libredb/studio` and Homebrew install on an Intel Mac, has no Thick mode either: node-oracledb 26.0.0 ships no addon for that target ([providers/oracle.md §4.4](providers/oracle.md#44-thick-mode-opt-in-oracle_client_lib_dir)).
 
 **All three prune the payload.** Next's output file tracing sweeps the repository root into
 `.next/standalone`, so every image used to unpack `src/`, `scripts/`, the lockfile and the tooling
@@ -759,9 +967,8 @@ The formula tracks the latest release (it is rendered and pushed to
 
 ```bash
 # One-time: Homebrew's untrusted-tap policy requires trusting third-party
-# taps. `brew trust` needs Homebrew 6+ - if it prints "Unknown command",
-# run `brew update` first (pre-6 Homebrew installs the tap without a trust
-# step, but the command below would stop the chain).
+# taps. The formula needs Homebrew 6.0.13 or later, which also has
+# `brew trust`: if `brew --version` is older, run `brew update` first.
 brew trust libredb/tap
 
 brew install libredb/tap/libredb-studio
@@ -1061,6 +1268,7 @@ The launcher mirrors the Linux packages' contract:
 - **Configuration:** environment variables only — the same set as Docker and the Linux packages
   (`PORT`, `LIBREDB_BIND`, `JWT_SECRET`, `ADMIN_PASSWORD`, `LLM_*`, `OIDC_*`, `STORAGE_*`, ...).
   See [Configuration](#configuration) above and [`.env.example`](../.env.example).
+  cmd.exe and PowerShell before 7.5 remove a variable set to the empty string, so `NEXT_MANUAL_SIG_HANDLE=` reaches the launcher only from a parent that keeps an empty variable, such as PowerShell 7.5 or later ([Stopping the server](#stopping-the-server)).
 
 ### Portable zip (no package manager)
 
@@ -1363,9 +1571,8 @@ bash scripts/build-standalone-payload.sh dist --smoke
 # -> dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz
 ```
 
-`--smoke` boots the packed payload with `node server.js` and requires
-`GET /api/db/health` to return 200. Run the result via the npx launcher:
-`npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
+`--smoke` boots the packed payload with `node server.js` and `SEED_ASSETS_DIR` at its `seed-assets`, and requires `GET /api/db/health` to return 200 and both built-in samples copied.
+Run the result via the npx launcher: `npx @libredb/studio --archive dist/libredb-studio-standalone-<version>-<os>-<arch>.tar.gz`.
 
 ## VS Code extension (Marketplace)
 
@@ -1503,6 +1710,11 @@ macOS, missing artifact) and prints a summary. Where each channel runs in CI:
 | deb, rpm | `release-artifacts.yml` linux-packages job (amd64; alongside the zero-config smoke) |
 | snap | `release-artifacts.yml` snap job (amd64; runs before the store publish) |
 | homebrew | not in CI (linux runners) — run locally on macOS |
+
+The next-dev row's servers get this checkout's `seed-assets` from `playwright.config.ts`, the tarball channel, which has no launcher, gets it from the script, as a user running `server.js` directly would, and the docker channel runs on the image's `ENV`.
+Every channel the script starts through a launcher runs with no inherited `SEED_ASSETS_DIR`, so it runs on the value its launcher sets ([Built-in sample assets](#built-in-sample-assets)), and a wrong value fails it.
+A launcher that sets nothing fails it as well: the server never takes the assets from its working directory, so both samples are listed unavailable as `asset-directory-unset`, never as connections, and the spec's two query tests fail on them; its sidebar test still passes, since an Unavailable row shows the sample's name.
+The default `scripts/next-with-seed-assets.mjs` sets for `bun dev` and `bun start` when neither the shell nor a `.env` file sets one is not exercised here, since `playwright.config.ts` sets the variable; that launcher's own unit test proves it.
 
 ### First-release validation runbook
 

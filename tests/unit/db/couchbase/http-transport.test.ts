@@ -8,19 +8,23 @@
  */
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
+import { BLOCKED_HOST, EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import type { NodeRequest, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import {
+  COUCHBASE_RESPONSE_CAP_BYTES,
   CouchbaseHttpTransport,
   nodeRequestJson,
   type CouchbaseHttpTransportDeps,
   type CouchbaseTlsMaterial,
   type JsonRequestInit,
 } from "@/lib/db/providers/document/couchbase/http-transport";
+import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { withEgressFlag } from "../../../helpers/egress-flag";
 
 // ============================================================================
 // Helpers
@@ -74,7 +78,7 @@ function makeConnection(overrides: Partial<DatabaseConnection> = {}): DatabaseCo
 }
 
 function makeTransport(overrides: Partial<DatabaseConnection> = {}, deps: CouchbaseHttpTransportDeps = {}) {
-  return new CouchbaseHttpTransport(makeConnection(overrides), deps);
+  return new CouchbaseHttpTransport(makeConnection(overrides), deps, ALLOWS_PRIVATE_HOSTS);
 }
 
 function successPayload(overrides: Record<string, unknown> = {}) {
@@ -131,6 +135,25 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+// ============================================================================
+// The egress decision is the last constructor argument
+// ============================================================================
+
+describe("CouchbaseHttpTransport takes the egress decision last", () => {
+  test("a transport built without its decision, as an untyped call of the shape (config, deps) does, is not built and sends nothing", () => {
+    // The decision is last, as at every other guarded transport, so an omitted decision is undefined and the
+    // constructor refuses it by name; with the decision second, the deps object would stand in for it and allow every
+    // destination, and this refusal would not be the one thrown.
+    const Untyped = CouchbaseHttpTransport as unknown as new (
+      config: DatabaseConnection,
+      deps: CouchbaseHttpTransportDeps,
+    ) => CouchbaseHttpTransport;
+    expect(() => new Untyped(makeConnection(), {})).toThrow(DatabaseConfigError);
+    expect(() => new Untyped(makeConnection(), {})).toThrow(EGRESS_DECISION_MISSING);
+    expect(calls).toEqual([]);
+  });
 });
 
 // ============================================================================
@@ -912,7 +935,7 @@ describe("nodeRequestJson", () => {
     });
 
     try {
-      const response = await nodeRequestJson(`${server.url}/pools/default?x=1`, GET_INIT, NO_TLS);
+      const response = await nodeRequestJson(`${server.url}/pools/default?x=1`, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
 
       expect(response.httpCode).toBe(200);
       expect(response.payload).toEqual({ ok: true });
@@ -939,6 +962,7 @@ describe("nodeRequestJson", () => {
         `${server.url}/query/service`,
         { method: "POST", headers: { "content-type": "application/json" }, body: '{"statement":"SELECT 1"}' },
         NO_TLS,
+        ALLOWS_PRIVATE_HOSTS,
       );
 
       expect(response.httpCode).toBe(201);
@@ -956,7 +980,7 @@ describe("nodeRequestJson", () => {
     });
 
     try {
-      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS);
+      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
 
       expect(response.httpCode).toBe(500);
       expect(response.payload).toBeNull();
@@ -983,6 +1007,7 @@ describe("nodeRequestJson", () => {
         `${redirecting.url}/pools/default`,
         { method: "GET", headers: { authorization: "Basic c2VjcmV0" } },
         NO_TLS,
+        ALLOWS_PRIVATE_HOSTS,
       );
 
       expect(response.httpCode).toBe(307);
@@ -998,10 +1023,242 @@ describe("nodeRequestJson", () => {
     const deadUrl = server.url;
     await server.close();
 
-    const error = (await nodeRequestJson(deadUrl, GET_INIT, NO_TLS).catch((e: unknown) => e)) as CouchbaseError;
+    const error = (await nodeRequestJson(deadUrl, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+      (e: unknown) => e,
+    )) as CouchbaseError;
 
     expect(error).toBeInstanceOf(CouchbaseError);
     expect(error.code).toBe(0);
+    expect(error.retriable).toBe(true);
+  });
+});
+
+// ============================================================================
+// Answer bounds: the byte cap and an answer that stops before it is complete
+// ============================================================================
+
+/** The cap in the words the too-large message uses. */
+const CAP_MIB = `${COUCHBASE_RESPONSE_CAP_BYTES / (1024 * 1024)} MiB`;
+
+/**
+ * Serves `{"ok":true}` padded with spaces to `total` bytes, written a MiB at a time under backpressure, so no test holds
+ * the whole answer, and records how many bytes it wrote and whether the socket closed before the answer was finished.
+ */
+function streamingListener(total: number) {
+  const outcome = { written: 0, closedEarly: false };
+  const head = Buffer.from('{"ok":true}');
+  const pad = Buffer.alloc(1024 * 1024, 0x20);
+  const listener = (req: IncomingMessage, res: ServerResponse) => {
+    req.resume();
+    res.writeHead(200, { "content-type": "application/json", "content-length": String(total) });
+    res.on("close", () => {
+      outcome.closedEarly = !res.writableFinished;
+    });
+    res.write(head);
+    outcome.written = head.length;
+    const pump = () => {
+      while (outcome.written < total && !res.destroyed) {
+        const size = Math.min(pad.length, total - outcome.written);
+        outcome.written += size;
+        if (!res.write(pad.subarray(0, size))) {
+          res.once("drain", pump);
+          return;
+        }
+      }
+      if (!res.destroyed) res.end();
+    };
+    pump();
+  };
+  return { outcome, listener };
+}
+
+/**
+ * A raw listener that answers every request with `101 Switching Protocols` and an Upgrade header, then closes the socket
+ * (`fin`) or keeps it open (`open`). close() destroys any socket still open, so the listener can stop.
+ */
+async function startSwitchingServer(how: "fin" | "open") {
+  const sockets = new Set<Socket>();
+  const server = createNetServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.once("data", () => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      if (how === "fin") socket.end();
+    });
+  });
+  await new Promise<void>((resolve) => {
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+/** Declares 1000 bytes, writes 100, then closes (`fin`) or resets (`reset`) the socket. */
+function cutListener(how: "fin" | "reset" | "chunked-fin") {
+  return (req: IncomingMessage, res: ServerResponse) => {
+    req.resume();
+    res.writeHead(200, {
+      "content-type": "application/json",
+      ...(how === "chunked-fin" ? {} : { "content-length": "1000" }),
+    });
+    res.write(`{"results":[${"1,".repeat(40)}`, () => {
+      if (how === "reset") res.socket?.resetAndDestroy();
+      else res.socket?.end();
+    });
+  };
+}
+
+describe("nodeRequestJson answer bounds", () => {
+  test("reads an answer of exactly the cap", async () => {
+    const { listener } = streamingListener(COUCHBASE_RESPONSE_CAP_BYTES);
+    const server = await startServer(listener);
+
+    try {
+      const response = await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS);
+
+      expect(response).toEqual({ httpCode: 200, payload: { ok: true } });
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("refuses an answer past the cap by name, and closes the socket before the rest is sent", async () => {
+    const { outcome, listener } = streamingListener(COUCHBASE_RESPONSE_CAP_BYTES * 4);
+    const server = await startServer(listener);
+
+    const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+      (e: unknown) => e,
+    )) as CouchbaseError;
+    // Waits for the server side of the socket to close, so the outcome below is final.
+    await server.close();
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe(`Couchbase answered with more than ${CAP_MIB}, so the answer was not read further`);
+    expect(error.code).toBe(0);
+    expect(error.retriable).toBe(false);
+    expect(outcome.closedEarly).toBe(true);
+    expect(outcome.written).toBeLessThan(COUCHBASE_RESPONSE_CAP_BYTES * 4);
+  });
+
+  test.each([
+    ["the server closes the socket", "fin"],
+    ["a chunked answer's socket closes before its last chunk", "chunked-fin"],
+  ] as const)("rejects with a named network failure when %s before the answer is complete", async (_label, how) => {
+    const server = await startServer(cutListener(how));
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toBe("Couchbase request failed: the server ended the answer before it was complete");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test("rejects with a named network failure when the server resets the socket mid-answer", async () => {
+    const server = await startServer(cutListener("reset"));
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toStartWith("Couchbase request failed: ");
+      expect(error.message).toContain("ECONNRESET");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test.each([
+    ["closes the socket", "fin"],
+    ["keeps the socket open", "open"],
+  ] as const)("rejects with a named network failure when the server switches protocols and %s", async (_label, how) => {
+    const server = await startSwitchingServer(how);
+
+    try {
+      const error = (await nodeRequestJson(server.url, GET_INIT, NO_TLS, ALLOWS_PRIVATE_HOSTS).catch(
+        (e: unknown) => e,
+      )) as CouchbaseError;
+
+      expect(error).toBeInstanceOf(CouchbaseError);
+      expect(error.message).toBe("Couchbase request failed: the server switched protocols instead of answering");
+      expect(error.code).toBe(0);
+      expect(error.retriable).toBe(true);
+    } finally {
+      await server.close();
+    }
+  });
+});
+
+describe("CouchbaseHttpTransport plaintext answer bounds", () => {
+  /** A body of `total` bytes, pulled a MiB at a time, so no test holds the whole answer. */
+  function streamedBody(total: number): ReadableStream<Uint8Array> {
+    const pad = new Uint8Array(1024 * 1024).fill(0x20);
+    let sent = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent >= total) {
+          controller.close();
+          return;
+        }
+        const size = Math.min(pad.length, total - sent);
+        sent += size;
+        controller.enqueue(pad.subarray(0, size));
+      },
+    });
+  }
+
+  test("refuses a management answer past the cap by name", async () => {
+    handler = () => new Response(streamedBody(COUCHBASE_RESPONSE_CAP_BYTES + 1), { status: 200 });
+
+    const error = (await makeTransport()
+      .manage("/pools/default")
+      .catch((e: unknown) => e)) as CouchbaseError;
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe(`Couchbase answered with more than ${CAP_MIB}, so the answer was not read further`);
+    expect(error.retriable).toBe(false);
+  });
+
+  test("reports a query answer that fails mid-read as a named network failure", async () => {
+    // What undici rejects a body read with when the socket closes before the answer is complete.
+    const cut = new TypeError("terminated", { cause: { code: "UND_ERR_SOCKET", address: "127.0.0.1", port: 8093 } });
+    const cluster = routeQuery(successPayload());
+    handler = (url) => {
+      if (!url.includes("/query/service")) return cluster(url);
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"results":['));
+            controller.error(cut);
+          },
+        }),
+        { status: 200 },
+      );
+    };
+
+    const error = (await makeTransport()
+      .query("SELECT 1")
+      .catch((e: unknown) => e)) as CouchbaseError;
+
+    expect(error).toBeInstanceOf(CouchbaseError);
+    expect(error.message).toBe("Couchbase request failed: connection to 127.0.0.1:8093 was reset (UND_ERR_SOCKET)");
     expect(error.retriable).toBe(true);
   });
 });
@@ -1068,11 +1325,14 @@ describe("CouchbaseHttpTransport agent path", () => {
       origin: { scheme: "http", host: "127.0.0.1", port: 8091 },
       tls: null,
       maxSockets: 4,
+      egress: ALLOWS_PRIVATE_HOSTS,
       headers: {
         accept: "application/json",
         authorization: `Basic ${Buffer.from("Administrator:password123").toString("base64")}`,
       },
     });
+    // The decision the transport was built with, by identity.
+    expect(built[0].options.egress).toBe(ALLOWS_PRIVATE_HOSTS);
     expect(built[0].requests).toEqual([
       { method: "GET", url: "http://127.0.0.1:8091/whoami", signal: request.signal, maxResponseBytes: 65536 },
     ]);
@@ -1204,5 +1464,103 @@ describe("CouchbaseHttpTransport agent path", () => {
     await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
     expect(built).toHaveLength(4);
     expect(built[2].requests.map((sent) => new URL(sent.url).pathname)).toEqual(["/pools/default/nodeServices"]);
+  });
+
+  test("refuses a private node the cluster advertises by the decision the transport was built with, before any request to it", async () => {
+    // The node transport is a stub here, so the query origin built from the advertised node is the only check of the
+    // handed decision; the management host is a name, which the origin lets through.
+    const built: Built[] = [];
+    const advertised = {
+      nodesExt: [{ hostname: "10.0.0.5", services: { n1ql: 8093 } }],
+    };
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test" }),
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices") {
+          return { status: 200, text: JSON.stringify(advertised) };
+        }
+        return cluster()(request);
+      }, built),
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([
+      "http://cb.example.test:8091/pools/default/nodeServices",
+    ]);
+  });
+
+  test("refuses a private external alternate address the cluster advertises by the decision the transport was built with, before any request to it", async () => {
+    // The node is a name and only its external alternate address is private, so the query origin built from that
+    // address is the only check of the handed decision.
+    const built: Built[] = [];
+    const advertised = {
+      nodesExt: [
+        {
+          hostname: "cb-internal.example.test",
+          alternateAddresses: { external: { hostname: "10.0.0.5", ports: { n1ql: 8093 } } },
+          services: { n1ql: 8093 },
+        },
+      ],
+    };
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test" }),
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices") {
+          return { status: 200, text: JSON.stringify(advertised) };
+        }
+        return cluster()(request);
+      }, built),
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([
+      "http://cb.example.test:8091/pools/default/nodeServices",
+    ]);
+  });
+
+  test("refuses a private management host an SRV answer names, on the agent path, by the decision the transport was built with", async () => {
+    // The configured host is a name with no port, so the SRV answer picks the management host, and the origin built
+    // from it is the only check of the handed decision.
+    const built: Built[] = [];
+    const transport = new CouchbaseHttpTransport(
+      makeConnection({ host: "cb.example.test", port: undefined }),
+      {
+        ...nodeDeps(cluster(), built),
+        resolveSrv: async () => [{ name: "10.0.0.7", port: 11207, priority: 0, weight: 0 }],
+      },
+      BLOCKS_PRIVATE_HOSTS,
+    );
+
+    // DB_HTTP_BLOCK_PRIVATE_HOSTS is unset, so a refusal shows the handed decision decided, not the variable.
+    const failure = await withEgressFlag(undefined, () =>
+      transport.whoami(bounds()).then(
+        () => null,
+        (error: unknown) => error,
+      ),
+    );
+
+    expect(failure).toBeInstanceOf(DatabaseConfigError);
+    expect((failure as Error).message).toBe(BLOCKED_HOST);
+    expect(built.flatMap((record) => record.requests.map((sent) => sent.url))).toEqual([]);
   });
 });

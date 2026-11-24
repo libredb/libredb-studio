@@ -140,6 +140,7 @@ class FakeTransport implements Transport {
     this.data = handler;
   }
   onClose(): void {}
+  onError(): void {}
   close(): void {}
   send(chunk: string): void {
     this.data?.(chunk);

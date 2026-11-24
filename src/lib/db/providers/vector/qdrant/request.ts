@@ -10,6 +10,7 @@ import {
   taggedNumber,
   toJsonText,
 } from "@/lib/db/console/tagged-json";
+import { hasValue, isTaggedObject, kindOf, shownText, taggedReaders } from "@/lib/db/console/tagged-readers";
 import {
   checkDenseElements,
   checkMultiVector,
@@ -145,7 +146,6 @@ export interface QdrantWire {
 /** A UUID as the server reads one: 32 hex digits, or the hyphenated form; a form with only some hyphens is refused. */
 const UUID = /^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$/;
 const DIGITS = /^[0-9]+$/;
-const SHOWN = 80;
 
 const INFERENCE_RULE =
   'Studio sends no inference input except a text for the local BM25 model: {"text": "...", "model": "qdrant/bm25"} ' +
@@ -223,40 +223,7 @@ function refuse(message: string, key: string | null = null): never {
   throw new RequestRefusal(message, 0, key);
 }
 
-function shown(text: string): string {
-  return JSON.stringify(text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
-}
-
-/** The JSON kind of a value, as a refusal names it, never the value itself. */
-export function kindOf(value: TaggedJson | undefined): string {
-  if (value === undefined) return "nothing";
-  if (value === null) return "null";
-  if (Array.isArray(value)) return "a list";
-  if (isTaggedInt(value) || isTaggedFloat(value)) return "a number";
-  if (typeof value === "object") return "an object";
-  return typeof value === "boolean" ? "a boolean" : `a ${typeof value}`;
-}
-
-const isObject = (value: TaggedJson | undefined): value is TaggedObject =>
-  typeof value === "object" && value !== null && !Array.isArray(value) && !isTaggedInt(value) && !isTaggedFloat(value);
-
-/** Whether the object holds the key with a value: a key written as null is a key left out. */
-const has = (object: TaggedObject, key: string): boolean => Object.hasOwn(object, key) && object[key] !== null;
-
-function objectAt(value: TaggedJson | undefined, where: string): TaggedObject {
-  if (!isObject(value)) return refuse(`${where} must be an object, found ${kindOf(value)}.`, where);
-  return value;
-}
-
-function listAt(value: TaggedJson | undefined, where: string): readonly TaggedJson[] {
-  if (!Array.isArray(value)) return refuse(`${where} must be a list, found ${kindOf(value)}.`, where);
-  return value;
-}
-
-function stringAt(value: TaggedJson | undefined, where: string): string {
-  if (typeof value !== "string") return refuse(`${where} must be a string, found ${kindOf(value)}.`, where);
-  return value;
-}
+const { objectAt, listAt, stringAt, integerAt, numberAt, wordAt } = taggedReaders(refuse);
 
 /** The object's keys against the closed set of its schema: an unknown key and a missing required key by name. */
 function closed(object: TaggedObject, name: QdrantObjectName, where: string): void {
@@ -264,39 +231,12 @@ function closed(object: TaggedObject, name: QdrantObjectName, where: string): vo
   const keys: readonly string[] = set.keys;
   for (const key of Object.keys(object)) {
     if (!keys.includes(key)) {
-      refuse(`${where} takes no key ${shown(key)}: Qdrant reads ${keys.join(", ")} there and nothing else.`, key);
+      refuse(`${where} takes no key ${shownText(key)}: Qdrant reads ${keys.join(", ")} there and nothing else.`, key);
     }
   }
   for (const key of set.required) {
-    if (!has(object, key)) refuse(`${where} needs the key ${key}.`, key);
+    if (!hasValue(object, key)) refuse(`${where} needs the key ${key}.`, key);
   }
-}
-
-/** A whole number written as an integer literal, from `min` to `max`. */
-function integerAt(value: TaggedJson | undefined, where: string, min: number, max: number): number {
-  if (value === undefined || !isTaggedInt(value)) {
-    return refuse(`${where} must be an integer, found ${kindOf(value)}.`, where);
-  }
-  if (!checkIntRange(value, "safe") || Number(value.digits) < min || Number(value.digits) > max) {
-    return refuse(`${where} is ${value.digits}; it takes an integer from ${min} to ${max}.`, where);
-  }
-  return Number(value.digits);
-}
-
-function numberAt(value: TaggedJson | undefined, where: string): number {
-  if (value !== undefined && isTaggedFloat(value)) return Number(value.text);
-  if (value !== undefined && isTaggedInt(value)) return Number(value.digits);
-  return refuse(`${where} must be a number, found ${kindOf(value)}.`, where);
-}
-
-function wordAt(value: TaggedJson | undefined, where: string, words: readonly string[]): string {
-  if (typeof value !== "string" || !words.includes(value)) {
-    return refuse(
-      `${where} takes one of ${words.join(", ")}, not ${typeof value === "string" ? shown(value) : kindOf(value)}.`,
-      where,
-    );
-  }
-  return value;
 }
 
 /** A point id as a body takes it: an integer literal in the unsigned 64-bit range, or a UUID string. */
@@ -311,11 +251,11 @@ function pointIdAt(value: TaggedJson | undefined, where: string): void {
     if (UUID.test(value)) return;
     if (DIGITS.test(value)) {
       refuse(
-        `${where} is the string ${shown(value)}: write the id as a bare number, because Qdrant refuses a digit string.`,
+        `${where} is the string ${shownText(value)}: write the id as a bare number, because Qdrant refuses a digit string.`,
         where,
       );
     }
-    refuse(`${where} is ${shown(value)}, which is neither an unsigned integer nor a UUID.`, where);
+    refuse(`${where} is ${shownText(value)}, which is neither an unsigned integer nor a UUID.`, where);
   }
   refuse(`${where} must be a point id, an unsigned integer or a UUID string, found ${kindOf(value)}.`, where);
 }
@@ -326,9 +266,9 @@ function pointIdAt(value: TaggedJson | undefined, where: string): void {
  */
 export function qdrantCollectionNameRefusal(name: string): string | undefined {
   if (name === "") return "A collection name cannot be empty.";
-  if (name === "." || name === "..") return `${shown(name)} is not a collection name: Qdrant serves no dot name.`;
+  if (name === "." || name === "..") return `${shownText(name)} is not a collection name: Qdrant serves no dot name.`;
   if (name.includes("/") || name.includes("\u0000")) {
-    return `The collection name ${shown(name)} holds a character Qdrant refuses in a name: / or NUL.`;
+    return `The collection name ${shownText(name)} holds a character Qdrant refuses in a name: / or NUL.`;
   }
   const length = Array.from(name).length;
   if (length > QDRANT_BOUNDS.maxCollectionNameLength) {
@@ -340,10 +280,10 @@ export function qdrantCollectionNameRefusal(name: string): string | undefined {
 /** Why a vector name is not one Qdrant takes, or undefined. The unnamed vector's name, "", is refused here. */
 export function qdrantVectorNameRefusal(name: string): string | undefined {
   if (name === "") return "A vector name cannot be empty.";
-  if (name === "." || name === "..") return `${shown(name)} is not a vector name.`;
+  if (name === "." || name === "..") return `${shownText(name)} is not a vector name.`;
   const forbidden = QDRANT_VECTOR_NAME_FORBIDDEN.find((character) => name.includes(character));
   if (forbidden !== undefined) {
-    return `The vector name ${shown(name)} holds ${JSON.stringify(forbidden)}, a character Qdrant refuses in a vector name.`;
+    return `The vector name ${shownText(name)} holds ${JSON.stringify(forbidden)}, a character Qdrant refuses in a vector name.`;
   }
   const bytes = utf8ByteLength(name);
   if (bytes > QDRANT_BOUNDS.maxVectorNameBytes) {
@@ -423,13 +363,13 @@ function readFilter(walk: Walk, value: TaggedJson, where: string, count: FilterC
   const filter = objectAt(value, where);
   closed(filter, "Filter", where);
   for (const clause of FILTER_CLAUSES) {
-    if (!has(filter, clause)) continue;
+    if (!hasValue(filter, clause)) continue;
     const conditions = Array.isArray(filter[clause]) ? (filter[clause] as readonly TaggedJson[]) : [filter[clause]];
     conditions.forEach((condition, index) => {
       readCondition(walk, condition, `${where}.${clause}[${index}]`, count, nested);
     });
   }
-  if (has(filter, "min_should")) {
+  if (hasValue(filter, "min_should")) {
     const minShould = objectAt(filter.min_should, `${where}.min_should`);
     closed(minShould, "MinShould", `${where}.min_should`);
     integerAt(minShould.min_count, `${where}.min_should.min_count`, 1, Number.MAX_SAFE_INTEGER);
@@ -448,7 +388,7 @@ function readCondition(walk: Walk, value: TaggedJson, where: string, count: Filt
   if (form === undefined) {
     const filterKeys: readonly string[] = QDRANT_KEYS.Filter.keys;
     const stray = keys.find((key) => !filterKeys.includes(key));
-    if (stray !== undefined) refuse(`${where} takes no key ${shown(stray)}: ${CONDITION_FORMS}.`, stray);
+    if (stray !== undefined) refuse(`${where} takes no key ${shownText(stray)}: ${CONDITION_FORMS}.`, stray);
     readFilter(walk, condition, where, count, nested);
     return;
   }
@@ -518,8 +458,8 @@ function readLineString(value: TaggedJson | undefined, where: string): void {
 function readFieldCondition(walk: Walk, condition: TaggedObject, where: string): void {
   closed(condition, "FieldCondition", where);
   stringAt(condition.key, `${where}.key`);
-  if (has(condition, "match")) readMatch(walk, condition.match, `${where}.match`);
-  if (has(condition, "range")) {
+  if (hasValue(condition, "match")) readMatch(walk, condition.match, `${where}.match`);
+  if (hasValue(condition, "range")) {
     const range = objectAt(condition.range, `${where}.range`);
     closed(range, "Range", `${where}.range`);
     for (const bound of Object.keys(range)) {
@@ -531,28 +471,28 @@ function readFieldCondition(walk: Walk, condition: TaggedObject, where: string):
       if (!checkIntRange(value, "safe")) walk.rangeBound(`${where}.range.${bound}`);
     }
   }
-  if (has(condition, "geo_bounding_box")) {
+  if (hasValue(condition, "geo_bounding_box")) {
     const box = objectAt(condition.geo_bounding_box, `${where}.geo_bounding_box`);
     closed(box, "GeoBoundingBox", `${where}.geo_bounding_box`);
     readGeoPoint(box.top_left, `${where}.geo_bounding_box.top_left`);
     readGeoPoint(box.bottom_right, `${where}.geo_bounding_box.bottom_right`);
   }
-  if (has(condition, "geo_radius")) {
+  if (hasValue(condition, "geo_radius")) {
     const radius = objectAt(condition.geo_radius, `${where}.geo_radius`);
     closed(radius, "GeoRadius", `${where}.geo_radius`);
     readGeoPoint(radius.center, `${where}.geo_radius.center`);
   }
-  if (has(condition, "geo_polygon")) {
+  if (hasValue(condition, "geo_polygon")) {
     const polygon = objectAt(condition.geo_polygon, `${where}.geo_polygon`);
     closed(polygon, "GeoPolygon", `${where}.geo_polygon`);
     readLineString(polygon.exterior, `${where}.geo_polygon.exterior`);
-    if (has(polygon, "interiors")) {
+    if (hasValue(polygon, "interiors")) {
       listAt(polygon.interiors, `${where}.geo_polygon.interiors`).forEach((line, index) => {
         readLineString(line, `${where}.geo_polygon.interiors[${index}]`);
       });
     }
   }
-  if (has(condition, "values_count")) {
+  if (hasValue(condition, "values_count")) {
     closed(objectAt(condition.values_count, `${where}.values_count`), "ValuesCount", `${where}.values_count`);
   }
 }
@@ -570,7 +510,7 @@ function readMatch(walk: Walk, value: TaggedJson, where: string): void {
   const form = keys.length === 1 ? MATCH_FORMS[keys[0]] : undefined;
   if (form === undefined || !Object.hasOwn(MATCH_FORMS, keys[0])) {
     refuse(
-      `${where} takes exactly one of ${Object.keys(MATCH_FORMS).join(", ")}; found ${keys.length === 0 ? "no key" : keys.map(shown).join(", ")}.`,
+      `${where} takes exactly one of ${Object.keys(MATCH_FORMS).join(", ")}; found ${keys.length === 0 ? "no key" : keys.map(shownText).join(", ")}.`,
       keys[0] ?? "match",
     );
   }
@@ -651,7 +591,7 @@ function readExpression(
     const decay = objectAt(operand, inner);
     closed(decay, "DecayParamsExpression", inner);
     readExpression(walk, decay.x, `${inner}.x`, count, depth + 1);
-    if (has(decay, "target")) readExpression(walk, decay.target, `${inner}.target`, count, depth + 1);
+    if (hasValue(decay, "target")) readExpression(walk, decay.target, `${inner}.target`, count, depth + 1);
   } else {
     if (key === "acosh") walk.gates.add("formulaAcosh");
     readExpression(walk, operand, inner, count, depth + 1);
@@ -693,7 +633,7 @@ function readVectorInput(walk: Walk, value: TaggedJson | undefined, where: strin
     }
     return;
   }
-  if (!isObject(value)) {
+  if (!isTaggedObject(value)) {
     pointIdAt(value, where);
     return;
   }
@@ -701,7 +641,7 @@ function readVectorInput(walk: Walk, value: TaggedJson | undefined, where: strin
     const model = value.model;
     if (typeof model !== "string" || !QDRANT_LOCAL_MODELS.includes(model)) {
       const named =
-        typeof model === "string" ? `names the model ${shown(model)}` : "is an inference input with no model name";
+        typeof model === "string" ? `names the model ${shownText(model)}` : "is an inference input with no model name";
       refuse(`${where} ${named}, which this console does not send. ${INFERENCE_RULE}`, "model");
     }
     if (Object.hasOwn(value, "options")) refuse(`${where} holds options. ${INFERENCE_RULE}`, "options");
@@ -740,7 +680,7 @@ function readOrderBy(value: TaggedJson | undefined, where: string): void {
   const order = objectAt(value, where);
   closed(order, "OrderBy", where);
   stringAt(order.key, `${where}.key`);
-  if (has(order, "direction")) wordAt(order.direction, `${where}.direction`, QDRANT_ENUMS.Direction);
+  if (hasValue(order, "direction")) wordAt(order.direction, `${where}.direction`, QDRANT_ENUMS.Direction);
   const start = order.start_from;
   if (start !== undefined && isTaggedInt(start) && !checkIntRange(start, "int64")) {
     refuse(`${where}.start_from is ${start.digits}, outside the signed 64-bit range.`, "start_from");
@@ -755,7 +695,7 @@ interface QueryRead {
 
 function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, using: string): QueryRead {
   if (value === undefined || value === null) return { form: "none", mmrCandidates: null };
-  if (!isObject(value)) {
+  if (!isTaggedObject(value)) {
     readVectorInput(walk, value, where, using);
     return { form: Array.isArray(value) ? "vector" : "id", mmrCandidates: null };
   }
@@ -770,7 +710,7 @@ function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, usi
     const stray = Object.keys(value).find((key) => !vectorKeys.includes(key));
     if (stray !== undefined || Object.keys(value).length === 0) {
       refuse(
-        `${where} is not a query Qdrant reads: a query is a vector, a point id, {"indices", "values"}, or one of ${QUERY_FORMS.join(", ")}${stray === undefined ? "" : `; found the key ${shown(stray)}`}.`,
+        `${where} is not a query Qdrant reads: a query is a vector, a point id, {"indices", "values"}, or one of ${QUERY_FORMS.join(", ")}${stray === undefined ? "" : `; found the key ${shownText(stray)}`}.`,
         stray ?? "query",
       );
     }
@@ -784,11 +724,11 @@ function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, usi
   if (form === "nearest") {
     closed(value, "NearestQuery", where);
     readVectorInput(walk, value.nearest, inner, using);
-    if (has(value, "mmr")) {
+    if (hasValue(value, "mmr")) {
       const mmr = objectAt(value.mmr, `${where}.mmr`);
       closed(mmr, "Mmr", `${where}.mmr`);
-      if (has(mmr, "diversity")) numberAt(mmr.diversity, `${where}.mmr.diversity`);
-      if (has(mmr, "candidates_limit")) {
+      if (hasValue(mmr, "diversity")) numberAt(mmr.diversity, `${where}.mmr.diversity`);
+      if (hasValue(mmr, "candidates_limit")) {
         mmrCandidates = integerAt(
           mmr.candidates_limit,
           `${where}.mmr.candidates_limit`,
@@ -804,12 +744,13 @@ function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, usi
     const recommend = objectAt(value.recommend, inner);
     closed(recommend, "RecommendInput", inner);
     for (const side of ["positive", "negative"]) {
-      if (!has(recommend, side)) continue;
+      if (!hasValue(recommend, side)) continue;
       listAt(recommend[side], `${inner}.${side}`).forEach((example, index) => {
         readVectorInput(walk, example, `${inner}.${side}[${index}]`, using);
       });
     }
-    if (has(recommend, "strategy")) wordAt(recommend.strategy, `${inner}.strategy`, QDRANT_ENUMS.RecommendStrategy);
+    if (hasValue(recommend, "strategy"))
+      wordAt(recommend.strategy, `${inner}.strategy`, QDRANT_ENUMS.RecommendStrategy);
     return { form, mmrCandidates };
   }
   if (form === "discover") {
@@ -841,8 +782,8 @@ function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, usi
     closed(value, "RrfQuery", where);
     const rrf = objectAt(value.rrf, inner);
     closed(rrf, "Rrf", inner);
-    if (has(rrf, "k")) integerAt(rrf.k, `${inner}.k`, 1, Number.MAX_SAFE_INTEGER);
-    if (has(rrf, "weights")) {
+    if (hasValue(rrf, "k")) integerAt(rrf.k, `${inner}.k`, 1, Number.MAX_SAFE_INTEGER);
+    if (hasValue(rrf, "weights")) {
       listAt(rrf.weights, `${inner}.weights`).forEach((weight, index) => {
         numberAt(weight, `${inner}.weights[${index}]`);
       });
@@ -853,7 +794,7 @@ function readQuery(walk: Walk, value: TaggedJson | undefined, where: string, usi
   if (form === "formula") {
     closed(value, "FormulaQuery", where);
     readExpression(walk, value.formula, inner, { nodes: 0 }, 1);
-    if (has(value, "defaults")) objectAt(value.defaults, `${where}.defaults`);
+    if (hasValue(value, "defaults")) objectAt(value.defaults, `${where}.defaults`);
     return { form, mmrCandidates };
   }
   if (form === "sample") {
@@ -889,7 +830,7 @@ function readShardKey(value: TaggedJson, where: string): void {
     value.forEach((key, index) => {
       one(key, `${where}[${index}]`);
     });
-  } else if (isObject(value)) {
+  } else if (isTaggedObject(value)) {
     closed(value, "ShardKeyWithFallback", where);
     one(value.target, `${where}.target`);
     one(value.fallback, `${where}.fallback`);
@@ -923,19 +864,20 @@ function readWithVector(value: TaggedJson, where: string): void {
 function readParams(walk: Walk, value: TaggedJson, where: string): number {
   const params = objectAt(value, where);
   closed(params, "SearchParams", where);
-  if (has(params, "hnsw_ef")) integerAt(params.hnsw_ef, `${where}.hnsw_ef`, 1, QDRANT_BOUNDS.maxHnswEf);
-  if (has(params, "acorn")) closed(objectAt(params.acorn, `${where}.acorn`), "AcornSearchParams", `${where}.acorn`);
-  if (has(params, "idf")) {
+  if (hasValue(params, "hnsw_ef")) integerAt(params.hnsw_ef, `${where}.hnsw_ef`, 1, QDRANT_BOUNDS.maxHnswEf);
+  if (hasValue(params, "acorn"))
+    closed(objectAt(params.acorn, `${where}.acorn`), "AcornSearchParams", `${where}.acorn`);
+  if (hasValue(params, "idf")) {
     walk.gates.add("paramsIdf");
-    if (isObject(params.idf)) {
+    if (isTaggedObject(params.idf)) {
       closed(params.idf, "IdfCorpusParams", `${where}.idf`);
       walk.filter(params.idf.corpus, `${where}.idf.corpus`);
     } else wordAt(params.idf, `${where}.idf`, QDRANT_ENUMS.IdfScope);
   }
-  if (!has(params, "quantization")) return 1;
+  if (!hasValue(params, "quantization")) return 1;
   const quantization = objectAt(params.quantization, `${where}.quantization`);
   closed(quantization, "QuantizationSearchParams", `${where}.quantization`);
-  if (!has(quantization, "oversampling")) return 1;
+  if (!hasValue(quantization, "oversampling")) return 1;
   const oversampling = numberAt(quantization.oversampling, `${where}.quantization.oversampling`);
   if (!(oversampling >= 1 && oversampling <= QDRANT_BOUNDS.maxOversampling)) {
     refuse(
@@ -955,20 +897,20 @@ function readStage(
   rows: (limit: number | null) => { readonly limit: number; readonly offset: number },
 ): QdrantSearch {
   const at = (key: string) => (where === "" ? key : `${where}.${key}`);
-  const using = has(stage, "using") ? vectorNameAt(stage.using, at("using")) : "";
-  if (has(stage, "filter")) walk.filter(stage.filter, at("filter"));
-  const oversampling = has(stage, "params") ? readParams(walk, stage.params, at("params")) : 1;
-  if (has(stage, "score_threshold")) numberAt(stage.score_threshold, at("score_threshold"));
-  if (has(stage, "lookup_from")) {
+  const using = hasValue(stage, "using") ? vectorNameAt(stage.using, at("using")) : "";
+  if (hasValue(stage, "filter")) walk.filter(stage.filter, at("filter"));
+  const oversampling = hasValue(stage, "params") ? readParams(walk, stage.params, at("params")) : 1;
+  if (hasValue(stage, "score_threshold")) numberAt(stage.score_threshold, at("score_threshold"));
+  if (hasValue(stage, "lookup_from")) {
     const lookup = objectAt(stage.lookup_from, at("lookup_from"));
     closed(lookup, "LookupLocation", at("lookup_from"));
     const collection = collectionNameAt(lookup.collection, at("lookup_from.collection"));
-    const vector = has(lookup, "vector") ? vectorNameAt(lookup.vector, at("lookup_from.vector")) : using;
-    if (has(lookup, "shard_key")) readShardKey(lookup.shard_key, at("lookup_from.shard_key"));
+    const vector = hasValue(lookup, "vector") ? vectorNameAt(lookup.vector, at("lookup_from.vector")) : using;
+    if (hasValue(lookup, "shard_key")) readShardKey(lookup.shard_key, at("lookup_from.shard_key"));
     walk.lookups.add(collection);
     walk.usings.push({ where: at("lookup_from.vector"), using: vector, needed: true, collection });
   }
-  if (has(stage, "prefetch")) {
+  if (hasValue(stage, "prefetch")) {
     if (depth + 1 > QDRANT_BOUNDS.maxPrefetchDepth) {
       refuse(
         `${at("prefetch")} nests prefetch more than ${QDRANT_BOUNDS.maxPrefetchDepth} levels deep, the console's bound.`,
@@ -1003,10 +945,10 @@ function readStage(
   walk.usings.push({
     where: at("using"),
     using,
-    needed: VECTOR_FORMS.has(query.form) || has(stage, "using"),
+    needed: VECTOR_FORMS.has(query.form) || hasValue(stage, "using"),
     collection: null,
   });
-  const limit = has(stage, "limit") ? integerAt(stage.limit, at("limit"), 1, QDRANT_BOUNDS.maxCandidates) : null;
+  const limit = hasValue(stage, "limit") ? integerAt(stage.limit, at("limit"), 1, QDRANT_BOUNDS.maxCandidates) : null;
   const asked = rows(limit);
   walk.candidate(
     (asked.offset + (query.mmrCandidates ?? asked.limit)) * oversampling,
@@ -1038,9 +980,9 @@ function withoutKey(object: TaggedObject, key: string): TaggedObject {
 }
 
 function readSelectors(body: TaggedObject): void {
-  if (has(body, "shard_key")) readShardKey(body.shard_key, "shard_key");
-  if (has(body, "with_payload")) readWithPayload(body.with_payload, "with_payload");
-  if (has(body, "with_vector")) readWithVector(body.with_vector, "with_vector");
+  if (hasValue(body, "shard_key")) readShardKey(body.shard_key, "shard_key");
+  if (hasValue(body, "with_payload")) readWithPayload(body.with_payload, "with_payload");
+  if (hasValue(body, "with_vector")) readWithVector(body.with_vector, "with_vector");
 }
 
 /** One search, a query or an entry of a batch: its keys, its rows and its defaults. */
@@ -1056,10 +998,10 @@ function readSearch(walk: Walk, search: TaggedObject, where: string, rows: strin
     readWithVector(search[QDRANT_QUERY_ALIAS.alias], `${prefix}${QDRANT_QUERY_ALIAS.alias}`);
   }
   closed(withoutKey(search, QDRANT_QUERY_ALIAS.alias), "QueryRequest", where === "" ? "The body" : where);
-  if (has(search, "shard_key")) readShardKey(search.shard_key, `${prefix}shard_key`);
-  if (has(search, "with_payload")) readWithPayload(search.with_payload, `${prefix}with_payload`);
-  if (has(search, "with_vector")) readWithVector(search.with_vector, `${prefix}with_vector`);
-  const offset = has(search, "offset")
+  if (hasValue(search, "shard_key")) readShardKey(search.shard_key, `${prefix}shard_key`);
+  if (hasValue(search, "with_payload")) readWithPayload(search.with_payload, `${prefix}with_payload`);
+  if (hasValue(search, "with_vector")) readWithVector(search.with_vector, `${prefix}with_vector`);
+  const offset = hasValue(search, "offset")
     ? integerAt(search.offset, `${prefix}offset`, 0, QDRANT_BOUNDS.maxCandidates)
     : 0;
   walk.searches.push(
@@ -1084,7 +1026,7 @@ function refuseOptions(body: TaggedObject): void {
     // 262,144).
     if (Array.isArray(value)) {
       for (const item of value) pending.push(item);
-    } else if (isObject(value)) {
+    } else if (isTaggedObject(value)) {
       if (Object.hasOwn(value, "options")) {
         refuse(`A request holds no key "options", at any depth. ${INFERENCE_RULE}`, "options");
       }
@@ -1132,22 +1074,22 @@ export function qdrantPhase0(request: ConsoleRequest<QdrantOp>): QdrantPhase0 {
     readSelectors(original);
     body = original;
   } else if (route.op === "scroll_points") {
-    if (has(original, "limit")) walk.row(integerAt(original.limit, "limit", 1, QDRANT_BOUNDS.maxRows), "limit");
-    if (has(original, "offset")) pointIdAt(original.offset, "offset");
-    if (has(original, "filter")) walk.filter(original.filter, "filter");
-    if (has(original, "order_by")) readOrderBy(original.order_by, "order_by");
+    if (hasValue(original, "limit")) walk.row(integerAt(original.limit, "limit", 1, QDRANT_BOUNDS.maxRows), "limit");
+    if (hasValue(original, "offset")) pointIdAt(original.offset, "offset");
+    if (hasValue(original, "filter")) walk.filter(original.filter, "filter");
+    if (hasValue(original, "order_by")) readOrderBy(original.order_by, "order_by");
     readSelectors(original);
     body = withDefaults(original, { limit: integer(QDRANT_BOUNDS.defaultLimit) });
   } else if (route.op === "count_points") {
-    if (has(original, "filter")) walk.filter(original.filter, "filter");
-    if (has(original, "shard_key")) readShardKey(original.shard_key, "shard_key");
+    if (hasValue(original, "filter")) walk.filter(original.filter, "filter");
+    if (hasValue(original, "shard_key")) readShardKey(original.shard_key, "shard_key");
     body = withDefaults(original, { exact: true });
   } else if (route.op === "facet") {
     if (stringAt(original.key, "key") === "")
       refuse("key names the payload field to count by; it cannot be empty.", "key");
-    if (has(original, "limit")) integerAt(original.limit, "limit", 1, QDRANT_BOUNDS.maxFacetLimit);
-    if (has(original, "filter")) walk.filter(original.filter, "filter");
-    if (has(original, "shard_key")) readShardKey(original.shard_key, "shard_key");
+    if (hasValue(original, "limit")) integerAt(original.limit, "limit", 1, QDRANT_BOUNDS.maxFacetLimit);
+    if (hasValue(original, "filter")) walk.filter(original.filter, "filter");
+    if (hasValue(original, "shard_key")) readShardKey(original.shard_key, "shard_key");
     body = withDefaults(original, { limit: integer(QDRANT_BOUNDS.defaultLimit) });
   } else if (route.op === "query_points") {
     body = readSearch(walk, original, "", "limit");
@@ -1171,16 +1113,16 @@ export function qdrantPhase0(request: ConsoleRequest<QdrantOp>): QdrantPhase0 {
       refuse("group_by names the payload field to group by; it cannot be empty.", "group_by");
     }
     readSelectors(original);
-    const size = has(original, "group_size")
+    const size = hasValue(original, "group_size")
       ? integerAt(original.group_size, "group_size", 1, QDRANT_BOUNDS.maxRows)
       : QDRANT_BOUNDS.defaultGroupSize;
-    if (has(original, "with_lookup") && typeof original.with_lookup !== "string") {
+    if (hasValue(original, "with_lookup") && typeof original.with_lookup !== "string") {
       const lookup = objectAt(original.with_lookup, "with_lookup");
       closed(lookup, "WithLookup", "with_lookup");
       collectionNameAt(lookup.collection, "with_lookup.collection");
-      if (has(lookup, "with_payload")) readWithPayload(lookup.with_payload, "with_lookup.with_payload");
-      if (has(lookup, "with_vectors")) readWithVector(lookup.with_vectors, "with_lookup.with_vectors");
-    } else if (has(original, "with_lookup")) collectionNameAt(original.with_lookup, "with_lookup");
+      if (hasValue(lookup, "with_payload")) readWithPayload(lookup.with_payload, "with_lookup.with_payload");
+      if (hasValue(lookup, "with_vectors")) readWithVector(lookup.with_vectors, "with_lookup.with_vectors");
+    } else if (hasValue(original, "with_lookup")) collectionNameAt(original.with_lookup, "with_lookup");
     walk.searches.push(
       readStage(walk, original, "", 0, (limit) => {
         const groups = limit ?? QDRANT_BOUNDS.defaultLimit;
@@ -1233,7 +1175,7 @@ export function qdrantVersionGates(plan: QdrantPhase0, version: string | null): 
     if (plain && atLeast(version, gate.needs)) continue;
     const server = plain
       ? `this server is ${version}`
-      : `this server reported ${version === null ? "no version" : `the version ${shown(version)}, which is not a plain major.minor.patch`}`;
+      : `this server reported ${version === null ? "no version" : `the version ${shownText(version)}, which is not a plain major.minor.patch`}`;
     refuse(
       `${gate.key} needs Qdrant ${gate.needs} or later, and ${server}. An older server ignores the key or answers an error that names no key, so Studio refuses it.`,
       gate.key,
@@ -1252,17 +1194,17 @@ function vectorOf(
   const holds = names.length === 0 ? "it has no vector" : `it has ${names.join(", ")}`;
   if (use.using === "") {
     return refuseLater(
-      `The collection ${shown(collection)} has no unnamed vector, so the search needs "using" with a vector's name: ${holds}.`,
+      `The collection ${shownText(collection)} has no unnamed vector, so the search needs "using" with a vector's name: ${holds}.`,
       "using",
     );
   }
   return refuseLater(
-    `${use.where} names ${shown(use.using)}, which is no vector of the collection ${shown(collection)}: ${holds}.`,
+    `${use.where} names ${shownText(use.using)}, which is no vector of the collection ${shownText(collection)}: ${holds}.`,
     "using",
   );
 }
 
-const named = (vector: VectorFieldInfo): string => (vector.name === "" ? "the unnamed vector" : shown(vector.name));
+const named = (vector: VectorFieldInfo): string => (vector.name === "" ? "the unnamed vector" : shownText(vector.name));
 
 /** The literal checked against its vector, and what is written in its place: its numbers as doubles. */
 function checkedLiteral(literal: VectorLiteral, vector: VectorFieldInfo): TaggedJson | undefined {
@@ -1314,7 +1256,7 @@ function rewritten(value: TaggedJson, replacements: ReadonlyMap<TaggedJson, Tagg
   const replacement = replacements.get(value);
   if (replacement !== undefined) return replacement;
   if (Array.isArray(value)) return value.map((entry) => rewritten(entry, replacements));
-  if (!isObject(value)) return value;
+  if (!isTaggedObject(value)) return value;
   const copy: Record<string, TaggedJson> = Object.create(null);
   for (const key of Object.keys(value)) copy[key] = rewritten(value[key], replacements);
   return copy;

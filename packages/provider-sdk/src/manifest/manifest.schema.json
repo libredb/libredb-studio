@@ -1,0 +1,3445 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:libredb:provider-manifest:0.1",
+  "title": "ProviderManifest",
+  "description": "A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "The identifier of this schema, for an editor that reads it; never fetched.",
+      "const": "urn:libredb:provider-manifest:0.1"
+    },
+    "contract": {
+      "description": "The provider contract the manifest was built against, the one this schema serves.",
+      "const": "0.1"
+    },
+    "runtime": {
+      "$ref": "#/$defs/runtime"
+    },
+    "calls": {
+      "$ref": "#/$defs/calls"
+    },
+    "engines": {
+      "description": "The engines the package serves, one declaration each, at most 64: a contract limit for a package that serves one provider's engines, which bounds every reading of the list.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/engineDeclaration"
+      },
+      "minItems": 1,
+      "maxItems": 64
+    },
+    "compatibility": {
+      "description": "The products the package was measured against, one entry per product, each naming an engine the manifest declares.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/compatibilityEntry"
+      },
+      "minItems": 1
+    },
+    "vendor": {
+      "description": "Keys of the package's own, which Studio never reads.",
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "required": ["contract", "runtime", "calls", "engines", "compatibility"],
+  "additionalProperties": false,
+  "$defs": {
+    "envelope": {
+      "description": "What a host reads first, before it knows which schema applies: the contract the manifest was built against, in the form MAJOR.MINOR.",
+      "type": "object",
+      "properties": {
+        "contract": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})$"
+        }
+      },
+      "required": ["contract"],
+      "additionalProperties": true
+    },
+    "runtime": {
+      "description": "How the host loads the package into its own process.",
+      "type": "object",
+      "properties": {
+        "entry": {
+          "description": "The package-relative POSIX path of the ES module whose default export the loader reads, with no dot segment.",
+          "type": "string",
+          "pattern": "^(?:[A-Za-z0-9_-][A-Za-z0-9._-]*/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\\.m?js$",
+          "maxLength": 256
+        },
+        "native": {
+          "description": "The per-platform native packages the package needs, each pinned exactly.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nativePackage"
+          },
+          "minItems": 1
+        },
+        "env": {
+          "description": "The environment variables the package reads, each with the reason it reads it.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/envDeclaration"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["entry"],
+      "additionalProperties": false
+    },
+    "nativePackage": {
+      "description": "A native package pinned to one version, the platforms it serves and the Node-API version it is built for.",
+      "type": "object",
+      "properties": {
+        "package": {
+          "type": "string",
+          "pattern": "^(?:@[a-z0-9][a-z0-9._-]*/)?[a-z0-9][a-z0-9._-]*$",
+          "maxLength": 214
+        },
+        "version": {
+          "description": "An exact version, never a range.",
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$",
+          "maxLength": 64
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nativeTarget"
+          },
+          "minItems": 1
+        },
+        "nodeApi": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        }
+      },
+      "required": ["package", "version", "targets", "nodeApi"],
+      "additionalProperties": false
+    },
+    "nativeTarget": {
+      "description": "One platform, in npm's os, cpu and libc vocabulary.",
+      "type": "object",
+      "properties": {
+        "os": {
+          "$ref": "#/$defs/targetOs"
+        },
+        "cpu": {
+          "$ref": "#/$defs/targetCpu"
+        },
+        "libc": {
+          "$ref": "#/$defs/targetLibc"
+        }
+      },
+      "required": ["os", "cpu"],
+      "additionalProperties": false
+    },
+    "targetOs": {
+      "type": "string",
+      "enum": ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"]
+    },
+    "targetCpu": {
+      "type": "string",
+      "enum": ["arm", "arm64", "ia32", "loong64", "mips", "mipsel", "ppc64", "riscv64", "s390x", "x64"]
+    },
+    "targetLibc": {
+      "type": "string",
+      "enum": ["glibc", "musl"]
+    },
+    "envDeclaration": {
+      "description": "One environment variable the package reads, by name, and why.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        }
+      },
+      "required": ["name", "purpose"],
+      "additionalProperties": false
+    },
+    "calls": {
+      "description": "What the package's code answers beyond the mandatory calls. One implementation serves every engine the package declares, so these are facts of the package, not of an engine; every key is required, written as not-offered or an empty list where the package answers nothing more.",
+      "type": "object",
+      "properties": {
+        "console": {
+          "$ref": "#/$defs/consoleCalls"
+        },
+        "objects": {
+          "$ref": "#/$defs/objectsCalls"
+        }
+      },
+      "required": ["console", "objects"],
+      "additionalProperties": false
+    },
+    "consoleCalls": {
+      "description": "The console's calls: execute, which every package answers, and each optional console facet, keyed by the path to its function under the implementation's console.",
+      "type": "object",
+      "properties": {
+        "execute": {
+          "$ref": "#/$defs/executeCall"
+        },
+        "cancel": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "endScope": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "transaction": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["execute", "cancel", "endScope", "transaction"],
+      "additionalProperties": false
+    },
+    "objectsCalls": {
+      "description": "The object facets: each optional call that reads what a connection holds, keyed by the path to its function under the implementation's objects. tree: list a connection's containers and the objects of one kind in one container, count each kind's objects in one container, and describe one object or every object of one kind in one container.",
+      "type": "object",
+      "properties": {
+        "tree": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["tree"],
+      "additionalProperties": false
+    },
+    "executeCall": {
+      "description": "What the package's console execute does with the optional fields of its request.",
+      "type": "object",
+      "properties": {
+        "honours": {
+          "description": "The optional request fields execute honours; the host sends no other.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/executeRequestField"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["honours"],
+      "additionalProperties": false
+    },
+    "executeRequestField": {
+      "description": "An optional field of the console execute request. params: bound parameter values. offset: a page that starts past the first row.",
+      "type": "string",
+      "enum": ["params", "offset"]
+    },
+    "engineId": {
+      "description": "An engine's type-id: a lower-case letter, then up to 31 lower-case letters or digits.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,31}$"
+    },
+    "engineDeclaration": {
+      "description": "One engine the package serves. Every fact is required, written as null, false or an empty list where the engine has none, so no fact is left out by omission.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/engineId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "location": {
+          "$ref": "#/$defs/engineLocation"
+        },
+        "connection": {
+          "$ref": "#/$defs/connection"
+        },
+        "facets": {
+          "$ref": "#/$defs/facets"
+        },
+        "agent": {
+          "$ref": "#/$defs/agent"
+        },
+        "editor": {
+          "$ref": "#/$defs/editor"
+        },
+        "sqlText": {
+          "$ref": "#/$defs/sqlText"
+        },
+        "sqlWriting": {
+          "$ref": "#/$defs/sqlWriting"
+        },
+        "migrationDdl": {
+          "$ref": "#/$defs/migrationDdl"
+        },
+        "sqlGenerators": {
+          "$ref": "#/$defs/sqlGenerators"
+        },
+        "policy": {
+          "$ref": "#/$defs/policyClaims"
+        },
+        "mcp": {
+          "$ref": "#/$defs/mcpClaims"
+        },
+        "safeguards": {
+          "$ref": "#/$defs/safeguards"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "location",
+        "connection",
+        "facets",
+        "agent",
+        "editor",
+        "sqlText",
+        "sqlWriting",
+        "migrationDdl",
+        "sqlGenerators",
+        "policy",
+        "mcp",
+        "safeguards"
+      ],
+      "additionalProperties": false
+    },
+    "engineLocation": {
+      "description": "external: a database the user already runs, which Studio is pointed at. embedded: a store Studio carries and creates itself.",
+      "type": "string",
+      "enum": ["external", "embedded"]
+    },
+    "connection": {
+      "description": "What a connection to the engine is made of.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "description": "The fields the connection dialog draws and a save writes, in the order the VS Code extension prompts in.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "defaults": {
+          "$ref": "#/$defs/connectionDefaults"
+        },
+        "seedOnly": {
+          "$ref": "#/$defs/seedOnly"
+        },
+        "refused": {
+          "description": "The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/refusedField"
+          }
+        },
+        "connectionString": {
+          "$ref": "#/$defs/connectionStringOffer"
+        },
+        "tls": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "readsTrustMaterial": {
+          "description": "Whether the engine's provider is handed the CA certificates of the file NODE_EXTRA_CA_CERTS names, as data: true where its TLS library does not read Node.js's trust store, so the variable never reaches it on its own. Not a claim: no gate reads it, the certificates are the operator's public ones, and a provider that needs them and does not ask fails to verify, never verifies less.",
+          "type": "boolean"
+        },
+        "sshTunnel": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sshTunnelOffered"
+            },
+            {
+              "$ref": "#/$defs/sshTunnelRefused"
+            }
+          ]
+        },
+        "hostPathFields": {
+          "description": "The seed-only fields that name a file on Studio's own host the provider reads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostPathField"
+          },
+          "uniqueItems": true
+        },
+        "opensLocalFile": {
+          "description": "Whether the engine opens a file on Studio's own host as its database.",
+          "type": "boolean"
+        },
+        "serverLevelWithoutDatabase": {
+          "description": "Whether a connection that names no database reaches every database of the server.",
+          "type": "boolean"
+        },
+        "agentCredential": {
+          "$ref": "#/$defs/agentCredential"
+        },
+        "dialog": {
+          "$ref": "#/$defs/connectionDialog"
+        },
+        "hostUriSchemes": {
+          "description": "The URI schemes the dialog's Host box accepts a pasted address in, in the order its refusal names them; empty where it accepts none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/hostUriScheme"
+          },
+          "uniqueItems": true
+        },
+        "credentialWarnings": {
+          "description": "The credentials the engine warns about, read by the connection dialog and at seed load, in the order they are read.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/credentialWarning"
+          }
+        },
+        "fieldRules": {
+          "description": "The checks the connection dialog runs on a field before Test Connection and Save send anything, at most one rule per field the engine takes; the dialog checks the fields in the order of fields, so the order of this list carries no meaning.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldRule"
+          }
+        },
+        "hostHint": {
+          "description": "The function that answers, from the text in the Host box, the sentence the dialog draws in place of the static Host hint while it answers one; null where the engine has none.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hostIdentity": {
+          "description": "The function that answers the server a Host text names, for telling whether a pasted connection string names the server already in the box; null where the text trimmed and lower-cased is its identity.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "import": {
+          "$ref": "#/$defs/connectionImport"
+        },
+        "connectBudgetMs": {
+          "$ref": "#/$defs/connectBudget"
+        }
+      },
+      "required": [
+        "fields",
+        "defaults",
+        "seedOnly",
+        "refused",
+        "connectionString",
+        "tls",
+        "readsTrustMaterial",
+        "sshTunnel",
+        "hostPathFields",
+        "opensLocalFile",
+        "serverLevelWithoutDatabase",
+        "agentCredential",
+        "dialog",
+        "hostUriSchemes",
+        "credentialWarnings",
+        "fieldRules",
+        "hostHint",
+        "hostIdentity",
+        "import",
+        "connectBudgetMs"
+      ],
+      "additionalProperties": false
+    },
+    "functionName": {
+      "description": "The name of a function the package exports, which the manifest names and never carries, local to its engine: a lower-case letter, then up to 63 letters or digits.",
+      "type": "string",
+      "pattern": "^[a-z][A-Za-z0-9]{0,63}$"
+    },
+    "fieldRule": {
+      "description": "The checks on one field: a blank field is refused with required; a field that is not blank must match format, then hold a length within charRange, then pass check. A rule states at least one of them.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "required": {
+          "description": "The sentence a blank field is refused with; null where a blank field passes.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "format": {
+          "$ref": "#/$defs/fieldFormat"
+        },
+        "charRange": {
+          "$ref": "#/$defs/fieldCharRange"
+        },
+        "check": {
+          "description": "The function that reads a field that passes format and charRange and answers its refusal sentence, or nothing where it passes; null where the field has none.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["field", "required", "format", "charRange", "check"],
+      "additionalProperties": false
+    },
+    "fieldFormat": {
+      "description": "The pattern a field that is not blank must match, and the sentence it is refused with where it does not; null where the field has none.",
+      "type": ["object", "null"],
+      "properties": {
+        "pattern": {
+          "$ref": "#/$defs/boundedPattern"
+        },
+        "sentence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["pattern", "sentence"],
+      "additionalProperties": false
+    },
+    "boundedPattern": {
+      "description": "A regular expression, its source and flags as JavaScript's RegExp reads them, which must compile. A value is tested with RegExp.prototype.test, so a pattern that must match the whole value writes ^ and $ itself.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "flags": {
+          "description": "No flag, or u alone.",
+          "type": "string",
+          "enum": ["", "u"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "fieldCharRange": {
+      "description": "The length, in characters, a field that is not blank and matches its format must have, both ends included, and the sentence it is refused with otherwise; null where the field has none.",
+      "type": ["object", "null"],
+      "properties": {
+        "min": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "sentence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["min", "max", "sentence"],
+      "additionalProperties": false
+    },
+    "connectBudget": {
+      "description": "How long the host waits for an open of the engine and for its Test connection, in milliseconds from the open's start: at least 30,000, an SSH tunnel's 20 s handshake bound plus 10 s for the connect, and at most 300,000; null where the engine takes the host's default, DEFAULT_CONNECT_BUDGET_MS, 70,000.",
+      "type": ["integer", "null"],
+      "minimum": 30000,
+      "maximum": 300000
+    },
+    "connectionImport": {
+      "description": "An import the connection dialog offers for a new connection: the action's label, and the function that reads a pasted text into entries, one of which fills the form, without throwing; null where the dialog offers none.",
+      "type": ["object", "null"],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "importer": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["label", "importer"],
+      "additionalProperties": false
+    },
+    "refusedField": {
+      "description": "A field the engine refuses by name, and the sentence core refuses a connection that sets it with, which names the field and never its value.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["field", "refusal"],
+      "additionalProperties": false
+    },
+    "connectionDialog": {
+      "description": "How the connection dialog presents the engine's fields. Each list holds at most one entry per field, each naming a field the engine takes; a field with no entry keeps the dialog's own word.",
+      "type": "object",
+      "properties": {
+        "order": {
+          "description": "The order the dialog draws the fields in, the fields left out drawn after them; null where the dialog keeps its own order.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        },
+        "labels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldLabel"
+          }
+        },
+        "hints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldHint"
+          }
+        },
+        "placeholders": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldPlaceholder"
+          }
+        },
+        "placement": {
+          "description": "Where each placeable field the engine takes is drawn; every one of them has an entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldPlacementEntry"
+          }
+        },
+        "options": {
+          "description": "The choices of each select field the engine takes; every one of them has an entry.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldOptions"
+          }
+        },
+        "shownWhen": {
+          "description": "The fields the dialog draws only while another field holds one value; a field hidden by its condition is neither saved nor required.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldShownWhen"
+          }
+        },
+        "absentValues": {
+          "description": "The value a connection that leaves a field absent is read as, declared for a field a condition reads.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldAbsentValue"
+          }
+        }
+      },
+      "required": ["order", "labels", "hints", "placeholders", "placement", "options", "shownWhen", "absentValues"],
+      "additionalProperties": false
+    },
+    "fieldLabel": {
+      "description": "The label the dialog draws for a field in place of its own.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldHint": {
+      "description": "The sentence the dialog draws under a field.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldPlaceholder": {
+      "description": "The example the dialog draws in an empty field in place of its own; the empty string means no example.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 256
+        }
+      },
+      "required": ["field", "text"],
+      "additionalProperties": false
+    },
+    "fieldPlacementEntry": {
+      "description": "Where the dialog draws one placeable field.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/placeableFieldName"
+        },
+        "where": {
+          "$ref": "#/$defs/fieldPlacement"
+        }
+      },
+      "required": ["field", "where"],
+      "additionalProperties": false
+    },
+    "placeableFieldName": {
+      "description": "The fields the dialog draws either in the open or behind Advanced, by the engine's placement.",
+      "type": "string",
+      "enum": ["authSource", "localDataCenter", "serviceName", "instanceName"]
+    },
+    "fieldPlacement": {
+      "description": "open: drawn with the other fields. advanced: drawn behind Advanced.",
+      "type": "string",
+      "enum": ["open", "advanced"]
+    },
+    "selectFieldName": {
+      "description": "The fields the dialog draws as a select, whose choices each engine that takes one declares.",
+      "type": "string",
+      "enum": ["saslMechanism", "authMethod"]
+    },
+    "fieldOptions": {
+      "description": "The choices of one select field, in the order the dialog lists them.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/selectFieldName"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldChoice"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["field", "choices"],
+      "additionalProperties": false
+    },
+    "fieldChoice": {
+      "description": "One choice of a select: the value saved and the label drawn.",
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["value", "label"],
+      "additionalProperties": false
+    },
+    "fieldShownWhen": {
+      "description": "A field the dialog draws only while its condition holds.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "when": {
+          "$ref": "#/$defs/fieldCondition"
+        }
+      },
+      "required": ["field", "when"],
+      "additionalProperties": false
+    },
+    "fieldCondition": {
+      "description": "One field equals one value, the field's absent value standing for a value the connection leaves absent.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "equals": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "equals"],
+      "additionalProperties": false
+    },
+    "fieldAbsentValue": {
+      "description": "The value a connection that leaves the field absent is read as, by the dialog, by core and by the provider.",
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/fieldName"
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["field", "value"],
+      "additionalProperties": false
+    },
+    "hostUriScheme": {
+      "type": "string",
+      "enum": ["http", "https"]
+    },
+    "credentialWarning": {
+      "description": "A credential the engine warns about.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/pairWarning"
+        },
+        {
+          "$ref": "#/$defs/jwtWarning"
+        },
+        {
+          "$ref": "#/$defs/noSecretWarning"
+        }
+      ]
+    },
+    "pairWarning": {
+      "description": "A published default user and password: the dialog warns when both are typed, and a read-only seed with them is refused.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "pair"
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "password": {
+          "description": "The published default password; the empty string where the default is no password.",
+          "type": "string",
+          "maxLength": 128
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "user", "password", "message"],
+      "additionalProperties": false
+    },
+    "jwtWarning": {
+      "description": "A JSON Web Token in the password field, decoded locally: the dialog warns when it declares no expiry or one of the access claims named.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "jwt"
+        },
+        "noExp": {
+          "const": true
+        },
+        "access": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jwtAccessClaim"
+          },
+          "uniqueItems": true
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "noExp", "access", "message"],
+      "additionalProperties": false
+    },
+    "jwtAccessClaim": {
+      "description": "m: the token declares manage access. absent: the token declares no access claim at all.",
+      "type": "string",
+      "enum": ["m", "absent"]
+    },
+    "noSecretWarning": {
+      "description": "A server that accepts a connection with no password: a read-only seed without one is refused.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "no-secret"
+        },
+        "message": {
+          "description": "The warning's sentence, which Studio frames with its own words in the dialog and at seed load.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["kind", "message"],
+      "additionalProperties": false
+    },
+    "connectionDefaults": {
+      "description": "What the connection dialog fills in when the engine is chosen; a key is absent where the dialog fills in nothing.",
+      "type": "object",
+      "properties": {
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "host": {
+          "type": "string",
+          "maxLength": 253
+        }
+      },
+      "additionalProperties": false
+    },
+    "seedOnly": {
+      "description": "The fields only this engine's provider reads, and how a seed of another type that carries one is refused; null where a seed of another type may carry every field this engine reads.",
+      "type": ["object", "null"],
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "scope": {
+          "description": "each: one refusal per present field. set: one refusal for the whole set.",
+          "type": "string",
+          "enum": ["each", "set"]
+        },
+        "refusal": {
+          "description": "The refusal sentence, in which {field} stands for the field refused.",
+          "type": "string",
+          "pattern": "^(?:[^{}]|\\{field\\})*$",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "projectionRefusal": {
+          "description": "The sentence that refuses a seed connection of another type carrying the fields when it is projected, in which {id} and {type} stand for the connection's id and type; null where the projection has none.",
+          "type": ["string", "null"],
+          "pattern": "^(?:[^{}]|\\{id\\}|\\{type\\})*$",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["fields", "scope", "refusal", "projectionRefusal"],
+      "additionalProperties": false
+    },
+    "connectionStringOffer": {
+      "description": "What an engine's connection string is. accepted: whether the provider opens what a connection string names. dialogOffersUri: whether the connection dialog offers a connection string box. scheme: the one URI scheme shown for the engine. urlTls: the function that reads the TLS a URL's query carries. paste: how the engine reads a connection string pasted into the dialog's Paste URL box. seedCheck: the function Studio runs on a seed file's connection before any socket.",
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean"
+        },
+        "dialogOffersUri": {
+          "type": "boolean"
+        },
+        "scheme": {
+          "description": "The one URI scheme shown for the engine, lower-case as the parser reads a pasted scheme, of a form the engine's paste reader reads; null where the engine has none. It names no alias the reader also accepts.",
+          "type": ["string", "null"],
+          "pattern": "^[a-z][a-z0-9+.-]{0,31}$"
+        },
+        "urlTls": {
+          "description": "The function that reads the TLS a URL's query carries into a mode the connection form can hold, or keeps the parameter as written where no mode expresses it, never a weaker mode than the engine's driver applies; only the engine's paste reader calls it. Null where the engine's URL carries no TLS in its query.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "paste": {
+          "$ref": "#/$defs/connectionStringPaste"
+        },
+        "seedCheck": {
+          "description": "The function Studio runs when it loads a seed file, on the fields the file writes for a connection of the engine, before any socket: it leaves a field written as a reference unjudged and answers each refusal as a field and a sentence that never quotes the value. Null where the engine is not checked at load.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["accepted", "dialogOffersUri", "scheme", "urlTls", "paste", "seedCheck"],
+      "additionalProperties": false
+    },
+    "connectionStringPaste": {
+      "description": "How an engine reads a pasted connection string; null where the Paste URL box never names the engine. reader: the one function name for the reader's three operations, claims (whether it reads the paste trimmed with its scheme lower-cased), names (whether the paste trimmed and lower-cased whole is a spelling the engine connects with) and parse (the form's fields, or a refusal, for a text claims accepted, and only for such a text). catchAll: whether it claims generic transport schemes other readers may claim on their own hosts, so Studio offers it a paste after every other reader. formats: the forms the Paste URL box names for the engine, each one that parse connects with.",
+      "type": ["object", "null"],
+      "properties": {
+        "reader": {
+          "$ref": "#/$defs/functionName"
+        },
+        "catchAll": {
+          "type": "boolean"
+        },
+        "formats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true
+        }
+      },
+      "required": ["reader", "catchAll", "formats"],
+      "additionalProperties": false
+    },
+    "facetOffer": {
+      "description": "offered: the engine, or for a call the package's code, has something to read or do for it. not-offered: it has nothing, so no surface draws it and no call is made.",
+      "type": "string",
+      "enum": ["offered", "not-offered"]
+    },
+    "sshTunnelOffered": {
+      "description": "The engine's connections may run through an SSH tunnel.",
+      "type": "object",
+      "properties": {
+        "offered": {
+          "const": true
+        }
+      },
+      "required": ["offered"],
+      "additionalProperties": false
+    },
+    "sshTunnelRefused": {
+      "description": "The engine's connections never run through an SSH tunnel, and the sentence that refuses one says why.",
+      "type": "object",
+      "properties": {
+        "offered": {
+          "const": false
+        },
+        "refusal": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["offered", "refusal"],
+      "additionalProperties": false
+    },
+    "agentCredential": {
+      "description": "The agent credential a seed connection of the engine may carry; null where it carries none.",
+      "type": ["object", "null"],
+      "properties": {
+        "form": {
+          "$ref": "#/$defs/agentCredentialForm"
+        },
+        "supersededBy": {
+          "description": "Fields the provider signs in with in preference to the user and password, beside which an agent credential is refused.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fieldName"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": ["form", "supersededBy"],
+      "additionalProperties": false
+    },
+    "agentCredentialForm": {
+      "description": "pair: a user and a password. dedicated-pair: a pair whose user differs from the connection's own. secret: a password alone.",
+      "type": "string",
+      "enum": ["pair", "dedicated-pair", "secret"]
+    },
+    "fieldName": {
+      "description": "A connection field, from the contract's closed vocabulary. Its class is the contract's: each name is in exactly one of secretFieldName, identityFieldName and publicFieldName.",
+      "type": "string",
+      "enum": [
+        "host",
+        "port",
+        "connectionString",
+        "allowInsecureAuth",
+        "user",
+        "password",
+        "saslMechanism",
+        "authMethod",
+        "privateKey",
+        "privateKeyPassphrase",
+        "hostKeyFingerprint",
+        "database",
+        "dataServers",
+        "warehouse",
+        "location",
+        "region",
+        "namespaces",
+        "amqpPort",
+        "apiPath",
+        "tlsServerName",
+        "registerMap",
+        "securityMode",
+        "serverCertificateThumbprint",
+        "schema",
+        "role",
+        "authSource",
+        "apiKeyId",
+        "apiKeySecret",
+        "localDataCenter",
+        "serviceName",
+        "instanceName",
+        "securityPolicyUri",
+        "clientCertificatePath",
+        "clientPrivateKeyPath",
+        "agentReadRoots"
+      ]
+    },
+    "seedOnlyFieldName": {
+      "description": "The field names only a seed file or an embedder's own code sets, which no connection dialog draws.",
+      "type": "string",
+      "enum": ["securityPolicyUri", "clientCertificatePath", "clientPrivateKeyPath", "agentReadRoots"]
+    },
+    "secretFieldName": {
+      "description": "The secret class: a stored value is encrypted, never sent to a browser, and moves the provider cache key.",
+      "type": "string",
+      "enum": ["connectionString", "password", "privateKey", "privateKeyPassphrase", "apiKeyId", "apiKeySecret"]
+    },
+    "identityFieldName": {
+      "description": "The identity class: another value names another principal or server, so a change of it is a new connection.",
+      "type": "string",
+      "enum": [
+        "host",
+        "port",
+        "allowInsecureAuth",
+        "user",
+        "saslMechanism",
+        "hostKeyFingerprint",
+        "database",
+        "dataServers",
+        "amqpPort",
+        "apiPath",
+        "tlsServerName",
+        "securityMode",
+        "serverCertificateThumbprint",
+        "authSource",
+        "serviceName",
+        "instanceName",
+        "securityPolicyUri",
+        "clientCertificatePath",
+        "clientPrivateKeyPath"
+      ]
+    },
+    "publicFieldName": {
+      "description": "The public class: a value that grants nothing.",
+      "type": "string",
+      "enum": [
+        "authMethod",
+        "warehouse",
+        "location",
+        "region",
+        "namespaces",
+        "registerMap",
+        "schema",
+        "role",
+        "localDataCenter",
+        "agentReadRoots"
+      ]
+    },
+    "hostPathField": {
+      "description": "A field that names a file on Studio's own host, which core admits through its reserved-path refusal before the provider reads it.",
+      "type": "string",
+      "enum": ["clientCertificatePath", "clientPrivateKeyPath"]
+    },
+    "facets": {
+      "description": "What the engine offers beyond its queries.",
+      "type": "object",
+      "properties": {
+        "monitoring": {
+          "$ref": "#/$defs/monitoringPanels"
+        },
+        "maintenance": {
+          "description": "The maintenance operations the engine offers before Studio connects, each once, so at most as many as the operations there are.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenanceOperation"
+          },
+          "uniqueItems": true,
+          "maxItems": 11
+        },
+        "maintenanceSpecs": {
+          "description": "How each maintenance operation the engine offers is placed, worded and confirmed: one spec for each operation the maintenance list names and for no other, so at most as many as the operations there are. The provider's own statements of its target grammar and wording, never claims: the maintenance routes read the placements only to refuse a request in a form the provider says it does not take, and a typed confirmation only adds a step to the confirmations Studio asks itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/maintenanceSpec"
+          },
+          "maxItems": 11
+        },
+        "agentReadings": {
+          "description": "The curated operational readings agent mode is offered on the engine, each once, so at most as many as the readings there are.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agentReading"
+          },
+          "uniqueItems": true,
+          "maxItems": 6
+        }
+      },
+      "required": ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"],
+      "additionalProperties": false
+    },
+    "monitoringPanels": {
+      "description": "Every monitoring panel, each stated as offered or not, so no panel is offered or withheld by default.",
+      "type": "object",
+      "properties": {
+        "overview": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "performance": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "slowQueries": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "activeSessions": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "tables": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "indexes": {
+          "$ref": "#/$defs/facetOffer"
+        },
+        "storage": {
+          "$ref": "#/$defs/facetOffer"
+        }
+      },
+      "required": ["overview", "performance", "slowQueries", "activeSessions", "tables", "indexes", "storage"],
+      "additionalProperties": false
+    },
+    "maintenanceOperation": {
+      "type": "string",
+      "enum": [
+        "vacuum",
+        "analyze",
+        "reindex",
+        "kill",
+        "optimize",
+        "check",
+        "compact",
+        "defragment",
+        "disarm",
+        "load",
+        "release"
+      ]
+    },
+    "maintenanceSpec": {
+      "description": "One maintenance operation's spec: where its controls are placed, the words they show, the confirmation and preview they ask and the object kinds they run on. A spec places its operation on a row, over the whole database or both; only kill's places it nowhere, since its target is a session the session list names.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "$ref": "#/$defs/maintenanceOperation"
+        },
+        "label": {
+          "description": "The engine's own wording for a control that runs the operation.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "perEntity": {
+          "description": "Whether the operation runs on one object a row names: a table, a collection, a keyspace.",
+          "type": "boolean"
+        },
+        "global": {
+          "description": "Whether the operation runs with no target, over the whole database.",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "The heading of the operation's own whole-database card, which the card draws with the label on its button and the description as its body; null where the operation stays on the Operations tab's own cards.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "description": {
+          "description": "The body of the operation's card, of its typed dialog and of its per-row dialog; null where the operation states none.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "confirmation": {
+          "$ref": "#/$defs/maintenanceConfirmation"
+        },
+        "preview": {
+          "description": "Whether a per-row control shows the provider's preview of the operation before it offers the confirm button.",
+          "type": "boolean"
+        },
+        "kinds": {
+          "description": "The object kinds a per-row control offers the operation on, each once; null where it runs on every relation kind, which no empty list states.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/objectKindId"
+          },
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "operation",
+        "label",
+        "perEntity",
+        "global",
+        "title",
+        "description",
+        "confirmation",
+        "preview",
+        "kinds"
+      ],
+      "additionalProperties": false
+    },
+    "maintenanceConfirmation": {
+      "description": "How a control of the operation is confirmed before it sends anything, beyond the confirmations Studio asks itself. typed: the operation's whole-database card asks for the connection's name, typed exactly. typed-target: a per-row control asks for its object's own name, typed exactly. null where the spec asks neither.",
+      "type": ["string", "null"],
+      "enum": ["typed", "typed-target", null]
+    },
+    "objectKindId": {
+      "description": "An object kind, by the id Studio's object model gives it.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]{0,63}$"
+    },
+    "agentReading": {
+      "type": "string",
+      "enum": ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"]
+    },
+    "agent": {
+      "description": "The statement language agent mode sends to the engine, and the overlay by which agent mode composes on it.",
+      "type": "object",
+      "properties": {
+        "statementLanguage": {
+          "$ref": "#/$defs/statementLanguage"
+        },
+        "overlay": {
+          "$ref": "#/$defs/agentOverlay"
+        }
+      },
+      "required": ["statementLanguage", "overlay"],
+      "additionalProperties": false
+    },
+    "agentOverlay": {
+      "description": "How agent mode composes on the engine, member for member as Studio's engine server overlay holds it: null exactly where the engine speaks no statement language. dialect: the members of the engine's family that are bound to its dialect, which only the SQL family has, so null on an engine of any other family. grounding: a named derivation of the family's grounding, Studio's slot groundingOverride, null where the engine keeps its family's. The client view of a dialect and the engine's family are derived, the client view supplied exactly where the server member is, so neither is a member. No member says whether agent mode runs on the engine: the engines agent and MCP statements run on are Studio's agent execution record alone.",
+      "type": ["object", "null"],
+      "properties": {
+        "dialect": {
+          "$ref": "#/$defs/sqlDialect"
+        },
+        "grounding": {
+          "description": "The function that derives the engine's grounding from its family's, named by its slot, groundingOverride; null where the engine keeps its family's grounding.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["dialect", "grounding"],
+      "additionalProperties": false
+    },
+    "sqlDialect": {
+      "description": "The members of an SQL engine's agent overlay bound to its dialect, each a verified composition or null where the engine composes none, which Studio's overlay writes as unsupported. Every statement a member composes meets Studio's statement fence as a statement the model wrote does, so a member widens what agent mode composes on an engine it already runs on, never where it runs or what the fence admits.",
+      "type": ["object", "null"],
+      "properties": {
+        "catalogRead": {
+          "$ref": "#/$defs/catalogRead"
+        },
+        "planEstimate": {
+          "$ref": "#/$defs/planEstimate"
+        },
+        "profileComposition": {
+          "$ref": "#/$defs/profileComposition"
+        },
+        "statistics": {
+          "$ref": "#/$defs/statisticsReading"
+        },
+        "catalogCapture": {
+          "$ref": "#/$defs/catalogCapture"
+        }
+      },
+      "required": ["catalogRead", "planEstimate", "profileComposition", "statistics", "catalogCapture"],
+      "additionalProperties": false
+    },
+    "catalogRead": {
+      "description": "How the engine reads its catalog, each composed statement sent as a bounded read: one composer per catalog kind, an optional fold of a selector's schema to the name a policy target declares, an optional retry of a refused read, whether the composed statement is a command, and an optional row mapper. Null where the engine composes no catalog read.",
+      "type": ["object", "null"],
+      "properties": {
+        "compose": {
+          "$ref": "#/$defs/catalogCompose"
+        },
+        "declaredSchema": {
+          "description": "The function that folds a selector's schema to the name a policy target declares, named by its slot, declaredSchema; null where the name is declared as written.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "retry": {
+          "$ref": "#/$defs/catalogRetry"
+        },
+        "commandShaped": {
+          "description": "Whether the engine's catalog answers only to a command rather than to a SELECT, so the statement fence admits each composed catalog statement by identity, on the catalog read alone, still refusing a comment or a word with a side effect. A claim: a request, never a fact Studio believes as declared, granted only as far as Studio's review record of it, the engine's server overlay in Studio's agent overlay registry. Restrictive value: false, under which the composed command meets the fence's ordinary refusal, as the same text written by the model does.",
+          "type": "boolean"
+        },
+        "mapRows": {
+          "description": "The function that turns the rows of one kind as the engine answered them into the catalog rows that kind reads as, named by its slot, mapRows; null where the composed statement answers the catalog rows itself.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["compose", "declaredSchema", "retry", "commandShaped", "mapRows"],
+      "additionalProperties": false
+    },
+    "catalogCompose": {
+      "description": "The composer of each catalog kind, each a function of a catalog selector named by its slot: catalogColumns, catalogRelations, catalogIndexes and catalogStatistics.",
+      "type": "object",
+      "properties": {
+        "columns": {
+          "$ref": "#/$defs/functionName"
+        },
+        "relations": {
+          "$ref": "#/$defs/functionName"
+        },
+        "indexes": {
+          "$ref": "#/$defs/functionName"
+        },
+        "statistics": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["columns", "relations", "indexes", "statistics"],
+      "additionalProperties": false
+    },
+    "catalogRetry": {
+      "description": "The one retry a refused catalog read may take, or null where it takes none: matches, named by its slot retryMatches, says whether a database error is the one the retry answers, and rewrite, named by its slot retryRewrite, writes the statement to send instead, which meets the statement fence as any statement does.",
+      "type": ["object", "null"],
+      "properties": {
+        "matches": {
+          "$ref": "#/$defs/functionName"
+        },
+        "rewrite": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["matches", "rewrite"],
+      "additionalProperties": false
+    },
+    "planEstimate": {
+      "description": "How the engine asks for its estimating plan: a statement prefix, or a session mode the provider sets around the statement it is given unchanged; null where the engine has no estimating plan. One strip built from every engine's prefix removes a prefix the model wrote on every engine, so a prefix opens with EXPLAIN and holds no word that executes the plan.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/planEstimatePrefix"
+        },
+        {
+          "$ref": "#/$defs/planEstimateSessionMode"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "planEstimatePrefix": {
+      "description": "An estimating plan asked for by a prefix written in front of the statement: EXPLAIN, then words each after one space, up to 128 characters.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "prefix"
+        },
+        "prefix": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^EXPLAIN(?: [!-~]+)*$"
+        }
+      },
+      "required": ["kind", "prefix"],
+      "additionalProperties": false
+    },
+    "planEstimateSessionMode": {
+      "description": "An estimating plan asked for by the session mode the provider sets around the statement it is given unchanged.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "session-mode"
+        },
+        "mode": {
+          "const": "estimate-plan"
+        }
+      },
+      "required": ["kind", "mode"],
+      "additionalProperties": false
+    },
+    "profileComposition": {
+      "description": "How the engine composes a table profile, one aggregate over one scan: the shape tests in the engine's spelling, the type pattern of the columns whose distinct values the engine cannot count, and the type pattern of the columns it cannot count at all, null where it counts every type. Null where the engine composes no profile.",
+      "type": ["object", "null"],
+      "properties": {
+        "shapeTests": {
+          "$ref": "#/$defs/profileShapeTests"
+        },
+        "incomparableType": {
+          "$ref": "#/$defs/profileTypePattern"
+        },
+        "uncountableType": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/profileTypePattern"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["shapeTests", "incomparableType", "uncountableType"],
+      "additionalProperties": false
+    },
+    "profileShapeTests": {
+      "description": "The shape tests of a table profile, each a function over an already quoted column reference named by its slot: emailShapeTest and digitRunShapeTest.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "$ref": "#/$defs/functionName"
+        },
+        "digitRun": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["email", "digitRun"],
+      "additionalProperties": false
+    },
+    "profileTypePattern": {
+      "description": "A pattern a column's type name is tested with anywhere in the name, so it is not anchored: its source and flags as JavaScript's RegExp reads them, which must compile.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "flags": {
+          "description": "No flag, i, u or iu: a flag that remembers where a match stopped is not one a type pattern takes.",
+          "type": "string",
+          "enum": ["", "i", "u", "iu"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "statisticsReading": {
+      "description": "How the engine reads the estimates it already holds about its tables, as the catalog read's statistics kind, so it is stated only beside a catalog read; null where the engine reads none.",
+      "type": ["object", "null"],
+      "properties": {
+        "probe": {
+          "description": "The statement that asks whether the engine holds any statistics, sent as a plain read; null where none is needed.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "build": {
+          "description": "The function that builds the estimates from the statistics read's rows, named by its slot, statisticsBuild.",
+          "$ref": "#/$defs/functionName"
+        },
+        "limitNote": {
+          "description": "The engine's absolute limit, said once ahead of the estimates; null where it has none to say.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["probe", "build", "limitNote"],
+      "additionalProperties": false
+    },
+    "catalogCapture": {
+      "description": "How the engine's grounding capture reads its catalog, through its catalog read, so it is stated only beside one; null where the provider describes its own schema instead.",
+      "type": ["object", "null"],
+      "properties": {
+        "kinds": {
+          "description": "The catalog kinds the capture reads, in statement order, each once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/catalogKind"
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "build": {
+          "description": "The function that builds the captured tables from the rows of each kind, named by its slot, captureBuild.",
+          "$ref": "#/$defs/functionName"
+        },
+        "kindWords": {
+          "description": "The engine's own word for what a relation is, each mapped onto the object kind the provider declares, in the order Studio's overlay holds them; each word once.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/captureKindWord"
+          },
+          "maxItems": 64
+        }
+      },
+      "required": ["kinds", "build", "kindWords"],
+      "additionalProperties": false
+    },
+    "catalogKind": {
+      "description": "Which inventory a catalog read asks for.",
+      "type": "string",
+      "enum": ["columns", "relations", "indexes", "statistics"]
+    },
+    "captureKindWord": {
+      "description": "One word the engine's catalog answers for what a relation is, a letter, then up to 63 letters, digits or underscores, and the object kind the provider declares for it.",
+      "type": "object",
+      "properties": {
+        "word": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+        },
+        "kind": {
+          "$ref": "#/$defs/objectKindId"
+        }
+      },
+      "required": ["word", "kind"],
+      "additionalProperties": false
+    },
+    "statementLanguage": {
+      "description": "The statement language family agent mode sends, or null where agent mode sends the engine no statement.",
+      "type": ["string", "null"],
+      "enum": [
+        "sql",
+        "kubectl",
+        "mongo",
+        "libredbkv",
+        "influxql",
+        "weaviateapi",
+        "qdrantapi",
+        "cypher",
+        "milvusrpc",
+        "rediscli",
+        "etcdctl",
+        "oxiacli",
+        "rabbitread",
+        "kafkaread",
+        "s3api",
+        "fsquery",
+        "snmpget",
+        "netconfrpc",
+        "modbusread",
+        "promql",
+        "opcuaread",
+        "mtconnectread",
+        "mqttread",
+        "sparkplugread",
+        null
+      ]
+    },
+    "editor": {
+      "description": "The editor facts of the engine that are data: the keyword its open transaction is committed with, the consent card's deadline, the fence tags naming it, the explain format of its plans, its query dialect and the language its tabs are written and rendered in. The SQL text facts are sqlText, the SQL writing facts sqlWriting, the migration DDL facts migrationDdl and the SQL generator forms sqlGenerators.",
+      "type": "object",
+      "properties": {
+        "commitKeyword": {
+          "description": "The one word that keeps an open transaction on the engine, which the notice Studio shows when a statement left a transaction open and it was rolled back names: a letter, then up to 31 letters, digits or underscores.",
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,31}$"
+        },
+        "consentDeadline": {
+          "$ref": "#/$defs/consentDeadline"
+        },
+        "fenceAliases": {
+          "description": "The fence tags, other than the engine's own id, that name the engine: a fenced block a model writes under one of them holds a statement for this engine. The engine's id is always a fence tag naming it, so it is never listed here, and a generic fence tag names no engine, so it is never listed either.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fenceTag"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "explainFormat": {
+          "$ref": "#/$defs/explainFormat"
+        },
+        "dialect": {
+          "$ref": "#/$defs/queryDialectRow"
+        },
+        "language": {
+          "$ref": "#/$defs/editorLanguageFacts"
+        }
+      },
+      "required": ["commitKeyword", "consentDeadline", "fenceAliases", "explainFormat", "dialect", "language"],
+      "additionalProperties": false
+    },
+    "consentDeadline": {
+      "description": "The chip and the sentence the agent's consent card shows for an engine whose long read ends differently from the others, or null where the engine has none. chip: the label in the card's bounds row. sentence: the paragraph under the card's box.",
+      "type": ["object", "null"],
+      "properties": {
+        "chip": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sentence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["chip", "sentence"],
+      "additionalProperties": false
+    },
+    "fenceTag": {
+      "description": "A markdown fence tag as Studio reads it, lower-cased: a lower-case letter, then up to 31 lower-case letters or digits, the form of an engine id.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]{0,31}$"
+    },
+    "genericFenceTag": {
+      "description": "The fence tags of a query language several engines speak: a block under one of them holds a query and names no engine, so no engine declares one as an alias.",
+      "type": "string",
+      "enum": ["sql", "cql"]
+    },
+    "explainFormat": {
+      "description": "The format of the engine's query plans, one of Studio's explain strategies, as the provider declares it for a connection it has not connected; Studio reads a plan with that format's strategy. Null where the engine offers no explain.",
+      "type": ["string", "null"],
+      "enum": [
+        "postgres-json",
+        "postgres-text",
+        "postgres-text-analyze",
+        "mysql-json",
+        "mysql-text",
+        "sqlite-queryplan",
+        "couchbase-json",
+        "clickhouse-json",
+        "druid-native",
+        "trino-json",
+        "duckdb-json",
+        "databend-text",
+        "bigquery-dryrun",
+        "snowflake-json",
+        "firestore-explain",
+        "spark-text",
+        null
+      ]
+    },
+    "queryDialect": {
+      "description": "A query dialect Studio's editor reads: a grammar of JSON or of a command line that is neither MongoDB's JSON nor SQL.",
+      "type": "string",
+      "enum": [
+        "libredb",
+        "redis",
+        "kafka",
+        "etcd",
+        "milvus",
+        "qdrant",
+        "weaviate",
+        "oxia",
+        "s3",
+        "mqtt",
+        "firestore",
+        "rabbitmq",
+        "kubectl",
+        "opcua",
+        "mtconnect",
+        "modbus",
+        "netconf",
+        "snmp",
+        "sparkplug"
+      ]
+    },
+    "queryDialectRow": {
+      "description": "The engine's query dialect and what the editor offers for it, or null where the engine declares no dialect. name: the dialect, under whose name the editor opens the engine's tabs. offersColumnProfiling: whether Profile is offered. offersCodeGeneration: whether the code generator is offered. offersCountQuery: whether Generate Count Query is offered. offersSqlExport: whether the result export menu offers SQL INSERT statements and CREATE TABLE DDL. historyMask: the flags whose values query history never keeps.",
+      "type": ["object", "null"],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/queryDialect"
+        },
+        "offersColumnProfiling": {
+          "type": "boolean"
+        },
+        "offersCodeGeneration": {
+          "type": "boolean"
+        },
+        "offersCountQuery": {
+          "type": "boolean"
+        },
+        "offersSqlExport": {
+          "type": "boolean"
+        },
+        "historyMask": {
+          "$ref": "#/$defs/historyMask"
+        }
+      },
+      "required": [
+        "name",
+        "offersColumnProfiling",
+        "offersCodeGeneration",
+        "offersCountQuery",
+        "offersSqlExport",
+        "historyMask"
+      ],
+      "additionalProperties": false
+    },
+    "editorLanguageFacts": {
+      "description": "The language the engine's query tabs are written and rendered in. queryLanguage: the query language the engine speaks; an engine with no dialect opens its tabs under that language's tab type (sql for sql, mongodb for json, and promql, cypher and influxql for their own), an engine with a dialect under the dialect's name, so no tab type is stated. monacoId: the Monaco language the tabs render in, one of Studio's editor languages. accent: that language's accent. console: whether the language is a console dialect, registered under its Monaco id, which is also its dialect id, so no second id is stated.",
+      "type": "object",
+      "properties": {
+        "queryLanguage": {
+          "$ref": "#/$defs/queryLanguage"
+        },
+        "monacoId": {
+          "$ref": "#/$defs/monacoLanguageId"
+        },
+        "accent": {
+          "$ref": "#/$defs/editorAccent"
+        },
+        "console": {
+          "type": "boolean"
+        }
+      },
+      "required": ["queryLanguage", "monacoId", "accent", "console"],
+      "additionalProperties": false
+    },
+    "queryLanguage": {
+      "description": "A query language Studio's editor reads: SQL, JSON, PromQL, Cypher or InfluxQL.",
+      "type": "string",
+      "enum": ["sql", "json", "promql", "cypher", "influxql"]
+    },
+    "monacoLanguageId": {
+      "description": "A Monaco language Studio's query editor renders a tab in, each with Studio's own registration, completion and formatting code until Studio's browser catalog reads them. graph-cypher and not cypher, which Monaco's own bundle registers.",
+      "type": "string",
+      "enum": [
+        "sql",
+        "json",
+        "libredb",
+        "redis",
+        "promql",
+        "etcd",
+        "oxia",
+        "s3",
+        "kubectl",
+        "firestore",
+        "graph-cypher",
+        "influxql",
+        "milvus",
+        "qdrant",
+        "weaviate",
+        "mtconnect"
+      ]
+    },
+    "editorAccent": {
+      "description": "The border class an agent answer's statement block takes in the language, up to 32 characters: border-hue-, one hue of Studio's palette in lower-case letters that is none of the three status hues (amber, rose, emerald), optionally -alt, then /40.",
+      "type": "string",
+      "maxLength": 32,
+      "pattern": "^border-hue-(?!amber|rose|emerald)[a-z]+(?:-alt)?/40$"
+    },
+    "historyMask": {
+      "description": "The command-line flags whose values query history never keeps, each once, or null where history keeps a statement as typed.",
+      "type": ["object", "null"],
+      "properties": {
+        "credentialFlags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/credentialFlag"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        }
+      },
+      "required": ["credentialFlags"],
+      "additionalProperties": false
+    },
+    "credentialFlag": {
+      "description": "A long command-line option: two hyphens, a lower-case letter, then up to 62 lower-case letters, digits or hyphens.",
+      "type": "string",
+      "pattern": "^--[a-z][a-z0-9-]{0,62}$"
+    },
+    "sqlText": {
+      "description": "The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names.",
+      "type": "object",
+      "properties": {
+        "readsSqlText": {
+          "description": "Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it, and every other reader reads it as declared.",
+          "type": "boolean"
+        },
+        "grammar": {
+          "$ref": "#/$defs/grammarFacts"
+        },
+        "redaction": {
+          "$ref": "#/$defs/statementRedaction"
+        },
+        "updateTarget": {
+          "$ref": "#/$defs/updateTargetWords"
+        },
+        "completion": {
+          "$ref": "#/$defs/completionReaders"
+        }
+      },
+      "required": ["readsSqlText", "grammar", "redaction", "updateTarget", "completion"],
+      "additionalProperties": false
+    },
+    "grammarFacts": {
+      "description": "The engine's SQL grammar facts, one member per fact of the SDK's SqlGrammar, whose doc comments give each fact's rationale. A fact the SqlGrammar type may leave out is written at the reading its absence has, so a form the engine does not have is false or an empty list.",
+      "type": "object",
+      "properties": {
+        "hash": {
+          "$ref": "#/$defs/hashRule"
+        },
+        "bracket": {
+          "$ref": "#/$defs/bracketRule"
+        },
+        "blockComment": {
+          "$ref": "#/$defs/blockCommentRule"
+        },
+        "alternateQuoting": {
+          "description": "Whether q'...' opens a string literal, Oracle's alternate quoting.",
+          "type": "boolean"
+        },
+        "doubleSlashComment": {
+          "description": "Whether // opens a line comment.",
+          "type": "boolean"
+        },
+        "backslashAlwaysEscapes": {
+          "description": "Whether a backslash always escapes the next character inside '...' and \"...\", under every session setting.",
+          "type": "boolean"
+        },
+        "tripleQuotedStrings": {
+          "description": "Whether '''...''' and \"\"\"...\"\"\" are string literals that run to the next unescaped triple; false where the engine has no such form.",
+          "type": "boolean"
+        },
+        "backtickBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside a backtick identifier; false where only a doubled backtick escapes.",
+          "type": "boolean"
+        },
+        "dollarTags": {
+          "description": "Whether a tagged run, $tag$ ... $tag$, is a string literal; true where the engine has the form, the reading every engine had before the fact existed. False: the $ that would open a tagged run is code, and the untagged $$ ... $$ is still a dollar string.",
+          "type": "boolean"
+        },
+        "doubleQuoteBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside \"...\"; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false.",
+          "type": ["boolean", "null"]
+        },
+        "singleQuoteBackslashEscapes": {
+          "description": "Whether a backslash escapes the next character inside '...'; null where the quote takes the reading backslashAlwaysEscapes gives both quotes, which is a third reading where backslashAlwaysEscapes is false.",
+          "type": ["boolean", "null"]
+        },
+        "rawStrings": {
+          "description": "Whether r'...', R'...', r\"...\" and R\"...\" are string literals that take no escapes; false where the engine has no such form.",
+          "type": "boolean"
+        },
+        "hintsAreCode": {
+          "description": "Whether /*+ opens an optimizer hint the engine lexes as code rather than a block comment; false where it opens a block comment.",
+          "type": "boolean"
+        },
+        "lineCommentBackslashContinues": {
+          "description": "Whether a line comment continues onto the next line when a backslash stands immediately before the line feed that would end it; false where it never does.",
+          "type": "boolean"
+        },
+        "lineCommentEndsAtCarriageReturn": {
+          "description": "Whether a carriage return ends a line comment as a line feed does; false where a carriage return is comment text.",
+          "type": "boolean"
+        },
+        "script": {
+          "$ref": "#/$defs/scriptFacts"
+        },
+        "trailingLimitClauses": {
+          "description": "The clauses that must follow the row bound on the engine, each a pattern matching one such clause at the very end of a statement, in the order the limiter strips them; empty where the engine has none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clausePattern"
+          },
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "nonNumericRowBounds": {
+          "description": "The values other than a digit run the engine accepts as a LIMIT or FETCH count and as an OFFSET, each spelled as a statement writes it, with no whitespace; empty where the engine accepts only digits.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\S{1,32}$"
+          },
+          "maxItems": 16,
+          "uniqueItems": true
+        },
+        "confirmForms": {
+          "description": "Keyword sequences that ask for a confirmation when they operate a statement, beside the shared dangerous keywords; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/keywordSequence"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmCodeForms": {
+          "description": "Forms that ask for a confirmation wherever they appear in a statement's code; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/codeForm"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmFormsWhen": {
+          "description": "Keyword sequences that ask only when a code word also appears in the statement's code after them; empty where the engine adds none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/conditionalForm"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "confirmExemptForms": {
+          "description": "Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it; empty where every shared keyword asks.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/keywordSequence"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "formatterLanguage": {
+          "$ref": "#/$defs/formatterLanguage"
+        },
+        "completionWords": {
+          "$ref": "#/$defs/completionWords"
+        },
+        "confirmConfigKeys": {
+          "description": "Session configuration keys whose SET or RESET asks for a confirmation, compared without case, an entry ending in . matching every key under it; a list, even an empty one, also makes a RESET with no key ask. Null where no SET or RESET asks.",
+          "type": ["array", "null"],
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z][A-Za-z0-9_.-]{0,127}$"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "explainExecutesWithAnalyze": {
+          "description": "Whether EXPLAIN ANALYZE executes the explained statement; false where EXPLAIN only plans.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "hash",
+        "bracket",
+        "blockComment",
+        "alternateQuoting",
+        "doubleSlashComment",
+        "backslashAlwaysEscapes",
+        "tripleQuotedStrings",
+        "backtickBackslashEscapes",
+        "dollarTags",
+        "doubleQuoteBackslashEscapes",
+        "singleQuoteBackslashEscapes",
+        "rawStrings",
+        "hintsAreCode",
+        "lineCommentBackslashContinues",
+        "lineCommentEndsAtCarriageReturn",
+        "script",
+        "trailingLimitClauses",
+        "nonNumericRowBounds",
+        "confirmForms",
+        "confirmCodeForms",
+        "confirmFormsWhen",
+        "confirmExemptForms",
+        "formatterLanguage",
+        "completionWords",
+        "confirmConfigKeys",
+        "explainExecutesWithAnalyze"
+      ],
+      "additionalProperties": false
+    },
+    "hashRule": {
+      "description": "What a # opens. comment: a line comment, always. code: never a comment. comment-unless-operator: the compatibility default, a comment unless the next character makes a PostgreSQL jsonb or geometric operator.",
+      "type": "string",
+      "enum": ["comment", "code", "comment-unless-operator"]
+    },
+    "bracketRule": {
+      "description": "What a [...] run is. quoted-identifier: a name that does not nest. subscript: an array literal or a subscript, which nests.",
+      "type": "string",
+      "enum": ["quoted-identifier", "subscript"]
+    },
+    "blockCommentRule": {
+      "description": "Where a block comment ends when a second /* is written inside it. flat: at the first closer, whatever is inside. nesting: an inner /* opens another comment, so the run ends where the depth returns to zero.",
+      "type": "string",
+      "enum": ["flat", "nesting"]
+    },
+    "scriptFacts": {
+      "description": "How a script is cut into what the engine receives, beyond the ; the span rules find. separatorLine: the token a line holding only it ends the statement in progress with, never sent, or null where the engine has none. terminatedStatements: the operative keywords whose statement keeps its own terminating ;, empty where every statement drops it.",
+      "type": "object",
+      "properties": {
+        "blocks": {
+          "$ref": "#/$defs/procedureBodies"
+        },
+        "separatorLine": {
+          "type": ["string", "null"],
+          "enum": ["GO", "/", null]
+        },
+        "unit": {
+          "$ref": "#/$defs/scriptUnit"
+        },
+        "terminatedStatements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": ["blocks", "separatorLine", "unit", "terminatedStatements"],
+      "additionalProperties": false
+    },
+    "procedureBodies": {
+      "description": "Which statements carry a procedural body, inside which a ; ends a body statement. none: no statement does. trigger-body: CREATE TRIGGER ... BEGIN ... END is the one statement with a body. pl-sql: an anonymous block and every stored PL/SQL unit.",
+      "type": "string",
+      "enum": ["none", "trigger-body", "pl-sql"]
+    },
+    "scriptUnit": {
+      "description": "What one request to the engine carries. statement: one statement. batch: everything between two separator lines, sent whole.",
+      "type": "string",
+      "enum": ["statement", "batch"]
+    },
+    "clausePattern": {
+      "description": "A pattern matching one clause that must follow the row bound, at the very end of a statement: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with \\s+, so a host that anchors it behind a character that is not whitespace starts a match only where a whitespace run starts, and closes with \\s*$, so it matches only at the end.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^\\\\s\\+[\\s\\S]*\\\\s\\*\\$$"
+        },
+        "flags": {
+          "description": "i, so the clause's words match in any case, or iu.",
+          "type": "string",
+          "enum": ["i", "iu"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "sqlKeyword": {
+      "description": "One SQL keyword as the readers compare it, upper-cased: an upper-case letter, then up to 63 upper-case letters, digits or underscores.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
+    "keywordSequence": {
+      "description": "A sequence of one to 16 keywords, read in order with whitespace or comments between them.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sqlKeyword"
+      },
+      "minItems": 1,
+      "maxItems": 16
+    },
+    "codeForm": {
+      "description": "A form a confirmation code form looks for: a keyword sequence, an identifier prefix, a word a literal follows, a word a routine body follows, a quoted name called as a function, a word whose parenthesised run names the function called, or a dollar-quoted run.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/keywordSequence"
+        },
+        {
+          "$ref": "#/$defs/codeFormPrefix"
+        },
+        {
+          "$ref": "#/$defs/codeFormWordThenLiteral"
+        },
+        {
+          "$ref": "#/$defs/codeFormWordThenBody"
+        },
+        {
+          "$ref": "#/$defs/codeFormQuotedCall"
+        },
+        {
+          "$ref": "#/$defs/codeFormComputedCall"
+        },
+        {
+          "$ref": "#/$defs/codeFormDollarQuoted"
+        }
+      ]
+    },
+    "codeFormPrefix": {
+      "description": "The start of an identifier: an upper-case letter, then up to 63 upper-case letters, digits, underscores or dollar signs.",
+      "type": "object",
+      "properties": {
+        "prefix": {
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_$]{0,63}$"
+        }
+      },
+      "required": ["prefix"],
+      "additionalProperties": false
+    },
+    "codeFormWordThenLiteral": {
+      "description": "A word whose next code, past whitespace and comments, is a string literal.",
+      "type": "object",
+      "properties": {
+        "wordThenLiteral": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["wordThenLiteral"],
+      "additionalProperties": false
+    },
+    "codeFormWordThenBody": {
+      "description": "A word whose next code is a routine body, a string literal or a dollar-quoted run.",
+      "type": "object",
+      "properties": {
+        "wordThenBody": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["wordThenBody"],
+      "additionalProperties": false
+    },
+    "codeFormQuotedCall": {
+      "description": "A closed quoted name whose text is the word, compared without case, that a ( follows.",
+      "type": "object",
+      "properties": {
+        "quotedCall": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["quotedCall"],
+      "additionalProperties": false
+    },
+    "codeFormComputedCall": {
+      "description": "A word followed by a parenthesised run and then a (, a call whose function name the run computes.",
+      "type": "object",
+      "properties": {
+        "computedCall": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["computedCall"],
+      "additionalProperties": false
+    },
+    "codeFormDollarQuoted": {
+      "description": "A dollar-quoted run, $$...$$ or $tag$...$tag$, a body the gate does not read.",
+      "type": "object",
+      "properties": {
+        "dollarQuoted": {
+          "const": true
+        }
+      },
+      "required": ["dollarQuoted"],
+      "additionalProperties": false
+    },
+    "conditionalForm": {
+      "description": "A keyword sequence that asks only when the code word when also appears in the statement's code after it.",
+      "type": "object",
+      "properties": {
+        "form": {
+          "$ref": "#/$defs/keywordSequence"
+        },
+        "when": {
+          "$ref": "#/$defs/sqlKeyword"
+        }
+      },
+      "required": ["form", "when"],
+      "additionalProperties": false
+    },
+    "formatterLanguage": {
+      "description": "The sql-formatter language the editor's Format uses for the engine; postgresql where the engine declares none, the language every engine formatted with before an engine declared one.",
+      "type": "string",
+      "enum": ["postgresql", "snowflake"]
+    },
+    "completionWords": {
+      "description": "The keywords and functions the editor's completion offers on the engine beside the shared lists, a function inserted as a call; both lists empty where the engine adds none. A keyword is upper-case words separated by one space.",
+      "type": "object",
+      "properties": {
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Z][A-Z0-9_]*(?: [A-Z][A-Z0-9_]*)*$"
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        },
+        "functions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 1024,
+          "uniqueItems": true
+        }
+      },
+      "required": ["keywords", "functions"],
+      "additionalProperties": false
+    },
+    "statementRedaction": {
+      "description": "How a statement is redacted before the query event log keeps it.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sqlTextRedaction"
+        },
+        {
+          "$ref": "#/$defs/commandRedaction"
+        },
+        {
+          "$ref": "#/$defs/noRedaction"
+        }
+      ]
+    },
+    "sqlTextRedaction": {
+      "description": "SQL text: the statement's literals are replaced, and only a closed name in the engine's identifier quote is kept.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "sql"
+        },
+        "nameQuote": {
+          "$ref": "#/$defs/nameQuote"
+        }
+      },
+      "required": ["kind", "nameQuote"],
+      "additionalProperties": false
+    },
+    "commandRedaction": {
+      "description": "A command language: the named pure reader answers, from the statement's text, the text the query event log keeps.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "command"
+        },
+        "reader": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["kind", "reader"],
+      "additionalProperties": false
+    },
+    "noRedaction": {
+      "description": "Nothing of the statement's text is kept.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "none"
+        }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
+    },
+    "nameQuote": {
+      "description": "The character that opens the engine's quoted identifier, whose closed names redaction keeps; null where the engine has none.",
+      "type": ["string", "null"],
+      "enum": ["\"", "`", "[", null]
+    },
+    "updateTargetWords": {
+      "description": "The facts the update target reader needs beyond the grammar. dashCommentNeedsSeparator: whether -- opens a comment only when a space or a control character follows it. extraQueryOpeners: the words beside the shared set that open a query. extraSetOperators: the words beside the shared set that join two queries. Each word list is empty where the engine adds none.",
+      "type": "object",
+      "properties": {
+        "dashCommentNeedsSeparator": {
+          "type": "boolean"
+        },
+        "extraQueryOpeners": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        },
+        "extraSetOperators": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/sqlKeyword"
+          },
+          "maxItems": 64,
+          "uniqueItems": true
+        }
+      },
+      "required": ["dashCommentNeedsSeparator", "extraQueryOpeners", "extraSetOperators"],
+      "additionalProperties": false
+    },
+    "completionReaders": {
+      "description": "How completion quotes and reads qualified names.",
+      "type": "object",
+      "properties": {
+        "formatSegment": {
+          "description": "The pure function that quotes one name segment, used instead of the connection's quoting; null where the connection's quoting is used.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "readQuotedQualifier": {
+          "description": "The pure function that reads, from the text up to a dot, the qualifier before the dot when it is quoted; null where the engine has no such reading.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["formatSegment", "readQuotedQualifier"],
+      "additionalProperties": false
+    },
+    "sqlWriting": {
+      "description": "The engine's SQL writing facts: how a generated statement spells a literal, a name, a bind and a temporal literal for the engine, what its inline edit and its result export read, and how a document insert is written where its console text is a request. One member per member of Studio's SQL writing row, each function named by the slot it fills. escapeLiteral: the pure function that writes a text as the engine's whole quoted literal. unescapeLiteral: the pure function that reads a whole literal back to its text. quoteIdentifier: the pure function that quotes a name so its closing quote cannot end it. binaryLiteral, under export, writes bytes as a literal the engine accepts.",
+      "type": "object",
+      "properties": {
+        "escapeLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "unescapeLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "quoteIdentifier": {
+          "$ref": "#/$defs/functionName"
+        },
+        "placeholder": {
+          "description": "The pure function that writes the bind placeholder for a 1-based position; null where the engine quotes each value instead of binding it.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temporalLiteral": {
+          "description": "The pure function that writes a date or timestamp text as the engine's literal of that kind, or answers none to quote it; null where every such text is quoted.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "inlineEdit": {
+          "$ref": "#/$defs/inlineEditFacts"
+        },
+        "export": {
+          "$ref": "#/$defs/exportFacts"
+        },
+        "insertDocuments": {
+          "description": "The pure function that writes the request inserting documents at an address, for an engine whose console text is a request rather than a statement; null where the test data generator writes an INSERT.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "escapeLiteral",
+        "unescapeLiteral",
+        "quoteIdentifier",
+        "placeholder",
+        "temporalLiteral",
+        "inlineEdit",
+        "export",
+        "insertDocuments"
+      ],
+      "additionalProperties": false
+    },
+    "inlineEditFacts": {
+      "description": "What the inline edit reads for the engine: the type names that make a key column date-time, exact decimal and float64, each read against the first word of the column's declared type, lower-cased and with its wrappers off.",
+      "type": "object",
+      "properties": {
+        "instantTypeNames": {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        "exactDecimalTypeNames": {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        "float64TypeNames": {
+          "$ref": "#/$defs/float64TypeNames"
+        },
+        "boundEdit": {
+          "description": "The pure function that writes the SET right-hand side of one edit that is not NULL, or answers none to bind the text unchanged; null where every edit binds its text unchanged.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["instantTypeNames", "exactDecimalTypeNames", "float64TypeNames", "boundEdit"],
+      "additionalProperties": false
+    },
+    "keyTypeNames": {
+      "description": "Type names a key column's declared type is compared with, each once; an empty list where no name makes a key column of that kind.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/keyTypeName"
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "keyTypeName": {
+      "description": "One type name as the inline edit compares it: a lower-case letter, then up to 63 lower-case letters, digits or underscores, since the inline edit reads only the lower-cased first word of a declared type.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "float64TypeNames": {
+      "description": "The type names that make a key column float64, or all where every key column of the engine is float64.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/keyTypeNames"
+        },
+        {
+          "const": "all"
+        }
+      ]
+    },
+    "exportFacts": {
+      "description": "What the result export writes for the engine: the CREATE TABLE type of each inferred kind, the declared type names kept as they are, the bare names written with a spelling of their own, the patterns a declared type is read with, the literal NaN and the infinities are written as, and whether an INSERT takes VALUES or SELECT. A hook the engine lacks is null.",
+      "type": "object",
+      "properties": {
+        "ddlTypes": {
+          "$ref": "#/$defs/ddlTypeSpellings"
+        },
+        "standsAlone": {
+          "description": "The bare declared type names the engine stands behind, written through as they are; empty where every bare name is re-spelled from its family.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/declaredTypeName"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "bareSpelling": {
+          "description": "The bare declared type names the engine narrows below the value its driver hands back, each with the spelling written instead, each name once; empty where the engine narrows none.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bareSpellingEntry"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "typeVocabulary": {
+          "$ref": "#/$defs/typeVocabulary"
+        },
+        "binaryLiteral": {
+          "$ref": "#/$defs/functionName"
+        },
+        "nonFinite": {
+          "$ref": "#/$defs/nonFiniteLiterals"
+        },
+        "insertForm": {
+          "$ref": "#/$defs/insertForm"
+        },
+        "rewriteDeclared": {
+          "description": "The pure function that rewrites a declared type before a CREATE TABLE takes it; null where no type is rewritten.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "declareFromSample": {
+          "description": "The pure function that answers a column's type from its declared type and its first value, or none to leave it; null where no type is read from a value.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "typedLiteral": {
+          "description": "The pure function that writes a cell from its column's declared type, or none to leave it to the generic writer; null where the generic writer writes every cell.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "columnWriters": {
+          "description": "The pure function that prepares one literal writer per column from the declared types; null where no column has a writer of its own.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "createTableKey": {
+          "$ref": "#/$defs/createTableKey"
+        }
+      },
+      "required": [
+        "ddlTypes",
+        "standsAlone",
+        "bareSpelling",
+        "typeVocabulary",
+        "binaryLiteral",
+        "nonFinite",
+        "insertForm",
+        "rewriteDeclared",
+        "declareFromSample",
+        "typedLiteral",
+        "columnWriters",
+        "createTableKey"
+      ],
+      "additionalProperties": false
+    },
+    "ddlTypeSpellings": {
+      "description": "How the engine spells each inferred kind of column in a CREATE TABLE.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "integer": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "numeric": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "boolean": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        },
+        "binary": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        }
+      },
+      "required": ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+      "additionalProperties": false
+    },
+    "sqlTypeSpelling": {
+      "description": "One SQL type as a CREATE TABLE writes it, verbatim, up to 64 characters: words separated by one space, the first opening with a letter, each of letters, digits or underscores, then at most one parenthesized argument list with its commas inside it, each argument such words, then words, so it fills one column's type, never adds a column and never ends its line or its statement. A type nested two deep is not admitted yet.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*(?: [A-Za-z0-9_]+)*(?:\\([A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*(?:, ?[A-Za-z0-9_]+(?: [A-Za-z0-9_]+)*)*\\)(?: [A-Za-z][A-Za-z0-9_]*)*)?$"
+    },
+    "declaredTypeName": {
+      "description": "A bare declared type name as the export compares it: lower-case words separated by one space, each a lower-case letter, then lower-case letters, digits or underscores, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_]*(?: [a-z][a-z0-9_]*)*$"
+    },
+    "bareSpellingEntry": {
+      "description": "A bare declared type name and the spelling the export writes in its place.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/declaredTypeName"
+        },
+        "spelling": {
+          "$ref": "#/$defs/sqlTypeSpelling"
+        }
+      },
+      "required": ["name", "spelling"],
+      "additionalProperties": false
+    },
+    "typeVocabulary": {
+      "description": "The patterns the export reads a declared type with for the engine. bareTypeFamily: the bare names whose parameters the result does not carry, grouped by the inferred kind each is re-spelled from. floatType: a declared type that holds a binary float, tested against the trimmed type. exactNumericType: an exact numeric type that can hold an infinity, tested against the trimmed type. numericWrapper: a wrapper that changes nothing about whether a column holds numbers, whose one capturing group is the wrapped type.",
+      "type": "object",
+      "properties": {
+        "bareTypeFamily": {
+          "$ref": "#/$defs/typeFamilies"
+        },
+        "floatType": {
+          "$ref": "#/$defs/typePattern"
+        },
+        "exactNumericType": {
+          "$ref": "#/$defs/typePattern"
+        },
+        "numericWrapper": {
+          "$ref": "#/$defs/typePattern"
+        }
+      },
+      "required": ["bareTypeFamily", "floatType", "exactNumericType", "numericWrapper"],
+      "additionalProperties": false
+    },
+    "typeFamilies": {
+      "description": "The bare declared type names of each inferred kind, each name under one kind only; an empty list where no name is of that kind.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "integer": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "numeric": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "boolean": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "timestamp": {
+          "$ref": "#/$defs/declaredTypeNames"
+        },
+        "binary": {
+          "$ref": "#/$defs/declaredTypeNames"
+        }
+      },
+      "required": ["text", "integer", "numeric", "boolean", "timestamp", "binary"],
+      "additionalProperties": false
+    },
+    "declaredTypeNames": {
+      "description": "Bare declared type names, each once.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/declaredTypeName"
+      },
+      "maxItems": 256,
+      "uniqueItems": true
+    },
+    "typePattern": {
+      "description": "A pattern a declared type is read with: its source and flags as JavaScript's RegExp reads them, which must compile. The source opens with ^ and closes with $, since it is tested against a whole type.",
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 512,
+          "pattern": "^\\^[\\s\\S]*\\$$"
+        },
+        "flags": {
+          "description": "No flag, i, u or iu: a flag that remembers where a match stopped, or that changes where $ matches, is not one a type pattern takes.",
+          "type": "string",
+          "enum": ["", "i", "u", "iu"]
+        }
+      },
+      "required": ["source", "flags"],
+      "additionalProperties": false
+    },
+    "nonFiniteLiterals": {
+      "description": "How the export writes NaN and the infinities into a float column, each as a literal the engine reads back; NULL where the engine cannot store the value.",
+      "type": "object",
+      "properties": {
+        "NaN": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        },
+        "Infinity": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        },
+        "-Infinity": {
+          "$ref": "#/$defs/nonFiniteLiteral"
+        }
+      },
+      "required": ["NaN", "Infinity", "-Infinity"],
+      "additionalProperties": false
+    },
+    "nonFiniteLiteral": {
+      "description": "A literal an INSERT writes verbatim: printable ASCII, 1 to 64 characters, with no space at either end and no line break.",
+      "type": "string",
+      "pattern": "^[!-~](?:[ -~]{0,62}[!-~])?$"
+    },
+    "insertForm": {
+      "description": "How an INSERT is written. values: INSERT INTO t (...) VALUES (...). select: INSERT INTO t (...) SELECT ....",
+      "type": "string",
+      "enum": ["values", "select"]
+    },
+    "createTableKey": {
+      "description": "A key a CREATE TABLE needs that a result cannot supply: the note written above the statement, and the pure function, clause, that writes the key's definition from the quoted column names; null where the engine takes a table without one.",
+      "type": ["object", "null"],
+      "properties": {
+        "note": {
+          "$ref": "#/$defs/commentLines"
+        },
+        "clause": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["note", "clause"],
+      "additionalProperties": false
+    },
+    "commentLines": {
+      "description": "Whole SQL comment lines, each -- and a space, then text with no line break, then a line feed, up to 1024 characters in all, so the text written above a statement never becomes one.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^(?:-- [^\\r\\n\\u2028\\u2029]*\\n)+$"
+    },
+    "migrationDdl": {
+      "description": "What the schema diff's migration writes for the engine, in one of two forms: refused, where the engine writes no table DDL and the migration is one comment line saying why, or written, with its transaction wrapper, its CREATE TABLE form and a statement writer for each change. One member per member of Studio's migration DDL row in that form, each function named by the slot it fills.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/migrationDdlRefused"
+        },
+        {
+          "$ref": "#/$defs/migrationDdlWritten"
+        }
+      ]
+    },
+    "migrationDdlRefused": {
+      "description": "Migration DDL of an engine that writes no table DDL: the one comment line the migration holds in place of any statement, no transaction wrapper, and the reasons the line gives.",
+      "type": "object",
+      "properties": {
+        "tableDdl": {
+          "const": "refused"
+        },
+        "refusal": {
+          "$ref": "#/$defs/migrationRefusal"
+        },
+        "transactionWrapper": {
+          "description": "Always null: an engine that writes no table DDL has nothing to wrap.",
+          "type": "null"
+        },
+        "reasons": {
+          "$ref": "#/$defs/ddlReasons"
+        }
+      },
+      "required": ["tableDdl", "refusal", "transactionWrapper", "reasons"],
+      "additionalProperties": false
+    },
+    "migrationDdlWritten": {
+      "description": "Migration DDL of an engine that writes table DDL: its transaction wrapper or null, its CREATE TABLE form, and the pure function that writes each statement from names the migration has already quoted. columnDef: one column's definition. createIndex and dropIndex: an index's CREATE and DROP. addForeignKey and dropForeignKey: a foreign key added to or dropped from a table. addColumn, dropColumn and modifyColumn: a column added, dropped or changed, the last as one statement or several. dropTable: a table dropped. reasons: every refusal sentence the writers print.",
+      "type": "object",
+      "properties": {
+        "tableDdl": {
+          "const": "written"
+        },
+        "transactionWrapper": {
+          "$ref": "#/$defs/transactionWrapper"
+        },
+        "createTable": {
+          "$ref": "#/$defs/createTable"
+        },
+        "columnDef": {
+          "$ref": "#/$defs/functionName"
+        },
+        "createIndex": {
+          "$ref": "#/$defs/functionName"
+        },
+        "dropIndex": {
+          "$ref": "#/$defs/functionName"
+        },
+        "addForeignKey": {
+          "$ref": "#/$defs/functionName"
+        },
+        "dropForeignKey": {
+          "$ref": "#/$defs/functionName"
+        },
+        "addColumn": {
+          "$ref": "#/$defs/functionName"
+        },
+        "dropColumn": {
+          "$ref": "#/$defs/functionName"
+        },
+        "modifyColumn": {
+          "$ref": "#/$defs/functionName"
+        },
+        "dropTable": {
+          "$ref": "#/$defs/functionName"
+        },
+        "reasons": {
+          "$ref": "#/$defs/ddlReasons"
+        }
+      },
+      "required": [
+        "tableDdl",
+        "transactionWrapper",
+        "createTable",
+        "columnDef",
+        "createIndex",
+        "dropIndex",
+        "addForeignKey",
+        "dropForeignKey",
+        "addColumn",
+        "dropColumn",
+        "modifyColumn",
+        "dropTable",
+        "reasons"
+      ],
+      "additionalProperties": false
+    },
+    "transactionWrapper": {
+      "description": "The statements the migration writes on a line of their own before its first statement and after its last; null where the migration is not wrapped in a transaction.",
+      "type": ["object", "null"],
+      "properties": {
+        "begin": {
+          "$ref": "#/$defs/wrapperStatement"
+        },
+        "commit": {
+          "$ref": "#/$defs/wrapperStatement"
+        }
+      },
+      "required": ["begin", "commit"],
+      "additionalProperties": false
+    },
+    "wrapperStatement": {
+      "description": "One statement of a transaction wrapper, up to 64 characters: words of letters separated by one space, ending in its one semicolon, so it is one statement on its line and never a second.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z]+(?: [A-Za-z]+)*;$"
+    },
+    "createTable": {
+      "description": "How the migration writes a CREATE TABLE for the engine: written, with the pure functions that write the primary key and a foreign key from quoted names, each inside the column list or as a statement after it, or refused, with the pure function that writes the line in its place for the quoted table.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/createTableRefused"
+        },
+        {
+          "$ref": "#/$defs/createTableWritten"
+        }
+      ]
+    },
+    "createTableRefused": {
+      "description": "A CREATE TABLE the engine refuses: createTableRefusal names the pure function that writes the line in its place for the quoted table.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "refused"
+        },
+        "createTableRefusal": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["kind", "createTableRefusal"],
+      "additionalProperties": false
+    },
+    "createTableWritten": {
+      "description": "A CREATE TABLE the engine writes: primaryKey names the pure function that writes the primary key from the quoted key columns, and foreignKey the one that writes a foreign key of the quoted table.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "written"
+        },
+        "primaryKey": {
+          "$ref": "#/$defs/functionName"
+        },
+        "foreignKey": {
+          "$ref": "#/$defs/functionName"
+        }
+      },
+      "required": ["kind", "primaryKey", "foreignKey"],
+      "additionalProperties": false
+    },
+    "migrationRefusal": {
+      "description": "The whole migration after its header for an engine that writes no table DDL: one SQL comment line, -- and a space, then text with no line break, up to 1024 characters, so it is never a statement.",
+      "type": "string",
+      "maxLength": 1024,
+      "pattern": "^-- [^\\r\\n\\u2028\\u2029]+$"
+    },
+    "ddlReasons": {
+      "description": "Every refusal sentence the engine's migration DDL can print, each once, in the row's order; an empty list where it prints none.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ddlReason"
+      },
+      "maxItems": 64,
+      "uniqueItems": true
+    },
+    "ddlReason": {
+      "description": "One refusal sentence, 1 to 1024 characters with no line break, since every sentence a writer prints is printed inside a comment line.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^[^\\r\\n\\u2028\\u2029]+$"
+    },
+    "sqlGenerators": {
+      "description": "What an SQL engine writes apart from Studio's shared SQL forms, or null where it writes the shared forms, quotes a name as its declared identifier quoting or Studio's default says, and counts with COUNT(*). One member per member of Studio's SQL generator row, each function named by the slot it fills. quote: the pure function that quotes a name for the engine, leaving it bare where it round-trips bare and quoting is not forced.",
+      "type": ["object", "null"],
+      "properties": {
+        "quote": {
+          "$ref": "#/$defs/functionName"
+        },
+        "table": {
+          "description": "The pure function that writes the tree click's statement on the quoted address; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "select": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its columns; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "selectList": {
+          "description": "The pure function that writes Generate Query's statement on the quoted address and its projected column list; null where the shared form stands.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/functionName"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "countExpression": {
+          "$ref": "#/$defs/countExpression"
+        }
+      },
+      "required": ["quote", "table", "select", "selectList", "countExpression"],
+      "additionalProperties": false
+    },
+    "countExpression": {
+      "description": "The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement.",
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*\\(\\*\\)$"
+    },
+    "policyClaims": {
+      "description": "What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description.",
+      "type": "object",
+      "properties": {
+        "writeReach": {
+          "$ref": "#/$defs/writeReachClaim"
+        },
+        "readsFileAccessPosture": {
+          "description": "Whether the engine's provider opens its handle under a file-access posture, opening with external file access off where the caller's is denied, so a denied handle and a full-reach one never share a cached provider or a borrowed handle. Restrictive value: true.",
+          "type": "boolean"
+        },
+        "deniedFileAccessRefusal": {
+          "description": "The sentence a connection whose file access is denied is refused with before anything is opened, where the provider cannot confine that access; null where a denied handle opens confined. Restrictive value: a refusal, so every caller whose file access is denied is refused.",
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "singleWriterFile": {
+          "description": "Whether the engine keeps one handle per database file in a process, so every user of a connection is served the one provider instead of a provider of their own. Restrictive value: false, each user keeping a provider of their own.",
+          "type": "boolean"
+        },
+        "readRootsRequired": {
+          "description": "Whether agent mode and MCP read the engine only beneath read roots a seed declares, refusing a connection that declares none. Restrictive value: true.",
+          "type": "boolean"
+        },
+        "agentCredentialForm": {
+          "$ref": "#/$defs/agentCredentialFormClaim"
+        },
+        "maskingExemptColumns": {
+          "$ref": "#/$defs/maskingExemption"
+        }
+      },
+      "required": [
+        "writeReach",
+        "readsFileAccessPosture",
+        "deniedFileAccessRefusal",
+        "singleWriterFile",
+        "readRootsRequired",
+        "agentCredentialForm",
+        "maskingExemptColumns"
+      ],
+      "additionalProperties": false
+    },
+    "agentCredentialFormClaim": {
+      "description": "The form of the agent credential every agent acquisition of the engine takes. pair: a user and a password, both required. token: a password alone, sent as the bearer token instead of the connection's own, with no user. service-account-key: a password alone holding a service-account key, from which the provider mints its own access token, with no user. dedicated-user: a user other than the connection's own and that user's password, both required. none: the engine has no principal to sign an agent in as, so every agent credential is refused. The forms are unordered: a host reads a request that differs from Studio's record at its restrictive value. Restrictive value: none.",
+      "type": "string",
+      "enum": ["pair", "token", "service-account-key", "dedicated-user", "none"]
+    },
+    "maskingExemption": {
+      "description": "The result columns no masking rule of Studio masks on the engine, and why; null where the engine exempts no column. Restrictive value: null, so every column the masking rules match stays masked.",
+      "type": ["object", "null"],
+      "properties": {
+        "column": {
+          "description": "A regular expression over a result column's name, compiled with no flag, that matches whole names only: it opens with ^, closes with an unescaped $ and keeps every alternative inside a group.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 512
+        },
+        "reason": {
+          "description": "Why the columns the pattern matches hold no value a masking rule protects.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["column", "reason"],
+      "additionalProperties": false
+    },
+    "writeReachClaim": {
+      "description": "What Studio's code can write on the engine. none: no code of the provider can send a write on any write path. guarded: every write path it has is refused by a named gate while read-only mode holds. open: at least one path sends a write no Studio gate refuses. Studio keeps a connection's read-only mode only where the reach is not open, so no manifest states read-only enforcement. Restrictive value: open, under which read-only mode is refused, ordered open, guarded, none from the most restrictive.",
+      "type": "string",
+      "enum": ["none", "guarded", "open"]
+    },
+    "mcpClaims": {
+      "description": "What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states.",
+      "type": "object",
+      "properties": {
+        "exposable": {
+          "description": "Whether a connection of the engine may be exposed to MCP clients at all. Restrictive value: false.",
+          "type": "boolean"
+        },
+        "statementRead": {
+          "description": "Whether an MCP client may run a statement on the engine, beside the metadata tools exposable opens. Restrictive value: false.",
+          "type": "boolean"
+        },
+        "metadataReadChangesState": {
+          "description": "Whether reading the engine's metadata changes state the engine keeps, though it writes no data, so the metadata tool is not marked read-only. Restrictive value: true.",
+          "type": "boolean"
+        },
+        "agentCredentialRequired": {
+          "description": "Whether MCP reads the engine only under an agent credential of the seed's own, refusing a connection that has none. Restrictive value: true.",
+          "type": "boolean"
+        }
+      },
+      "required": ["exposable", "statementRead", "metadataReadChangesState", "agentCredentialRequired"],
+      "additionalProperties": false
+    },
+    "safeguards": {
+      "description": "What the engine's provider states its own code does: the reach of each write path, the answer of its metadata-only read and the result columns its inline editor refuses. Every member is a fact the provider declares, never a request: no gate of Studio reads it, so none is a claim, and Studio's census reads each back to the provider's own declaration. A review reads them as the evidence of the policy claims.",
+      "type": "object",
+      "properties": {
+        "writePaths": {
+          "$ref": "#/$defs/writePaths"
+        },
+        "metadataOnly": {
+          "description": "Each operation the engine's metadata-only read permits, in the provider's order, with the columns its answer holds; null where the provider answers its machine surfaces as it reads, which no empty list states.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/metadataOnlyOperation"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "inlineEditRefusedColumns": {
+          "$ref": "#/$defs/inlineEditRefusal"
+        }
+      },
+      "required": ["writePaths", "metadataOnly", "inlineEditRefusedColumns"],
+      "additionalProperties": false
+    },
+    "writePaths": {
+      "description": "What the provider's code can send on each of Studio's four write paths: the query editor, object edit, maintenance and transactions. A provider that states no path is written open on every path, the reading Studio gives that absence. The policy claim writeReach is their summary: open where any path is open, else guarded where any is gated, else none.",
+      "type": "object",
+      "properties": {
+        "editor": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "objectEdit": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "transaction": {
+          "$ref": "#/$defs/writePathEvidence"
+        }
+      },
+      "required": ["editor", "objectEdit", "maintenance", "transaction"],
+      "additionalProperties": false
+    },
+    "writePathEvidence": {
+      "description": "One write path's reach: absent, gated or open.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/writePathAbsent"
+        },
+        {
+          "$ref": "#/$defs/writePathGated"
+        },
+        {
+          "$ref": "#/$defs/writePathOpen"
+        }
+      ]
+    },
+    "writePathAbsent": {
+      "description": "The provider has no code on the path that can send a write. On the editor path it names the structural proof that keeps it so; elsewhere the proof is null where it names none.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "absent"
+        },
+        "proof": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/writePathProof"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["reach", "proof"],
+      "additionalProperties": false
+    },
+    "writePathGated": {
+      "description": "Provider code refuses every write on the path while read-only mode holds, naming the mode, before any request, and the gate names that code.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "gated"
+        },
+        "gate": {
+          "$ref": "#/$defs/writePathProof"
+        }
+      },
+      "required": ["reach", "gate"],
+      "additionalProperties": false
+    },
+    "writePathOpen": {
+      "description": "The path sends a write no Studio gate refuses.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "open"
+        }
+      },
+      "required": ["reach"],
+      "additionalProperties": false
+    },
+    "writePathProof": {
+      "description": "The export that keeps a write path's answer: its module by its path relative to the root of the package declaring the engine, under src/ with no dot segment and ending in .ts, and the export's name.",
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^src(?:/[A-Za-z0-9][A-Za-z0-9_-]*)+\\.ts$"
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      },
+      "required": ["module", "symbol"],
+      "additionalProperties": false
+    },
+    "metadataOnlyOperation": {
+      "description": "One operation a metadata-only read permits, by the name the provider gives it, and the columns its answer holds, in the answer's order, each named once.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "^[A-Za-z](?:[A-Za-z0-9 _-]{0,62}[A-Za-z0-9_])?$"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadataOnlyColumn"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        }
+      },
+      "required": ["operation", "columns"],
+      "additionalProperties": false
+    },
+    "metadataOnlyColumn": {
+      "description": "One column of a metadata-only answer and the kind of fact it holds.",
+      "type": "object",
+      "properties": {
+        "column": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "kind": {
+          "$ref": "#/$defs/metadataOnlyKind"
+        }
+      },
+      "required": ["column", "kind"],
+      "additionalProperties": false
+    },
+    "metadataOnlyKind": {
+      "description": "name: a name the store keeps for an object of its own, printable, 1 to 512 characters. count: a non-negative safe integer. flag: true or false.",
+      "type": "string",
+      "enum": ["name", "count", "flag"]
+    },
+    "inlineEditRefusal": {
+      "description": "The result columns the engine's inline editor refuses to edit, by their type, and the reason a refused cell shows; null where it refuses none by type.",
+      "type": ["object", "null"],
+      "properties": {
+        "type": {
+          "description": "A regular expression over a result column's type name, compiled with no flag.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["type", "reason"],
+      "additionalProperties": false
+    },
+    "compatibilityEntry": {
+      "description": "One product the package was measured against: the engine that serves it, the versions claimed and the versions tested.",
+      "type": "object",
+      "properties": {
+        "engine": {
+          "$ref": "#/$defs/engineId"
+        },
+        "product": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "versions": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/versionRange"
+            },
+            {
+              "$ref": "#/$defs/versionList"
+            },
+            {
+              "$ref": "#/$defs/serviceVersions"
+            }
+          ]
+        },
+        "tested": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/testedVersion"
+          },
+          "minItems": 1
+        }
+      },
+      "required": ["engine", "product", "versions", "tested"],
+      "additionalProperties": false
+    },
+    "productVersion": {
+      "type": "string",
+      "pattern": "^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$"
+    },
+    "versionRange": {
+      "description": "Every version from one tested version to another, both included.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "range"
+        },
+        "from": {
+          "$ref": "#/$defs/productVersion"
+        },
+        "to": {
+          "$ref": "#/$defs/productVersion"
+        }
+      },
+      "required": ["kind", "from", "to"],
+      "additionalProperties": false
+    },
+    "versionList": {
+      "description": "The versions named, and no other.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "list"
+        },
+        "list": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/productVersion"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": ["kind", "list"],
+      "additionalProperties": false
+    },
+    "serviceVersions": {
+      "description": "A hosted service with no version of its own, measured on the date named.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "service"
+        },
+        "measured": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$"
+        }
+      },
+      "required": ["kind", "measured"],
+      "additionalProperties": false
+    },
+    "testedVersion": {
+      "description": "A version the package's tests ran against, with the image they ran where one exists.",
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/productVersion"
+        },
+        "image": {
+          "$ref": "#/$defs/imageReference"
+        }
+      },
+      "required": ["version"],
+      "additionalProperties": false
+    },
+    "imageReference": {
+      "description": "A container image, pinned by the full SHA-256 digest of its manifest.",
+      "type": "object",
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._/:-]{0,254}$"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      },
+      "required": ["repository", "digest"],
+      "additionalProperties": false
+    },
+    "valueTag": {
+      "description": "The tag of a tagged value, the form a value JSON cannot carry takes when it crosses a JSON boundary: an object whose own keys are exactly $ (the tag) and v (its payload). The value and payload each tag carries are stated by the value codec, @libredb/provider-sdk/values.",
+      "type": "string",
+      "enum": ["i64", "bytes", "ts", "nf", "obj"]
+    }
+  }
+}

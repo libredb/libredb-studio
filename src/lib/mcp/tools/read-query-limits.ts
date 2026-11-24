@@ -1,33 +1,33 @@
-import { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
-import {
-  READ_ONLY_REFUSAL_OPENINGS,
-  type ReadOnlyRefusalKind,
-  type ReadOnlyRefusalOpening,
-} from "@/lib/db/providers/sql/read-only-refusals";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
+import { errorKind } from "@/lib/db/error-record";
+import type { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ENGINE_TOO_LARGE_TEXTS } from "@/lib/sql/read-only-refusals";
+import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { DatabaseType } from "@/lib/types";
 
 /**
  * The pure rules run_read_query follows (#246).
  *
- * A provider's read-only budget refusal is recognised by the fixed opening of this repository's
- * own messages, and answered in this server's words. The row and byte refusals are built once, by
- * the constructors in src/lib/db/providers/sql/read-only-budget.ts that every provider with a
- * queryReadOnly calls; every other opening, and the answer to a kind only one engine raises, is
- * declared beside the provider that raises it. All of them are read from READ_ONLY_REFUSAL_OPENINGS
- * in src/lib/db/providers/sql/read-only-refusals.ts rather than typed again here. A test reads the
- * provider files and fails when an opening no longer occurs, so a reworded message cannot fall
- * through to an engine error. A time-budget refusal, and any failure that settles once the
- * deadline has passed, is the timeout, so which of the two settles first never changes what the
- * client reads. The deadline race stops the wait for a statement, not the statement: no provider
- * can cancel a read-only statement yet (docs/BACKLOG.md D128).
+ * A failure is answered by its class, its error kind (src/lib/db/error-record.ts), never by its words: a provider's
+ * or Studio's row, byte, cut-value or serialised budget refusal is answered as too large, in this server's words; a
+ * time budget refusal is the timeout; a statement refused before it was sent is the provider's refusal; and any other
+ * failure is the engine's, whatever its message says. A `TimeoutError` before the deadline is the engine's too: its
+ * class says some timeout fired, not that it was the call's (Cassandra's coordinator, a connection's own query
+ * timeout), so its own text, not a sentence claiming timeout_ms was reached, says which. `MCP_FAILURE_OF_KIND` holds one answer for every
+ * kind, so a kind added to `ERROR_KINDS` fails typecheck until it is given one. Which provider sites raise a budget
+ * refusal as its class is held by tests/unit/db/operations/budget-refusal-census.test.ts. Any failure that settles
+ * once the deadline has passed is the deadline, answered as the deadline timer's own answer is, so which of the two
+ * settles first never changes what the client reads.
+ * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
+ * yet (docs/BACKLOG.md D128).
  *
  * The statements an engine takes and its own paging clause differ by engine, so every text that names either reads the
- * engine's row in src/lib/db/providers/sql/read-query-forms.ts rather than one engine's words for all.
+ * engine's row in src/lib/sql/read-query-forms.ts rather than one engine's words for all.
  */
 
-export type { ReadOnlyRefusalKind };
+/** The kinds of read-only budget refusal a provider raises. */
+export type ReadOnlyRefusalKind = "rows" | "bytes" | "cut-value" | "serialised" | "time";
 
 /**
  * The bounds of every MCP tool's `timeout_ms`: at least 500 ms, unless a statement facet raises its own least
@@ -35,40 +35,96 @@ export type { ReadOnlyRefusalKind };
  */
 export const MCP_TIMEOUT_BOUNDS_MS = { min: 500, max: 30_000 } as const;
 
-export const READ_ONLY_REFUSALS: readonly ReadOnlyRefusalOpening[] = READ_ONLY_REFUSAL_OPENINGS;
+/** The answer a statement tool gives a failure of each kind before the deadline. */
+type McpFailureClass = Exclude<ReadOnlyRefusalKind, "time"> | "timeout" | "allowance" | "not-sent" | "engine";
 
-const TOO_LARGE_TEXTS: Record<"rows" | "bytes", string> = {
+/**
+ * One answer for every error kind, so a kind added to `ERROR_KINDS` fails typecheck until it has one. A budget
+ * refusal is too large (`rows`, `bytes`, `cut-value`, `serialised`) or the timeout, Studio's and the provider's alike;
+ * the call's read allowance is too large in its own sentence; a statement refused before it was sent is the
+ * provider's refusal; every other kind, `timeout` among them, is the engine's error.
+ */
+export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> = {
+  database: "engine",
+  config: "engine",
+  "unknown-provider": "engine",
+  "not-offered": "engine",
+  connection: "engine",
+  "transaction-lost": "engine",
+  authentication: "engine",
+  permission: "engine",
+  "pool-exhausted": "engine",
+  query: "engine",
+  "offset-unsupported": "engine",
+  "refused-before-send": "not-sent",
+  "read-allowance-exceeded": "allowance",
+  "row-budget-refusal": "rows",
+  "byte-budget-refusal": "bytes",
+  "time-budget-refusal": "timeout",
+  "cut-value-refusal": "cut-value",
+  "serialised-result-refusal": "serialised",
+  "studio-row-budget-refusal": "rows",
+  "studio-byte-budget-refusal": "bytes",
+  "studio-time-budget-refusal": "timeout",
+  timeout: "engine",
+  "studio-timeout-refusal": "engine",
+  cancelled: "engine",
+  "execution-profile": "engine",
+  "studio-profile-refusal": "engine",
+  "provider-text-withheld": "engine",
+  internal: "engine",
+};
+
+/** The too-large answer of each budget class, where an arm's statement language gives none of its own. */
+const TOO_LARGE_TEXTS: Record<Exclude<ReadOnlyRefusalKind, "time">, string> = {
   rows: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
   bytes:
     "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+  "cut-value": ENGINE_TOO_LARGE_TEXTS["cut-value"],
+  serialised: ENGINE_TOO_LARGE_TEXTS.serialised,
 };
 
+/**
+ * `deadline` is a failure that settled at or after the call's deadline, answered as the deadline itself is; `timeout`
+ * is a time budget refusal before it.
+ */
 export type ReadQueryFailure =
+  | { readonly kind: "deadline" }
   | { readonly kind: "timeout" }
   | { readonly kind: "too-large"; readonly text: string }
-  | { readonly kind: "not-sent"; readonly text: string }
+  | { readonly kind: "not-sent"; readonly error: RefusedBeforeSendError }
   | { readonly kind: "engine"; readonly error: unknown };
 
-/** `texts` answers a budget refusal in a statement language's own words; a refusal it leaves out keeps the SQL text. */
+/**
+ * The answer to a failed statement, by its error kind (`MCP_FAILURE_OF_KIND`). `texts` answers a budget refusal in a
+ * statement language's own words; a refusal it leaves out keeps the shared text. A kind names its class by
+ * construction (`errorKind` walks the prototype chain), so the `allowance` and `not-sent` answers hold the error as
+ * that class.
+ */
 export function classifyReadQueryFailure(
   error: unknown,
   settledAt: number,
   deadline: number,
   texts: Partial<Record<Exclude<ReadOnlyRefusalKind, "time">, string>> = {},
 ): ReadQueryFailure {
-  if (settledAt >= deadline) return { kind: "timeout" };
-  // The call's read allowance, refused by this server before anything was sent: its own sentence, never the
-  // database's error.
-  if (error instanceof ReadAllowanceExceededError) return { kind: "too-large", text: error.message };
-  // Any other statement this repository refused before sending it, a provider's own fence: its sentence, said to be
-  // this server's refusal rather than the database's error.
-  if (error instanceof RefusedBeforeSendError) return { kind: "not-sent", text: notSentText(error.message) };
-  const message = error instanceof Error ? error.message : String(error);
-  const refusal = READ_ONLY_REFUSALS.find(({ prefix }) => message.startsWith(prefix));
-  if (refusal === undefined) return { kind: "engine", error };
-  if (refusal.kind === "time") return { kind: "timeout" };
-  const own = "tooLargeText" in refusal ? refusal.tooLargeText : TOO_LARGE_TEXTS[refusal.kind];
-  return { kind: "too-large", text: texts[refusal.kind] ?? own };
+  if (settledAt >= deadline) return { kind: "deadline" };
+  const answer = MCP_FAILURE_OF_KIND[errorKind(error)];
+  switch (answer) {
+    case "timeout":
+      return { kind: "timeout" };
+    // The call's read allowance, refused by this server before anything was sent: its own sentence, never the
+    // database's error.
+    case "allowance":
+      return { kind: "too-large", text: (error as ReadAllowanceExceededError).message };
+    // Any other statement refused before it was sent, a provider's own fence: the error itself, which the caller
+    // renders as the provider's text behind a notice naming it, never as the database's error.
+    case "not-sent":
+      return { kind: "not-sent", error: error as RefusedBeforeSendError };
+    case "engine":
+      return { kind: "engine", error };
+    default:
+      return { kind: "too-large", text: texts[answer] ?? TOO_LARGE_TEXTS[answer] };
+  }
 }
 
 /** Whether `prepareQuery` can page `type`'s SQL with an offset; where it cannot, no offset is ever named or taken. */
@@ -127,11 +183,6 @@ export function timeoutText(timeoutMs: number): string {
 
 export function nextPageHint(nextOffset: number): string {
   return `Call again with offset ${nextOffset} for the next page.`;
-}
-
-function notSentText(message: string): string {
-  const reason = /[.!?]$/.test(message) ? message : `${message}.`;
-  return `The statement was refused before it reached the database: ${reason}`;
 }
 
 export function fenceRefusalText(code: string, type: DatabaseType): string {

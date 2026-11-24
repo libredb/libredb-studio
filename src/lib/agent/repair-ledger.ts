@@ -60,7 +60,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { readSqlSpan } from "@/lib/sql/spans";
 import { readSqlWord } from "@/lib/sql/words";
 import { AGENT_MAX_REPAIR_ATTEMPTS } from "./execution-policy";

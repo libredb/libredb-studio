@@ -86,9 +86,10 @@ import {
   ROW_BUDGET_PREFIX,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "../read-only-budget";
+} from "@/lib/db/read-only-budget";
 import {
   AuthenticationError,
+  ByteBudgetRefusal,
   ConnectionError,
   DatabaseConfigError,
   ExecutionProfileError,
@@ -96,6 +97,8 @@ import {
   QueryCancelledError,
   QueryError,
   RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -126,7 +129,7 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
-  type ProviderExecutionContext,
+  type ProviderBuildContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
@@ -137,6 +140,7 @@ import {
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { formatCacheHitRatio } from "@/lib/monitoring-cache-ratio";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { SearchHttpTransport } from "./http-transport";
@@ -281,10 +285,10 @@ interface SearchProduct {
    * anything - it reports "no rows" for data that exists, which is worse than an
    * error because nothing tells the reader to distrust it.
    *
-   * This crosses into `ProviderCapabilities.identifierQuoting` because
-   * `query-generators.ts` derives the dialect from the DEFAULT PORT, and both
-   * products ship on 9200 - the first time in this codebase that one port has had
-   * to answer for two dialects.
+   * This crosses into `ProviderCapabilities.identifierQuoting` because one provider
+   * serves both products, and the query generators keep no row per product: their
+   * SQL engine rows are keyed by type id, and this declaration is what tells the
+   * two products' quoting apart.
    */
   readonly identifierQuoting: "double" | "backtick";
 
@@ -847,15 +851,19 @@ abstract class SearchProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /** The egress decision the factory built this provider with, handed to the transport `connect()` builds. */
+  private readonly egress: ProviderBuildContext["egress"];
+
   protected constructor(
     product: SearchProduct,
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    execution: ProviderExecutionContext = {},
+    execution: ProviderBuildContext = {},
   ) {
     super(config, options);
     this.product = product;
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.egress = execution.egress;
     this.validate();
   }
 
@@ -918,8 +926,8 @@ abstract class SearchProvider extends SQLBaseProvider {
       // the shared connection-string parser.
       supportsConnectionString: false,
       defaultPort: SEARCH_DEFAULT_PORT,
-      // Declared because the port cannot say: both products are 9200 and they
-      // disagree. See SearchProduct.identifierQuoting for the measurement.
+      // Declared per product: one provider serves both and they disagree, and the
+      // generators keep no row per product. See SearchProduct.identifierQuoting for the measurement.
       identifierQuoting: this.product.identifierQuoting,
       // One answer for both products, and the safe one rather than the tolerant one.
       // Elasticsearch has no `;` in its grammar: the generator's own
@@ -986,12 +994,6 @@ abstract class SearchProvider extends SQLBaseProvider {
       vacuumGlobalTitle: "Reclaim Deleted Documents",
       vacuumGlobalDesc:
         "A deleted document stays in its segment until the segments are merged. Merging is an index API on the cluster rather than a statement this SQL surface can send, so nothing runs from here.",
-      // The monitoring Queries tab used to tell a search cluster to install a
-      // PostgreSQL extension (#463). Both products keep a slow log; `getSlowQueries()`
-      // above says why neither is readable from here, and this is the same fact in the
-      // panel's words.
-      slowQueriesEmptyState:
-        "The slow log is written to the node's own log file, which no API returns, so this SQL surface does not reach it.",
     };
   }
 
@@ -1055,7 +1057,7 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = new SearchHttpTransport(this.product.dialect, this.config);
+    const transport = new SearchHttpTransport(this.product.dialect, this.config, requireEgressDecision(this.egress));
 
     try {
       await transport.query(CONNECT_PROBE_SQL, this.deadline());
@@ -1419,16 +1421,20 @@ abstract class SearchProvider extends SQLBaseProvider {
           );
         } catch (error) {
           if (error instanceof SearchBoundsError) {
-            const sentence =
-              error.bound === "byte"
-                ? byteBudgetSentence(error.measured, error.allowed)
-                : cut === null
-                  ? rowBudgetSentence(error.measured, error.allowed)
-                  : `${ROW_BUDGET_PREFIX}: ${this.product.label} answers at most ${cut.rows} rows (${cut.setting}) and cuts the rest without saying so, so an answer that reaches it is refused`;
-            throw new QueryError(sentence, this.type, sql);
+            if (error.bound === "byte") {
+              throw new ByteBudgetRefusal(byteBudgetSentence(error.measured, error.allowed), this.type, sql);
+            }
+            if (cut === null) {
+              throw new RowBudgetRefusal(rowBudgetSentence(error.measured, error.allowed), this.type, sql);
+            }
+            throw new RowBudgetRefusal(
+              `${ROW_BUDGET_PREFIX}: ${this.product.label} answers at most ${cut.rows} rows (${cut.setting}) and cuts the rest without saying so, so an answer that reaches it is refused`,
+              this.type,
+              sql,
+            );
           }
           if (error instanceof SearchTransportError && error.category === "timeout") {
-            throw new QueryError(
+            throw new TimeBudgetRefusal(
               `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
               this.type,
               sql,
@@ -2213,7 +2219,7 @@ abstract class SearchProvider extends SQLBaseProvider {
  * rather than ES|QL.
  */
 export class ElasticsearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(ELASTICSEARCH_PRODUCT, config, options, execution);
   }
 
@@ -2236,7 +2242,7 @@ export class ElasticsearchProvider extends SearchProvider {
  * branched on.
  */
 export class OpenSearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderBuildContext = {}) {
     super(OPENSEARCH_PRODUCT, config, options, execution);
   }
 

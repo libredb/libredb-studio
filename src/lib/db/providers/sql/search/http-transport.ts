@@ -74,10 +74,10 @@
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, EgressDecision } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
-import { measureRowBytes } from "../read-only-budget";
+import { measureRowBytes } from "@/lib/db/read-only-budget";
 import {
   SearchBoundsError,
   type SearchClusterHealth,
@@ -1784,16 +1784,24 @@ export class SearchHttpTransport implements SearchTransport {
   private readonly spec: SearchDialectSpec;
   private readonly origin: HttpOrigin;
   private readonly authorization: string | undefined;
+  /** The egress decision the provider was built with, handed to the guarded fetch on every request. */
+  private readonly egress: EgressDecision;
 
-  constructor(dialect: SearchDialectId, config: DatabaseConnection) {
+  constructor(dialect: SearchDialectId, config: DatabaseConnection, egress: EgressDecision) {
     this.dialect = dialect;
+    this.egress = egress;
     this.spec = DIALECTS[dialect];
     // `ssl` is a first-class connection field and independent of the form's
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
     // an explicit mode turns it on (the #264 lesson). No connection-string parsing:
     // this provider is configured by host and port, like Druid.
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
-    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
+    this.origin = httpOrigin(
+      secure ? "https" : "http",
+      config.host ?? DEFAULT_HOST,
+      config.port ?? DEFAULT_PORT,
+      egress,
+    );
     // Measured on both probe clusters, which run with security disabled: a bogus
     // `Basic` header is IGNORED (HTTP 200), so credentials are optional and sending
     // none is the normal local case. When they are configured they are for the
@@ -1808,16 +1816,12 @@ export class SearchHttpTransport implements SearchTransport {
     //
     // Both halves are trimmed first: a trailing newline in either half measured as
     // HTTP 401 on a key that works once the whitespace is gone. OpenSearch is not a
-    // silent drop - the dialect flag is false, so a pair that arrived here (a seed
-    // with no type gate, a stored connection) is refused rather than sent as Basic.
+    // silent drop either: core refuses an OpenSearch connection that sets either half
+    // before the provider is built (`REFUSED_CONNECTION_FIELDS` in
+    // src/lib/db/connection-fields.ts), so no pair reaches its transport, and the
+    // dialect flag still decides that only Elasticsearch sends `ApiKey`.
     const apiKeyId = config.apiKeyId?.trim() ?? "";
     const apiKeySecret = config.apiKeySecret?.trim() ?? "";
-    if (!this.spec.supportsApiKeyAuth && (apiKeyId || apiKeySecret)) {
-      throw new DatabaseConfigError(
-        `${this.spec.label} does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.`,
-        this.dialect,
-      );
-    }
     this.authorization =
       this.spec.supportsApiKeyAuth && apiKeyId && apiKeySecret
         ? `ApiKey ${Buffer.from(`${apiKeyId}:${apiKeySecret}`).toString("base64")}`
@@ -2534,20 +2538,24 @@ export class SearchHttpTransport implements SearchTransport {
     let response: Response;
     let text: string;
     try {
-      response = await httpTransportFetch(url, {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          // Sent on GETs too: harmless, and it keeps one header block for one
-          // request helper. A POST without it is refused with HTTP 406 on both
-          // products (measured).
-          "content-type": JSON_CONTENT_TYPE,
-          ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+      response = await httpTransportFetch(
+        url,
+        {
+          method: body === undefined ? "GET" : "POST",
+          headers: {
+            // Sent on GETs too: harmless, and it keeps one header block for one
+            // request helper. A POST without it is refused with HTTP 406 on both
+            // products (measured).
+            "content-type": JSON_CONTENT_TYPE,
+            ...(this.authorization === undefined ? {} : { authorization: this.authorization }),
+          },
+          ...(body === undefined ? {} : { body }),
+          // A followed redirect would carry the credential to wherever it points.
+          redirect: "manual",
+          ...(signal ? { signal } : {}),
         },
-        ...(body === undefined ? {} : { body }),
-        // A followed redirect would carry the credential to wherever it points.
-        redirect: "manual",
-        ...(signal ? { signal } : {}),
-      });
+        this.egress,
+      );
       text = bodyCap === undefined ? await response.text() : await readCappedText(response, bodyCap);
     } catch (error) {
       if (error instanceof DatabaseConfigError || error instanceof SearchBoundsError) throw error;

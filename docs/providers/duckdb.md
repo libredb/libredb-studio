@@ -35,6 +35,7 @@
 | **Probed against** | DuckDB **v1.5.5** embedded through `@duckdb/node-api` **1.5.5-r.4**, under **Node 24.14.0** and **Bun 1.3.14**, on **2026-08-27** |
 | **Reproducible with** | `bun add @duckdb/node-api@1.5.5-r.4` — the engine ships inside the package, so there is no image to pull and no service in `database-compose.yml` (§11). Every statement quoted below was run against a two-schema fixture built from scratch; the integration test builds the same fixture in a temp directory |
 | **Write reach** | open: the editor, inline row edit, Import, Generate Test Data, Create Table and maintenance (`vacuum`, `analyze`, `optimize`) all write the file |
+| **Failed statement outcome** | unknown: every statement is sent on the one connection opened at connect, and nothing is taken from a pool before it is sent |
 
 ---
 
@@ -293,22 +294,11 @@ SELECT * FROM duckdb_queries();      -- Catalog Error: Table Function with name 
 SELECT * FROM duckdb_connections();  -- Catalog Error: Table Function with name duckdb_connections does not exist!
 ```
 
-Both therefore answer `[]`, and neither fabricates a zero. **Both empties are DuckDB's own words on
-screen**, through the two `ProviderLabels` fields the provider declares:
+Both therefore answer `[]` without asking the engine, and neither fabricates a zero.
+Neither panel is offered in DuckDB's `ENGINE_FACETS` row ([Engine facets](#engine-facets)), so `getMonitoringData` never reads them, and neither the monitoring dashboard nor the admin Operations page draws them.
+The provider therefore declares no `slowQueriesEmptyState` and no `sessionsEmptyState`: a sentence explaining an empty panel would have no reader.
 
-- `getSlowQueries()` returns `[]` and the provider declares `slowQueriesEmptyState`, so the Queries
-  panel prints *"DuckDB keeps no store of finished statements — it publishes no `duckdb_queries()`
-  table function — so there is nothing to enable."* Without it that panel tells every engine to
-  install `pg_stat_statements`, which for DuckDB is nonsense (#463).
-- `getActiveSessions()` returns `[]` and the provider declares `sessionsEmptyState`, so `SessionsTab`
-  and `OperationsTab` print *"DuckDB publishes no session list — there is no `duckdb_connections()`
-  table function — so this panel can never show a row."* in place of the generic **"No active
-  sessions found."** they used for every provider until D48. That generic sentence reads as "nothing
-  is running right now", which is a different claim from "this panel can never show a row". A
-  provider that declares neither label keeps the generic wording. (The `sessionsUnavailable` path
-  beside it is a third fact again: it renders a reason only when the reading *failed*.)
-
-`sqlite.ts` answers this panel with a row describing its own handle. That row would be true here
+`sqlite.ts` answers the sessions read with a row describing its own handle. That row would be true here
 too, but it would be the only row the panel could ever show, and "the engine reports one session"
 is a different claim from "the engine reports nothing". The count that *is* measurable travels as
 `activeConnections` on the overview, where it is a number rather than a fabricated session record.
@@ -362,6 +352,9 @@ An `agent-operations` acquisition borrows only a handle of its requester's own e
 rather than declared unsupported: a long analytical scan is exactly the workload a user needs to be
 able to stop, and this engine has no session to `KILL` from a second connection.
 
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `interrupt()` on its connection, when the request named a `queryId`.
+
 ### 3.10 `access_mode: 'READ_ONLY'` is not a filesystem sandbox — `enable_external_access` is
 
 Measured, with database writes genuinely refused at the same time: `COPY … TO`, `EXPORT DATABASE`,
@@ -389,7 +382,8 @@ The SQL denylist stays, as **defence in depth** rather than as the boundary: it 
 and says why, which the engine's sentence does not, and it costs nothing to run first. §14 records
 the three bypasses that proved a text guard cannot be the boundary here.
 Its refusals, an unterminated literal or comment included, are `RefusedBeforeSendError`, since the engine is never asked.
-The agent rail shows them as refused before the database and MCP answers them in Studio's words, never as DuckDB's error.
+Before the denylist this path makes the Unicode-space refusal of §5 as well, also a `RefusedBeforeSendError`, so the statement the denylist reads is the one the engine parses.
+The agent rail shows them as refused before the database, and MCP answers them as "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, "DuckDB provider, bundled with Studio", never as DuckDB's error.
 
 ### 3.11 A multi-statement string runs the first statement only
 
@@ -636,6 +630,9 @@ Pass `{ allowExternalFileAccess: true }` as the third argument for the full reac
 
 `defaultPort` is `null`, so the connection dialog offers no port for DuckDB.
 
+DuckDB takes no SSH tunnel: it opens a file on the Studio server, so there is no address to forward to, and the dialog offers no SSH panel for it.
+A stored connection that still carries a tunnel switched on is refused before anything is opened; edit the connection and save it again to clear it ([SSH tunnels](./README.md#ssh-tunnels-bastion-host-key-verification)).
+
 `:memory:` opens a database that exists for the life of the connection and is discarded on
 disconnect. It is the zero-configuration way to try the editor, and it is what most of the
 integration tests use.
@@ -691,6 +688,7 @@ columnTypes? }`.
 - **`rowCount`** is the row count for a read and `result.rowsChanged` for a write; the synthetic
   `Count` column is not surfaced (§3.4).
 - **Cancellation** calls `interrupt()` on the connection (§3.9).
+- **A Unicode space at a code position is refused** before the engine reads the statement, by `query()` and by `queryReadOnly()` alike, with the sentence in §10: DuckDB reads U+00A0, U+2000 to U+200B, U+202F, U+205F, U+2060, U+3000 and U+FEFF between two code words as a space and Studio's span reader does not ([SQL grammar](#sql-grammar)).
 
 ### Result column names
 
@@ -729,7 +727,8 @@ an alias of `get_current_timestamp()`, and the client context object carries onl
 the session nothing: measured, the very next statement runs normally. Any OTHER rollback failure is
 raised rather than read as an answer.
 
-Both query routes call this in a `finally` and report the outcome, `POST /api/db/multi-query` and
+Both query routes end their scope through the host core's `console.endScope` after the run
+([`CONTRACT.md`](CONTRACT.md), C-60) and report the outcome, `POST /api/db/multi-query` and
 `POST /api/db/query`, each under a call scope of its own (D74, D87).
 
 **WHAT IS NOT CLOSED: the ender cannot tell whose transaction it is ending.** The `scope` parameter
@@ -806,6 +805,12 @@ Every fact was measured on v1.5.5 through `@duckdb/node-api` 1.5.5-r.4, and the 
 `[` is a subscript, not a name quote: `SELECT [1,2][1]` answers 1, a list literal followed by a 1-based index.
 Block comments nest: `/* a /* b */ still */ SELECT 1` runs.
 `SELECT q'[x]' AS a` is `Catalog Error: Type with name q does not exist!`, and `SELECT 1 AS a // note` is `Parser Error: syntax error at or near "//"`.
+The confirmation gate asks before `INSERT OR REPLACE` (`confirmForms`), as it asks before `UPDATE` and `DELETE`: measured on v1.5.5 against a table holding `(1, 'a', 'keep-me')`, `INSERT OR REPLACE` of key 1 left `(1, 'new', NULL)`, and with a column list or `BY NAME` it overwrote the listed columns and kept the others.
+`INSERT ... ON CONFLICT ... DO UPDATE SET` overwrote the row too, and asks through the gate's shared `UPDATE ... SET` reading rather than a form of this row.
+DuckDB reads U+00A0, U+2000 to U+200B, U+202F, U+205F, U+2060, U+3000 and U+FEFF as a space between two code words, measured one by one on v1.5.5 (`INSERT<U+00A0>OR<U+00A0>REPLACE` replaced the row), and Studio's span reader does not, so the gate read no form there and did not ask.
+So the provider refuses such a character at a code position before the engine reads the statement (`unicodeSpaceRefusal` in `statement-shape.ts`), on the editor path (`query()`) and on the agent and MCP read-only path (`queryReadOnly()`) alike, and the statement that runs is the one the gate, the row limiter and the read-only statement guard read; inside a string, a dollar string, a quoted name or a comment the character is kept.
+It is the Spark provider's refusal with DuckDB's own measured characters: both ask `hasCodeCharacter` in `src/lib/sql/spans.ts`, which reads a `[` and the contents of a subscript as code.
+`INSERT OR IGNORE`, `ON CONFLICT DO NOTHING`, a plain `INSERT` and `INSERT ... BY NAME` or `BY POSITION` kept the row, refusing a duplicate key with a Constraint Error where they do not skip it, so none of them asks; `REPLACE INTO` and `INSERT OR ROLLBACK`, `OR ABORT` and `OR FAIL` are Parser Errors on DuckDB.
 The update-target reader takes `PIVOT`, `UNPIVOT`, `UNNEST`, `SUMMARIZE`, `DESCRIBE` and `SHOW` as words that open a query here alone: on DuckDB 1.5.5 `(PIVOT orders ON k USING max(note))` is a scalar subquery that answers with another table's value, and asking about them on every engine cost PostgreSQL a refusal for `coalesce(show, '')`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
@@ -1264,8 +1269,8 @@ and one index.
 | Memory limit | `50.0 GiB` on the probe machine — 80% of host RAM, so **never asserted in a test** |
 | Temporary files | Empty, from `duckdb_temporary_files()` — a real reading, not a gap |
 | Settings | `access_mode`, `memory_limit`, `threads`, from `duckdb_settings()` |
-| Slow queries | **Empty, permanently** — `duckdb_queries()` does not exist, and the panel says so in DuckDB's own words through `slowQueriesEmptyState` (§3.7) |
-| Active sessions | **Empty, permanently** — `duckdb_connections()` does not exist, and the panel says so in DuckDB's own words through `sessionsEmptyState` (§3.7) |
+| Slow queries | **Not offered**: `duckdb_queries()` does not exist, so the panel is never read and not drawn (§3.7, [Engine facets](#engine-facets)) |
+| Active sessions | **Not offered**: `duckdb_connections()` does not exist, so the panel is never read and not drawn (§3.7, [Engine facets](#engine-facets)) |
 | Table bytes | Only via `PRAGMA storage_info('<table>')`, per column segment |
 
 Where a reading is absent it is reported as absent with the reason, never as `0`: a zero on a size
@@ -1289,6 +1294,28 @@ the engine answers `0` for a **file** database, the provider falls back to the f
 [`index.ts`](../../src/lib/db/providers/sql/duckdb/index.ts)) stats the two files and hands the
 sizes in. A size the engine did measure is kept as it is, and an in-memory database is unchanged:
 it has no file, and still reports its memory usage (§3.5).
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `duckdb` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/duckdb/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `vacuum`, `analyze`, `optimize`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `index-stats`, `storage`, `health`.
 
 ---
 
@@ -1358,13 +1385,10 @@ See §8 for the statements and placement rules.
 
 | Label | UI effect |
 |---|---|
-| `slowQueriesEmptyState` | Explains that DuckDB publishes no `duckdb_queries()` table function, so the Queries panel has no finished-statement store to show. |
-| `sessionsEmptyState` | Explains that DuckDB publishes no `duckdb_connections()` table function, so the Sessions panel cannot show rows. |
 | `vacuumGlobalDesc` | Describes the global `VACUUM` control and its checkpoint behaviour. |
 
-The first two replace generic empty-state copy with the engine-specific absence already measured
-in §3.7. The maintenance label does not add another operation; it only describes the global
-`vacuum` control declared above.
+The label does not add another operation; it only describes the global `vacuum` control declared above.
+No empty-state sentence is declared: neither the Queries nor the Sessions panel is offered (§3.7).
 
 ### 9.3 Agent language pack
 
@@ -1421,8 +1445,10 @@ message do not accidentally select an unrelated shared classification.
 | Condition | Provider error | What the user sees |
 |---|---|---|
 | `INTERRUPT Error` | `QueryCancelledError` | `Query was cancelled` |
+| A path the reserved check cannot read (a path through a regular file on POSIX, a symbolic link loop, a directory the server cannot search), refused by the provider factory before the provider is built | `DatabaseConfigError` | `This connection's file could not be checked against the server's own storage files: <filesystem message>` |
 | Conflicting file lock | `ConnectionError` | `DuckDB file <path> is locked by <process>. DuckDB admits one operating-system process per database file, in read-only mode too, so the other process has to release it first. Engine message: <engine message>` |
 | A write in the editor on a file opened read-only because this process cannot write it (§3.15) | `QueryError` | `DuckDB database <path> is open read-only because this process cannot write the file or its directory: <engine message>` |
+| A Unicode space outside a string, a quoted name and a comment, refused before the engine reads the statement (§5) | `QueryError`, a `RefusedBeforeSendError` on `queryReadOnly()` | `This statement holds a non-breaking or other Unicode space outside a string. DuckDB reads it as a space and Studio's readers do not, so what Studio checks before it runs could differ from what DuckDB runs; replace it with an ordinary space.` |
 | A `Permission Error` on an editor handle opened with file access denied (§3.16) | `QueryError` | `File and network access is off on this DuckDB connection: the handle was opened with external access denied, which Studio does for every role but admin and for any connection a non-admin role can use, and which an embedder overrides by passing { allowExternalFileAccess: true }: <engine message>` |
 | `Parser Error`, `Binder Error`, `Catalog Error`, `Conversion Error`, `Invalid Input Error`, `Constraint Error`, `Out of Range Error`, `Not implemented Error`, `Permission Error`, `Serialization Error`, `TransactionContext Error` | `QueryError` | The engine message, with the query attached when one is available |
 | Anything else | shared database error | `mapDatabaseError()` classifies the error using the common provider rules |
@@ -1742,7 +1768,10 @@ Every refusal reason it can print, verbatim:
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
 
 
-Connection targets reserve Studio's storage database, its WAL/SHM files and bootstrap
-credentials (including backups and temporary files). This applies to every role.
-Checks normalize paths, resolve symbolic links and compare existing file identities
-so hard links cannot alias reserved files. Other user database files beside them remain usable.
+Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).
+This applies to every role.
+Studio's provider factory makes the check when it builds the provider, before any provider exists to connect, against the storage location the process took once (at boot, or at the first provider built where no boot runs), so a later change of the working directory or of `STORAGE_SQLITE_PATH` moves nothing ([SECURITY.md](../SECURITY.md) control 3.45).
+Checks normalize paths, resolve symbolic links and compare existing file identities so hard links cannot alias reserved files.
+Other user database files beside them remain usable.
+Names are compared with letter case and Unicode normalization (NFC against NFD) folded, on every OS, whether or not the file exists yet.
+macOS treats two spellings that differ only in letter case or only in normalization form as one file, and Windows treats two spellings that differ only in letter case as one file.

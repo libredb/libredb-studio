@@ -12,6 +12,7 @@ reference encoder is Eclipse Tahu `sparkplug-payload` 1.0.3.
 | | |
 |---|---|
 | **Write reach** | none: the encoder's packet table, `PACKET`, holds five packet types and no PUBLISH, and its CONNECT takes no will; there is no object edit, maintenance or transaction route |
+| **Failed statement outcome** | unknown: the provider opens an MQTT session of its own for each read (`reader()`) before it sends the statement, and that failure answers `unknown` like every other |
 
 ## 1. Overview
 
@@ -174,6 +175,16 @@ TLS is not absent: the broker is dialled over TLS from the connection's SSL / TL
 With no panel, or the `disable` mode, the socket is plain.
 Through an SSH tunnel the certificate is checked against the broker the user named, not the local forward.
 
+### 4.3 Where the dial may connect
+
+The dial applies the shared egress rule, `socketEgress` in [`egress-policy.ts`](../../src/lib/db/http/egress-policy.ts), and writes no address check of its own.
+A link-local address or AWS's IPv6 instance metadata address is never reached, whatever `DB_HTTP_BLOCK_PRIVATE_HOSTS` says.
+With the flag on, a loopback, private or other non-public address is refused as well, before any byte reaches the broker: an IP literal before any socket opens, with the shared sentence, and a name at the lookup the socket dials through.
+
+Through an SSH tunnel the socket dials the local forward, a loopback address, and the rule is checked against that address.
+So with the flag on a tunnelled connection is refused, and with it off the forward is dialled.
+The broker at the far end is not checked here: a link-local or metadata address there is reached through the tunnel, and a name is resolved by the SSH server, where Studio cannot check it.
+
 ### Connection string
 
 `sparkplug` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/sparkplug/connection-string.ts)).
@@ -203,7 +214,7 @@ Agent mode does not use this request: it has a closed table of four reads of its
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/industrial/sparkplug/sql-grammar.ts`](../../src/lib/db/providers/industrial/sparkplug/sql-grammar.ts), the `sparkplug` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: the console takes one JSON read request naming a group, an edge node and a window, so no span of it is SQL (#1720).
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/industrial/sparkplug/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/sparkplugread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -246,6 +257,29 @@ There is no "online" count, and that is a measured decision rather than an omiss
 published nothing during the window and has a stored certificate is indistinguishable from one that
 is running and quiet. The three states a read can tell apart are "not seen in this read", "published
 during this read" and "a death arrived during this read".
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `sparkplug` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/industrial/sparkplug/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` reports what the last read of the broker saw |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | No | `getTableStats` answers `[]` without asking the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | No | `getStorageStats` answers `[]` without asking the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: none.
+`health` is not offered to agent mode: the agent handle refuses it with `SPARKPLUG_AGENT_WITHHELD.health`.
 
 ## 8. Maintenance
 
@@ -317,6 +351,10 @@ reporting every mutation caught looks identical to a run that measured nothing.
 
 ## 12. Known limitations
 
+- A console read ends at the window it names, not at the connection's statement timeout.
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
+  This provider cannot cancel a run, so Studio sends no cancel, and the read's session runs on until its window ends, and its answer is dropped.
 - A Sparkplug 2.2 host's STATE is not read. 2.2 published it at `STATE/<scada_host_id>`, outside the
   `spBv1.0` namespace, and every filter this read sends is inside it.
 - No credential fields, as section 4.2 states; TLS comes from the SSL / TLS panel, not from a field of this engine's own.
@@ -413,9 +451,11 @@ The agent reads it through `runServerPack` and `agentEnginePack`.
 Both overlays are empty, so the engine resolves to the `sparkplugread` family pack itself.
 The `sparkplugread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `sparkplugread` statement-language family's own.
-The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The family offers the investigation workflow, through `run_read_query` with one read request, and holds an operations variant; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The operations workflow still does not open in agent mode on Sparkplug B: the engine offers agent mode no curated reading, so Start refuses it with the reason, and plan mode drafts instead.
 The investigation rule tells the model to read a group, edge node or device the question names directly, to read the window only for the plant's totals, never to guess an id, and to report an object not seen as not seen in that window, never as absent or offline.
 A plan of the investigation is prose: the editor's console request reads metric values, which agent mode never reads, and plan mode is ungrounded on it, as agent mode is.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/sparkplugread/client.ts)) beside core's pill, *Executes nothing it drafts*: "no group, edge node or device is listed for it; opening the connection is a handshake that subscribes to nothing", because Sparkplug has no command that lists edge nodes or devices and their ids are withheld, so the shared strip's "one schema read grounds it" would not be true here.
 The editor language id stays `sparkplug`, and the fence alias `sparkplugread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP clients run a Sparkplug read with `run_sparkplug_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/sparkplugread/mcp.ts`](../../src/lib/agent/languages/sparkplugread/mcp.ts)), opened by `MCP_EXPOSABLE.sparkplug` and `MCP_STATEMENT_READ.sparkplug` (section 15); `READ_ONLY_ENFORCED.sparkplug` is unchanged.

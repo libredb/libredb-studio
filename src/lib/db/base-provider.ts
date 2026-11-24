@@ -37,102 +37,10 @@ import {
   DEFAULT_QUERY_TIMEOUT,
 } from "./types";
 import { DatabaseConfigError } from "./errors";
+import { engineFacetsFor } from "./engine-facets";
+import { readDeclaredPanels } from "./engine-facets/monitoring";
 import { mapDatabaseError } from "./map-database-error";
 import { mergePoolConfig, formatDuration } from "./utils/pool-manager";
-
-// ============================================================================
-// Connection String Redaction
-// ============================================================================
-
-/**
- * Substrings that mark a connection-string parameter as carrying a credential.
- * They are matched case-insensitively anywhere inside the parameter NAME, so a
- * driver-specific spelling is covered too: `password` also catches libpq's
- * `sslpassword`, and `token` also catches `authToken` and `accessToken`. The mask
- * deliberately errs towards hiding, because a non-secret hidden costs a reader one
- * value while a secret missed costs a leak that looks redacted.
- */
-const CREDENTIAL_PARAM_SUBSTRINGS = ["password", "token", "sslkey", "secret"];
-
-/**
- * Redact the credentials a connection string carries, in the two places engines put them.
- *
- * PostgreSQL and MongoDB put the credential in the authority
- * (`scheme://user:password@host`), while libSQL carries the whole token in the query
- * string (`libsql://<db>-<org>.turso.io?authToken=<jwt>`) and libpq accepts `password`,
- * `sslpassword` and `sslkey` as URI parameters as well. An ADO-style string
- * (`Server=host;Database=db;Password=pw`) has neither a scheme nor a query string and
- * puts its parameters in arbitrary order, so the first parameter is as likely to be the
- * credential as the last.
- *
- * Nothing here parses the input as a URL: a connection string is not always a valid one,
- * and a redaction that throws on the input it was handed is worse than none.
- *
- * What is NOT covered is an authority password containing an unencoded `/`, `?` or `#`
- * (`scheme://user:p/w@host/db`). Each of those ENDS the authority, so the `@` falls
- * outside it and the parse below never sees a credential. `/` is the instructive one:
- * `scheme://host:5432/tenant@acme` has exactly the same shape, and masking it would hide
- * the port behind a `***` asserting a credential the string never carried - a fabricated
- * reading rather than a mask, which is the worse of the two. `?` and `#` end the authority
- * for the same reason and are excluded with it. An unencoded `@` IS covered, because the
- * authority is parsed rather than pattern-matched (see `maskAuthorityPassword`).
- *
- * A scheme-relative string (`//user:pass@host/db`) is not covered either, and no driver
- * here accepts one.
- */
-/**
- * Mask the password an authority carries, by PARSING it rather than by matching a pattern.
- *
- * The authority begins after `://` - anchoring there is what keeps this off a path: in
- * `postgres://host/db:owner@example.com` the only `:`+text+`@` sits in the path, and a mask
- * that matched it would replace a path segment while hiding no secret. It ENDS at the first
- * `/`, `?` or `#`. Inside it the credential ends at the LAST `@`, not the first: `@` is a
- * legal password character while a host name cannot hold one, so `scheme://user:p@ss@host`
- * is masked whole where a single-`@` pattern left the tail visible.
- */
-function maskAuthorityPassword(connectionString: string): string {
-  const schemeIndex = connectionString.indexOf("://");
-  if (schemeIndex === -1) return connectionString;
-
-  const authorityStart = schemeIndex + "://".length;
-  const delimiter = /[/?#]/.exec(connectionString.slice(authorityStart));
-  const authorityEnd = delimiter ? authorityStart + delimiter.index : connectionString.length;
-  const authority = connectionString.slice(authorityStart, authorityEnd);
-
-  const atIndex = authority.lastIndexOf("@");
-  if (atIndex === -1) return connectionString;
-
-  const colonIndex = authority.indexOf(":");
-  // No ':' before that '@' means the authority carries a user name and no password
-  // (`scheme://user@host`, `scheme://user@host:5432`), and a ':' immediately before it
-  // means the password is empty. Both stay verbatim for the reason the parameter half
-  // gives below: '***' over a value the string never carried asserts a secret.
-  if (colonIndex === -1 || colonIndex > atIndex || colonIndex + 1 === atIndex) return connectionString;
-
-  const masked = `${authority.slice(0, colonIndex + 1)}***${authority.slice(atIndex)}`;
-  return connectionString.slice(0, authorityStart) + masked + connectionString.slice(authorityEnd);
-}
-
-function redactConnectionString(connectionString: string): string {
-  const withAuthorityMasked = maskAuthorityPassword(connectionString);
-
-  // Replace the VALUE of a credential-shaped parameter and keep its name, so the reader
-  // can still see which knobs were set. Matching the name between a delimiter and '=' is
-  // what stops a credential word sitting in somebody else's value from triggering a
-  // replacement. ';' counts as a delimiter because ADO-style strings separate their
-  // parameters with it, and `^` counts as one because such a string may LEAD with its
-  // credential - `Password=pw;Server=host` is as valid as the reverse, and matching only
-  // after a delimiter returned the leading one verbatim.
-  return withAuthorityMasked.replace(
-    /(^|[?&#;])([^=&#;?]*)=([^&#;]*)/g,
-    (whole: string, delimiter: string, name: string, value: string) => {
-      const isCredential = CREDENTIAL_PARAM_SUBSTRINGS.some((word) => name.toLowerCase().includes(word));
-      // An empty value stays empty: '***' over a value the string never carried would
-      // assert a secret that is not there, which is a fabricated reading, not a mask.
-      return isCredential && value !== "" ? `${delimiter}${name}=***` : whole;
-    },
-  );
-}
 
 // ============================================================================
 // Base Provider Class
@@ -216,105 +124,17 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
   }
 
   /**
-   * Get comprehensive monitoring data
+   * Get comprehensive monitoring data: the panels the engine's `ENGINE_FACETS` row offers, read by
+   * `readDeclaredPanels`, which states the four panel states and the failure rule. A panel the engine does not offer is
+   * never read and is listed in `notOffered`.
    *
-   * Every panel is read independently and a rejection costs only its own panel: the field
-   * is left absent and the ENGINE's own sentence is recorded under `errors`. One failing
-   * read used to discard the whole dashboard - `Promise.all` rejects on the first failure -
-   * so StarRocks 3.3, which has no `information_schema.PROCESSLIST`, answered
-   * "Unknown table 'information_schema.PROCESSLIST'" and cost the user the overview, the
-   * performance panel, the slow queries, the tables, the indexes and the storage panel, all
-   * six of which it had already answered (measured 2026-08-24 against StarRocks 3.3 on
-   * 127.0.0.1:19030 through this provider).
-   *
-   * It still throws when ALL FOUR core reads reject, which is what a dead connection looks
-   * like: the caller (/api/db/monitoring) keeps its error path, and the thrown message
-   * carries the engine's own sentences rather than replacing them.
-   *
-   * Subclasses can override for optimized implementations.
+   * Core reads only declared panels, so no provider overrides this method;
+   * `tests/isolated/monitoring-panels-census.test.ts` holds that across the fleet.
    */
   public async getMonitoringData(options: MonitoringOptions = {}): Promise<MonitoringData> {
-    const {
-      includeTables = true,
-      includeIndexes = true,
-      includeStorage = true,
-      slowQueryLimit = 10,
-      sessionLimit = 50,
-      schemaFilter, // undefined = all user schemas
-    } = options;
-
-    const result: MonitoringData = { timestamp: new Date() };
-    const errors: NonNullable<MonitoringData["errors"]> = {};
-
-    const record = (panel: keyof NonNullable<MonitoringData["errors"]>, reason: unknown): void => {
-      errors[panel] = reason instanceof Error ? reason.message : String(reason);
-    };
-
-    // Read every panel independently, then fill in whatever answered.
-    const [overview, performance, slowQueries, activeSessions, tables, indexes, storage] = await Promise.allSettled([
-      this.getOverview(),
-      this.getPerformanceMetrics(),
-      this.getSlowQueries({ limit: slowQueryLimit }),
-      this.getActiveSessions({ limit: sessionLimit }),
-      includeTables ? this.getTableStats({ schema: schemaFilter }) : Promise.resolve(undefined),
-      includeIndexes ? this.getIndexStats({ schema: schemaFilter }) : Promise.resolve(undefined),
-      includeStorage ? this.getStorageStats() : Promise.resolve(undefined),
-    ]);
-
-    if (overview.status === "fulfilled") result.overview = overview.value;
-    else record("overview", overview.reason);
-
-    if (performance.status === "fulfilled") result.performance = performance.value;
-    else record("performance", performance.reason);
-
-    if (slowQueries.status === "fulfilled") result.slowQueries = slowQueries.value;
-    else record("slowQueries", slowQueries.reason);
-
-    if (activeSessions.status === "fulfilled") result.activeSessions = activeSessions.value;
-    else record("activeSessions", activeSessions.reason);
-
-    // The optional three: a panel that was not requested resolves to `undefined` and stays
-    // absent with no error entry, which is how "not asked for" differs from "asked and refused".
-    if (tables.status === "fulfilled") {
-      if (tables.value !== undefined) result.tables = tables.value;
-    } else record("tables", tables.reason);
-
-    if (indexes.status === "fulfilled") {
-      if (indexes.value !== undefined) result.indexes = indexes.value;
-    } else record("indexes", indexes.reason);
-
-    if (storage.status === "fulfilled") {
-      if (storage.value !== undefined) result.storage = storage.value;
-    } else record("storage", storage.reason);
-
-    // All four core reads rejected: there is no dashboard to render, so this is a failure
-    // and not a partial answer. The engine's own sentences travel in the thrown message.
-    if (
-      overview.status === "rejected" &&
-      performance.status === "rejected" &&
-      slowQueries.status === "rejected" &&
-      activeSessions.status === "rejected"
-    ) {
-      const seen = new Set<string>();
-      const sentences = [errors.overview, errors.performance, errors.slowQueries, errors.activeSessions].filter(
-        (message): message is string => {
-          if (message === undefined || seen.has(message)) return false;
-          seen.add(message);
-          return true;
-        },
-      );
-      // One sentence for all four is what a dead connection looks like, and the first
-      // rejection is already a mapped provider error carrying its own class and
-      // ApiErrorCode. Rethrowing it verbatim keeps the status code /api/db/monitoring
-      // answered before this change; re-wrapping would re-classify it from its text and
-      // could downgrade an AuthenticationError to a generic DatabaseError.
-      if (sentences.length === 1) throw overview.reason;
-      throw this.mapError(new Error(sentences.join("; ")), undefined);
-    }
-
-    if (Object.keys(errors).length > 0) result.errors = errors;
-
-    return result;
+    return readDeclaredPanels(this, engineFacetsFor(this.type).monitoring, options, (error) =>
+      this.mapError(error, undefined),
+    );
   }
 
   public validate(): void {
@@ -442,35 +262,6 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
     // Sanitize to prevent log injection via newlines/control chars
     const sanitize = (v: string) => v.replace(/[\r\n]/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
     console.error(`[DB:${sanitize(this.type)}] ${sanitize(operation)} failed: ${sanitize(errorMessage)}`);
-  }
-
-  /**
-   * Get config without sensitive data for logging
-   */
-  protected getSafeConfig(): Record<string, unknown> {
-    return {
-      id: this.config.id,
-      name: this.config.name,
-      type: this.config.type,
-      host: this.config.host,
-      port: this.config.port,
-      database: this.config.database,
-      user: this.config.user,
-      // Never log password or connection string
-    };
-  }
-
-  /**
-   * Build connection info for health check
-   *
-   * A connection string is redacted in both of the places a credential can hide - the
-   * authority and the query string - see `redactConnectionString`.
-   */
-  protected getConnectionInfo(): string {
-    if (this.config.connectionString) {
-      return redactConnectionString(this.config.connectionString);
-    }
-    return `${this.config.host}:${this.config.port}/${this.config.database}`;
   }
 
   /**

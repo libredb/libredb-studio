@@ -11,7 +11,7 @@ import {
   weaviateReadRoutes,
   weaviateStatementLanguage,
 } from "@/lib/db/providers/vector/weaviate/labels";
-import { refusedRouteSentence, WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
+import { refusedRouteSentence, WEAVIATE_CONSOLE, WEAVIATE_ROUTES } from "@/lib/languages/weaviateapi/routes";
 import { plan } from "../../../helpers/weaviate-request-fixtures";
 
 const ROUTES =
@@ -80,10 +80,9 @@ describe("the other labels", () => {
       tableStatsCaption:
         "The first 200 single-tenant collections, each with its exact object count (aggregate meta.count). A multi-tenant collection is counted per tenant: POST /v1/aggregate/{collection} with a tenant.",
     });
-    expect(WEAVIATE_LABELS.slowQueriesEmptyState).toBe(
-      "Weaviate reports no slow-query log over the routes Studio reads.",
-    );
-    expect(WEAVIATE_LABELS.sessionsEmptyState).toContain("Prometheus server that scrapes Weaviate's metrics");
+    // No sentence for an empty Queries or Sessions panel: neither is offered, so nothing would draw one.
+    expect(WEAVIATE_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(WEAVIATE_LABELS.sessionsEmptyState).toBeUndefined();
   });
 
   test("the maintenance words say nothing runs", () => {

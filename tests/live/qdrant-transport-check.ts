@@ -56,8 +56,10 @@ import {
   versionGateRefusal,
 } from "@/lib/db/providers/vector/qdrant/versions";
 import { TUNNEL_FAR_END } from "@/lib/types";
+import { setEgressFlag } from "../helpers/egress-flag";
 import routeTable from "../fixtures/vector/routes/qdrant-v1.json";
 import { JWT_CLAIMS, mintJwt, QDRANT_SERVICES, slowFilter } from "./qdrant-evidence-catalog";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 const RUNTIME = typeof Bun !== "undefined" ? `bun ${Bun.version}` : `node ${process.versions.node}`;
 /** Stand-ins, never realistic values: the key no server holds, and the secret the wrongly signed JWT is signed with. */
@@ -99,7 +101,7 @@ function options(overrides: Record<string, unknown>, queryTimeout = 30_000): Qdr
       port: QDRANT_SERVICES.qdrant.port,
       ...overrides,
     } as never,
-    { executionReadOnly: false, queryTimeout },
+    { executionReadOnly: false, queryTimeout, egress: egressDecision() },
   );
 }
 
@@ -572,7 +574,7 @@ async function main(): Promise<void> {
   // T11
   {
     const relay = await forwarder(QDRANT_SERVICES.qdrant.port);
-    process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS = "true";
+    setEgressFlag("true");
     let literal: unknown;
     try {
       options({ port: relay.port });
@@ -583,7 +585,7 @@ async function main(): Promise<void> {
     const qdrant = createRestQdrantClient(connection, ROUTES);
     const named = await outcome(connection, qdrant, request("get_collections"));
     qdrant.close();
-    delete process.env.DB_HTTP_BLOCK_PRIVATE_HOSTS;
+    setEgressFlag(undefined);
     relay.close();
     report(
       "T11",

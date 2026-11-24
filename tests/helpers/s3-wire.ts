@@ -38,7 +38,7 @@ export interface S3RecordedAuthorization {
 }
 
 export interface S3RecordedRequest {
-  readonly method: "GET" | "HEAD";
+  readonly method: SigningInput["method"];
   /** The path exactly as sent on the wire. */
   readonly path: string;
   /** The query exactly as sent on the wire, without "?". */
@@ -230,6 +230,7 @@ export function signingInput(
     path: request.target.path,
     query: request.target.query,
     headers: Object.freeze(headers),
+    body: "",
   });
 }
 
@@ -263,7 +264,7 @@ function checkTarget({ path, query }: { readonly path: string; readonly query: s
 /**
  * The signer's headers for one request, held to the byte transport's rules on what a signer returns
  * (src/lib/db/http/node-transport.ts): every name one of the signer's headerNames, and every value (isHeaderValue)
- * visible ASCII or space and at most 1024 bytes, refused by name, never by value.
+ * visible ASCII or space and at most 8192 bytes, refused by name, never by value.
  */
 function signatureOf(options: NodeByteTransportOptions, input: SigningInput): Readonly<Record<string, string>> {
   if (options.signer === undefined) return {};
@@ -272,9 +273,9 @@ function signatureOf(options: NodeByteTransportOptions, input: SigningInput): Re
   for (const name of Object.keys(returned))
     if (!listed.has(name)) throw new DatabaseConfigError(UNLISTED_SIGNATURE_HEADER);
   for (const [name, value] of Object.entries(returned))
-    if (value.length > 1024 || !/^[\x20-\x7e]*$/.test(value))
+    if (value.length > 8192 || !/^[\x20-\x7e]*$/.test(value))
       throw new DatabaseConfigError(
-        `Invalid signature headers: the value of ${name} must be visible ASCII or space, at most 1024 bytes`,
+        `Invalid signature headers: the value of ${name} must be visible ASCII or space, at most 8192 bytes`,
       );
   return returned;
 }

@@ -13,6 +13,8 @@
  */
 import { afterAll, afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
+import { shutdownStandIn } from "../../../helpers/shutdown-stand-in";
+import { standInProcess } from "../../../helpers/uncaught-exception-stand-in";
 import {
   answerSnapshot,
   EMPTY_SOURCE,
@@ -47,6 +49,8 @@ const { resetGovernanceKeyring } = await import("@/lib/governance/keyring");
 const { resetShutdownHooks, runShutdownHooks } = await import("@/lib/shutdown");
 const { register } = await import("@/instrumentation");
 const { logger } = await import("@/lib/logger");
+const { installUncaughtExceptionExit, resetUncaughtExceptionExit } = await import("@/lib/uncaught-exception");
+const { installShutdownHandler, resetShutdownHandler } = await import("@/lib/shutdown-handler");
 
 const KEYRING_FILE = keyringFileOf(testKey());
 
@@ -72,6 +76,10 @@ const GOVERNED: Readonly<Record<string, string | undefined>> = {
   LIBREDB_NO_BANNER: undefined,
   LIBREDB_EMBEDDED_SAMPLE: undefined,
   SQLITE_EMBEDDED_SAMPLE: undefined,
+  // register() re-seals and checks the server store when these are set; a developer's .env must not make this test do it.
+  STORAGE_ENCRYPTION_RESEAL: undefined,
+  STORAGE_ENCRYPTION_REQUIRE_V2: undefined,
+  STORAGE_PROVIDER: undefined,
 };
 
 let saved: Record<string, string | undefined> = {};
@@ -423,6 +431,17 @@ describe("the listener", () => {
 });
 
 describe("register()", () => {
+  // register() installs the uncaught-exception exit and the shutdown handler once per process; installed on stand-ins
+  // first, its own installs attach nothing, so these tests never bind the real process.exit or a real signal listener.
+  beforeEach(() => {
+    installUncaughtExceptionExit(standInProcess());
+    installShutdownHandler(shutdownStandIn(), "nextjs");
+  });
+  afterEach(() => {
+    resetUncaughtExceptionExit();
+    resetShutdownHandler();
+  });
+
   test("register() starts the refresher under governance without waiting for its first load", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.AUTH_BOOTSTRAP = "off";

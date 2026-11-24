@@ -23,6 +23,7 @@ import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/ind
 import { createSendRequest, type SendRequest } from "@/lib/db/providers/timeseries/prometheus/request";
 import type { DatabaseProvider, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import { egressDecision } from "@/lib/db/egress-decision";
 
 function env(name: string): string {
   const value = process.env[name];
@@ -52,7 +53,7 @@ interface SentRecord {
 }
 
 const sent: SentRecord[] = [];
-const real = createSendRequest(null);
+const real = createSendRequest(null, egressDecision());
 const send: SendRequest = (request) => {
   sent.push({ method: request.method, path: request.url.pathname });
   return real(request);
@@ -165,18 +166,18 @@ const accepted = await createDatabaseProvider(CONNECTION).then(
   () => false,
 );
 
-const editor = new PrometheusProvider(CONNECTION, {}, {}, { send });
+const editor = new PrometheusProvider(CONNECTION, {}, { egress: egressDecision() }, { send });
 await surfaces("read-only connection", editor);
 await measure("read-only connection: query", () => editor.query("write_reach_seed"));
 await editor.disconnect();
 
 const readOnlyProfile: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
-const agent = new PrometheusProvider(CONNECTION, {}, readOnlyProfile, { send });
+const agent = new PrometheusProvider(CONNECTION, {}, { ...readOnlyProfile, egress: egressDecision() }, { send });
 await surfaces("agent read-only profile", agent);
 await measure("agent read-only profile: queryReadOnly", () => agent.queryReadOnly("write_reach_seed", BUDGET));
 await agent.disconnect();
 
-const operations = new PrometheusProvider(CONNECTION, {}, { readOnly: true }, { send });
+const operations = new PrometheusProvider(CONNECTION, {}, { readOnly: true, egress: egressDecision() }, { send });
 await surfaces("agent operations profile", operations);
 await operations.disconnect();
 

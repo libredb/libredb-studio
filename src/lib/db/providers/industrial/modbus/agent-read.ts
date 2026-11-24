@@ -25,13 +25,23 @@
  * the read itself; past it the read is refused in Studio's words and its socket destroyed. A device's silence, its
  * exception and an answer that cannot be read are each worded by their category, never by the device's bytes.
  */
-import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import {
+  ByteBudgetRefusal,
+  ConnectionError,
+  DatabaseConfigError,
+  isBudgetRefusal,
+  QueryError,
+  RefusedBeforeSendError,
+  RowBudgetRefusal,
+  TimeBudgetRefusal,
+} from "@/lib/db/errors";
+import { EGRESS_DECISION_MISSING } from "@/lib/db/http/egress-policy";
 import {
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
   TIME_BUDGET_PREFIX,
-} from "@/lib/db/providers/sql/read-only-budget";
+} from "@/lib/db/read-only-budget";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { MODBUS_AGENT_DEVICE_GAP_MS, ModbusPacingTimeout, type ModbusDevicePacer, deviceKey } from "./agent-pacing";
 import { socketWire, type Dialer, type Endpoint, type ModbusSocket } from "./client";
@@ -87,7 +97,7 @@ export const MODBUS_AGENT_FAILURE_SENTENCES = {
 const F = MODBUS_AGENT_FAILURE_SENTENCES;
 
 /** A refusal or failure worded by Studio. The class tells a caller that nothing in it came from the device's bytes. */
-export class ModbusAgentError extends QueryError {
+class ModbusAgentError extends QueryError {
   constructor(message: string) {
     super(message, "modbus");
     this.name = "ModbusAgentError";
@@ -106,10 +116,6 @@ class ModbusAgentRefusal extends RefusedBeforeSendError {
 
 const refuse = (sentence: string): never => {
   throw new ModbusAgentRefusal(sentence);
-};
-
-const fail = (sentence: string): never => {
-  throw new ModbusAgentError(sentence);
 };
 
 /** The points a points read names, in the map's own declaration. */
@@ -167,14 +173,21 @@ export interface ModbusAgentReadSeams {
   readonly pacer: ModbusDevicePacer;
 }
 
-/** A failure of the read worded by its category; Studio's own refusals pass as they are, and a defect rises unchanged. */
+/**
+ * A failure of the read worded by its category; Studio's own refusals and a budget refusal (`isBudgetRefusal`) pass as
+ * they are, so each keeps its class and kind, and a defect rises unchanged.
+ */
 function categorized(error: unknown): unknown {
-  if (error instanceof ModbusAgentError || error instanceof RefusedBeforeSendError) return error;
+  if (error instanceof ModbusAgentError || error instanceof RefusedBeforeSendError || isBudgetRefusal(error)) {
+    return error;
+  }
   if (error instanceof ModbusWalkBoundError) return new ModbusAgentError(F.walkBound);
   if (error instanceof ModbusTimeout) return new ModbusAgentError(F.silence);
   if (error instanceof ModbusExceptionError) return new ModbusAgentError(F.refused(error.exceptionCode));
   if (error instanceof ModbusDecodeError) return new ModbusAgentError(F.decode);
   if (error instanceof ConnectionError) return new ModbusAgentError(F.unreachable);
+  // A provider built without the egress decision is refused by name, as its connect() is, never as the settings.
+  if (error instanceof DatabaseConfigError && error.message === EGRESS_DECISION_MISSING) return error;
   if (error instanceof DatabaseConfigError) return new ModbusAgentError(F.settings);
   if (error instanceof ModbusIdentificationError || error instanceof QueryError) {
     return new ModbusAgentError(F.unreadable);
@@ -229,7 +242,7 @@ async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, left: num
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
     // Whole milliseconds, rounded up: what remains of the budget is a fraction on performance.now()'s clock.
-    timer = setTimeout(() => reject(new ModbusAgentError(F.deadline(ms))), Math.ceil(left));
+    timer = setTimeout(() => reject(new TimeBudgetRefusal(F.deadline(ms), "modbus")), Math.ceil(left));
   });
   // The session's own request timer words a device's silence; the socket's timer is set past it so the two never
   // race and silence is never worded as an unreachable device.
@@ -264,9 +277,12 @@ async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, left: num
 export function modbusAgentResult(read: ModbusAgentRead, budget: ReadOnlyStatementBudget): QueryResult {
   const rows = read.rows.map((row) => ({ ...row }));
   // Only an identification answer can get here past the budget: a points or block read was refused before its socket.
-  if (rows.length > budget.maxResultRows) fail(F.overAnswerRows(rows.length, budget.maxResultRows));
+  if (rows.length > budget.maxResultRows) {
+    throw new RowBudgetRefusal(F.overAnswerRows(rows.length, budget.maxResultRows), "modbus");
+  }
   const bytes = measureResultBytes(rows);
-  if (bytes > budget.maxResultBytes) fail(byteBudgetSentence(bytes, budget.maxResultBytes));
+  if (bytes > budget.maxResultBytes)
+    throw new ByteBudgetRefusal(byteBudgetSentence(bytes, budget.maxResultBytes), "modbus");
   return {
     fields: [...read.fields],
     rows,

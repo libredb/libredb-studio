@@ -19,6 +19,7 @@
 | **Connection string** | Not supported. `http://` and `https://` already parse as ClickHouse ([§4.5](#45-no-connection-string)) |
 | **EXPLAIN** | None. `/api/v1/parse_query` is experimental upstream, so no plan view is offered |
 | **Write reach** | none: the transport requests only the closed endpoint table `PATHS`, every one a read listed in [§6.1](#every-endpoint-call-with-its-parameters), and builds no admin, remote-write, OTLP or lifecycle endpoint; there is no object edit, maintenance or transaction route, so every connection is read-only and a read-only one is accepted |
+| **Failed statement outcome** | unknown: a statement waits for one of the provider's request slots and then sends, and nothing is taken from a pool, so a wait that ends answers `unknown` like every other failure |
 | **Transactions** | Not applicable |
 | **Maintenance** | None. The admin API (series deletion, snapshots, tombstones) and the lifecycle endpoints (`/-/quit`, `/-/reload`) are never called |
 | **Query cancellation** | Yes: `cancelQuery(queryId)` aborts that query's request, and the server ends the evaluation at its next checkpoint; a query still waiting for one of the connection's query slots leaves the queue without reaching the server (M1, [§5.5](#55-timeout-and-cancellation)) |
@@ -377,6 +378,7 @@ The three verifying modes come out the same, because Node checks the server name
 `ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the request as `ca`, `cert` and `key`, an empty field is left out, and `ssl.rejectUnauthorized` overrides the mode's default either way.
 Each case is exercised by a real handshake against a local `node:https` server in `tests/unit/db/prometheus/request.test.ts`.
 `tests/unit/db/prometheus/provider.test.ts` repeats four of them through the provider's own composition, with nothing injected, so the panel is proven to reach that request function.
+`tests/unit/db/prometheus/upgrade-runtimes.test.ts` runs the TLS path against a `101` that announces an upgrade under Bun and again under Node, where only the path's own destroy closes the switched connection.
 
 ### 4.5 No connection string
 
@@ -412,7 +414,7 @@ Ranges are written in PromQL itself: `x[1h]` returns raw samples and `rate(x[5m]
 A row click in the tree runs the metric's selector as an instant query, the action the labels name "Run Instant Query".
 Generate Query writes that selector as the one runnable line, below the two range forms as `#` comments, so the buffer run whole is exactly one expression.
 The execution confirmation gate never asks on a Prometheus connection.
-PromQL has no statement that writes, and editor text only ever reaches `POST /api/v1/query`, so the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/timeseries/prometheus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer.
+PromQL has no statement that writes, and editor text only ever reaches `POST /api/v1/query`, so the `prometheus` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/promql/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer.
 The gate's SQL keyword test, which still reads a MongoDB or Redis buffer first, never reads PromQL: a metric may legally be named `update`, `delete` or `drop`, and read as SQL its bare selector is a write.
 On a PromQL tab there is no formatter: no Format button, no Format SQL entry in the editor's menu, and the format shortcut does nothing.
 In the standalone app the run shortcut on a PromQL tab sends the selection when there is one and otherwise the whole buffer, never cut at a `;`.
@@ -481,7 +483,7 @@ None: `supportsExplain` is `false`, and the plan view is not offered.
 
 How this engine's statement text is read is declared once, in [`src/lib/db/providers/timeseries/prometheus/sql-grammar.ts`](../../src/lib/db/providers/timeseries/prometheus/sql-grammar.ts), the `prometheus` row of the SQL grammar registry in `src/lib/db/sql-grammar/`.
 `readsSqlText` is `false`: `prometheus` takes a PromQL expression (#1085), whose strings escape with a backslash, so a SQL span reader reads `'it\'s'` as a literal that never closes, the false prompt #297 measured on Redis; the provider extends `BaseDatabaseProvider`.
-The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/db/providers/timeseries/prometheus/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
+The confirmation gate therefore answers from this engine's row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/promql/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) instead of a SQL reading.
 Its grammar is `DEFAULT_SQL_GRAMMAR`, the compatibility default, since no SQL grammar of its own applies to this text.
 Redaction is `none`: a redacted statement is stored as `?`, because a reader guessing where a literal ends in a language it does not read can store the literal.
 
@@ -590,15 +592,37 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 |---|---|---|
 | `getHealth()` | `/-/healthy` and `/-/ready`, then `buildinfo` | Driven by the answers, never by identifying the product: `/health` is tried only after a 404 from `/-/healthy`; the first probe answering neither 200 nor a `/-/healthy` 404 that the `/health` probe superseded is named with its path and status, and ends the read before `buildinfo` is sent; a 401 or 403 is an `AuthenticationError` |
 | `getOverview()` | `buildinfo` (version), `runtimeinfo` (`startTime` and `serverTime`: uptime is the server's own clock minus its start time), `status/flags` (`web.max-connections`, a real `maxConnections`), `status/tsdb` (the metric count, M2) | `databaseSize` is "N/A" with `databaseSizeBytes` absent, because the API does not measure it; `tableCount` is the metric count and `indexCount` is 0; a server clock behind its start time reads the uptime "N/A"; a full label list that omits `__name__` refuses the overview with a `QueryError` rather than report a count it did not measure |
-| `getPerformanceMetrics()` | none | `cacheHitRatio` is absent and the panel renders unavailable |
+| `getPerformanceMetrics()` | none | `cacheHitRatio` is absent, so the panel is not offered: never read and not drawn |
 | `getTableStats()` | `/api/v1/status/tsdb?limit=&topN=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (`docs/BACKLOG.md` D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the admin Operations list the same way, which then titles the rows "Listed (N)" rather than "Tables (N)" and answers a filter that matches none of them with "No listed table matches the filter."; it heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
 | `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (`docs/BACKLOG.md` D105); a TSDB status with no head statistics, the one VictoriaMetrics answers, is refused with a `QueryError` saying "The server reports no head block statistics: its TSDB status carries none, so the storage row has no series count, chunk count or sample span to show", because an empty list or a row of zeros would claim a measurement the server never sent |
-| `getSlowQueries()`, `getActiveSessions()` | none | `[]`, with the empty-state sentences from `getLabels()` saying Prometheus publishes no query log and no session list over its HTTP API |
-| `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe |
+| `getSlowQueries()`, `getActiveSessions()` | none | `[]`: Prometheus publishes no query log and no session list over its HTTP API; neither panel is offered, so neither is read by the dashboard or drawn, and `getLabels()` declares no empty-state sentence for either |
+| `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe, so the panel is not offered |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
 
-The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the monitored server through them too.
+In agent mode the `operations` workflow takes only the `table-stats`, `storage` and `health` readings here ([Engine facets](#engine-facets)), so agent runs reach the monitored server through those surfaces too, and every other kind is refused by name before the server is reached.
 On a handle opened for an agent-mode profile the overview, performance, slow-query, session and index readings answer their reason instead ([§14.4](#144-values-and-what-each-path-reads)).
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `prometheus` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/timeseries/prometheus/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | No | `getPerformanceMetrics` answers `{}` without asking the engine |
+| `slowQueries` | No | `getSlowQueries` answers `[]` without asking the engine |
+| `activeSessions` | No | `getActiveSessions` answers `[]` without asking the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | No | `getIndexStats` answers `[]` without asking the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: none.
+`POST /api/db/maintenance` and its preview refuse every operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `table-stats`, `storage`, `health`.
 
 ---
 
@@ -623,7 +647,7 @@ A direct call of `runMaintenance` is refused with a `QueryError` saying that com
 
 ### `getLabels()` ([`index.ts`](../../src/lib/db/providers/timeseries/prometheus/index.ts))
 
-`entityName` "Metric" and "Metrics", `rowName` and `rowNamePlural` "series" and "series", `selectAction` "Run Instant Query", `generateAction` "Generate Query", `statementLanguage` "PromQL", and the two empty-state sentences of [§7](#7-monitoring--health).
+`entityName` "Metric" and "Metrics", `rowName` and `rowNamePlural` "series" and "series", `selectAction` "Run Instant Query", `generateAction` "Generate Query", `statementLanguage` "PromQL", and the `tableStatsCaption` of [§7](#7-monitoring--health); no empty-state sentence, because neither the Queries nor the Sessions panel is offered.
 The maintenance labels carry PromQL-true wording although they are never rendered.
 
 ### SQL writing
@@ -655,6 +679,7 @@ Mapped from the envelope's `errorType`, not from the HTTP status, as Druid and T
 | any 3xx | `ConnectionError` naming the status and the `Location` origin |
 | TLS handshake or verification failure | `ConnectionError` carrying the Node error code |
 | refused connection, reset, DNS failure | `ConnectionError` |
+| a `101 Switching Protocols` that announces an upgrade (`Connection: Upgrade` and an `Upgrade` header) | `ConnectionError`, at once rather than at the deadline, on both paths; on the TLS path the switched connection is closed |
 | a `400` whose whole body is `unsupported path requested: "<the path>"` and a newline, for the path the request was sent to, the answer VictoriaMetrics gives a path it does not serve | `QueryError` saying the server does not serve that path |
 | a body that is not the API envelope (a proxy's HTML page, a 502, or the plain-text 503 the server's own ready gate, `testReady` in `web/web.go`, answers while it starts up or shuts down) | `ConnectionError` naming the path and the status and the sources such an answer can have, without choosing one and without quoting the body |
 | a response past `RESPONSE_BYTE_CAP` | `QueryError` naming the cap |
@@ -672,7 +697,7 @@ An `errorType` this build does not know is carried verbatim as the transport err
 | File | Owns |
 |---|---|
 | [`tests/integration/db/prometheus-provider.test.ts`](../../tests/integration/db/prometheus-provider.test.ts) | The provider end to end through the real composition; `globalThis.fetch` is replaced per test and restored in `afterEach`, with payloads captured from the live server |
-| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `provider-endpoint` (the endpoint the real composition builds, against a local server), `seam-guard`, and `provider-doc` (this document against the constants) |
+| `tests/unit/db/prometheus/` | One file per module: `promql`, `transport`, `results`, `request` (real TLS handshakes against a local `node:https` server), `upgrade-runtimes` (a `101` that switches protocols, under Bun and Node), `concurrency`, `http-transport` (every endpoint's exact URL), `monitoring`, `errors`, `objects`, `provider`, `provider-endpoint` (the endpoint the real composition builds, against a local server), `seam-guard`, and `provider-doc` (this document against the constants) |
 | `tests/unit/editor/promql-language.test.ts` | The editor's tokenizer, its word lists pinned to the lexer and function tables captured at the tag |
 | [`e2e/prometheus-provider.spec.ts`](../../e2e/prometheus-provider.spec.ts) | The connection dialog: the driver is selectable, `9090` is the default, no Database box renders, the password field's label and hint |
 
@@ -856,7 +881,7 @@ Both overlays are empty, so the engine resolves to the `promql` family pack itse
 The `promql` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `promql` statement-language family's own.
 The family offers the investigation and the data analysis, through `run_read_query` with one expression, and the operations workflow; it offers no query optimization or database assessment, since the server composes no plan an agent can be shown and Studio no table profile, and no workflow hands an answer to the editor.
-Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/promql/client.ts)): "the server's read endpoints ground it, and no PromQL it drafted is evaluated", because the grounding is several read endpoints rather than one schema read; plan mode follows the provider's `statementLanguage` label, `PromQL`.
+Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/promql/client.ts)) beside core's pill, *Executes nothing it drafts*: "the server's read endpoints ground it, and no PromQL it drafted is evaluated", because the grounding is several read endpoints rather than one schema read; plan mode follows the provider's `statementLanguage` label, `PromQL`.
 The editor language id stays `promql`, and the fence alias `promql` names this engine.
 VictoriaMetrics is served by the same provider and the same type-id, so it takes the same agent path; it was measured beside Prometheus in the capture, and its own admin and import endpoints are not on the table either.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.

@@ -4,12 +4,13 @@
  * worded by its category with nothing the agent sent back quoted.
  */
 import { describe, expect, test } from "bun:test";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
+import { errorKind } from "@/lib/db/error-record";
 import type { SnmpAgentClient } from "@/lib/db/providers/network/snmp/agent-client";
 import {
   runSnmpAgentRead,
   runSnmpAgentReadWithin,
   SNMP_AGENT_FAILURE_SENTENCES as F,
-  SnmpAgentError,
   snmpAgentResult,
 } from "@/lib/db/providers/network/snmp/agent-read";
 import {
@@ -21,7 +22,7 @@ import {
 import type { SnmpFailure } from "@/lib/db/providers/network/snmp/errors";
 import type { Response, ResponseVarbind } from "@/lib/db/providers/network/snmp/message";
 import { compareOid } from "@/lib/db/providers/network/snmp/objects";
-import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 3, maxResultBytes: 10_000, statementTimeoutMs: 2_000 };
@@ -105,6 +106,26 @@ const IF_TABLE: Array<[string, number, Uint8Array]> = [
 ];
 
 const MARKER = /marker|109\.97\.114\.107/;
+
+/** What a read rejects with, settled before anything is asserted on it. */
+async function rejection(read: Promise<unknown>): Promise<Error> {
+  const outcome = await read.then(
+    () => undefined,
+    (error: unknown) => error,
+  );
+  if (!(outcome instanceof Error)) throw new Error("the read was answered");
+  return outcome;
+}
+
+/** What a call throws. */
+function thrownBy(call: () => unknown): Error {
+  try {
+    call();
+  } catch (error) {
+    return error as Error;
+  }
+  throw new Error("the call returned");
+}
 
 describe("get and next", () => {
   test("a get answers each value as the console renders it, and an exception as its type with no value", async () => {
@@ -224,7 +245,9 @@ describe("walk and table", () => {
     const four = treeClient([...three, ["1.3.6.1.4.1.9.4", 0x02, Uint8Array.of(4)]]);
     // The whole subtree in one answer: the walk ends at its end, and the result is refused past the budget.
     const whole = await runSnmpAgentRead(four.client, plan("walk 1.3.6.1.4.1.9"), BUDGET);
-    expect(() => snmpAgentResult(whole, BUDGET, 1)).toThrow(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    const overWhole = thrownBy(() => snmpAgentResult(whole, BUDGET, 1));
+    expect(overWhole.message).toBe(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    expect(errorKind(overWhole)).toBe("row-budget-refusal");
     // A full answer with more to come: the walk stops at once, past the budget, and sends no second request.
     const sixty = treeClient(
       Array.from({ length: 60 }, (_, i): [string, number, Uint8Array] => [
@@ -233,9 +256,9 @@ describe("walk and table", () => {
         Uint8Array.of(1),
       ]),
     );
-    const refusal = runSnmpAgentRead(sixty.client, plan("walk 1.3.6.1.4.1.9"), BUDGET);
-    await expect(refusal).rejects.toThrow(SnmpAgentError);
-    await expect(refusal).rejects.toThrow(`${ROW_BUDGET_PREFIX}: 50 rows > 3 allowed`);
+    const refusal = await rejection(runSnmpAgentRead(sixty.client, plan("walk 1.3.6.1.4.1.9"), BUDGET));
+    expect(refusal.message).toContain(`${ROW_BUDGET_PREFIX}: 50 rows > 3 allowed`);
+    expect(errorKind(refusal)).toBe("row-budget-refusal");
     expect(sixty.calls).toHaveLength(1);
     // Four objects an answer: the walk stops on the first, at one row past the budget, and asks nothing more.
     const fours = treeClient(
@@ -246,9 +269,9 @@ describe("walk and table", () => {
       ]),
       (_call, made) => ({ ...made, varbinds: made.varbinds.slice(0, 4) }),
     );
-    await expect(runSnmpAgentRead(fours.client, plan("walk 1.3.6.1.4.1.9"), BUDGET)).rejects.toThrow(
-      `${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`,
-    );
+    const overFours = await rejection(runSnmpAgentRead(fours.client, plan("walk 1.3.6.1.4.1.9"), BUDGET));
+    expect(overFours.message).toContain(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    expect(errorKind(overFours)).toBe("row-budget-refusal");
     expect(fours.calls).toHaveLength(1);
   });
 
@@ -265,7 +288,9 @@ describe("walk and table", () => {
       clock += 700;
       return clock;
     });
-    await expect(read).rejects.toThrow(F.walkTime("walk", 2_000));
+    const refusal = await rejection(read);
+    expect(refusal.message).toBe(F.walkTime("walk", 2_000));
+    expect(errorKind(refusal)).toBe("time-budget-refusal");
     expect(F.walkTime("walk", 2_000)).toBe(
       `${TIME_BUDGET_PREFIX}: the agent was still answering the walk after 2000ms, Studio's time budget for one read, so the walk was refused rather than answered in part; walk a narrower subtree.`,
     );
@@ -281,25 +306,27 @@ describe("walk and table", () => {
     // One varbind per answer, whatever was asked, so the walk spends a request per object.
     const { client } = treeClient(many, (_call, made) => ({ ...made, varbinds: made.varbinds.slice(0, 1) }));
     const wide = { ...BUDGET, maxResultRows: 100_000 };
-    await expect(runSnmpAgentRead(client, plan("walk 1.3.6.1.4.1.7 limit 1"), wide, () => 0)).rejects.toThrow(
-      F.walkBound("walk", "request"),
-    );
+    const requests = await rejection(runSnmpAgentRead(client, plan("walk 1.3.6.1.4.1.7 limit 1"), wide, () => 0));
+    expect(requests.message).toBe(F.walkBound("walk", "request"));
+    expect(errorKind(requests)).toBe("query");
     const big: Array<[string, number, Uint8Array]> = Array.from({ length: 40 }, (_, i) => [
       `1.3.6.1.4.1.8.${i + 1}`,
       0x04,
       new Uint8Array(120_000),
     ]);
     const oneEach = treeClient(big, (_call, made) => ({ ...made, varbinds: made.varbinds.slice(0, 1) })).client;
-    await expect(
+    const bytes = await rejection(
       runSnmpAgentRead(oneEach, plan("walk 1.3.6.1.4.1.8"), { ...BUDGET, maxResultRows: 1_000 }),
-    ).rejects.toThrow(F.walkBound("walk", "inbound byte"));
+    );
+    expect(bytes.message).toBe(F.walkBound("walk", "inbound byte"));
+    expect(errorKind(bytes)).toBe("query");
   });
 
   test("a walk the agent left unfinished is refused, never answered as the whole subtree", async () => {
     const empty = treeClient(IF_TABLE, (_call, made) => ({ ...made, varbinds: [] }));
-    await expect(runSnmpAgentRead(empty.client, plan("walk 1.3.6.1.2.1.2"), BUDGET)).rejects.toThrow(
-      F.walkIncomplete("walk", "the agent answered a step with no objects"),
-    );
+    const emptyStep = await rejection(runSnmpAgentRead(empty.client, plan("walk 1.3.6.1.2.1.2"), BUDGET));
+    expect(emptyStep.message).toBe(F.walkIncomplete("walk", "the agent answered a step with no objects"));
+    expect(errorKind(emptyStep)).toBe("query");
     const backwards = treeClient(IF_TABLE, (call, made) =>
       call.oids[0] === "1.3.6.1.2.1.2.2.1.1"
         ? {
@@ -311,9 +338,9 @@ describe("walk and table", () => {
           }
         : made,
     );
-    await expect(runSnmpAgentRead(backwards.client, plan("walk 1.3.6.1.2.1.2.2.1.1"), BUDGET)).rejects.toThrow(
-      F.walkIncomplete("walk", "the agent's answers did not move forward"),
-    );
+    const notForward = await rejection(runSnmpAgentRead(backwards.client, plan("walk 1.3.6.1.2.1.2.2.1.1"), BUDGET));
+    expect(notForward.message).toBe(F.walkIncomplete("walk", "the agent's answers did not move forward"));
+    expect(errorKind(notForward)).toBe("query");
   });
 
   test("a walk covering a withheld subtree steps over it: no request starts inside it, nothing of it is answered, its reason is warned", async () => {
@@ -449,7 +476,9 @@ describe("walk and table", () => {
       clock += 2_500;
       return clock;
     });
-    await expect(read).rejects.toThrow(F.walkTime("walk", 2_000));
+    const refusal = await rejection(read);
+    expect(refusal.message).toBe(F.walkTime("walk", 2_000));
+    expect(errorKind(refusal)).toBe("time-budget-refusal");
   });
 
   test("a table is shaped as the console shapes it, and refused past the row budget once built", async () => {
@@ -461,7 +490,9 @@ describe("walk and table", () => {
       { index: "2", column1: "2", column2: "eth0", column6: "0242ac110002" },
     ]);
     const narrow = { ...BUDGET, maxResultRows: 1 };
-    await expect(runSnmpAgentRead(client, plan("table ifEntry"), narrow)).rejects.toThrow(F.tableOverRows(2, 1));
+    const narrowed = await rejection(runSnmpAgentRead(client, plan("table ifEntry"), narrow));
+    expect(narrowed.message).toBe(F.tableOverRows(2, 1));
+    expect(errorKind(narrowed)).toBe("row-budget-refusal");
     const none = await runSnmpAgentRead(client, plan("table 1.3.6.1.4.1.99"), BUDGET);
     expect(none).toEqual({ fields: ["index"], rows: [], withheld: [] });
   });
@@ -486,7 +517,9 @@ describe("walk and table", () => {
     ]);
     const { client, calls } = treeClient(tall);
     const read = runSnmpAgentRead(client, plan("table 1.3.6.1.4.1.6.1"), { ...BUDGET, maxResultRows: 500 });
-    await expect(read).rejects.toThrow(F.tableOverRows(501, 500));
+    const tallRefusal = await rejection(read);
+    expect(tallRefusal.message).toBe(F.tableOverRows(501, 500));
+    expect(errorKind(tallRefusal)).toBe("row-budget-refusal");
     expect(calls).toHaveLength(11);
     const exact = treeClient(tall.slice(0, 500));
     const answer = await runSnmpAgentRead(exact.client, plan("table 1.3.6.1.4.1.6.1"), {
@@ -519,8 +552,9 @@ describe("the read's own deadline", () => {
 
   test("a read the agent kept answering past the time budget is Studio's refusal, not silence", async () => {
     const budget = { ...BUDGET, statementTimeoutMs: 60, maxResultRows: 1_000 };
-    const read = runSnmpAgentReadWithin(slow(5), plan("walk 1.3.6.1.4.1.5"), budget, () => 0);
-    await expect(read).rejects.toThrow(F.deadline(60));
+    const refusal = await rejection(runSnmpAgentReadWithin(slow(5), plan("walk 1.3.6.1.4.1.5"), budget, () => 0));
+    expect(refusal.message).toBe(F.deadline(60));
+    expect(errorKind(refusal)).toBe("time-budget-refusal");
     expect(F.deadline(60)).toBe(
       `${TIME_BUDGET_PREFIX}: the read did not finish within 60ms, Studio's time budget for one read, while the agent was still answering, so it was refused rather than answered in part; ask for less in one read, such as a narrower subtree.`,
     );
@@ -533,7 +567,9 @@ describe("the read's own deadline", () => {
       getBulk: () => new Promise(() => undefined),
     };
     const budget = { ...BUDGET, statementTimeoutMs: 40 };
-    await expect(runSnmpAgentReadWithin(silent, plan("get sysDescr.0"), budget)).rejects.toThrow(F.silence(40));
+    const refusal = await rejection(runSnmpAgentReadWithin(silent, plan("get sysDescr.0"), budget));
+    expect(refusal.message).toBe(F.silence(40));
+    expect(errorKind(refusal)).toBe("time-budget-refusal");
   });
 
   test("a read that finishes in time is answered, and a failure inside it is its own", async () => {
@@ -547,16 +583,17 @@ describe("the read's own deadline", () => {
 
 describe("failures are worded by category, quoting nothing the agent sent", () => {
   const failing = (failure: SnmpFailure) => treeClient(IF_TABLE, () => failure).client;
-  const cases: Array<[SnmpFailure, string]> = [
-    [{ kind: "silence", reason: "x", causes: [], retryable: true }, F.silence(2_000)],
-    [{ kind: "tooLarge", reason: "x", retryable: false }, F.tooBig],
-    [{ kind: "requestTooLarge", reason: "x", retryable: false }, F.requestTooLarge],
+  const cases: Array<[SnmpFailure, string, ErrorKind]> = [
+    [{ kind: "silence", reason: "x", causes: [], retryable: true }, F.silence(2_000), "time-budget-refusal"],
+    [{ kind: "tooLarge", reason: "x", retryable: false }, F.tooBig, "query"],
+    [{ kind: "requestTooLarge", reason: "x", retryable: false }, F.requestTooLarge, "query"],
     [
       { kind: "answerTooLarge", reason: "x", retryable: false },
       "The agent answered with more objects than one request asks for, so Studio refused the answer as too large rather than read it: ask for fewer objects in one get or next. SNMP carries no error text of its own, and Studio quotes nothing the agent sent back.",
+      "query",
     ],
-    [{ kind: "credential", reason: "x", retryable: false }, F.credential],
-    [{ kind: "transport", reason: "x", retryable: false }, F.unreachable],
+    [{ kind: "credential", reason: "x", retryable: false }, F.credential, "query"],
+    [{ kind: "transport", reason: "x", retryable: false }, F.unreachable, "query"],
     [
       {
         kind: "refused",
@@ -564,12 +601,14 @@ describe("failures are worded by category, quoting nothing the agent sent", () =
         retryable: false,
       },
       F.report,
+      "query",
     ],
   ];
-  for (const [failure, sentence] of cases) {
+  for (const [failure, sentence, kind] of cases) {
     test(`${failure.kind}`, async () => {
-      const read = runSnmpAgentRead(failing(failure), plan("get sysDescr.0"), BUDGET);
-      await expect(read).rejects.toThrow(sentence);
+      const refusal = await rejection(runSnmpAgentRead(failing(failure), plan("get sysDescr.0"), BUDGET));
+      expect(refusal.message).toContain(sentence);
+      expect(errorKind(refusal)).toBe(kind);
     });
   }
 
@@ -608,9 +647,11 @@ describe("the result", () => {
     });
     expect(snmpAgentResult({ ...answer, withheld: [] }, BUDGET, 1).warnings).toBeUndefined();
     const four = { ...answer, rows: [1, 2, 3, 4].map(() => answer.rows[0]), withheld: [] };
-    expect(() => snmpAgentResult(four, BUDGET, 1)).toThrow(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
-    expect(() => snmpAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, 1)).toThrow(
-      "Read-only execution exceeded the byte budget",
-    );
+    const overRows = thrownBy(() => snmpAgentResult(four, BUDGET, 1));
+    expect(overRows.message).toBe(`${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`);
+    expect(errorKind(overRows)).toBe("row-budget-refusal");
+    const overBytes = thrownBy(() => snmpAgentResult(answer, { ...BUDGET, maxResultBytes: 10 }, 1));
+    expect(overBytes.message).toStartWith("Read-only execution exceeded the byte budget");
+    expect(errorKind(overBytes)).toBe("byte-budget-refusal");
   });
 });

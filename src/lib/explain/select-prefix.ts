@@ -22,7 +22,7 @@
  * tolerance (#275), and the ReDoS reasoning that shapes the pattern moved with it.
  */
 
-import type { SqlGrammar } from "@/lib/sql/grammar";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 
 /**

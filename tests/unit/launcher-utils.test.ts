@@ -16,6 +16,8 @@ import {
   extractArchive,
   extractionCommand,
   LauncherUsageError,
+  MANUAL_SIGNAL_HANDLING_VARIABLE,
+  manualSignalHandlingEnv,
   mcpUrlFor,
   parseLauncherArgs,
   parseSha256Sums,
@@ -26,11 +28,14 @@ import {
   resolveCacheDir,
   resolveLedgerDir,
   resolvePathVariables,
+  seedAssetsEnv,
   sha256File,
   URL_PATH_VARIABLES,
   OTHER_PROGRAM_PATH_VARIABLES,
 } from "../../bin/lib/launcher-utils.mjs";
-import { describeIf, missingUnixTool, resolveUnixTool } from "../helpers/posix-tools";
+import { MANUAL_SIGNAL_HANDLING_VARIABLE as SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE } from "@/lib/shutdown-handler";
+import { type SpawnProbeOptions, spawnProbe, untilPrinted } from "../helpers/launcher-spawn-probe";
+import { describeIf, missingUnixTool, resolveUnixTool, testIf } from "../helpers/posix-tools";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "launcher-utils-test-"));
@@ -724,6 +729,54 @@ describe("resolvePathVariables", () => {
   });
 });
 
+describe("seedAssetsEnv", () => {
+  const payloadDir = path.join(tempDir, "payload");
+
+  test("points the server at the payload's seed-assets when the operator set none", () => {
+    expect(seedAssetsEnv(payloadDir, undefined)).toEqual({ SEED_ASSETS_DIR: path.join(payloadDir, "seed-assets") });
+  });
+
+  test("treats an empty or whitespace-only value as unset", () => {
+    for (const current of ["", "   ", "\t\n"]) {
+      expect(seedAssetsEnv(payloadDir, current)).toEqual({ SEED_ASSETS_DIR: path.join(payloadDir, "seed-assets") });
+    }
+  });
+
+  test("keeps the operator's own value", () => {
+    expect(seedAssetsEnv(payloadDir, path.join(tempDir, "own-assets"))).toEqual({});
+  });
+
+  test("hands an absolute path when the payload directory is relative", () => {
+    // A relative HOME gives a relative payload directory, and server.js changes into it before it reads
+    // SEED_ASSETS_DIR, so the value is resolved here against the launcher's directory, as spawn resolves cwd.
+    expect(seedAssetsEnv(path.join("rel-home", "payload"), undefined)).toEqual({
+      SEED_ASSETS_DIR: path.resolve("rel-home", "payload", "seed-assets"),
+    });
+  });
+});
+
+describe("manualSignalHandlingEnv", () => {
+  const onNode = { node: "24.11.0" };
+  const onBun = { node: "26.3.0", bun: "1.4.4" };
+
+  test("names the variable the server's shutdown handler reads", () => {
+    expect(MANUAL_SIGNAL_HANDLING_VARIABLE).toBe(SERVER_MANUAL_SIGNAL_HANDLING_VARIABLE);
+  });
+
+  test("hands NEXT_MANUAL_SIG_HANDLE=true to a server on Node.js when the operator set none", () => {
+    expect(manualSignalHandlingEnv(onNode, undefined)).toEqual({ NEXT_MANUAL_SIG_HANDLE: "true" });
+  });
+
+  test("adds nothing on Bun, where the server refuses true at boot", () => {
+    expect(manualSignalHandlingEnv(onBun, undefined)).toEqual({});
+  });
+
+  test.each(["", "true", "1"])("keeps an operator's value %p on Node.js and on Bun", (current) => {
+    expect(manualSignalHandlingEnv(onNode, current)).toEqual({});
+    expect(manualSignalHandlingEnv(onBun, current)).toEqual({});
+  });
+});
+
 describe("resolveBindAddress (issue #813)", () => {
   /*
     Named rather than numbered, because the rows move: the pair carrying the issue
@@ -1041,4 +1094,320 @@ describe("launcher path variables", () => {
     expect(output).toContain(`SEED=${path.join(fs.realpathSync(invokedFrom), "seed-connections.yaml")}\n`);
     expect(output).toContain("BASE=/tools/libredb\n");
   });
+});
+
+/**
+ * The seed assets directory the launcher hands the server (docs/DISTRIBUTION.md, "Built-in sample
+ * assets"), read back from a real launcher process on the harness of `launcher MCP URL` above: the
+ * stub payload prints what it was given.
+ */
+describe("launcher seed assets directory", () => {
+  /**
+   * With `relativeHome`, os.homedir() reports the fixture home by its bare name and the launcher runs from
+   * the home's parent directory, as with a relative HOME on POSIX, where os.homedir() returns HOME as given.
+   */
+  function launch(
+    overrides: Record<string, string> = {},
+    cwd?: string,
+    { relativeHome = false } = {},
+  ): { output: string; payload: string } {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+
+    const home = fs.mkdtempSync(path.join(tempDir, "seed-assets-"));
+    if (relativeHome) cwd = path.dirname(home);
+    const root = path.resolve(import.meta.dir, "../..");
+    const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), 'console.log("SEED_ASSETS=" + process.env.SEED_ASSETS_DIR);');
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(relativeHome ? path.basename(home) : home)}; syncBuiltinESMExports();`,
+    );
+    const env = { ...process.env };
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "SEED_ASSETS_DIR"])
+      delete env[name];
+    Object.assign(env, overrides);
+    const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    return { output: run.stdout.toString(), payload };
+  }
+
+  test("hands the server the payload's seed-assets when the operator set none", () => {
+    const { output, payload } = launch();
+    expect(output).toContain(`SEED_ASSETS=${path.join(payload, "seed-assets")}\n`);
+  });
+
+  test("hands an absolute seed-assets path when the home directory is relative", () => {
+    const { output, payload } = launch({}, undefined, { relativeHome: true });
+    // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
+    expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(payload), "seed-assets")}\n`);
+  });
+
+  test("treats a whitespace-only SEED_ASSETS_DIR as unset", () => {
+    const { output, payload } = launch({ SEED_ASSETS_DIR: "   " });
+    expect(output).toContain(`SEED_ASSETS=${path.join(payload, "seed-assets")}\n`);
+  });
+
+  test("leaves an operator's absolute SEED_ASSETS_DIR untouched", () => {
+    const own = path.join(tempDir, "operator-seed-assets");
+    expect(launch({ SEED_ASSETS_DIR: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+  });
+
+  test("resolves an operator's relative SEED_ASSETS_DIR against the directory the launcher was run from", () => {
+    const invokedFrom = fs.mkdtempSync(path.join(tempDir, "invoked-"));
+    const { output } = launch({ SEED_ASSETS_DIR: "./my-assets" }, invokedFrom);
+    // realpath: on macOS the temp directory is a symlink, and process.cwd() reports its target.
+    expect(output).toContain(`SEED_ASSETS=${path.join(fs.realpathSync(invokedFrom), "my-assets")}\n`);
+  });
+
+  // Only Windows reads environment names without letter case, and only there does spawn keep one of two names
+  // differing in case: a plain-object read of SEED_ASSETS_DIR would miss this value, and the default would win.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "keeps an operator's seed_assets_dir in another letter case",
+    () => {
+      const own = path.join(tempDir, "operator-seed-assets-lowercase");
+      expect(launch({ seed_assets_dir: own }).output).toContain(`SEED_ASSETS=${own}\n`);
+    },
+  );
+});
+
+/**
+ * The exit owner the launcher hands the server (docs/DISTRIBUTION.md, "Stopping the server"), read back from a
+ * real launcher process: the stub payload prints the variable it was given and the runtime it runs on. The
+ * launcher spawns process.execPath, so the server runs on the launcher's own runtime.
+ */
+describe("launcher NEXT_MANUAL_SIG_HANDLE", () => {
+  const root = path.resolve(import.meta.dir, "../..");
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+  function fixtureHome(): string {
+    const home = fs.mkdtempSync(path.join(tempDir, "manual-signal-"));
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(
+      path.join(payload, "server.js"),
+      'console.log("MANUAL=" + (process.env.NEXT_MANUAL_SIG_HANDLE ?? "<unset>")); ' +
+        'console.log("RUNTIME=" + (typeof process.versions.bun === "string" ? "bun" : "node"));',
+    );
+    return home;
+  }
+
+  function baseEnv(home: string, overrides: Record<string, string>): Record<string, string | undefined> {
+    const env: Record<string, string | undefined> = { ...process.env };
+    for (const name of Object.keys(env)) {
+      if (name.toUpperCase() === "NEXT_MANUAL_SIG_HANDLE") delete env[name];
+    }
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME", "SEED_ASSETS_DIR"])
+      delete env[name];
+    Object.assign(env, { HOME: home, USERPROFILE: home }, overrides);
+    return env;
+  }
+
+  function finish(run: ReturnType<typeof Bun.spawnSync>): string {
+    expect(run.exitCode, `launcher stderr: ${run.stderr?.toString()}`).toBe(0);
+    return run.stdout!.toString();
+  }
+
+  /** The launcher on Node.js, with os.homedir() pointed at the fixture home by an --import preload. */
+  function onNode(overrides: Record<string, string> = {}): string {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+    const home = fixtureHome();
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const run = Bun.spawnSync([node!, "--import", pathToFileURL(preload).href, path.join(root, "bin/studio.js")], {
+      env: baseEnv(home, overrides),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return finish(run);
+  }
+
+  /**
+   * The launcher on Bun. No preload: the home comes from HOME and USERPROFILE, and this Bun is first asked
+   * where it puts os.homedir() with that same environment, so a run never reaches the real home's cache or
+   * the network to fill it. Both run in the fixture home, which holds no .env file: Bun loads the working
+   * directory's .env files into a file it runs, and the checkout's own would add the keys baseEnv leaves out.
+   */
+  function onBun(overrides: Record<string, string> = {}): string {
+    const home = fixtureHome();
+    const env = baseEnv(home, overrides);
+    const probe = Bun.spawnSync([process.execPath, "-e", "console.log(require('node:os').homedir())"], {
+      cwd: home,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reported = probe.stdout.toString().trim();
+    if (reported !== home) {
+      throw new Error(`Bun reports the home ${JSON.stringify(reported)} with HOME and USERPROFILE set to ${home}`);
+    }
+    const run = Bun.spawnSync([process.execPath, path.join(root, "bin/studio.js")], {
+      cwd: home,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return finish(run);
+  }
+
+  test("on Node.js hands the server NEXT_MANUAL_SIG_HANDLE=true when the operator set none", () => {
+    const output = onNode();
+    expect(output).toContain("RUNTIME=node\n");
+    expect(output).toContain("MANUAL=true\n");
+  });
+
+  test("on Node.js keeps an operator's empty NEXT_MANUAL_SIG_HANDLE, which leaves the exit to Next.js's handler", () => {
+    expect(onNode({ NEXT_MANUAL_SIG_HANDLE: "" })).toContain("MANUAL=\n");
+  });
+
+  test("on Node.js passes an operator's other value on, for the server to refuse by name", () => {
+    expect(onNode({ NEXT_MANUAL_SIG_HANDLE: "1" })).toContain("MANUAL=1\n");
+  });
+
+  test("on Bun starts the server on Bun without NEXT_MANUAL_SIG_HANDLE", () => {
+    const output = onBun();
+    expect(output).toContain("RUNTIME=bun\n");
+    expect(output).toContain("MANUAL=<unset>\n");
+  });
+
+  test("on Bun passes an operator's NEXT_MANUAL_SIG_HANDLE=true on, so the server's refusal names it", () => {
+    const output = onBun({ NEXT_MANUAL_SIG_HANDLE: "true" });
+    expect(output).toContain("RUNTIME=bun\n");
+    expect(output).toContain("MANUAL=true\n");
+  });
+
+  // Only Windows reads environment names without letter case: a plain-object read of NEXT_MANUAL_SIG_HANDLE
+  // would miss this value, and the launcher's true would be added beside it.
+  testIf(
+    process.platform === "win32" ? null : "letter case in environment names: only Windows ignores it",
+    "keeps an operator's next_manual_sig_handle in another letter case",
+    () => {
+      expect(onNode({ next_manual_sig_handle: "" })).toContain("MANUAL=\n");
+    },
+  );
+});
+
+/**
+ * The launcher's SIGINT and SIGTERM forwarding (docs/DISTRIBUTION.md, "Stopping the server"), read from a real
+ * launcher process with two preloads: one points os.homedir() at a fixture home whose cached payload holds a stub
+ * server.js, and the spawn probe records what held when the launcher spawned it, so no case depends on how the
+ * launcher and the stub are scheduled.
+ */
+describe("launcher signal forwarding", () => {
+  const NO_POSIX_SIGNALS =
+    process.platform === "win32"
+      ? "POSIX signals: Windows has no SIGINT or SIGTERM to forward, and kill() there ends a process at once"
+      : null;
+  const root = path.resolve(import.meta.dir, "../..");
+  const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+  /** The launcher on Node.js against a payload whose server.js is `server`, with the spawn probe preloaded. */
+  function launcherWith(server: string, options: SpawnProbeOptions = {}) {
+    const node = Bun.which("node");
+    expect(node).not.toBeNull();
+    const ambient = Bun.spawnSync([node!, "-p", "process.versions.node"]).stdout.toString().trim();
+    expect(assessNodeRuntime(ambient).message).toBeNull();
+    const home = fs.mkdtempSync(path.join(tempDir, "signals-"));
+    const payload = path.join(home, ".libredb-studio", version, "payload");
+    fs.mkdirSync(payload, { recursive: true });
+    fs.writeFileSync(path.join(payload, "server.js"), server);
+    const preload = path.join(home, "home-fixture.mjs");
+    fs.writeFileSync(
+      preload,
+      'import os from "node:os"; import { syncBuiltinESMExports } from "node:module"; ' +
+        `os.homedir = () => ${JSON.stringify(home)}; syncBuiltinESMExports();`,
+    );
+    const probe = spawnProbe(home, options);
+    const env = { ...process.env };
+    for (const name of ["PORT", "LIBREDB_STUDIO_ARCHIVE", "LIBREDB_BIND", "HOSTNAME"]) delete env[name];
+    const command = [
+      node!,
+      "--import",
+      pathToFileURL(preload).href,
+      "--import",
+      probe.importUrl,
+      path.join(root, "bin/studio.js"),
+    ];
+    return { probe, command, env };
+  }
+
+  test("installs its SIGINT and SIGTERM forwarding before it spawns the server", () => {
+    const { probe, command, env } = launcherWith('console.log("served");');
+    const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode, `launcher stderr: ${run.stderr.toString()}`).toBe(0);
+    expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
+  });
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `forwards a ${signal} that reaches it as it spawns the server to the server once it exists, and exits 1`,
+      () => {
+        // The probe sends the signal before the real spawn runs; the stub has no handler, so the forwarded signal
+        // ends it, and only a forwarded one does: it would otherwise exit 99 after five seconds.
+        const { probe, command, env } = launcherWith("setTimeout(() => process.exit(99), 5000);", { signal });
+        const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+        expect(probe.childEnd()).toEqual([null, signal]);
+        expect([run.exitCode, run.signalCode ?? null]).toEqual([1, null]);
+      },
+    );
+  }
+
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `ends with a ${signal} that reaches it while it checks its cached payload, and starts no server`,
+      () => {
+        // The probe sends the signal at the launcher's first look for the payload's server.js, main's cache check,
+        // before the spawn step; the forwarding is not installed yet, so the signal ends the launcher.
+        const { probe, command, env } = launcherWith('console.log("served");', { signal, before: "server.js" });
+        const run = Bun.spawnSync(command, { env, stdout: "pipe", stderr: "pipe" });
+        expect(probe.listenersAtSpawn()).toBeNull();
+        expect([run.exitCode, run.signalCode ?? null]).toEqual([null, signal]);
+      },
+    );
+  }
+
+  for (const [signal, code] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+  ] as const) {
+    testIf(
+      NO_POSIX_SIGNALS,
+      `forwards ${signal} to the server and exits with the code it then exits with`,
+      async () => {
+        // `ready` only says the stub has its handlers; the launcher has its own by then because it installs them
+        // before the spawn, which the probe asserts.
+        const { probe, command, env } = launcherWith(
+          'process.on("SIGINT", () => process.exit(130)); process.on("SIGTERM", () => process.exit(143)); ' +
+            'setTimeout(() => process.exit(99), 5000); console.log("ready");',
+        );
+        const proc = Bun.spawn(command, { env, stdout: "pipe", stderr: "pipe" });
+        await untilPrinted(proc.stdout, "ready");
+        expect(probe.listenersAtSpawn()).toEqual({ SIGINT: 1, SIGTERM: 1 });
+        proc.kill(signal);
+        await proc.exited;
+        expect([proc.exitCode, proc.signalCode ?? null]).toEqual([code, null]);
+      },
+    );
+  }
 });

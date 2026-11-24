@@ -2,6 +2,7 @@
 
 import React, { type RefObject } from "react";
 import type { DatabaseConnection } from "@/lib/types";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import { connectionPulseTitle, type ConnectionPulse } from "@/hooks/use-connection-pulse";
 import type { QueryEditorRef } from "@/components/QueryEditor";
 import { CancelQueryButton, type CancelControlMode } from "./QueryToolbar";
@@ -173,19 +174,32 @@ export const StudioMobileHeader = React.memo(function StudioMobileHeader({
                 )
               ) : (
                 <>
-                  {connections.map((c) => (
-                    <DropdownMenuItem
-                      key={c.id}
-                      onClick={() => onSelectConnection(c)}
-                      className={cn("cursor-pointer", activeConnection?.id === c.id && "bg-brand-solid/20 text-brand")}
-                    >
-                      <Database strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
-                      <span className="truncate">{c.name}</span>
-                      {activeConnection?.id === c.id && (
-                        <div className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-tint" />
-                      )}
-                    </DropdownMenuItem>
-                  ))}
+                  {connections.map((c) => {
+                    // Marked as every list marks a connection whose type names no provider (FND-1); the pick goes to
+                    // the shell's setter, which refuses it by name.
+                    const refusal = typeIdRefusal(c.type);
+                    return (
+                      <DropdownMenuItem
+                        key={c.id}
+                        onClick={() => onSelectConnection(c)}
+                        className={cn(
+                          "cursor-pointer",
+                          activeConnection?.id === c.id && "bg-brand-solid/20 text-brand",
+                        )}
+                      >
+                        <Database strokeWidth={1.5} className="w-3.5 h-3.5 mr-2" />
+                        <span className="truncate">{c.name}</span>
+                        {refusal !== null && (
+                          <span className="ml-auto text-[0.625rem] text-fg-muted shrink-0" title={refusal.sentence}>
+                            Unavailable
+                          </span>
+                        )}
+                        {activeConnection?.id === c.id && (
+                          <div className="ml-auto w-1.5 h-1.5 rounded-full bg-brand-tint" />
+                        )}
+                      </DropdownMenuItem>
+                    );
+                  })}
                   {onAddConnection && (
                     <DropdownMenuItem
                       onClick={onAddConnection}

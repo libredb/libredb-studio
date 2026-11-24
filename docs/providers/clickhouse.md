@@ -25,6 +25,7 @@
 | **Tests** | [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) + [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) + [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts) |
 | **Tracking issue** | [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264) |
 | **Write reach** | open: the editor and maintenance (`optimize`, `analyze`, `kill`) send writes |
+| **Failed statement outcome** | unknown: every statement is sent on an HTTP request of the provider's transport, and nothing is taken from a pool before it is sent |
 
 ---
 
@@ -157,11 +158,12 @@ case 'clickhouse': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
   const { ClickHouseProvider } = await import('./providers/sql/clickhouse/index');
-  return new ClickHouseProvider(connection, options, execution);
+  return new ClickHouseProvider(connection, options, context);
 }
 ```
 
-The third argument is the execution context, which the agent read-only profile's open-time proof keys on ([§5.6](#56-agent-read-only-execution-profile)).
+The third argument is the build context: the caller's execution context, which the agent read-only profile's open-time proof keys on ([§5.6](#56-agent-read-only-execution-profile)), plus the egress decision core took, which `connect()` requires and hands the guard.
+A provider built without that decision refuses `connect()` with a `DatabaseConfigError` and dials nothing.
 
 `connect()` proves the server, the credentials, and the database together with one `SELECT 1` —
 the cheapest statement that exercises all three at once. This matters here specifically because a
@@ -648,7 +650,7 @@ The transport sends one HTTP request per statement and pins no `session_id` ([`h
 Session state is what a transaction would live in: `SET max_block_size` was verified to persist inside a pinned `session_id` and not outside one, and ClickHouse's own transaction support is experimental and setting-gated ([§11](#11-testing) and the limitations section).
 So there is no handle between two statements for a `BEGIN TRANSACTION` to survive on, and nothing for a later caller to inherit.
 
-This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the route shape-checks for it rather than assuming `"none"`.
+This is a declared boundary, not a default: `endOpenQueryTransaction` is optional on `DatabaseProvider` with no default value, and the legacy bridge offers `console.endScope` only where it is implemented ([`CONTRACT.md`](CONTRACT.md), C-50), rather than assuming `"none"`.
 
 ### 3.14 What the SQL INSERT and DDL exports write for composite types
 
@@ -914,7 +916,7 @@ The proof runs in `connect()` only when the context sets both `readOnly` and `se
 | `cancel_http_readonly_queries_on_client_close` | `1` | a request the client abandons, at its deadline or at the body cap, is cancelled on the server: measured, the abandoned statement left `system.processes` with the setting, and was still running 3 s later without it |
 
 The transport reads the answer in chunks and stops at the byte budget plus a 1 MiB envelope allowance (`maxBodyBytes`), so an oversized answer is never held whole.
-The parsed rows are then held to the row and byte budgets again, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts).
+The parsed rows are then held to the row and byte budgets again, and every refusal is the shared sentence of [`read-only-budget.ts`](../../src/lib/db/read-only-budget.ts).
 An answer in a format the statement chose (`FORMAT TSV`) is refused, because its rows cannot be counted or measured.
 An estimating plan is the `EXPLAIN json = 1, indexes = 1` prefix the agent composes, sent in the ordinary execute mode; the estimate-plan session mode is refused.
 The run read allowance is not charged: ClickHouse does not bill per read.
@@ -1628,6 +1630,28 @@ Two honest zeroes in the overview, so neither reads as a measurement:
   degrades rather than failing the panel.
 - **Index scan counts are always `0`**, because ClickHouse publishes no per-index usage counter that
   the HTTP interface can reach.
+
+### Engine facets
+
+Which of the seven monitoring panels and which maintenance operations `clickhouse` offers is its row in `ENGINE_FACETS`, declared in [`engine-facets.ts`](../../src/lib/db/providers/sql/clickhouse/engine-facets.ts).
+`getMonitoringData` never reads a panel not offered: it lists it in `notOffered`, and neither the monitoring dashboard nor the admin Operations page draws it.
+The agent's `inspect_operations` tool offers only the readings the row offers agent mode, listed below, and refuses any other kind by name before it reaches the engine.
+Where the row offers none, the operations workflow does not open in agent mode.
+
+| Monitoring panel | Offered | Why |
+|---|---|---|
+| `overview` | Yes | `getOverview` asks the engine |
+| `performance` | Yes | `getPerformanceMetrics` asks the engine |
+| `slowQueries` | Yes | `getSlowQueries` asks the engine |
+| `activeSessions` | Yes | `getActiveSessions` asks the engine |
+| `tables` | Yes | `getTableStats` asks the engine |
+| `indexes` | Yes | `getIndexStats` asks the engine |
+| `storage` | Yes | `getStorageStats` asks the engine |
+
+Maintenance operations offered: `optimize`, `analyze`, `kill`.
+`POST /api/db/maintenance` and its preview refuse any other operation by name with `400 FACET_NOT_OFFERED` before Studio builds a provider or opens a connection.
+
+Agent readings offered: `sessions`, `slow-queries`, `table-stats`, `index-stats`, `storage`, `health`.
 
 ---
 

@@ -80,11 +80,12 @@ afterEach(() => {
 });
 
 describe("fields read in order, with every refusal (SB1-4.2)", () => {
-  test("1. the tunnel: on without its far end, and not an object", () => {
-    expect(refusal({ sshTunnel: { enabled: true } })).toBe(
-      "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Oxia was not dialled directly: the tunnel opens only when both Host and Port are set.",
-    );
-    expect(refusal({ sshTunnel: "x" })).toBe("The connection's sshTunnel must be an object; nothing was sent.");
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("1. reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [{ enabled: true }, { enabled: "yes" }, { enabled: false }, null, "x", []]) {
+      expect(build({ sshTunnel }).target).toBe(build().target);
+    }
   });
 
   test("2. the host: a pasted endpoint, and a host that is not one", () => {
@@ -111,13 +112,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     for (const port of [0, 70000]) {
       expect(refusal({ port })).toBe("Invalid port: expected an integer from 1 to 65535");
     }
-  });
-
-  test("4. the user: Oxia has none", () => {
-    expect(refusal({ user: "root" })).toBe("Oxia has no user name: clear User. A bearer token goes under Token.");
-    expect(build({ user: "" }).token).toBeUndefined();
-    expect(build({ user: null }).token).toBeUndefined();
-    expect(refusal({ user: 5 })).toBe("The connection's user must be a string; nothing was sent.");
   });
 
   test("5. the token: absent, null and empty are none; a bearer token is kept exactly; any other character is refused", () => {
@@ -235,7 +229,6 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
     // refusal() asserts it on every call of this describe; here on the values a user is most likely to paste.
     for (const overrides of [
       { host: "secret-host.example:6648" },
-      { user: "secret-user" },
       { password: "secret token" },
       { database: "secret\u0007namespace" },
       { dataServers: "secret.example" },
@@ -248,10 +241,8 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
 
   test("16. the order of the checks", () => {
     const wrong: Overrides = {
-      sshTunnel: { enabled: true },
       host: "bad host!",
       port: 0,
-      user: "root",
       password: "a b",
       database: "a\u0007b",
       ssl: { mode: "verify-full", caCert: "not a certificate" },
@@ -260,10 +251,8 @@ describe("fields read in order, with every refusal (SB1-4.2)", () => {
       readOnly: "yes",
     };
     const steps: ReadonlyArray<readonly [Overrides, string]> = [
-      [{ sshTunnel: undefined }, "This connection's SSH tunnel is on"],
       [{ host: "oxia.example" }, "Invalid host"],
       [{ port: 6648 }, "Invalid port"],
-      [{ user: undefined }, "Oxia has no user name"],
       [{ password: TEST_TOKEN }, "The Token holds a character"],
       [{ database: undefined }, "The Namespace must be"],
       [{ ssl: undefined }, "The CA Certificate under SSL / TLS"],

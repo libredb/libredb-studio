@@ -40,7 +40,7 @@
  * the connection, so it holds the answer.
  */
 
-import { sqlGrammarFor, sqlGrammarForExactType } from "@/lib/db/sql-grammar";
+import { sqlGrammarFor } from "@/lib/db/sql-grammar";
 import type { DatabaseType } from "@/lib/types";
 import { isBareIdentifier } from "./identifier";
 import { IDENTIFIER_PART, IDENTIFIER_START, readSqlSpan } from "./spans";
@@ -173,7 +173,7 @@ type PieceScan = Piece[] | "unterminated" | "executable-comment" | "split-commen
 
 function readPieces(sql: string, type?: DatabaseType): PieceScan {
   const { grammar } = sqlGrammarFor(type);
-  const { updateTarget } = sqlGrammarForExactType(type);
+  const { updateTarget } = sqlGrammarFor(type);
   const pieces: Piece[] = [];
   let depth = 0;
   let i = 0;
@@ -316,7 +316,7 @@ const QUERY_OPENERS = new Set(["SELECT", "TABLE", "FROM", "VALUES", "WITH"]);
  * loop already has.
  */
 function opensASubquery(pieces: Piece[], fromOffset: number, type?: DatabaseType): boolean {
-  const { extraQueryOpeners } = sqlGrammarForExactType(type).updateTarget;
+  const { extraQueryOpeners } = sqlGrammarFor(type).updateTarget;
   const opens = (word: string) => QUERY_OPENERS.has(word) || extraQueryOpeners.has(word);
   for (let i = 0; i < pieces.length; i++) {
     const piece = pieces[i];
@@ -569,7 +569,7 @@ export function resolveUpdateTarget(sql: string, type?: DatabaseType): UpdateTar
     return refuse("Only the rows of a SELECT can be written back, and this is not one");
   }
 
-  const { extraSetOperators } = sqlGrammarForExactType(type).updateTarget;
+  const { extraSetOperators } = sqlGrammarFor(type).updateTarget;
   const setOp = top.findIndex(
     (piece) =>
       piece.kind === "name" &&

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { BackendError, BackendExitedError } from "../../../src/host/backend-client";
+import { RunNotConfirmedError } from "../../../src/host/editor/run-confirmation";
 import { ALREADY_RUNNING, RunInFlightError } from "../../../src/host/editor/run-registry";
 import { LogResultsPresenter } from "../../../src/host/results/log-presenter";
 import {
@@ -327,7 +328,14 @@ describe("ResultsViewPresenter: Load More", () => {
     const first = view.presenter.loadMore(RUN_A);
     assert.deepEqual(view.posted.slice(count), [{ v: 1, type: "pageStarted", runId: RUN_A }]);
     assert.deepEqual(view.reads, [
-      { documentUri: UNTITLED, connectionId: "c1", statement: "select n from t", limit: 2, offset: 2 },
+      {
+        documentUri: UNTITLED,
+        connectionId: "c1",
+        connectionName: "shop",
+        statement: "select n from t",
+        limit: 2,
+        offset: 2,
+      },
     ]);
     const second = page([{ n: 3 }, { n: 4 }], { limit: 2, offset: 2, hasMore: true });
     view.answers[0].resolve(second);
@@ -357,6 +365,7 @@ describe("ResultsViewPresenter: Load More", () => {
       {
         documentUri: UNTITLED,
         connectionId: "c9",
+        connectionName: "shop",
         statement: "select * from orders",
         catalog: "sales",
         limit: 2,
@@ -432,6 +441,26 @@ describe("ResultsViewPresenter: Load More", () => {
     view.answers[1].resolve(page([{ n: 3 }], { limit: 2, offset: 2 }));
     await again;
     assert.equal(view.presenter.replay().at(-1)?.type, "pageAppended");
+  });
+
+  it("a page read carries the run's connection name", async () => {
+    const name = randomUUID();
+    const view = answered(undefined, { connectionName: name });
+    void view.presenter.loadMore(RUN_A);
+    assert.equal(view.reads[0].connectionName, name);
+  });
+
+  it("shows a declined confirmation of a page read as cancelled", async () => {
+    const view = answered();
+    const read = view.presenter.loadMore(RUN_A);
+    view.answers[0].reject(new RunNotConfirmedError());
+    await read;
+    assert.deepEqual(view.posted.at(-1), {
+      v: 1,
+      type: "pageFailed",
+      runId: RUN_A,
+      failure: { kind: "cancelled" },
+    });
   });
 
   it("shows a cancelled read as cancelled and a read refused by a preparing Run as that refusal (H6)", async () => {

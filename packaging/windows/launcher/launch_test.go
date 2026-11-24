@@ -17,6 +17,38 @@ func TestResolveLaunchPaths(t *testing.T) {
 	if want := filepath.Join("C:", "pkg", "server.js"); paths.Server != want {
 		t.Errorf("Server = %q, want %q", paths.Server, want)
 	}
+	if want := filepath.Join("C:", "pkg", "seed-assets"); paths.SeedAssets != want {
+		t.Errorf("SeedAssets = %q, want %q", paths.SeedAssets, want)
+	}
+}
+
+// testSeedAssets stands in for resolveLaunchPaths(exeDir).SeedAssets.
+var testSeedAssets = filepath.Join("C:", "pkg", "seed-assets")
+
+func TestLauncherEnvPointsSeedAssetsAtThePayload(t *testing.T) {
+	env := launcherEnv([]string{"PATH=x"}, testSeedAssets)
+	if last := lastValue(t, env, "SEED_ASSETS_DIR"); last != testSeedAssets {
+		t.Errorf("SEED_ASSETS_DIR = %q, want the payload's %q", last, testSeedAssets)
+	}
+}
+
+func TestLauncherEnvKeepsPresetSeedAssets(t *testing.T) {
+	env := launcherEnv([]string{"seed_assets_dir=D:\\own\\assets"}, testSeedAssets)
+	if count := countKey(env, "SEED_ASSETS_DIR"); count != 0 {
+		t.Errorf("SEED_ASSETS_DIR appended %d times, want the preset entry kept as the only one", count)
+	}
+	if value, _ := envValue(env, "SEED_ASSETS_DIR"); value != "D:\\own\\assets" {
+		t.Errorf("SEED_ASSETS_DIR = %q, want the preset", value)
+	}
+}
+
+func TestLauncherEnvTreatsAnEmptySeedAssetsPresetAsUnset(t *testing.T) {
+	env := launcherEnv([]string{"SEED_ASSETS_DIR="}, testSeedAssets)
+	// envValue, not lastValue: it keeps empty entries, so an inherited "SEED_ASSETS_DIR=" that comes
+	// last, and so is the value os/exec hands the child, fails the test.
+	if value, _ := envValue(env, "SEED_ASSETS_DIR"); value != testSeedAssets {
+		t.Errorf("SEED_ASSETS_DIR = %q, want the payload's %q despite the empty preset", value, testSeedAssets)
+	}
 }
 
 func TestEnvValueIsCaseInsensitive(t *testing.T) {
@@ -40,7 +72,7 @@ func TestEnvValueIsCaseInsensitive(t *testing.T) {
 }
 
 func TestLauncherEnvBindsLoopbackByDefault(t *testing.T) {
-	env := launcherEnv([]string{"HOSTNAME=container-1234", "LOCALAPPDATA=" + filepath.Join("C:", "Users", "u", "AppData", "Local")})
+	env := launcherEnv([]string{"HOSTNAME=container-1234", "LOCALAPPDATA=" + filepath.Join("C:", "Users", "u", "AppData", "Local")}, testSeedAssets)
 	// The override is appended AFTER the inherited entries, so it wins the
 	// os/exec last-duplicate-wins rule.
 	last := lastValue(t, env, "HOSTNAME")
@@ -50,7 +82,7 @@ func TestLauncherEnvBindsLoopbackByDefault(t *testing.T) {
 }
 
 func TestLauncherEnvHonoursLibredbBind(t *testing.T) {
-	env := launcherEnv([]string{"LIBREDB_BIND=0.0.0.0"})
+	env := launcherEnv([]string{"LIBREDB_BIND=0.0.0.0"}, testSeedAssets)
 	if last := lastValue(t, env, "HOSTNAME"); last != "0.0.0.0" {
 		t.Errorf("HOSTNAME = %q, want the LIBREDB_BIND opt-in 0.0.0.0", last)
 	}
@@ -58,7 +90,7 @@ func TestLauncherEnvHonoursLibredbBind(t *testing.T) {
 
 func TestLauncherEnvDefaultsStorageUnderLocalAppData(t *testing.T) {
 	localAppData := filepath.Join("C:", "Users", "u", "AppData", "Local")
-	env := launcherEnv([]string{"LOCALAPPDATA=" + localAppData})
+	env := launcherEnv([]string{"LOCALAPPDATA=" + localAppData}, testSeedAssets)
 	want := filepath.Join(localAppData, "LibreDB", "Studio", "libredb-storage.db")
 	if last := lastValue(t, env, "STORAGE_SQLITE_PATH"); last != want {
 		t.Errorf("STORAGE_SQLITE_PATH = %q, want %q", last, want)
@@ -66,7 +98,7 @@ func TestLauncherEnvDefaultsStorageUnderLocalAppData(t *testing.T) {
 }
 
 func TestLauncherEnvKeepsPresetStoragePath(t *testing.T) {
-	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=D:\\custom\\s.db", "LOCALAPPDATA=C:\\lad"})
+	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=D:\\custom\\s.db", "LOCALAPPDATA=C:\\lad"}, testSeedAssets)
 	if count := countKey(env, "STORAGE_SQLITE_PATH"); count != 1 {
 		t.Errorf("STORAGE_SQLITE_PATH appears %d times, want the single preset entry", count)
 	}
@@ -77,7 +109,7 @@ func TestLauncherEnvTreatsEmptyPresetsAsUnset(t *testing.T) {
 	// inherited-but-empty value must not suppress the zero-config defaults
 	// (the server would fall back to ./data inside the install tree).
 	localAppData := filepath.Join("C:", "Users", "u", "AppData", "Local")
-	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=", "NODE_ENV=", "LOCALAPPDATA=" + localAppData})
+	env := launcherEnv([]string{"STORAGE_SQLITE_PATH=", "NODE_ENV=", "LOCALAPPDATA=" + localAppData}, testSeedAssets)
 	wantStorage := filepath.Join(localAppData, "LibreDB", "Studio", "libredb-storage.db")
 	if last := lastValue(t, env, "STORAGE_SQLITE_PATH"); last != wantStorage {
 		t.Errorf("STORAGE_SQLITE_PATH = %q, want the default %q despite the empty preset", last, wantStorage)
@@ -89,7 +121,7 @@ func TestLauncherEnvTreatsEmptyPresetsAsUnset(t *testing.T) {
 
 func TestLauncherEnvFallsBackToUserProfile(t *testing.T) {
 	profile := filepath.Join("C:", "Users", "u")
-	env := launcherEnv([]string{"USERPROFILE=" + profile})
+	env := launcherEnv([]string{"USERPROFILE=" + profile}, testSeedAssets)
 	want := filepath.Join(profile, "AppData", "Local", "LibreDB", "Studio", "libredb-storage.db")
 	if last := lastValue(t, env, "STORAGE_SQLITE_PATH"); last != want {
 		t.Errorf("STORAGE_SQLITE_PATH = %q, want the USERPROFILE-derived %q", last, want)
@@ -97,24 +129,24 @@ func TestLauncherEnvFallsBackToUserProfile(t *testing.T) {
 }
 
 func TestLauncherEnvSkipsStorageWhenUnresolvable(t *testing.T) {
-	env := launcherEnv([]string{"PATH=x"})
+	env := launcherEnv([]string{"PATH=x"}, testSeedAssets)
 	if count := countKey(env, "STORAGE_SQLITE_PATH"); count != 0 {
 		t.Error("STORAGE_SQLITE_PATH must stay unset when no LOCALAPPDATA/USERPROFILE exists (server falls back to ./data)")
 	}
 }
 
 func TestLauncherEnvDefaultsNodeEnv(t *testing.T) {
-	if last := lastValue(t, launcherEnv(nil), "NODE_ENV"); last != "production" {
+	if last := lastValue(t, launcherEnv(nil, testSeedAssets), "NODE_ENV"); last != "production" {
 		t.Errorf("NODE_ENV = %q, want production", last)
 	}
-	env := launcherEnv([]string{"NODE_ENV=development"})
+	env := launcherEnv([]string{"NODE_ENV=development"}, testSeedAssets)
 	if count := countKey(env, "NODE_ENV"); count != 1 {
 		t.Error("a preset NODE_ENV must not be overridden")
 	}
 }
 
 func TestLauncherEnvPreservesInheritedEntries(t *testing.T) {
-	env := launcherEnv([]string{"JWT_SECRET=abc", "PORT=3900"})
+	env := launcherEnv([]string{"JWT_SECRET=abc", "PORT=3900"}, testSeedAssets)
 	if !slices.Contains(env, "JWT_SECRET=abc") || !slices.Contains(env, "PORT=3900") {
 		t.Error("inherited environment entries must pass through untouched")
 	}
@@ -152,4 +184,26 @@ func countKey(environ []string, key string) int {
 		}
 	}
 	return count
+}
+
+func TestLauncherEnvGivesStudioTheExit(t *testing.T) {
+	env := launcherEnv([]string{"PATH=x"}, testSeedAssets)
+	if last := lastValue(t, env, "NEXT_MANUAL_SIG_HANDLE"); last != "true" {
+		t.Errorf("NEXT_MANUAL_SIG_HANDLE = %q, want true for the bundled Node.js", last)
+	}
+}
+
+// An operator's value is kept as given in any letter case, the empty one included: it
+// leaves the exit to Next.js's handler (docs/DISTRIBUTION.md, "Stopping the server").
+func TestLauncherEnvKeepsAPresetManualSignalHandling(t *testing.T) {
+	for _, preset := range []string{"NEXT_MANUAL_SIG_HANDLE=", "next_manual_sig_handle=", "NEXT_MANUAL_SIG_HANDLE=1"} {
+		env := launcherEnv([]string{preset}, testSeedAssets)
+		if slices.Contains(env, "NEXT_MANUAL_SIG_HANDLE=true") {
+			t.Errorf("preset %q: the launcher added NEXT_MANUAL_SIG_HANDLE=true in %v", preset, env)
+		}
+		want := preset[len("NEXT_MANUAL_SIG_HANDLE="):]
+		if value, ok := envValue(env, "NEXT_MANUAL_SIG_HANDLE"); !ok || value != want {
+			t.Errorf("preset %q: NEXT_MANUAL_SIG_HANDLE = %q (found %v), want %q", preset, value, ok, want)
+		}
+	}
 }

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { PassThrough } from "node:stream";
-import { type Clock, install } from "@sinonjs/fake-timers";
 import { type CancellationToken, CancellationTokenSource, ResponseError } from "vscode-jsonrpc";
 import {
   createMessageConnection,
@@ -8,9 +9,25 @@ import {
   StreamMessageReader,
   StreamMessageWriter,
 } from "vscode-jsonrpc/node";
-import { runEditorQuery } from "@/lib/api/editor-query";
+import { EXECUTE_SLACK_MS, runEditorQuery } from "@/lib/api/editor-query";
+import type { TreeRequest } from "@libredb/provider-sdk/calls";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { databaseErrorBody, internalErrorBody, TIMEOUT_SENTENCE } from "@/lib/api/error-body";
-import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
+import {
+  CONFIRMATION_FIELD_MESSAGE,
+  CONFIRMATION_REQUIRED_MESSAGE,
+  CONFIRMATION_TYPED_MESSAGE,
+} from "@/lib/api/run-confirmation";
+import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
+import { TYPED_NAME_MISSING_REFUSAL } from "@/lib/editor/statement-analysis";
+import {
+  consoleTextByteLimit,
+  consoleTextOverLimit,
+  NON_SQL_DESTRUCTIVE_VOCABULARY,
+} from "@/lib/db/destructive-commands";
+import { PROVIDER_TEXT_WITHHELD, providerTextScrub, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { MASKING_EXEMPT_COLUMNS } from "@/lib/db/compatibility";
 import { executionUiFor } from "@/lib/db/execution-ui";
 import { generateTableQuery } from "@/lib/query-generators";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
@@ -24,8 +41,13 @@ import {
   PoolExhaustedError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
+  StudioTimeoutRefusal,
   TimeoutError,
+  connectPhase,
+  markNotSent,
 } from "@/lib/db/errors";
+import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import type { Container, DatabaseObject, KindCount, ObjectDetail, ProviderCapabilities } from "@/lib/db/types";
 import type { ColumnSchema, QueryResult } from "@/lib/types";
 import { engineCatalog } from "../../src/backend/engine-catalog";
@@ -35,16 +57,22 @@ import {
   createHandlers,
   invalidParams,
   nodeMeetsFloor,
+  RUN_CONFIRMATION_USER,
   RUN_ROUTE,
   refusal,
   registerHandlers,
-  TEST_DEADLINE_MS,
   TEST_ROUTE,
   toResponseError,
 } from "../../src/backend/handlers";
 import { ConnectionRegistry } from "../../src/backend/registry";
 import { ENABLED_PROVIDERS } from "../../src/host/channel";
-import { type BackendErrorData, EXIT_NOTIFICATION, METHODS } from "../../src/protocol";
+import {
+  type BackendErrorData,
+  EXIT_NOTIFICATION,
+  METHODS,
+  type QueryPage,
+  type RunTargetResult,
+} from "../../src/protocol";
 import {
   CAPS,
   type FakeProvider,
@@ -134,6 +162,67 @@ function refusedNow(call: () => unknown, code: number, message: string, data?: u
   assert.throws(call, (error) => isRefusal(error, code, message, data));
 }
 
+/** The answer to a provider step's failure on c1: `toResponseError` with the connection's scrub, as `answeringFor` gives. */
+function answeredWithScrub(failure: unknown) {
+  return toResponseError(failure, providerTextScrub(REVIVED, "any")).toJson();
+}
+
+/** Rejects-with for a provider step's failure on c1, answered as `answeredWithScrub` answers it. */
+async function answeredAs(call: Promise<unknown>, failure: unknown): Promise<void> {
+  await assert.rejects(call, (error) => {
+    assert.ok(error instanceof ResponseError, `expected a ResponseError, got ${String(error)}`);
+    assert.deepEqual(error.toJson(), answeredWithScrub(failure));
+    return true;
+  });
+}
+
+/**
+ * The editor query reads the process's host core (src/lib/provider-host/instance.ts), so a block that runs it composes
+ * its own and forgets it after: the unit leg is one Mocha process, where a hook at a file's top level would be a root
+ * hook of every file.
+ */
+function composeHostCore(): void {
+  before(() => installHostCore(createHostCore(), "test"));
+  after(forgetHostCore);
+}
+
+/** Runs `body` with `make(real)` installed in place of the composed host core, then puts the real one back. */
+async function withHostCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(make(real), "test");
+  try {
+    return await body();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+/** A request's token whose cancellation listeners are counted: how many were registered and how many are live. */
+function countedToken() {
+  const source = new CancellationTokenSource();
+  let registered = 0;
+  let live = 0;
+  const token: CancellationToken = {
+    get isCancellationRequested() {
+      return source.token.isCancellationRequested;
+    },
+    onCancellationRequested: (listener, thisArgs, disposables) => {
+      registered += 1;
+      live += 1;
+      const registration = source.token.onCancellationRequested(listener, thisArgs, disposables);
+      return {
+        dispose: () => {
+          live -= 1;
+          registration.dispose();
+        },
+      };
+    },
+  };
+  return { source, token, registered: () => registered, live: () => live };
+}
+
 describe("the child's refusals", () => {
   it("answers InvalidParams with no data, and its own refusals with a status and a code", () => {
     const params = invalidParams("connectionId must be a non-empty string");
@@ -151,8 +240,8 @@ describe("the child's refusals", () => {
 describe("initialize", () => {
   it("answers the protocol version, the runtime and the enabled providers", () => {
     const { handlers } = backend();
-    assert.deepEqual(handlers.initialize({ protocolVersion: 1 }), {
-      protocolVersion: 1,
+    assert.deepEqual(handlers.initialize({ protocolVersion: 2 }), {
+      protocolVersion: 2,
       runtime: { node: "24.21.0", electron: "43.7.7", modules: "148", platform: "linux", arch: "x64" },
       enabledProviders: ["postgres", "mssql", "mysql", "mongodb"],
     });
@@ -162,16 +251,16 @@ describe("initialize", () => {
     const versions: NodeJS.ProcessVersions = { ...RUNTIME.versions };
     delete versions.electron;
     const { factory } = fakeFactory(fakeProvider(), { enabledProviderTypes: () => null });
-    const answer = createHandlers(factory, { ...RUNTIME, versions }).initialize({ protocolVersion: 1 });
+    const answer = createHandlers(factory, { ...RUNTIME, versions }).initialize({ protocolVersion: 2 });
     assert.equal(answer.runtime.electron, null);
     assert.equal(answer.enabledProviders, null);
   });
 
   it("refuses another protocol version", () => {
     refusedNow(
-      () => backend().handlers.initialize({ protocolVersion: 2 }),
+      () => backend().handlers.initialize({ protocolVersion: 3 }),
       500,
-      "The LibreDB backend speaks protocol version 1, but the extension sent version 2. Reinstall the LibreDB extension.",
+      "The LibreDB backend speaks protocol version 2, but the extension sent version 3. Reinstall the LibreDB extension.",
       { code: "PROTOCOL_MISMATCH" },
     );
   });
@@ -180,7 +269,7 @@ describe("initialize", () => {
     const { factory } = fakeFactory();
     const handlers = createHandlers(factory, { ...RUNTIME, versions: { ...RUNTIME.versions, node: "22.11.0" } });
     refusedNow(
-      () => handlers.initialize({ protocolVersion: 1 }),
+      () => handlers.initialize({ protocolVersion: 2 }),
       500,
       "The LibreDB backend needs Node 24.0.0 or later and was started on Node 22.11.0.",
       { code: "RUNTIME_UNSUPPORTED" },
@@ -213,12 +302,7 @@ describe("connection/test", () => {
       latency: 12,
     });
     assert.equal(TEST_ROUTE, "vscode/connection/test");
-    assert.deepEqual(
-      calls.map((call) => call.slice(0, 4)),
-      [["testConnection", REVIVED, { allowExternalFileAccess: true }, "vscode/connection/test"]],
-    );
-    assert.ok(calls[0][4] instanceof AbortSignal);
-    assert.equal(calls[0][4].aborted, false);
+    assert.deepEqual(calls, [["testConnection", REVIVED, { allowExternalFileAccess: true }, "vscode/connection/test"]]);
     assert.equal(registry.get("c1"), undefined);
   });
 
@@ -266,69 +350,33 @@ describe("connection/test", () => {
   });
 
   describe("its deadline", () => {
-    let clock: Clock;
-
-    beforeEach(() => {
-      clock = install({ toFake: ["setTimeout", "clearTimeout"] });
+    it("hands the core the connection, posture and route only, so the core's deadline bounds the test", async () => {
+      const handed: unknown[][] = [];
+      const { handlers } = backend(fakeProvider(), {
+        testConnection: async (...args) => {
+          handed.push(args);
+          return { success: true, message: "Connection successful", latency: 1 };
+        },
+      });
+      await handlers.testConnection({ connection: WIRE, posture: POSTURE });
+      assert.deepEqual(handed, [[REVIVED, { allowExternalFileAccess: true }, TEST_ROUTE]]);
     });
 
-    afterEach(() => {
-      clock.uninstall();
-    });
-
-    it("answers CONNECTION_ERROR when the core has not settled 11 s in, as a driver's unbounded connect leaves it", async () => {
-      assert.equal(TEST_DEADLINE_MS, 11_000);
-      const { handlers } = backend(fakeProvider(), { testConnection: () => new Promise(() => undefined) });
-      const answer = handlers.testConnection({ connection: WIRE, posture: POSTURE });
-      const settled = assert.rejects(answer, (error) => {
-        assert.ok(error instanceof ConnectionError);
-        assert.equal(error.provider, "postgres");
-        assert.equal(
-          error.message,
-          "The connection test got no answer within 11 seconds: check the address, the port, the network path and that the server is running.",
-        );
-        assert.deepEqual(toResponseError(error).toJson(), {
+    it("answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code", async () => {
+      const late = new ConnectionError(
+        "The connection test got no answer within 70 seconds: check the address, the port, the network path and that the server is running.",
+        "postgres",
+      );
+      const { handlers } = backend(fakeProvider(), { testConnection: () => Promise.reject(late) });
+      await assert.rejects(handlers.testConnection({ connection: WIRE, posture: POSTURE }), (error) => {
+        assert.ok(error instanceof ResponseError);
+        assert.deepEqual(error.toJson(), {
           code: 503,
-          message: error.message,
-          data: { code: "CONNECTION_ERROR", retryable: true },
+          message: late.message,
+          data: { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
         });
         return true;
       });
-      await clock.tickAsync(TEST_DEADLINE_MS - 1);
-      assert.equal(clock.countTimers(), 1);
-      await clock.tickAsync(1);
-      await settled;
-    });
-
-    it("aborts the signal it handed the core at the deadline, with the error it answers, so the core closes what it opened", async () => {
-      let signal: AbortSignal | undefined;
-      const { handlers } = backend(fakeProvider(), {
-        testConnection: (_connection, _execution, _route, handed) => {
-          signal = handed;
-          return new Promise(() => undefined);
-        },
-      });
-      const answer = handlers.testConnection({ connection: WIRE, posture: POSTURE }).catch((error: unknown) => error);
-      await clock.tickAsync(TEST_DEADLINE_MS - 1);
-      assert.equal(signal?.aborted, false);
-      await clock.tickAsync(1);
-      const error = await answer;
-      assert.ok(error instanceof ConnectionError);
-      assert.equal(signal?.aborted, true);
-      assert.equal(signal?.reason, error);
-    });
-
-    it("answers the core's own answer or error when it settles first, and leaves no timer", async () => {
-      const { handlers } = backend();
-      assert.equal((await handlers.testConnection({ connection: WIRE, posture: POSTURE })).success, true);
-      assert.equal(clock.countTimers(), 0);
-      const denied = new AuthenticationError("password authentication failed", "postgres");
-      const refusing = backend(fakeProvider(), { testConnection: () => Promise.reject(denied) });
-      await assert.rejects(refusing.handlers.testConnection({ connection: WIRE, posture: POSTURE }), (error) => {
-        assert.equal(error, denied);
-        return true;
-      });
-      assert.equal(clock.countTimers(), 0);
     });
   });
 });
@@ -363,6 +411,24 @@ describe("connection/open", () => {
       const { description } = await handlers.openConnection({ connection, posture: POSTURE });
       assert.equal(description.commitKeyword, executionUiFor(type).commitKeyword);
     }
+  });
+
+  it("a masking exemption the provider declares that Studio's record does not hold is not in the description", async () => {
+    const wide = {
+      ...CAPS,
+      maskingExemptColumns: { column: ".*", reason: "Every column of this engine is said to carry no personal data." },
+    } as ProviderCapabilities;
+    const { handlers } = backend(fakeProvider({ getCapabilities: () => wide }));
+    const { description } = await handlers.openConnection({ connection: WIRE, posture: POSTURE });
+    assert.deepEqual(description.capabilities, { ...CAPS, supportsQueryCancel: false });
+    assert.equal(Object.hasOwn(description.capabilities, "maskingExemptColumns"), false);
+  });
+
+  it("the description answers Studio's record of the masking exemption where the provider declares none", async () => {
+    const { handlers } = backend();
+    const connection = { ...WIRE, type: "modbus", port: 502 };
+    const { description } = await handlers.openConnection({ connection, posture: POSTURE });
+    assert.deepEqual(description.capabilities.maskingExemptColumns, MASKING_EXEMPT_COLUMNS.modbus);
   });
 
   it("answers the editor language of the provider it opened, read from its capabilities", async () => {
@@ -403,7 +469,7 @@ describe("connection/open", () => {
     assert.equal(registry.get(SQLITE_WIRE.id), undefined);
   });
 
-  it("stores nothing when the open fails, and passes the factory's error on as it is", async () => {
+  it("stores nothing when the open fails, and answers the factory's error as toResponseError answers it with the connection's scrub", async () => {
     const failure = new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres");
     const { handlers, factory, calls, registry } = backend();
     const open = factory.getOrCreateProvider;
@@ -413,16 +479,13 @@ describe("connection/open", () => {
       calls.push(["getOrCreateProvider", ...args]);
       throw failure;
     };
-    await assert.rejects(handlers.openConnection({ connection: WIRE, posture: POSTURE }), (error) => error === failure);
+    await answeredAs(handlers.openConnection({ connection: WIRE, posture: POSTURE }), failure);
     assert.equal(registry.get("c1"), undefined);
 
     fail = false;
     await handlers.openConnection({ connection: WIRE, posture: POSTURE });
     fail = true;
-    await assert.rejects(
-      handlers.openConnection({ connection: { ...WIRE, password: "n3w" }, posture: POSTURE }),
-      (error) => error === failure,
-    );
+    await answeredAs(handlers.openConnection({ connection: { ...WIRE, password: "n3w" }, posture: POSTURE }), failure);
     assert.deepEqual(calls.at(-2), ["removeProvider", "c1"]);
     assert.equal(registry.get("c1"), undefined);
   });
@@ -504,6 +567,8 @@ describe("connection/close", () => {
 });
 
 describe("object reads", () => {
+  composeHostCore();
+
   const CONTAINERS: Container[] = [{ path: ["app", "public"], name: "public", level: 1 }];
   const COUNTS: Record<string, KindCount> = { table: { count: 2 } };
   const OBJECTS: DatabaseObject[] = [{ path: ["app", "public", "orders"], name: "orders", kind: "table" }];
@@ -526,49 +591,103 @@ describe("object reads", () => {
 
   it("lists containers on the provider resolved under the record's posture, answering as it answered", async () => {
     const { handlers, provider, calls } = await opened();
-    assert.equal(await handlers.listContainers({ connectionId: "c1", parent: ["app"] }), CONTAINERS);
+    assert.equal(await handlers.listContainers({ connectionId: "c1", parent: ["app"] }, idle), CONTAINERS);
     assert.deepEqual(provider.calls.at(-1), ["listContainers", ["app"]]);
     assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: false }]);
-    await handlers.listContainers({ connectionId: "c1" });
+    await handlers.listContainers({ connectionId: "c1" }, idle);
     assert.deepEqual(provider.calls.at(-1), ["listContainers", undefined]);
   });
 
   it("counts, lists and describes on the provider with the container, kind and path as sent", async () => {
     const { handlers, provider } = await opened();
-    assert.equal(await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }), COUNTS);
+    assert.deepEqual(await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }, idle), COUNTS);
     assert.deepEqual(provider.calls.at(-1), ["countObjects", ["app", "public"]]);
     assert.equal(
-      await handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }),
+      await handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }, idle),
       OBJECTS,
     );
     assert.deepEqual(provider.calls.at(-1), ["listObjects", ["app", "public"], "table"]);
     assert.equal(
-      await handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }),
+      await handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }, idle),
       DETAIL,
     );
     assert.deepEqual(provider.calls.at(-1), ["describeObject", ["app", "public", "orders"], "table"]);
+  });
+
+  it("answers an object count's and description's sentences that hold the connection's credential withheld, and the clean ones as the provider answered them", async () => {
+    const password = crypto.randomUUID();
+    const counts: Record<string, KindCount> = {
+      table: { unavailable: `permission denied for ${password}` },
+      view: { count: 3, sampledFrom: `sampled by ${password}` },
+      index: { count: 2 },
+    };
+    const detail: ObjectDetail = {
+      path: ["app", "public", "orders"],
+      columns: [],
+      indexes: { unavailable: `pg_index is not readable by ${password}` },
+      foreignKeys: [],
+    };
+    const cleanCounts: Record<string, KindCount> = {
+      table: { unavailable: "permission denied" },
+      view: { count: 3, sampledFrom: "a sample" },
+    };
+    const cleanDetail: ObjectDetail = { ...detail, indexes: { unavailable: "pg_index is not readable" } };
+    let answer: { counts: Record<string, KindCount>; detail: ObjectDetail } = { counts, detail };
+    const made = backend(
+      fakeProvider({ countObjects: async () => answer.counts, describeObject: async () => answer.detail }),
+    );
+    await made.handlers.openConnection({
+      connection: { ...WIRE, password },
+      posture: { allowExternalFileAccess: false },
+    });
+    const counted = await made.handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }, idle);
+    assert.deepEqual(counted, {
+      table: { unavailable: PROVIDER_TEXT_WITHHELD },
+      view: { count: 3, sampledFrom: PROVIDER_TEXT_WITHHELD },
+      index: { count: 2 },
+    });
+    const described = await made.handlers.describeObject(
+      {
+        connectionId: "c1",
+        path: ["app", "public", "orders"],
+        kind: "table",
+      },
+      idle,
+    );
+    assert.deepEqual(described, { ...detail, indexes: { unavailable: PROVIDER_TEXT_WITHHELD } });
+    assert.equal(JSON.stringify([counted, described]).includes(password), false);
+
+    answer = { counts: cleanCounts, detail: cleanDetail };
+    assert.deepEqual(await made.handlers.countObjects({ connectionId: "c1", container: ["app"] }, idle), cleanCounts);
+    assert.deepEqual(
+      await made.handlers.describeObject(
+        { connectionId: "c1", path: ["app", "public", "orders"], kind: "table" },
+        idle,
+      ),
+      cleanDetail,
+    );
   });
 
   it("refuses params it cannot read, naming the field, before resolving a provider", async () => {
     const { handlers, calls } = await opened();
     const before = calls.length;
     await refused(
-      handlers.listContainers({ connectionId: "c1", parent: ["app", 1] }),
+      handlers.listContainers({ connectionId: "c1", parent: ["app", 1] }, idle),
       -32602,
       "parent must be an array of strings",
     );
-    await refused(handlers.countObjects({ connectionId: "c1" }), -32602, "container must be an array of strings");
+    await refused(handlers.countObjects({ connectionId: "c1" }, idle), -32602, "container must be an array of strings");
     await refused(
-      handlers.listObjects({ connectionId: "c1", container: ["app"], kind: 5 }),
+      handlers.listObjects({ connectionId: "c1", container: ["app"], kind: 5 }, idle),
       -32602,
       "kind must be a string",
     );
     await refused(
-      handlers.describeObject({ connectionId: "c1", path: "app", kind: "table" }),
+      handlers.describeObject({ connectionId: "c1", path: "app", kind: "table" }, idle),
       -32602,
       "path must be an array of strings",
     );
-    await refused(handlers.listContainers({}), -32602, "connectionId must be a non-empty string");
+    await refused(handlers.listContainers({}, idle), -32602, "connectionId must be a non-empty string");
     assert.equal(calls.length, before);
   });
 
@@ -576,7 +695,7 @@ describe("object reads", () => {
     const { handlers, calls } = await opened();
     const before = calls.length;
     await refused(
-      handlers.listContainers({ connectionId: "c9" }),
+      handlers.listContainers({ connectionId: "c9" }, idle),
       404,
       'No connection with id "c9" is open in this LibreDB backend.',
       { code: "CONNECTION_NOT_OPEN" },
@@ -584,16 +703,223 @@ describe("object reads", () => {
     assert.equal(calls.length, before);
   });
 
-  it("passes a provider's error on as it is", async () => {
+  it("answers a provider's error as toResponseError answers it with the connection's scrub", async () => {
     const denied = new PermissionDeniedError("permission denied for schema app", "postgres");
     const { handlers } = await opened({
       listObjects: async () => {
         throw denied;
       },
     });
-    await assert.rejects(
-      handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }),
-      (error) => error === denied,
+    await answeredAs(handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }, idle), denied);
+  });
+
+  it("each tree call answers a provider's Studio error and a raw error as toResponseError answers them with the connection's scrub", async () => {
+    const raises: readonly ((text: string) => Error)[] = [
+      (text) => new QueryError(text, "postgres"),
+      (text) => new ConnectionError(text, "postgres"),
+      (text) => new TimeoutError(text, "postgres", 1000),
+      (text) => new Error(text),
+    ];
+    for (const raise of raises) {
+      const failure = raise(`refused ${crypto.randomUUID()}`);
+      const rejects = async () => {
+        throw failure;
+      };
+      // oxlint-disable-next-line no-await-in-loop -- one open at a time, so each call reaches its own provider.
+      const { handlers } = await opened({
+        listContainers: rejects,
+        countObjects: rejects,
+        listObjects: rejects,
+        describeObject: rejects,
+      });
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(handlers.listContainers({ connectionId: "c1" }, idle), failure);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }, idle), failure);
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(
+        handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }, idle),
+        failure,
+      );
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(
+        handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }, idle),
+        failure,
+      );
+    }
+  });
+
+  it("each tree call answers the provider's own answer: the containers, the objects and a detail whose indexes are a list as the same object, the counts as an equal copy through the scrub", async () => {
+    const { handlers } = await opened();
+
+    assert.equal(await handlers.listContainers({ connectionId: "c1" }, idle), CONTAINERS);
+    assert.equal(
+      await handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }, idle),
+      OBJECTS,
+    );
+    assert.equal(
+      await handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }, idle),
+      DETAIL,
+    );
+    const counted = await handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }, idle);
+    assert.deepEqual(counted, COUNTS);
+    assert.notEqual(counted, COUNTS);
+  });
+
+  it("answers a provider error's SQLSTATE in data", async () => {
+    const missing = new QueryError('relation "app" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const { handlers } = await opened({
+      listContainers: async () => {
+        throw missing;
+      },
+    });
+    await assert.rejects(handlers.listContainers({ connectionId: "c1" }, idle), (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal((error.data as BackendErrorData).sqlState, "42P01");
+      return true;
+    });
+  });
+
+  /** One tree call of each handler, its action and the provider member it reaches. */
+  const TREE_CALLS: readonly {
+    readonly action: TreeRequest["action"];
+    readonly member: "listContainers" | "countObjects" | "listObjects" | "describeObject";
+    readonly call: (handlers: BackendHandlers, token: CancellationToken) => Promise<unknown>;
+  }[] = [
+    {
+      action: "containers",
+      member: "listContainers",
+      call: (handlers, token) => handlers.listContainers({ connectionId: "c1", parent: ["app"] }, token),
+    },
+    {
+      action: "count",
+      member: "countObjects",
+      call: (handlers, token) => handlers.countObjects({ connectionId: "c1", container: ["app", "public"] }, token),
+    },
+    {
+      action: "list",
+      member: "listObjects",
+      call: (handlers, token) =>
+        handlers.listObjects({ connectionId: "c1", container: ["app", "public"], kind: "table" }, token),
+    },
+    {
+      action: "describe",
+      member: "describeObject",
+      call: (handlers, token) =>
+        handlers.describeObject({ connectionId: "c1", path: ["app", "public", "orders"], kind: "table" }, token),
+    },
+  ];
+
+  it("each tree call reads through the host core's tree call, the provider resolved as before", async () => {
+    const seen: { action: string; deadline: number }[] = [];
+    const counted = countedToken();
+    const failing = await opened({
+      listObjects: async () => {
+        throw new QueryError(crypto.randomUUID(), "postgres");
+      },
+    });
+    const { handlers, calls } = await opened();
+    const before = Date.now();
+    await withHostCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          seen.push({ action: request.action, deadline: ctx.deadline });
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      async () => {
+        for (const { call } of TREE_CALLS) {
+          // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each listener count is its own call's.
+          await call(handlers, counted.token);
+          assert.equal(counted.live(), 0, "the token's listener is disposed after the call answered");
+          assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: false }]);
+        }
+        await assert.rejects(TREE_CALLS[2]?.call(failing.handlers, counted.token) as Promise<unknown>);
+        assert.equal(counted.live(), 0, "the token's listener is disposed after the call failed");
+      },
+    );
+    const after = Date.now();
+
+    assert.deepEqual(
+      seen.map(({ action }) => action),
+      ["containers", "count", "list", "describe", "list"],
+    );
+    for (const { deadline } of seen) {
+      assert.ok(deadline >= before + 60_000 + EXECUTE_SLACK_MS && deadline <= after + 60_000 + EXECUTE_SLACK_MS);
+    }
+    assert.equal(counted.registered(), TREE_CALLS.length + 1);
+  });
+
+  it("a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown", async () => {
+    for (const { member, call } of TREE_CALLS) {
+      const pending = Promise.withResolvers<never>();
+      const reached = Promise.withResolvers<void>();
+      // oxlint-disable-next-line no-await-in-loop -- one open at a time, so each call reaches its own provider.
+      const { handlers } = await opened({
+        [member]: () => {
+          reached.resolve();
+          return pending.promise;
+        },
+      });
+      const source = new CancellationTokenSource();
+      const answering = call(handlers, source.token);
+      // oxlint-disable-next-line no-await-in-loop -- the cancel comes once the provider is reading.
+      await reached.promise;
+      source.cancel();
+      // oxlint-disable-next-line no-await-in-loop -- the answer comes before the provider's read settles.
+      await answeredAs(answering, new QueryCancelledError("The query was cancelled."));
+      pending.reject(new Error(crypto.randomUUID()));
+      // oxlint-disable-next-line no-await-in-loop -- the provider's read settles after the answer, with a plain await.
+      await pending.promise.catch(() => undefined);
+    }
+  });
+
+  it("a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent", async () => {
+    const source = new CancellationTokenSource();
+    source.cancel();
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled."), {
+      outcome: "not-sent" as const,
+    });
+    for (const { member, call } of TREE_CALLS) {
+      // oxlint-disable-next-line no-await-in-loop -- one open at a time, so each call log is its own provider's.
+      const { handlers, provider } = await opened();
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+      await answeredAs(call(handlers, source.token), notSent);
+      assert.equal(methodsOf(provider).includes(member), false);
+    }
+  });
+
+  it("a tree call past its deadline answers TIMEOUT_ERROR naming the read", async () => {
+    const nouns: Record<TreeRequest["action"], string> = {
+      containers: "The container listing",
+      count: "The object count",
+      list: "The object listing",
+      describe: "The object description",
+      describeMany: "The description of the objects",
+    };
+    const { handlers } = await opened();
+    await withHostCore(
+      (real) => ({
+        ...real,
+        treeCall: async () => ({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: Promise.resolve(),
+        }),
+      }),
+      async () => {
+        for (const { action, call } of TREE_CALLS) {
+          // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each answer is its own call's.
+          await answeredAs(
+            call(handlers, idle),
+            new StudioTimeoutRefusal(
+              `${nouns[action]} did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.`,
+            ),
+          );
+        }
+      },
     );
   });
 });
@@ -614,7 +940,40 @@ const methodsOf = (provider: FakeProvider) => provider.calls.map(([method]) => m
 /** Lets every promise the run awaits settle, so a provider call the run makes next has been made. */
 const settled = () => new Promise((resolve) => setImmediate(resolve));
 
+/** Clears LIBREDB_RUN_CONFIRMATION before each test of the enclosing describe and puts it back after each. */
+function restoresRunConfirmationMode(): void {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  beforeEach(() => {
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+  });
+  afterEach(() => {
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+  });
+}
+
+/** What an offer reads as once `shaped` has checked its token and expiry: the gate asks, nothing typed. */
+const ASKED = {
+  token: "<token>",
+  expiresAt: "<expiry>",
+  unreadable: false,
+  typedConfirmation: null,
+  classificationFailed: false,
+};
+
+/** The target's answer with its offer's token and expiry checked for shape and replaced by `ASKED`'s words. */
+function shaped(answer: RunTargetResult): RunTargetResult {
+  const offer = answer.confirmation;
+  assert.ok(offer !== null, "expected an offer");
+  assert.equal(typeof offer.token, "string");
+  assert.ok(offer.token.length > 0);
+  assert.equal(new Date(offer.expiresAt).toISOString(), offer.expiresAt);
+  return { ...answer, confirmation: { ...offer, token: ASKED.token, expiresAt: ASKED.expiresAt } };
+}
+
 describe("query/run", () => {
+  composeHostCore();
+
   it("answers the query route's body for the same provider outputs (criterion 5)", async () => {
     const { handlers } = await openedOn();
     const answer = await handlers.runQuery(RUN, idle);
@@ -632,6 +991,7 @@ describe("query/run", () => {
       queryId: "q-1",
       signal: new AbortController().signal,
       route: "test",
+      scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
     });
     assert.deepEqual(route.body, body);
     assert.equal("explainFormat" in answer, false);
@@ -644,8 +1004,8 @@ describe("query/run", () => {
     const [prepare, probe, query] = plain.provider.calls;
     assert.deepEqual(prepare, ["prepareQuery", "SELECT n FROM t", { limit: 2, offset: 0 }]);
     assert.deepEqual(probe, ["prepareQuery", "SELECT n FROM t", { limit: 3, offset: 0, unlimited: false }]);
-    assert.deepEqual(query.slice(0, 4), ["query", "SELECT n FROM t LIMIT 3 OFFSET 0", undefined, undefined]);
-    assert.equal(typeof query[4], "string");
+    // A provider without a transaction ender offers no console.endScope, so it is sent no scope.
+    assert.deepEqual(query, ["query", "SELECT n FROM t LIMIT 3 OFFSET 0", undefined, undefined, undefined]);
 
     const cancelling = await openedOn(fakeProvider({ cancelQuery: async () => true }));
     await cancelling.handlers.runQuery(RUN, idle);
@@ -672,6 +1032,26 @@ describe("query/run", () => {
     assert.equal((await handlers.runQuery(RUN, idle)).openTransaction, "rolled-back");
   });
 
+  it("ends the statement's own scope after the run, and answers an end that fails in the run's place", async () => {
+    const ending = await openedOn(fakeProvider({ endOpenQueryTransaction: async () => "none" }));
+    const page = await ending.handlers.runQuery(RUN, idle);
+    assert.equal("openTransaction" in page, false);
+    assert.deepEqual(methodsOf(ending.provider), ["prepareQuery", "prepareQuery", "query", "endOpenQueryTransaction"]);
+    const [, , query, end] = ending.provider.calls;
+    assert.equal(typeof query[4], "string");
+    assert.deepEqual(end, ["endOpenQueryTransaction", query[4]]);
+
+    const failing = new DatabaseError("Could not roll back the transaction this request left open", "postgres");
+    const { handlers } = await openedOn(
+      fakeProvider({
+        endOpenQueryTransaction: async () => {
+          throw failing;
+        },
+      }),
+    );
+    await answeredAs(handlers.runQuery(RUN, idle), failing);
+  });
+
   it("runs in the catalog asked for only where the provider has catalog sessions", async () => {
     const sales = fakeProvider();
     const server = fakeProvider({
@@ -684,14 +1064,34 @@ describe("query/run", () => {
     assert.deepEqual(methodsOf(sales), ["prepareQuery", "prepareQuery", "query"]);
 
     const { handlers } = await openedOn();
-    await assert.rejects(
+    await answeredAs(
       handlers.runQuery({ ...RUN, catalog: "sales" }, idle),
-      (error) =>
-        error instanceof DatabaseConfigError &&
-        error.message ===
-          'This postgres connection runs every request in its own database and cannot run one in "sales"',
+      new DatabaseConfigError(
+        'This postgres connection runs every request in its own database and cannot run one in "sales"',
+        "postgres",
+      ),
     );
     await refused(handlers.runQuery({ ...RUN, catalog: "" }, idle), -32602, "catalog must be a non-empty string");
+  });
+
+  it("a provider that declares catalog sessions on a connection naming its database runs nothing in another catalog, and the refusal says why", async () => {
+    const server = fakeProvider({
+      config: { id: "fake", name: "Fake", type: "postgres", createdAt: new Date(0), database: "orders" },
+      getCapabilities: () => ({ ...CAPS, catalogSessions: true }),
+      forCatalog: async () => fakeProvider(),
+    });
+    const { handlers } = await openedOn(server);
+    await answeredAs(
+      handlers.runQuery({ ...RUN, catalog: "sales" }, idle),
+      new DatabaseConfigError(
+        'This postgres connection runs every request in its own database and cannot run one in "sales": it names its own database, so Studio honours no session per database its provider declares',
+        "postgres",
+      ),
+    );
+    assert.equal(
+      server.calls.some(([method]) => method === "forCatalog"),
+      false,
+    );
   });
 
   it("refuses params it cannot read, naming the field, before resolving a provider", async () => {
@@ -727,6 +1127,17 @@ describe("query/run", () => {
     );
   });
 
+  it("refuses a connection whose statement timeout is not a whole number of milliseconds before resolving a provider", async () => {
+    const { handlers, calls } = backend();
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", queryTimeout: "60000" }, posture: POSTURE });
+    await refused(
+      handlers.runQuery({ ...RUN, connectionId: "c2" }, idle),
+      -32602,
+      "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+    );
+    assert.deepEqual(calls.filter(([method]) => method === "getOrCreateProvider").length, 1);
+  });
+
   it("refuses a text over its type's console bound before resolving a provider (TEXT_TOO_LARGE)", async () => {
     const { handlers, calls } = backend();
     await handlers.openConnection({ connection: { ...WIRE, id: "c2", type: "influxdb" }, posture: POSTURE });
@@ -754,23 +1165,97 @@ describe("query/run", () => {
     assert.deepEqual(methodsOf(provider), ["prepareQuery", "prepareQuery", "query"]);
     source.cancel();
     source.cancel();
+    // The host answers the run at the cancellation, outcome unknown, and has sent the engine's cancel once by then.
+    await answeredAs(run, new QueryCancelledError("The query was cancelled."));
     assert.deepEqual(
       provider.calls.filter(([method]) => method === "cancelQuery"),
       [["cancelQuery", "q-1"]],
     );
-    const cancelled = new QueryCancelledError("The query was cancelled.", "postgres");
-    fail(cancelled);
-    await assert.rejects(run, (error) => error === cancelled);
+    fail(new QueryCancelledError("The query was cancelled.", "postgres"));
+  });
+
+  it("answers a provider error's SQLSTATE in data", async () => {
+    const missing = new QueryError('relation "t" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const { handlers } = await openedOn(
+      fakeProvider({
+        query: async () => {
+          throw missing;
+        },
+      }),
+    );
+    await assert.rejects(handlers.runQuery(RUN, idle), (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal((error.data as BackendErrorData).sqlState, "42P01");
+      return true;
+    });
+  });
+
+  it("query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent", async () => {
+    const { handlers, factory, provider } = await openedOn();
+    const waits: { signal: AbortSignal }[] = [];
+    let reached: () => void = () => {};
+    const opening = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    factory.getOrCreateProvider = async (...args) => {
+      const wait = args[3] as { signal: AbortSignal };
+      waits.push(wait);
+      reached();
+      // An open that never connects: only the run's own wait ends it, as the factory's open table ends a caller's wait.
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    };
+    const source = new CancellationTokenSource();
+    const run = handlers.runQuery(RUN, source.token);
+    await opening;
+    assert.equal(waits[0]?.signal.aborted, false);
+    source.cancel();
+
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+    await answeredAs(run, notSent);
+    assert.equal(waits[0]?.signal.aborted, true);
+    assert.deepEqual(methodsOf(provider), []);
+  });
+
+  it("query/run whose open its connect budget ended answers TIMEOUT_ERROR in Studio's sentence naming the budget, not-sent", async () => {
+    const { handlers, factory, provider } = await openedOn();
+    factory.getOrCreateProvider = async () => {
+      // The factory's open refusal, as its open table answers every caller when the engine's connect budget ends.
+      const expired = new StudioTimeoutRefusal(openDeadlineSentence(connectBudgetFor("postgres")));
+      markNotSent(expired);
+      throw expired;
+    };
+
+    await assert.rejects(handlers.runQuery(RUN, idle), (error) => {
+      assert.ok(error instanceof ResponseError, `expected a ResponseError, got ${String(error)}`);
+      assert.equal(
+        error.message,
+        "The connection did not open within 70 seconds, so Studio stopped waiting for it and sent nothing.",
+      );
+      assert.deepEqual(error.data, {
+        code: "TIMEOUT_ERROR",
+        retryable: true,
+        kind: "studio-timeout-refusal",
+        outcome: "not-sent",
+      });
+      return true;
+    });
+    assert.deepEqual(methodsOf(provider), []);
   });
 
   it("starts nothing for a request already cancelled", async () => {
     const { handlers, provider } = await openedOn();
     const source = new CancellationTokenSource();
     source.cancel();
-    await assert.rejects(
-      handlers.runQuery(RUN, source.token),
-      (error) => error instanceof QueryCancelledError && error.message === "The query was cancelled.",
-    );
+    // Refused before any call, so nothing reached the database.
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+    await answeredAs(handlers.runQuery(RUN, source.token), notSent);
     assert.equal(methodsOf(provider).includes("query"), false);
   });
 
@@ -792,19 +1277,242 @@ describe("query/run", () => {
       const run = handlers.runQuery(RUN, source.token);
       await settled();
       source.cancel();
+      await answeredAs(run, new QueryCancelledError("The query was cancelled."));
       await settled();
       finish(resultOf(rowsOf(1)));
-      await run;
+      await settled();
     } finally {
       console.warn = warn;
     }
     assert.equal(RUN_ROUTE, "vscode/query/run");
     assert.equal(lines.length, 1);
-    assert.match(lines[0], /\{route=vscode\/query\/run\} The cancel sent after the request was aborted failed$/);
+    assert.match(
+      lines[0],
+      /\{route=vscode\/query\/run, kind=internal, code=INTERNAL_ERROR\} The cancel sent after the request was aborted failed$/,
+    );
+  });
+});
+
+describe("the confirmation gate on query/run (FND-5 6e)", () => {
+  composeHostCore();
+
+  restoresRunConfirmationMode();
+  const WRITE = "DELETE FROM t";
+  const write = { ...RUN, statement: WRITE };
+
+  /** The token query/target mints for `statement` on `connectionId`, read off its offer. */
+  async function tokenFor(
+    handlers: BackendHandlers,
+    statement: string,
+    connectionId = "c1",
+    catalog?: string,
+  ): Promise<string> {
+    const answer = await handlers.runTarget({
+      connectionId,
+      text: statement,
+      selection: { start: 0, end: 0 },
+      cursor: 0,
+      ...(catalog !== undefined && { catalog }),
+    });
+    assert.ok(answer.confirmation !== null, "expected an offer");
+    return answer.confirmation.token;
+  }
+
+  /** Whether the provider was asked to run anything. */
+  const ran = (provider: FakeProvider) => methodsOf(provider).includes("query");
+
+  /** The 428's data: its code and its offer. */
+  async function asked(call: Promise<unknown>, message = CONFIRMATION_REQUIRED_MESSAGE) {
+    let data: BackendErrorData | undefined;
+    await assert.rejects(call, (error) => {
+      assert.ok(error instanceof ResponseError);
+      assert.equal(error.code, 428);
+      assert.equal(error.message, message);
+      data = error.data as BackendErrorData;
+      return true;
+    });
+    assert.ok(data !== undefined);
+    assert.equal(data.code, "CONFIRMATION_REQUIRED");
+    assert.ok(data.confirmation !== undefined);
+    assert.equal(typeof data.confirmation.token, "string");
+    return data.confirmation;
+  }
+
+  const invalid = (call: Promise<unknown>, reason: string) =>
+    refused(call, 400, reason, { code: "CONFIRMATION_INVALID" });
+
+  it("answers a write sent with ask 428 with a token, and asks the provider to run nothing", async () => {
+    const { handlers, provider, calls } = await openedOn();
+    const before = calls.length;
+    const offer = await asked(handlers.runQuery({ ...write, confirmation: "ask" }, idle));
+    assert.deepEqual({ ...offer, token: "<token>", expiresAt: "<expiry>" }, ASKED);
+    assert.equal(calls.length, before, "no provider is built for a request the gate answers");
+    assert.deepEqual(provider.calls, []);
+  });
+
+  it("runs a write sent with no field in advisory, marked unconfirmed with one warning, and asks in required", async () => {
+    const { handlers, provider } = await openedOn();
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void lines.push(args.join(" "));
+    let page: QueryPage;
+    try {
+      page = await handlers.runQuery(write, idle);
+    } finally {
+      console.warn = warn;
+    }
+    assert.equal(page.confirmation, "unconfirmed");
+    assert.equal(ran(provider), true);
+    assert.equal(RUN_CONFIRMATION_USER, "vscode-extension");
+    assert.equal(lines.length, 1);
+    assert.match(
+      lines[0],
+      /\{route=vscode\/query\/run, type=postgres, user=vscode-extension\} A statement that needs a confirmation ran without one$/,
+    );
+    assert.equal("confirmation" in (await handlers.runQuery(RUN, idle)), false, "a read is not marked");
+
+    process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    provider.calls.length = 0;
+    await asked(handlers.runQuery(write, idle));
+    assert.equal(ran(provider), false);
+  });
+
+  it("runs a write once with the token query/target minted for it, and refuses the same token again", async () => {
+    const { handlers, provider } = await openedOn();
+    const token = await tokenFor(handlers, WRITE);
+    const page = await handlers.runQuery({ ...write, confirmation: { token } }, idle);
+    assert.equal("confirmation" in page, false);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token } }, idle),
+      "this confirmation has already been used",
+    );
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+  });
+
+  it("refuses a token another child, another statement, another connection or another catalog was minted for, and a fabricated one", async () => {
+    const { handlers, provider } = await openedOn(
+      fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, catalogSessions: true }) as ProviderCapabilities }),
+    );
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", host: "db2.internal" }, posture: POSTURE });
+    provider.calls.length = 0;
+
+    const other = await openedOn();
+    const fromAnotherChild = await tokenFor(other.handlers, WRITE);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: fromAnotherChild } }, idle),
+      "this confirmation could not be verified",
+    );
+
+    const forAnotherStatement = await tokenFor(handlers, "DELETE FROM u");
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: forAnotherStatement } }, idle),
+      "this confirmation was issued for another statement",
+    );
+
+    const onAnotherConnection = await tokenFor(handlers, WRITE, "c2");
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: onAnotherConnection } }, idle),
+      "this confirmation was issued for another connection",
+    );
+
+    const inAnotherCatalog = await tokenFor(handlers, WRITE, "c1", "sales");
+    await invalid(
+      handlers.runQuery({ ...write, catalog: "billing", confirmation: { token: inAnotherCatalog } }, idle),
+      "this confirmation was issued for another connection",
+    );
+
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token: crypto.randomUUID() } }, idle),
+      "this confirmation could not be verified",
+    );
+    assert.equal(ran(provider), false);
+  });
+
+  it("asks for a production connection's name whatever the request sends, and runs only with it", async () => {
+    const name = crypto.randomUUID();
+    const { handlers, provider } = await openedOn(fakeProvider(), { ...WIRE, name, environment: "production" });
+    const typedAsk = { type: "connection-name", expected: name, targets: [] };
+    for (const mode of ["advisory", "required"]) {
+      process.env.LIBREDB_RUN_CONFIRMATION = mode;
+      for (const confirmation of ["ask", undefined]) {
+        // oxlint-disable-next-line no-await-in-loop -- each mode is set in the environment before its run.
+        const offer = await asked(handlers.runQuery({ ...write, confirmation }, idle), CONFIRMATION_TYPED_MESSAGE);
+        assert.deepEqual(offer.typedConfirmation, typedAsk);
+      }
+    }
+    delete process.env.LIBREDB_RUN_CONFIRMATION;
+    const token = await tokenFor(handlers, WRITE);
+    const again = await asked(
+      handlers.runQuery({ ...write, confirmation: { token } }, idle),
+      CONFIRMATION_TYPED_MESSAGE,
+    );
+    assert.notEqual(again.token, token);
+    await invalid(
+      handlers.runQuery({ ...write, confirmation: { token, typed: crypto.randomUUID() } }, idle),
+      "the typed confirmation does not match what this statement asks to be typed",
+    );
+    assert.equal(ran(provider), false);
+    // The first token was spent by neither refusal.
+    await handlers.runQuery({ ...write, confirmation: { token, typed: name } }, idle);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 1);
+    await handlers.runQuery({ ...RUN, confirmation: "ask" }, idle);
+    assert.equal(methodsOf(provider).filter((method) => method === "query").length, 2);
+  });
+
+  it("classifies a page read like any run", async () => {
+    const { handlers, provider } = await openedOn();
+    await asked(handlers.runQuery({ ...write, offset: 2, confirmation: "ask" }, idle));
+    assert.equal(ran(provider), false);
+  });
+
+  it("refuses a malformed field with the route's sentence and no data, and runs nothing", async () => {
+    const { handlers, provider } = await openedOn();
+    for (const confirmation of [{ token: 1 }, "yes"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
+      await refused(handlers.runQuery({ ...RUN, confirmation }, idle), 400, CONFIRMATION_FIELD_MESSAGE);
+    }
+    assert.equal(ran(provider), false);
+  });
+
+  it("refuses an unreadable run confirmation setting by name, and runs nothing", async () => {
+    const { handlers, provider } = await openedOn();
+    process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+    await assert.rejects(
+      handlers.runQuery(RUN, idle),
+      (error) => error instanceof DatabaseConfigError && error.message === INVALID_RUN_CONFIRMATION_SETTING,
+    );
+    assert.equal(ran(provider), false);
+  });
+
+  it("keeps a refusal of the bounds or the text bound whatever confirmation holds", async () => {
+    const { handlers, calls } = backend();
+    await handlers.openConnection({ connection: WIRE, posture: POSTURE });
+    await handlers.openConnection({ connection: { ...WIRE, id: "c2", type: "influxdb" }, posture: POSTURE });
+    const before = calls.length;
+    await refused(
+      handlers.runQuery({ ...write, limit: -1, confirmation: "yes" }, idle),
+      -32602,
+      "options.limit must be a non-negative integer",
+    );
+    const bound = consoleTextByteLimit("influxdb");
+    assert.ok(bound !== undefined);
+    const text = "x".repeat(bound + 1);
+    const sentence = consoleTextOverLimit(text, bound);
+    assert.ok(sentence !== undefined);
+    await refused(
+      handlers.runQuery({ ...RUN, connectionId: "c2", statement: text, confirmation: { token: 1 } }, idle),
+      413,
+      sentence,
+      { code: "TEXT_TOO_LARGE" },
+    );
+    assert.equal(calls.length, before);
   });
 });
 
 describe("objects/selectStatement", () => {
+  composeHostCore();
+
   const ORDERS = { path: ["public", "orders"], name: "orders", kind: "table" };
   const COLUMNS: ColumnSchema[] = [
     { name: "id", type: "integer", nullable: false, isPrimary: true },
@@ -828,16 +1536,25 @@ describe("objects/selectStatement", () => {
   it("answers the generator's statement and describes nothing where no previewProjection is declared", async () => {
     const { handlers, provider } = await on(SQL_CAPS, { describeObject: async () => ({}) as ObjectDetail });
     // The PostgreSQL rule quotes only a name outside the lowercase bare set.
-    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }), {
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }, idle), {
       statement: "SELECT * FROM public.orders;",
     });
     assert.deepEqual(methodsOf(provider), ["getCapabilities"]);
   });
 
+  it("answers the statement in its provider's type's quoting, never the port its declaration names", async () => {
+    // SQL_CAPS declares PostgreSQL's port; only the provider's type can write MySQL's backticks.
+    const { handlers } = await openedOn(fakeProvider({ type: "mysql", getCapabilities: () => SQL_CAPS }));
+    const object = { path: ["app", "Order Items"], name: "Order Items", kind: "table" };
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object }, idle), {
+      statement: "SELECT * FROM app.`Order Items`;",
+    });
+  });
+
   it("names the described columns where a previewProjection is declared on a kind with columns", async () => {
     const detail = { path: ORDERS.path, columns: COLUMNS, indexes: [], foreignKeys: [] };
     const { handlers, provider } = await on(PROJECTED, { describeObject: async () => detail });
-    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }), {
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object: ORDERS }, idle), {
       statement: 'SELECT id, "Total" FROM public.orders;',
     });
     assert.deepEqual(
@@ -846,11 +1563,54 @@ describe("objects/selectStatement", () => {
     );
   });
 
+  it("the columns are read through the host core's tree call, under the request's cancellation", async () => {
+    const detail = { path: ORDERS.path, columns: COLUMNS, indexes: [], foreignKeys: [] };
+    const actions: string[] = [];
+    const { handlers, calls } = await on(PROJECTED, { describeObject: async () => detail });
+    await withHostCore(
+      (real) => ({
+        ...real,
+        treeCall: (session, request, ctx, ports) => {
+          actions.push(request.action);
+          return real.treeCall(session, request, ctx, ports);
+        },
+      }),
+      () => handlers.selectStatement({ connectionId: "c1", object: ORDERS }, idle),
+    );
+    assert.deepEqual(actions, ["describe"]);
+    assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, POSTURE]);
+
+    const pending = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<void>();
+    const held = await on(PROJECTED, {
+      describeObject: () => {
+        reached.resolve();
+        return pending.promise;
+      },
+    });
+    const source = new CancellationTokenSource();
+    const answering = held.handlers.selectStatement({ connectionId: "c1", object: ORDERS }, source.token);
+    await reached.promise;
+    source.cancel();
+    await answeredAs(answering, new QueryCancelledError("The query was cancelled."));
+    pending.reject(new Error(crypto.randomUUID()));
+    await pending.promise.catch(() => undefined);
+
+    const gone = new CancellationTokenSource();
+    gone.cancel();
+    const fresh = await on(PROJECTED, { describeObject: async () => detail });
+    await answeredAs(
+      fresh.handlers.selectStatement({ connectionId: "c1", object: ORDERS }, gone.token),
+      Object.assign(new QueryCancelledError("The query was cancelled."), { outcome: "not-sent" as const }),
+    );
+    assert.equal(methodsOf(fresh.provider).includes("describeObject"), false);
+  });
+
   it("answers a JSON command addressed by the declared levels", async () => {
     const { handlers } = await on(JSON_CAPS);
     const object = { path: ["shop", "orders"], name: "orders", kind: "collection" };
     const expected = { database: "shop", collection: "orders", operation: "find", filter: {}, options: { limit: 50 } };
-    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object }), {
+    assert.deepEqual(await handlers.selectStatement({ connectionId: "c1", object }, idle), {
       statement: JSON.stringify(expected, null, 2),
     });
   });
@@ -860,12 +1620,14 @@ describe("objects/selectStatement", () => {
     const object = { path: ["orders"], name: "orders", kind: "collection" };
     let sentence = "";
     try {
-      generateTableQuery(object.path, JSON_CAPS);
+      generateTableQuery(object.path, "mongodb", JSON_CAPS);
     } catch (error) {
       sentence = (error as Error).message;
     }
     assert.notEqual(sentence, "");
-    await refused(handlers.selectStatement({ connectionId: "c1", object }), 500, sentence, { code: "INTERNAL_ERROR" });
+    await refused(handlers.selectStatement({ connectionId: "c1", object }, idle), 500, sentence, {
+      code: "INTERNAL_ERROR",
+    });
   });
 
   it("refuses an object it cannot read, naming the field, before resolving a provider", async () => {
@@ -879,17 +1641,21 @@ describe("objects/selectStatement", () => {
     ];
     await Promise.all(
       cases.map(([object, message]) =>
-        refused(handlers.selectStatement({ connectionId: "c1", object }), -32602, message),
+        refused(handlers.selectStatement({ connectionId: "c1", object }, idle), -32602, message),
       ),
     );
-    await refused(handlers.selectStatement({ object: ORDERS }), -32602, "connectionId must be a non-empty string");
+    await refused(
+      handlers.selectStatement({ object: ORDERS }, idle),
+      -32602,
+      "connectionId must be a non-empty string",
+    );
     assert.equal(calls.length, before);
   });
 
   it("refuses a connection this backend has not opened", async () => {
     const { handlers } = await on(SQL_CAPS);
     await refused(
-      handlers.selectStatement({ connectionId: "c9", object: ORDERS }),
+      handlers.selectStatement({ connectionId: "c9", object: ORDERS }, idle),
       404,
       'No connection with id "c9" is open in this LibreDB backend.',
       { code: "CONNECTION_NOT_OPEN" },
@@ -898,6 +1664,7 @@ describe("objects/selectStatement", () => {
 });
 
 describe("query/target", () => {
+  restoresRunConfirmationMode();
   const TEXT = "select 1;\nselect 2;";
   const NONE = { start: 0, end: 0 };
   const target = (handlers: BackendHandlers, text: string, cursor: number, selection: unknown = NONE) =>
@@ -923,8 +1690,8 @@ describe("query/target", () => {
 
   it("answers the cursor's statement, without its terminator, and where it sits", async () => {
     const { handlers } = await on();
-    const first = { statement: "select 1", range: { start: 0, end: 8 }, dangerous: false };
-    const second = { statement: "select 2", range: { start: 10, end: 18 }, dangerous: false };
+    const first = { statement: "select 1", range: { start: 0, end: 8 }, confirmation: null };
+    const second = { statement: "select 2", range: { start: 10, end: 18 }, confirmation: null };
     assert.deepEqual(await target(handlers, TEXT, 3), first);
     // At the end of the first statement, and on the newline after its terminator, the first is the one before.
     assert.deepEqual(await target(handlers, TEXT, 8), first);
@@ -939,51 +1706,118 @@ describe("query/target", () => {
     assert.deepEqual(await target(handlers, TEXT, 0, { start: 10, end: 18 }), {
       statement: "select 2",
       range: { start: 10, end: 18 },
-      dangerous: false,
+      confirmation: null,
     });
     const spaced = "select 1;\n   \nselect 2;";
     assert.deepEqual(await target(handlers, spaced, 3, { start: 10, end: 13 }), {
       statement: "select 1",
       range: { start: 0, end: 8 },
-      dangerous: false,
+      confirmation: null,
     });
   });
 
   it("answers an empty statement with no range for a text that holds no code", async () => {
     const { handlers } = await on();
-    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), { statement: "", dangerous: false });
-    assert.deepEqual(await target(handlers, "", 0), { statement: "", dangerous: false });
+    assert.deepEqual(await target(handlers, "-- only a note\n/* and this */", 0), {
+      statement: "",
+      confirmation: null,
+    });
+    assert.deepEqual(await target(handlers, "", 0), { statement: "", confirmation: null });
   });
 
   it("answers the whole text with no range in an editor language other than sql, whatever the cursor", async () => {
     const { handlers } = await on({ ...SQL_CAPS, queryLanguage: "json" } as ProviderCapabilities);
     const text = '{ "collection": "orders" }';
-    assert.deepEqual(await target(handlers, text, 0), { statement: text, dangerous: false });
-    assert.deepEqual(await target(handlers, text, 12), { statement: text, dangerous: false });
+    assert.deepEqual(await target(handlers, text, 0), { statement: text, confirmation: null });
+    assert.deepEqual(await target(handlers, text, 12), { statement: text, confirmation: null });
   });
 
-  it("flags a target the web editor would ask about, and only that one", async () => {
+  it("offers a confirmation for a target the gate asks about, and only that one", async () => {
     const { handlers } = await on();
     const text = "select 1;\ndelete from t;";
     assert.deepEqual(await target(handlers, text, 3), {
       statement: "select 1",
       range: { start: 0, end: 8 },
-      dangerous: false,
+      confirmation: null,
     });
-    assert.deepEqual(await target(handlers, text, 12), {
+    assert.deepEqual(shaped(await target(handlers, text, 12)), {
       statement: "delete from t",
       range: { start: 10, end: 23 },
-      dangerous: true,
+      confirmation: ASKED,
     });
   });
 
-  it("flags a selection that holds a write behind a read, which the gate splits as the runner does", async () => {
+  it("offers a confirmation for a selection that holds a write behind a read, which the gate splits as the runner does", async () => {
     const { handlers } = await on();
-    assert.deepEqual(await target(handlers, "select 1; drop table t", 0, { start: 0, end: 22 }), {
+    assert.deepEqual(shaped(await target(handlers, "select 1; drop table t", 0, { start: 0, end: 22 })), {
       statement: "select 1; drop table t",
       range: { start: 0, end: 22 },
-      dangerous: true,
+      confirmation: ASKED,
     });
+  });
+
+  it("offers an unreadable run as unreadable", async () => {
+    const { handlers } = await on();
+    const text = "SELECT E'\\'; DELETE FROM t";
+    const answer = shaped(await target(handlers, text, 0, { start: 0, end: text.length }));
+    assert.deepEqual(answer.confirmation, { ...ASKED, unreadable: true });
+  });
+
+  it("asks for a production connection's name on a write, and nothing on a read", async () => {
+    const name = crypto.randomUUID();
+    const { handlers } = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), {
+      ...WIRE,
+      name,
+      environment: "production",
+    });
+    assert.deepEqual(shaped(await target(handlers, "DELETE FROM t", 0)).confirmation, {
+      ...ASKED,
+      typedConfirmation: { type: "connection-name", expected: name, targets: [] },
+    });
+    assert.equal((await target(handlers, "SELECT 1", 0)).confirmation, null);
+  });
+
+  it("asks for the row's text on an etcd lease revoke off production", async () => {
+    const lease = "694d77aa9e38260f";
+    const etcd = await openedOn(
+      fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
+      { ...WIRE, type: "etcd", environment: "development" },
+    );
+    const revoke = `lease revoke ${lease}`;
+    assert.deepEqual(shaped(await target(etcd.handlers, revoke, 0)).confirmation, {
+      ...ASKED,
+      typedConfirmation: { type: "text", expected: lease },
+    });
+  });
+
+  it("refuses a write on a nameless production connection with the route's sentence and no data", async () => {
+    const { handlers } = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), {
+      ...WIRE,
+      name: "",
+      environment: "production",
+    });
+    await refused(target(handlers, "DELETE FROM t", 0), 400, TYPED_NAME_MISSING_REFUSAL);
+  });
+
+  it("refuses a catalog that is present and not a non-empty string", async () => {
+    const { handlers } = await on();
+    for (const catalog of ["", 3]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is checked on its own.
+      await refused(
+        handlers.runTarget({ connectionId: "c1", text: TEXT, selection: NONE, cursor: 0, catalog }),
+        -32602,
+        "catalog must be a non-empty string",
+      );
+    }
+  });
+
+  it("refuses an unreadable run confirmation setting by name", async () => {
+    const { handlers } = await on();
+    process.env.LIBREDB_RUN_CONFIRMATION = "strict";
+    await assert.rejects(
+      target(handlers, "select 1", 0),
+      (error) => error instanceof DatabaseConfigError && error.message === INVALID_RUN_CONFIRMATION_SETTING,
+    );
   });
 
   it("reads the target under the connection's type", async () => {
@@ -992,8 +1826,8 @@ describe("query/target", () => {
     const whole = { start: 0, end: text.length };
     const postgres = await on();
     const mysql = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "mysql" });
-    assert.equal((await target(postgres.handlers, text, 0, whole)).dangerous, true);
-    assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, false);
+    assert.notEqual((await target(postgres.handlers, text, 0, whole)).confirmation, null);
+    assert.equal((await target(mysql.handlers, text, 0, whole)).confirmation, null);
   });
 
   it("reads an EXPLAIN chain as long as the analyze route's bound without running out of stack", async function () {
@@ -1005,19 +1839,44 @@ describe("query/target", () => {
     const { handlers } = await on();
     const write = `${"EXPLAIN ANALYZE ".repeat(62_500)}DELETE FROM t`;
     const read = `${"EXPLAIN ANALYZE ".repeat(62_500)}SELECT 1`;
-    assert.equal((await target(handlers, write, 0, { start: 0, end: write.length })).dangerous, true);
-    assert.equal((await target(handlers, read, 0, { start: 0, end: read.length })).dangerous, false);
+    assert.notEqual((await target(handlers, write, 0, { start: 0, end: write.length })).confirmation, null);
+    assert.equal((await target(handlers, read, 0, { start: 0, end: read.length })).confirmation, null);
   });
 
-  it("flags a non-SQL target by its engine's own vocabulary", async () => {
+  it("offers a confirmation for a non-SQL target by its engine's own vocabulary", async () => {
     const mongo = await openedOn(
       fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
       { ...WIRE, type: "mongodb" },
     );
     const drop = '{ "collection": "orders", "operation": "deleteMany", "filter": {} }';
-    assert.deepEqual(await target(mongo.handlers, drop, 0), { statement: drop, dangerous: true });
+    assert.deepEqual(shaped(await target(mongo.handlers, drop, 0)), { statement: drop, confirmation: ASKED });
     const find = '{ "collection": "orders", "operation": "find" }';
-    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, dangerous: false });
+    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find, confirmation: null });
+  });
+
+  it("offers a confirmation for a statement a row's claim would spare when Studio's review record does not list the claim", async () => {
+    // A row that decides alone is the gate's whole answer only where the record lists its claim
+    // (`CONFIRMATION_CLAIM_REVIEW`); this one is planted under trino, whose text is SQL, so the DROP is read as SQL.
+    const table = NON_SQL_DESTRUCTIVE_VOCABULARY as unknown as Record<string, unknown>;
+    assert.equal(Object.hasOwn(table, "trino"), false);
+    table.trino = { operations: new Set<string>(), read: () => [], decidesAlone: true };
+    try {
+      const trino = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "trino" });
+      const drop = "DROP TABLE t";
+      assert.deepEqual(shaped(await target(trino.handlers, drop, 0)), {
+        statement: drop,
+        range: { start: 0, end: drop.length },
+        confirmation: ASKED,
+      });
+    } finally {
+      delete table.trino;
+    }
+  });
+
+  it("reads a listed exempt form as exempt", async () => {
+    const snowflake = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "snowflake" });
+    const session = "ALTER SESSION SET QUERY_TAG = 'x'";
+    assert.equal((await target(snowflake.handlers, session, 0)).confirmation, null);
   });
 
   it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {
@@ -1064,31 +1923,51 @@ describe("query/target", () => {
     );
   });
 
-  it("passes a provider's error on as it is", async () => {
+  it("answers a provider's error as toResponseError answers it with the connection's scrub", async () => {
     const broken = new Error("capabilities unreadable");
     const { handlers, provider } = await on();
     (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
       throw broken;
     };
-    await assert.rejects(target(handlers, TEXT, 0), (error) => error === broken);
+    await answeredAs(target(handlers, TEXT, 0), broken);
   });
 });
 
 describe("query/cancel", () => {
+  composeHostCore();
+
   it("answers whether the engine stopped the statement", async () => {
     let stopped = true;
     const provider = fakeProvider({ cancelQuery: async () => stopped });
     const { handlers } = await openedOn(provider);
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: true });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: true });
     assert.deepEqual(provider.calls.at(-1), ["cancelQuery", "q-7"]);
     stopped = false;
-    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }), { cancelled: false });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: false });
+  });
+
+  it("cancelQuery reaches the provider through the host's cancel call", async () => {
+    const provider = fakeProvider({ cancelQuery: async (id: string) => id === "q-7" });
+    const { handlers } = await openedOn(provider);
+    const source = readFileSync(path.join(__dirname, "..", "..", "src", "backend", "handlers.ts"), "utf8");
+
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle), { cancelled: true });
+    assert.deepEqual(await handlers.cancelQuery({ connectionId: "c1", queryId: "q-8" }, idle), { cancelled: false });
+    assert.deepEqual(
+      provider.calls.filter(([method]) => method === "cancelQuery"),
+      [
+        ["cancelQuery", "q-7"],
+        ["cancelQuery", "q-8"],
+      ],
+    );
+    assert.match(source, /await cancelEditorRun\(provider, queryId, /);
+    assert.doesNotMatch(source, /provider\.cancelQuery\(/);
   });
 
   it("refuses a provider that cannot cancel (CANCEL_UNSUPPORTED)", async () => {
     const { handlers } = await openedOn();
     await refused(
-      handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }),
+      handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle),
       400,
       "Query cancellation is not supported for this database type",
       { code: "CANCEL_UNSUPPORTED" },
@@ -1102,21 +1981,86 @@ describe("query/cancel", () => {
       cancelQuery: async () => true,
     });
     const { handlers, calls } = await openedOn(server);
-    await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" });
+    await handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, idle);
     assert.deepEqual(server.calls, [["cancelQuery", "q-7"]]);
-    assert.deepEqual(calls.at(-1), ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: true }]);
+    const [method, connection, options, posture, wait] = calls.at(-1) as unknown[];
+    assert.deepEqual(
+      [method, connection, options, posture],
+      ["getOrCreateProvider", REVIVED, {}, { allowExternalFileAccess: true }],
+    );
+    assert.ok((wait as { signal: unknown }).signal instanceof AbortSignal);
   });
 
   it("refuses a connection this backend has not opened, and params it cannot read", async () => {
     const { handlers } = await openedOn();
     await refused(
-      handlers.cancelQuery({ connectionId: "c9", queryId: "q-7" }),
+      handlers.cancelQuery({ connectionId: "c9", queryId: "q-7" }, idle),
       404,
       'No connection with id "c9" is open in this LibreDB backend.',
       { code: "CONNECTION_NOT_OPEN" },
     );
-    await refused(handlers.cancelQuery({ connectionId: "c1" }), -32602, "queryId must be a non-empty string");
-    await refused(handlers.cancelQuery({ queryId: "q-7" }), -32602, "connectionId must be a non-empty string");
+    await refused(handlers.cancelQuery({ connectionId: "c1" }, idle), -32602, "queryId must be a non-empty string");
+    await refused(handlers.cancelQuery({ queryId: "q-7" }, idle), -32602, "connectionId must be a non-empty string");
+  });
+
+  it("query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers", async () => {
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+
+    // While the provider opens: the cancel stops waiting, answers not-sent and calls no cancel.
+    const opening = await openedOn(fakeProvider({ cancelQuery: async () => true }));
+    let reached: () => void = () => {};
+    const opened = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    opening.factory.getOrCreateProvider = async (...args) => {
+      const wait = args[3] as { signal: AbortSignal };
+      reached();
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    };
+    const whileOpening = new CancellationTokenSource();
+    const leftOpening = opening.handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, whileOpening.token);
+    await opened;
+    whileOpening.cancel();
+    await answeredAs(leftOpening, notSent);
+    assert.deepEqual(opening.provider.calls, []);
+
+    // While the engine answers: the cancel stops waiting at once, and the late answer is not logged as a failure.
+    let answer: (stopped: boolean) => void = () => {};
+    const provider = fakeProvider({ cancelQuery: () => new Promise<boolean>((resolve) => (answer = resolve)) });
+    const { handlers } = await openedOn(provider);
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => void lines.push(args.join(" "));
+    try {
+      const whileAnswering = new CancellationTokenSource();
+      const leftAnswering = handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, whileAnswering.token);
+      await settled();
+      assert.deepEqual(provider.calls, [["cancelQuery", "q-7"]]);
+      whileAnswering.cancel();
+      await answeredAs(leftAnswering, new QueryCancelledError("The query was cancelled."));
+      answer(true);
+      await settled();
+      assert.deepEqual(lines, []);
+    } finally {
+      console.warn = warn;
+    }
+  });
+
+  it("query/cancel with a token already cancelled calls nothing", async () => {
+    const provider = fakeProvider({ cancelQuery: async () => true });
+    const { handlers } = await openedOn(provider);
+    const source = new CancellationTokenSource();
+    source.cancel();
+    const notSent = Object.assign(new QueryCancelledError("The query was cancelled.", "postgres"), {
+      outcome: "not-sent" as const,
+    });
+
+    await answeredAs(handlers.cancelQuery({ connectionId: "c1", queryId: "q-7" }, source.token), notSent);
+    assert.deepEqual(provider.calls, []);
   });
 });
 
@@ -1185,13 +2129,274 @@ describe("toResponseError", () => {
 
   it("puts only the defined ones of retryable, details and fixStatement beside a database error's code", () => {
     const bare = toResponseError(new QueryError("syntax error", "postgres"));
-    assert.deepEqual(Object.keys(bare.data ?? {}), ["code"]);
+    assert.deepEqual(Object.keys(bare.data ?? {}), ["code", "kind", "outcome"]);
     const timeout = toResponseError(new TimeoutError("Query timeout after 60000ms", "postgres", 60000));
-    assert.deepEqual(timeout.data, { code: "TIMEOUT_ERROR", retryable: true });
+    assert.deepEqual(timeout.data, { code: "TIMEOUT_ERROR", retryable: true, kind: "timeout", outcome: "unknown" });
+  });
+
+  it("puts a database error's kind and outcome beside its code", async () => {
+    const lost = toResponseError(new ConnectionError("Connection terminated unexpectedly", "postgres"));
+    assert.deepEqual(lost.data, {
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+      outcome: "unknown",
+    });
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError("connect ECONNREFUSED", "postgres")),
+    ).catch((error: unknown) => error);
+    assert.deepEqual(toResponseError(failed).data, {
+      code: "CONNECTION_ERROR",
+      retryable: true,
+      kind: "connection",
+      outcome: "not-sent",
+    });
+    assert.deepEqual(toResponseError(new RefusedBeforeSendError("refused before sending", "postgres")).data, {
+      code: "QUERY_ERROR",
+      kind: "refused-before-send",
+      outcome: "not-sent",
+    });
+  });
+
+  it("an internal error and the extension's own refusals carry no kind and no outcome", () => {
+    for (const error of [
+      toResponseError(new Error("boom")),
+      toResponseError("boom"),
+      toResponseError(refusal(404, "CONNECTION_NOT_OPEN", "not open")),
+      toResponseError(refusal(413, "TEXT_TOO_LARGE", "too large")),
+    ]) {
+      const data = (error.data ?? {}) as object;
+      assert.equal(Object.hasOwn(data, "kind"), false);
+      assert.equal(Object.hasOwn(data, "outcome"), false);
+    }
+    assert.deepEqual(toResponseError(new Error("boom")).data, { code: "INTERNAL_ERROR" });
+  });
+
+  it("without a scrub no data carries a SQLSTATE", () => {
+    const missing = new QueryError('relation "orders" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    assert.equal(Object.hasOwn(toResponseError(missing).data ?? {}, "sqlState"), false);
+  });
+});
+
+describe("toResponseError with the connection's scrub", () => {
+  const password = crypto.randomUUID();
+  const scrub = providerTextScrub({ ...REVIVED, password }, "any");
+
+  it("a withheld error keeps its status, code, kind, outcome and retryable, and its message is the withheld sentence", async () => {
+    const failed = await connectPhase(() =>
+      Promise.reject(new ConnectionError(`could not connect as ${password}`, "postgres")),
+    ).catch((error: unknown) => error);
+    const clean = await connectPhase(() => Promise.reject(new ConnectionError("could not connect", "postgres"))).catch(
+      (error: unknown) => error,
+    );
+    const withheld = toResponseError(failed, scrub);
+    const answered = toResponseError(clean, scrub);
+    assert.equal(withheld.code, answered.code);
+    assert.deepEqual(withheld.data, answered.data);
+    assert.equal(withheld.message, withheldErrorMessage("ConnectionError"));
+
+    const detailed = toResponseError(
+      new QueryError("syntax error", "postgres", "SELECT 1", 4, `near ${password}`),
+      scrub,
+    );
+    assert.equal(detailed.code, 400);
+    assert.deepEqual(detailed.data, {
+      code: "QUERY_ERROR",
+      details: { position: 4 },
+      kind: "query",
+      outcome: "unknown",
+    });
+    const fix = toResponseError(
+      new AuthenticationError("denied", "postgres", { fixStatement: `ALTER ROLE x PASSWORD '${password}'` }),
+      scrub,
+    );
+    assert.equal(fix.code, 401);
+    assert.deepEqual(fix.data, { code: "AUTH_ERROR", kind: "authentication", outcome: "unknown" });
+    const plain = toResponseError(new Error(`boom ${password}`), scrub);
+    assert.equal(plain.code, 500);
+    assert.deepEqual(plain.data, { code: "INTERNAL_ERROR" });
+    assert.equal(plain.message, withheldErrorMessage("Error"));
+    for (const error of [withheld, detailed, fix, plain]) {
+      assert.equal(JSON.stringify({ message: error.message, data: error.data }).includes(password), false);
+    }
+  });
+
+  it("a database error's data carries the SQLSTATE its record carries, after its outcome", () => {
+    const missing = new QueryError('relation "orders" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const answered = toResponseError(missing, scrub);
+    assert.equal(answered.code, 400);
+    assert.deepEqual(answered.data, { code: "QUERY_ERROR", kind: "query", outcome: "unknown", sqlState: "42P01" });
+    assert.deepEqual(Object.keys(answered.data ?? {}), ["code", "kind", "outcome", "sqlState"]);
+  });
+
+  it("a withheld error's data carries no SQLSTATE", () => {
+    const missing = new QueryError(`relation "orders" does not exist for ${password}`, "postgres");
+    missing.sqlstate = "42P01";
+    const withheld = toResponseError(missing, scrub);
+    assert.equal(withheld.message, withheldErrorMessage("QueryError"));
+    assert.deepEqual(withheld.data, { code: "QUERY_ERROR", kind: "query", outcome: "unknown" });
+  });
+
+  it("an internal error and the extension's own refusals carry no SQLSTATE", () => {
+    for (const error of [
+      toResponseError(new Error("boom"), scrub),
+      toResponseError("boom", scrub),
+      toResponseError(refusal(404, "CONNECTION_NOT_OPEN", "not open"), scrub),
+      toResponseError(refusal(413, "TEXT_TOO_LARGE", "too large"), scrub),
+    ]) {
+      assert.equal(Object.hasOwn(error.data ?? {}, "sqlState"), false);
+    }
+  });
+
+  it("a clean error and a ResponseError pass unchanged", () => {
+    const params = invalidParams("connectionId must be a non-empty string");
+    assert.equal(toResponseError(params, scrub), params);
+    const error = new QueryError("syntax error", "postgres", "SELECT 1", 4, "near SELEC");
+    const scrubbed = toResponseError(error, scrub);
+    const plain = toResponseError(error);
+    assert.equal(scrubbed.code, plain.code);
+    assert.equal(scrubbed.message, plain.message);
+    assert.deepEqual(scrubbed.data, plain.data);
+  });
+});
+
+describe("provider errors that hold the connection's credential", () => {
+  composeHostCore();
+
+  const password = crypto.randomUUID();
+  const wire = { ...WIRE, password };
+
+  /** Asserts the call answers a ResponseError that holds no form of the password, with the clean answer's status and code. */
+  async function withheldAnswer(call: Promise<unknown>, clean: unknown): Promise<void> {
+    const expected = toResponseError(clean);
+    await assert.rejects(call, (error) => {
+      assert.ok(error instanceof ResponseError, "expected a ResponseError");
+      assert.equal(error.code, expected.code);
+      assert.equal((error.data as BackendErrorData).code, (expected.data as BackendErrorData).code);
+      assert.equal(error.message, withheldErrorMessage((clean as Error).name));
+      assert.equal(JSON.stringify({ message: error.message, data: error.data }).includes(password), false, "a field");
+      return true;
+    });
+  }
+
+  /** The handlers after an open of the password's record on `provider`. */
+  async function openedHolding(over: ProviderSurface = {}) {
+    const provider = fakeProvider(over);
+    const made = backend(provider);
+    await made.handlers.openConnection({ connection: wire, posture: POSTURE });
+    return made;
+  }
+
+  it("connection/test answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = backend(fakeProvider(), {
+      testConnection: async () => {
+        throw new ConnectionError(`password authentication failed for ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(
+      handlers.testConnection({ connection: wire, posture: POSTURE }),
+      new ConnectionError("password authentication failed", "postgres"),
+    );
+  });
+
+  it("connection/open answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = backend(fakeProvider(), {
+      getOrCreateProvider: async () => {
+        throw new AuthenticationError(`password authentication failed for ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(
+      handlers.openConnection({ connection: wire, posture: POSTURE }),
+      new AuthenticationError("password authentication failed", "postgres"),
+    );
+  });
+
+  const held = () => new PermissionDeniedError(`permission denied for ${password}`, "postgres");
+  const clean = new PermissionDeniedError("permission denied", "postgres");
+  const reject = async () => {
+    throw held();
+  };
+
+  it("objects/listContainers answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ listContainers: reject });
+    await withheldAnswer(handlers.listContainers({ connectionId: "c1" }, idle), clean);
+  });
+
+  it("objects/countObjects answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ countObjects: reject });
+    await withheldAnswer(handlers.countObjects({ connectionId: "c1", container: ["app"] }, idle), clean);
+  });
+
+  it("objects/listObjects answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ listObjects: reject });
+    await withheldAnswer(handlers.listObjects({ connectionId: "c1", container: ["app"], kind: "table" }, idle), clean);
+  });
+
+  it("objects/describeObject answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ describeObject: reject });
+    await withheldAnswer(
+      handlers.describeObject({ connectionId: "c1", path: ["app", "t"], kind: "table" }, idle),
+      clean,
+    );
+  });
+
+  it("query/run answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({
+      query: async () => {
+        throw new QueryError(`syntax error near ${password}`, "postgres");
+      },
+    });
+    await withheldAnswer(handlers.runQuery(RUN, idle), new QueryError("syntax error", "postgres"));
+  });
+
+  it("query/cancel answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers } = await openedHolding({ cancelQuery: reject });
+    await withheldAnswer(handlers.cancelQuery({ connectionId: "c1", queryId: "q-1" }, idle), clean);
+  });
+
+  it("objects/selectStatement answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers, provider } = await openedHolding();
+    (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
+      throw held();
+    };
+    await withheldAnswer(
+      handlers.selectStatement({ connectionId: "c1", object: { path: ["app", "t"], kind: "table", name: "t" } }, idle),
+      clean,
+    );
+  });
+
+  it("query/target answers a provider error that holds the connection's credential withheld, with its own status and code", async () => {
+    const { handlers, provider } = await openedHolding();
+    (provider as unknown as { getCapabilities: () => never }).getCapabilities = () => {
+      throw held();
+    };
+    await withheldAnswer(
+      handlers.runTarget({ connectionId: "c1", text: "select 1", selection: { start: 0, end: 0 }, cursor: 0 }),
+      clean,
+    );
+  });
+
+  it("query/run answers a warning that holds the credential withheld", async () => {
+    const { handlers } = await openedHolding({
+      query: async () =>
+        resultOf(rowsOf(1), {
+          warnings: [{ message: `a notice about ${password}`, code: "01000" }, { message: "a clean notice" }],
+        }),
+    });
+    const answer = await handlers.runQuery(RUN, idle);
+    assert.deepEqual(answer.warnings, [
+      { message: PROVIDER_TEXT_WITHHELD, code: "01000" },
+      { message: "a clean notice" },
+    ]);
   });
 });
 
 describe("registerHandlers", () => {
+  // A tree call reads through the host core's tree call.
+  composeHostCore();
+
   const open: MessageConnection[] = [];
   afterEach(() => {
     for (const connection of open.splice(0)) connection.dispose();
@@ -1211,7 +2416,7 @@ describe("registerHandlers", () => {
   /** served, after an initialize the child answered. */
   async function initialized(over: Partial<BackendHandlers> = {}, made = fakeFactory()) {
     const session = served(over, made);
-    await session.host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await session.host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     return session;
   }
 
@@ -1234,9 +2439,9 @@ describe("registerHandlers", () => {
       code: -32002,
       message: "The LibreDB backend has not been initialized.",
     });
-    assert.equal((await answeredError(host, METHODS.initialize, { protocolVersion: 2 })).code, 500);
+    assert.equal((await answeredError(host, METHODS.initialize, { protocolVersion: 3 })).code, 500);
     assert.equal((await answeredError(host, METHODS.closeConnection, { connectionId: "c1" })).code, -32002);
-    await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     assert.equal(await host.sendRequest(METHODS.closeConnection, { connectionId: "c1" }), null);
   });
 
@@ -1245,7 +2450,7 @@ describe("registerHandlers", () => {
     const notInitialized = { code: -32002, message: "The LibreDB backend has not been initialized." };
     assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), notInitialized);
     assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), notInitialized);
-    await host.sendRequest(METHODS.initialize, { protocolVersion: 1 });
+    await host.sendRequest(METHODS.initialize, { protocolVersion: 2 });
     assert.deepEqual(
       await host.sendRequest(METHODS.listEngines, {}),
       engineCatalog(["postgres", "mssql", "mysql", "mongodb"]),
@@ -1267,15 +2472,20 @@ describe("registerHandlers", () => {
         new QueryCancelledError("The query was cancelled.", "postgres"),
         499,
         "The query was cancelled.",
-        { code: "QUERY_CANCELLED" },
+        { code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" },
       ],
       [
         new QueryError('syntax error at or near "FORM"', "postgres", undefined, 10, "near FORM"),
         400,
         'syntax error at or near "FORM"',
-        { code: "QUERY_ERROR", details: { position: 10, detail: "near FORM" } },
+        { code: "QUERY_ERROR", details: { position: 10, detail: "near FORM" }, kind: "query", outcome: "unknown" },
       ],
-      [new QueryError("syntax error", "postgres"), 400, "syntax error", { code: "QUERY_ERROR" }],
+      [
+        new QueryError("syntax error", "postgres"),
+        400,
+        "syntax error",
+        { code: "QUERY_ERROR", kind: "query", outcome: "unknown" },
+      ],
       [
         new DatabaseConfigError(
           "The sqlite provider is not available in this distribution of LibreDB Studio.",
@@ -1283,7 +2493,7 @@ describe("registerHandlers", () => {
         ),
         400,
         "The sqlite provider is not available in this distribution of LibreDB Studio.",
-        { code: "CONFIG_ERROR" },
+        { code: "CONFIG_ERROR", kind: "config", outcome: "unknown" },
       ],
       [
         new AuthenticationError('password authentication failed for user "app"', "postgres", {
@@ -1291,33 +2501,38 @@ describe("registerHandlers", () => {
         }),
         401,
         'password authentication failed for user "app"',
-        { code: "AUTH_ERROR", fixStatement: "ALTER ROLE app LOGIN;" },
+        { code: "AUTH_ERROR", fixStatement: "ALTER ROLE app LOGIN;", kind: "authentication", outcome: "unknown" },
       ],
       [
         new PermissionDeniedError("permission denied for table orders", "postgres"),
         403,
         "permission denied for table orders",
-        { code: "PERMISSION_DENIED" },
+        { code: "PERMISSION_DENIED", kind: "permission", outcome: "unknown" },
       ],
       [
         new TimeoutError("Query timeout after 60000ms", "postgres", 60000),
         504,
         TIMEOUT_SENTENCE,
-        { code: "TIMEOUT_ERROR", retryable: true },
+        { code: "TIMEOUT_ERROR", retryable: true, kind: "timeout", outcome: "unknown" },
       ],
       [
         new ConnectionError("connect ECONNREFUSED 127.0.0.1:5432", "postgres"),
         503,
         "connect ECONNREFUSED 127.0.0.1:5432",
-        { code: "CONNECTION_ERROR", retryable: true },
+        { code: "CONNECTION_ERROR", retryable: true, kind: "connection", outcome: "unknown" },
       ],
       [
         new PoolExhaustedError("No connection is free in the pool", "postgres", 10),
         503,
         "No connection is free in the pool",
-        { code: "POOL_EXHAUSTED", retryable: true },
+        { code: "POOL_EXHAUSTED", retryable: true, kind: "pool-exhausted", outcome: "unknown" },
       ],
-      [new DatabaseError("The driver failed", "postgres"), 500, "The driver failed", { code: "DATABASE_ERROR" }],
+      [
+        new DatabaseError("The driver failed", "postgres"),
+        500,
+        "The driver failed",
+        { code: "DATABASE_ERROR", kind: "database", outcome: "unknown" },
+      ],
       [new Error("boom"), 500, "boom", { code: "INTERNAL_ERROR" }],
     ];
     assert.equal(TIMEOUT_SENTENCE, "Query timed out. Please try a simpler query or increase timeout.");
@@ -1335,6 +2550,25 @@ describe("registerHandlers", () => {
         assert.deepEqual([answer.code, answer.message, answer.data?.code], [route.statusCode, route.error, route.code]);
       }),
     );
+  });
+
+  it("a provider error's SQLSTATE reaches the client in data.sqlState", async () => {
+    const missing = new QueryError('relation "app" does not exist', "postgres");
+    missing.sqlstate = "42P01";
+    const made = fakeFactory(
+      fakeProvider({
+        listContainers: async () => {
+          throw missing;
+        },
+      }),
+    );
+    const { host } = await initialized({}, made);
+    await host.sendRequest(METHODS.openConnection, { connection: WIRE, posture: POSTURE });
+    assert.deepEqual(await answeredError(host, METHODS.listContainers, { connectionId: "c1" }), {
+      code: 400,
+      message: 'relation "app" does not exist',
+      data: { code: "QUERY_ERROR", kind: "query", outcome: "unknown", sqlState: "42P01" },
+    });
   });
 
   it("passes the extension's own refusals on with their code and data, and InvalidParams with none", async () => {
@@ -1387,7 +2621,7 @@ describe("registerHandlers", () => {
       data: { code: "SHUTTING_DOWN" },
     };
     assert.deepEqual(await answeredError(host, METHODS.runQuery, RUN), shuttingDown);
-    assert.deepEqual(await answeredError(host, METHODS.initialize, { protocolVersion: 1 }), shuttingDown);
+    assert.deepEqual(await answeredError(host, METHODS.initialize, { protocolVersion: 2 }), shuttingDown);
     assert.deepEqual(await answeredError(host, METHODS.listEngines, {}), shuttingDown);
     assert.deepEqual(await answeredError(host, METHODS.parsePastedConnection, { text: "hello" }), shuttingDown);
   });

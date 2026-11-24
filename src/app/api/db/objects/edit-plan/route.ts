@@ -15,7 +15,13 @@ import {
   planExecutableLength,
 } from "@/lib/db/object-edit";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
+import { providerConnection } from "@/lib/db/provider-connection";
 import { requireEditableKind } from "@/lib/db/object-kinds";
+import {
+  scrubObjectEditPlan,
+  scrubObjectEditPreimage,
+  scrubObjectEditRefusal,
+} from "@/lib/db/operations/provider-text";
 
 export const dynamic = "force-dynamic";
 
@@ -113,7 +119,8 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      if (!answer.built) return { built: false, refusal: answer.refusal };
+      // A refusal's sentence, code and hint are the engine's own words, answered through the connection's scrub.
+      if (!answer.built) return { built: false, refusal: scrubObjectEditRefusal(context.scrub, answer.refusal) };
 
       // THE ORDER OF THE FOUR CHECKS BELOW IS THE GUARD, and it is pinned by the suite.
       //
@@ -126,7 +133,9 @@ export async function POST(req: NextRequest) {
       if (!isObjectEditPlanShape(answer.plan)) {
         throw new ObjectRouteError("the build answered a plan this server cannot read as a plan", 400);
       }
-      const plan = answer.plan;
+      // The plan the caller holds is the plan answered through the connection's scrub, so the checks below and the
+      // mint read that plan, and the token seals what the apply receives back.
+      const plan = scrubObjectEditPlan(context.scrub, answer.plan);
 
       // 2. THE EXECUTABLE BOUND, which is `EDIT_PLAN_EXECUTABLE_LIMIT` and NEVER
       //    `EDIT_CHARACTER_LIMIT`. Those two answer different questions and `object-edit.ts` says
@@ -151,8 +160,9 @@ export async function POST(req: NextRequest) {
       //    fingerprint the route did not verify would seal a value nobody checked, and the apply
       //    route's different-server refusal would be comparing two numbers that came from the same
       //    unverified source. `context.connection` and never a second `resolveConnection`: a second
-      //    resolution can answer a different connection.
-      if (plan.connectionFingerprint !== (await connectionFingerprint(context.connection))) {
+      //    resolution can answer a different connection. Framed on `providerConnection` of it, the
+      //    copy the provider was built from, so both sides digest the same fields (FND-2 slice 6).
+      if (plan.connectionFingerprint !== (await connectionFingerprint(providerConnection(context.connection)))) {
         throw new ObjectRouteError(
           "the build answered a plan sealed against a different server than this request resolved",
           400,
@@ -160,7 +170,12 @@ export async function POST(req: NextRequest) {
       }
 
       // 4. THE MINT, last, so no token is ever issued for a plan this route would not accept back.
-      return { built: true, plan, preimage: answer.preimage, planToken: await mintPlanToken(plan) };
+      return {
+        built: true,
+        plan,
+        preimage: scrubObjectEditPreimage(context.scrub, answer.preimage),
+        planToken: await mintPlanToken(plan),
+      };
     },
     { readBody: (request) => readObjectRouteBody(request, EDIT_BODY_BYTE_LIMIT) },
   );

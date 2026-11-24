@@ -214,6 +214,10 @@ const CORE_UNAVAILABLE_TEXT: Readonly<Record<CoreUnavailableCode, string>> = Obj
   // evidence object wrong was answered with a sentence about statements.
   INVALID_TOOL_INPUT:
     "The arguments did not match the shape this tool declares, so nothing was done. Correct them and call the tool again.",
+  // Said only by `inspect_operations`, whose definition lists the readings this run's engine offers; the detail names
+  // the kind asked for and those readings, so the sentence itself names neither.
+  READING_NOT_OFFERED:
+    "This engine does not offer that reading to agent mode, so nothing was read and nothing was spent. Take one of the readings this tool offers here, named in the parentheses after this sentence, or report with what you have already read.",
   /*
     The true sentence for an inventory that exists and is empty.
 
@@ -253,6 +257,9 @@ const CORE_UNAVAILABLE_TEXT: Readonly<Record<CoreUnavailableCode, string>> = Obj
   // narrowed out of `inspect_schema`, and this one does not need it anyway, since the objects
   // are already inventoried. What it needs is the spellings, and they arrive as the `detail`
   // because they are this inventory's own addresses and this sentence may not invent them.
+  // One that is not a plain name arrives quoted (`nameForPrompt`), and `resolveProfileTarget`
+  // takes it back quoted as well, so "spelled in full" holds for the copy as the model reads it,
+  // except where one candidate's raw name is another's quoted form (see `resolveProfileTarget`).
   TABLE_SPELLING_AMBIGUOUS:
     "More than one object in this run's inventory is spelled that way, so nothing was profiled: this run cannot say which one you meant. Call profile_table again with one of the addresses below, spelled in full.",
   // Says what to change, which is the whole of it: the call this replaces was repeated
@@ -379,14 +386,18 @@ export const handoverText = (correlationId: string): string =>
  * The findings, in the server's own words.
  *
  * A column NAME is untrusted database content, so it is fenced rather than spliced
- * into a sentence the model would read as the server speaking. The finding codes
- * and the counts are this repository's own.
+ * into a sentence the model would read as the server speaking, naming `relayedBy`, the
+ * provider that relayed it. The finding codes and the counts are this repository's own.
  */
-export function describeFindings(findings: readonly AgentProfileFinding[], operationId: AgentOperationId): string {
+export function describeFindings(
+  findings: readonly AgentProfileFinding[],
+  operationId: AgentOperationId,
+  relayedBy: string,
+): string {
   if (findings.length === 0) return "Nothing crossed a finding threshold.";
   return fenceUntrustedContent(
     findings.map((finding) => `${finding.column}: ${finding.code} — ${finding.detail}`).join("\n"),
-    { label: `${findings.length} profile finding(s)`, operationId, reference: "server-derived" },
+    { label: `${findings.length} profile finding(s)`, operationId, reference: "server-derived", relayedBy },
   );
 }
 

@@ -38,6 +38,7 @@ import { databendNotAppliedNotice, parseConnectionString } from "@/lib/connectio
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { parseHostUri, tlsModeAfterScheme, type HostUriResult } from "@/lib/connection-host-uri";
 import { newLocalId } from "@/lib/ids";
+import { typeIdRefusal, typeIdRow } from "@/lib/db/type-id";
 import { WRITE_REACH } from "@/lib/db/compatibility";
 import type { WriteReach } from "@/lib/db/write-reach";
 import { credentialWarningFor } from "@/lib/db/credential-warnings";
@@ -97,9 +98,9 @@ const FIELD_OWNERSHIP: Record<keyof DatabaseConnection, FieldOwnership> = {
   // The checkbox owns it, so unticking it has to CLEAR it (#786): `preserved` would keep a Db2
   // connection sending its password without TLS after the user took the consent back.
   allowInsecureAuth: "edited",
-  // OPC UA's three deployment fields have no box in this dialog - they come from a seed file - so
-  // editing a seeded connection must hand them back unchanged rather than drop them. Preserved,
-  // which is what every field the form does not own is.
+  // OPC UA's three deployment fields have no box in this dialog: only the operator's seed file sets them, the managed
+  // listing never sends them to the browser, and an inline connection that sets one is refused. Preserved, which is
+  // what every field the form does not own is.
   securityPolicyUri: "preserved",
   clientCertificatePath: "preserved",
   clientPrivateKeyPath: "preserved",
@@ -719,6 +720,12 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   // seeding the state from `editConnection` directly would skip mount, and today's
   // effect does run on mount. Comparing on `.conn` keeps exactly the identity
   // semantics of the effect's old `[editConnection]` dependency.
+  //
+  // A target whose type names no provider (FND-1), which a host application can hand the
+  // published dialog, is withdrawn to as any new target is and seeds nothing else: no
+  // type, no engine config, no field. The form keeps its defaults and `editRefusal` below
+  // says why, so the dialog refuses it by name instead of throwing in render or rebinding
+  // the record to the picker's default engine. This runs whatever `isOpen` is.
   const [appliedEdit, setAppliedEdit] = useState<{ conn: DatabaseConnection | null | undefined } | null>(null);
   if (!appliedEdit || appliedEdit.conn !== editConnection) {
     setAppliedEdit({ conn: editConnection });
@@ -729,6 +736,8 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // next connection was saved on its first click having reported nothing (#1180).
       withdrawTransientState();
       resetConnectionFields();
+    }
+    if (editConnection && typeIdRefusal(editConnection.type) === null) {
       setType(editConnection.type);
       setName(editConnection.name);
       setHost(editConnection.host || "localhost");
@@ -1011,7 +1020,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
       // the box's state, the factory refuses `readOnly: true` where a path is open, and where Studio has no write
       // path the field changes no write. Written only when true, like the no-scan choice: `false` and absent are one
       // mode.
-      ...(readOnly && WRITE_REACH[type] === "guarded" ? { readOnly: true } : {}),
+      ...(readOnly && typeIdRow(WRITE_REACH, type) === "guarded" ? { readOnly: true } : {}),
       // Only for an engine that takes it, and only while no TLS is chosen, which is the only state the
       // box is drawn in (#786): consent left over from a type switch or a TLS mode is not sent.
       ...(allowInsecureAuth && addressedFields.has("allowInsecureAuth") && sslMode === "disable"
@@ -1456,7 +1465,7 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   });
   // The refusal of the Host box's address, drawn under the box as well as in the result banner; an edit clears both.
   const hostError = testResult !== null && testResult === hostRefusal ? testResult.message : undefined;
-  const readOnlyShown = readOnlyControl(WRITE_REACH[type], editConnection);
+  const readOnlyShown = readOnlyControl(typeIdRow(WRITE_REACH, type), editConnection);
   // The warning reads the credential `buildConnection` would send: a user left in state by another engine is not
   // this engine's, so it does not count where this engine takes no user name. It blocks nothing.
   const credentialWarning = credentialWarningFor(type, {
@@ -1476,6 +1485,11 @@ export function useConnectionForm({ isOpen, onConnect, editConnection, onTestCon
   };
 
   return {
+    /**
+     * Why the edit target cannot be edited: its type names no provider, is missing, or is not text (FND-1). Null
+     * without a target and for a target a provider can open. Derived on every render, never stored.
+     */
+    editRefusal: editConnection ? typeIdRefusal(editConnection.type) : null,
     // Connection fields
     type,
     setType: chooseType,

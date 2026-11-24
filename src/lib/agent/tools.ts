@@ -8,7 +8,11 @@
  * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
- * operations profile, which sends a statement it composes itself.
+ * operations profile, which sends a statement it composes itself, and only after the
+ * statement guard admits it as `sql.query.read`'s input contract would. Every
+ * `queryReadOnly` call goes through `runReadOnlyStatement`
+ * (`src/lib/db/operations/read-only-statement.ts`), which holds the provider's answer to
+ * the row, byte and time budget this layer handed out.
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
@@ -69,22 +73,45 @@ import {
   DatabaseError,
   PoolExhaustedError,
   QueryError,
-  ReadAllowanceExceededError,
   RefusedBeforeSendError,
-  TimeoutError,
+  StudioTimeoutRefusal,
 } from "@/lib/db/errors";
+import type { ErrorKind } from "@libredb/provider-sdk/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import {
+  errorRecord,
+  isStudioRefusal,
+  providerAuthor,
+  type ProviderTextScrub,
+  providerTextScrub,
+  scrubProviderText,
+  withScrubbedWarnings,
+} from "@/lib/db/operations/provider-text";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import {
   type AgentCuratedReadInput,
+  CURATED_OPERATION_KINDS,
   type CuratedOperationKind,
   agentCuratedReadInput,
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
-import { actorLabel, executeAuditedOperation } from "@/lib/db/operations/execution";
+import { CONNECTION_FORM } from "@/lib/db/connection-form";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { typeIdRow } from "@/lib/db/type-id";
+import {
+  type AuditedInvocation,
+  actorLabel,
+  executeAuditedOperation,
+  refuseAuditedInput,
+} from "@/lib/db/operations/execution";
 import type { ExecutionActor, ExecutionPolicy, PolicyDenyCode, TargetScope } from "@/lib/db/operations/policy";
 import type { OperationRegistry } from "@/lib/db/operations/registry";
-import { admitComposedStatement, type ComposedStatementAdmission } from "@/lib/db/operations/statement-guard";
+import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import {
+  admitComposedStatement,
+  agentQueryReadSqlInput,
+  type ComposedStatementAdmission,
+} from "@/lib/db/operations/statement-guard";
 import type {
   Container,
   DatabaseObject,
@@ -113,6 +140,7 @@ import {
   enumerableKinds,
   isCountSampled,
   isCountUnavailable,
+  isIndexesUnavailable,
   kindCountIsListing,
   kindNamesWithheld,
 } from "@/lib/db/object-kinds";
@@ -140,9 +168,9 @@ import {
   PLAN_ESTIMATE_OPERATIONS,
   requiredVariant,
 } from "./agent-manifest";
-import { connectionIdentity, heldSnapshotForConnection } from "./context-snapshot";
+import { connectionIdentity, heldSnapshotForConnection, rowBudgetIn } from "./context-snapshot";
 import { offersRefusalExamples } from "./models";
-import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
+import type { ColumnSchema, DatabaseConnection, DatabaseType, QueryResult } from "@/lib/types";
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
 import type {
@@ -220,7 +248,7 @@ import type {
   AgentRunWorkflowType,
   AgentToolRefusal,
 } from "./types";
-import { fenceUntrustedContent } from "./untrusted-content";
+import { fenceProviderText, fenceUntrustedContent, nameForPrompt, quoteIdentifierForPrompt } from "./untrusted-content";
 
 /** The tools an agent-mode run may be offered. Nothing else is a tool. */
 export type AgentToolName =
@@ -318,6 +346,12 @@ export interface AgentToolContext {
    * can only have come from the run record, never from the live connection.
    */
   readonly statementLanguage?: AgentStatementLanguageId;
+  /**
+   * The run's PERSISTED engine, the type id its connection had when it opened. Like `statementLanguage`, it can only
+   * have come from the run record. Absent for a run recorded before the field, which is offered the six curated
+   * readings it was opened with.
+   */
+  readonly engine?: DatabaseType;
   /** The persisted actor — the sole authority for authorizing this call. */
   readonly actor: AgentRunActor;
   readonly connection: DatabaseConnection;
@@ -380,6 +414,11 @@ export function readOnlyBudgetFor(context: AgentToolContext, budget: ExecutionBu
 export type AgentToolUnavailableCode =
   | "MODE_HAS_NO_TOOLS"
   | "INVALID_TOOL_INPUT"
+  /**
+   * A curated reading the run's recorded engine does not offer agent mode (its `ENGINE_FACETS` row's
+   * `agentReadings`), refused before any provider is acquired, any budget charged or any repair entry made.
+   */
+  | "READING_NOT_OFFERED"
   | "UNVERIFIABLE_EVIDENCE"
   /** A cited plan is not an estimating plan THIS run produced. */
   | "UNVERIFIABLE_PLAN"
@@ -886,6 +925,69 @@ function isAnswerShapeFailure(problems: string): boolean {
   return /\bartifact:|arguments object:|^presentation: |\bpresentation: expected/.test(problems);
 }
 
+/**
+ * The curated readings a run is offered: its recorded engine's `ENGINE_FACETS` row's `agentReadings`, or all six kinds
+ * for a run recorded before the engine field, which was told those six in its earlier turns.
+ */
+export function agentReadingsOf(engine: DatabaseType | undefined): readonly CuratedOperationKind[] {
+  return engine === undefined ? CURATED_OPERATION_KINDS : engineFacetsFor(engine).agentReadings;
+}
+
+/** Each curated reading as `inspect_operations` describes it to the model. */
+const CURATED_READING_GLOSS: Readonly<Record<CuratedOperationKind, string>> = Object.freeze({
+  sessions: "sessions (who is connected, what each is running, how long it has been running and whether it is blocked)",
+  "slow-queries": "slow-queries (the statements this engine reports as costly)",
+  "table-stats": "table-stats (row counts and sizes, and dead rows where the engine tracks them)",
+  "index-stats": "index-stats (size and how many scans each index has served, so an unused one is visible)",
+  storage: "storage (space and its growth)",
+  health: "health (one row of connection, size and cache figures)",
+});
+
+/** `a`, `a or b`, `a, b or c`: a list of alternatives in prose. */
+function alternatives(items: readonly string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(", ")} or ${items[items.length - 1]}`;
+}
+
+/** `a`, `a and b`, `a, b and c`: a list of members in prose. */
+function members(items: readonly string[]): string {
+  return items.length === 1 ? items[0] : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/** One frozen definition per distinct list of readings, so a run is handed the same definition on every turn. */
+const INSPECT_OPERATIONS_DEFINITIONS = new Map<string, AgentToolDefinition>();
+
+/**
+ * The `inspect_operations` definition offering exactly `kinds`: its `kind` enum holds only those, and its description
+ * lists only those, names `schema` only where a table or index reading is offered, and says a kind not offered here is
+ * refused before anything is read. The handler still parses with the six-kind contract (`agentCuratedReadInput`), so
+ * a call naming a kind this definition left out reaches it and is refused by name (`READING_NOT_OFFERED`).
+ *
+ * @throws {Error} On an empty list: a run on an engine that offers agent mode no reading is not opened in the
+ * operations workflow (`workflowAvailability`) and its header is refused when read (`runHeaderRefusal`), so there is
+ * no run to build this tool for, and an empty enum would be a tool that can only refuse.
+ */
+function inspectOperationsDefinition(kinds: readonly CuratedOperationKind[]): AgentToolDefinition {
+  if (kinds.length === 0) throw new Error("agent tool layer: no operations reading to offer");
+  const key = kinds.join(",");
+  const held = INSPECT_OPERATIONS_DEFINITIONS.get(key);
+  if (held !== undefined) return held;
+  const narrows = kinds.includes("table-stats") || kinds.includes("index-stats");
+  const bounds = narrows
+    ? "limit bounds EVERY kind, and schema narrows the table and index ones; the server applies both itself, so they hold whatever the engine does with them."
+    : "limit bounds EVERY kind; the server applies it itself, so it holds whatever the engine does with it.";
+  const definition: AgentToolDefinition = Object.freeze({
+    name: "inspect_operations",
+    description: `Read what the engine says about ITSELF, right now. Pass kind to choose the reading. The readings offered here: ${alternatives(kinds.map((kind) => CURATED_READING_GLOSS[kind]))}. No SQL is involved: you name the reading and the server calls the engine's own reporting interface, and a kind not offered here is refused before anything is read. ${bounds} EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.`,
+    inputSchema: z.strictObject({
+      ...agentCuratedReadInput.shape,
+      kind: z.enum(kinds as readonly [CuratedOperationKind, ...CuratedOperationKind[]]),
+    }),
+    operationId: "db.operations.read",
+  });
+  INSPECT_OPERATIONS_DEFINITIONS.set(key, definition);
+  return definition;
+}
+
 export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDefinition>> = Object.freeze({
   ...REFERENCE_STATEMENT_DEFINITIONS,
   compare_plans: {
@@ -895,13 +997,8 @@ export const AGENT_TOOL_DEFINITIONS: Readonly<Record<AgentToolName, AgentToolDef
     inputSchema: planComparisonSchema,
   },
   recommend_change: REFERENCE_RECOMMEND_CHANGE,
-  inspect_operations: {
-    name: "inspect_operations",
-    description:
-      "Read what the engine says about ITSELF, right now. Pass kind to choose the reading: sessions (who is connected, what each is running, how long it has been running and whether it is blocked), slow-queries (the statements this engine reports as costly), table-stats (row counts and sizes, and dead rows where the engine tracks them), index-stats (size and how many scans each index has served, so an unused one is visible), storage (space and its growth) or health (one row of connection, size and cache figures). No SQL is involved: you name the reading and the server calls the engine's own reporting interface, so these are the readings that work on every engine. limit bounds EVERY kind, and schema narrows the table and index ones; the server applies both itself, so they hold whatever the engine does with them. EVERY READING IS A MOMENT, not a history: it says what is true as it is taken, and calling it twice does not make a trend.",
-    inputSchema: agentCuratedReadInput,
-    operationId: "db.operations.read",
-  },
+  // What a run with no recorded engine is offered; `selectAgentTools` hands every other run its engine's readings.
+  inspect_operations: inspectOperationsDefinition(CURATED_OPERATION_KINDS),
   ...LANGUAGE_BASE_DEFINITIONS,
   present_answer: {
     name: "present_answer",
@@ -937,32 +1034,48 @@ const NO_TOOLS: readonly AgentToolDefinition[] = Object.freeze([]);
 
 /**
  * Workflow type → the tools that workflow may use (#330 T2), read from the workflow's
- * variant in `agent-manifest.ts`, which is the one place a tool set is decided.
+ * variant in `agent-manifest.ts`, which is the one place a tool set is decided, with
+ * `inspect_operations` offering only the readings of the run's recorded engine.
  *
- * Memoised per VARIANT, not per workflow or language, so a run is handed the same
- * frozen array on every turn, as it was when each set was a constant here, and so two
- * variants of one workflow can never share a set by accident.
+ * Memoised per VARIANT and per list of offered readings, not per workflow, language or
+ * engine, so a run is handed the same frozen array on every turn, as it was when each
+ * set was a constant here, two variants of one workflow can never share a set by
+ * accident, and two engines that offer the same readings share one.
  */
-const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, readonly AgentToolDefinition[]>();
+const VARIANT_TOOLS = new WeakMap<AgentWorkflowVariant, Map<string, readonly AgentToolDefinition[]>>();
 
 function workflowTools(
   language: AgentStatementLanguageId | undefined,
   workflow: AgentRunWorkflowType,
+  engine: DatabaseType | undefined,
 ): readonly AgentToolDefinition[] {
   const variant = requiredVariant(language, workflow);
-  let tools = VARIANT_TOOLS.get(variant);
+  let byReadings = VARIANT_TOOLS.get(variant);
+  if (byReadings === undefined) {
+    byReadings = new Map();
+    VARIANT_TOOLS.set(variant, byReadings);
+  }
+  const readings = agentReadingsOf(engine);
+  const key = readings.join(",");
+  let tools = byReadings.get(key);
   if (tools === undefined) {
-    tools = Object.freeze(variant.tools.map((name) => agentToolDefinition(language, workflow, name)));
-    VARIANT_TOOLS.set(variant, tools);
+    tools = Object.freeze(
+      variant.tools.map((name) =>
+        name === "inspect_operations"
+          ? inspectOperationsDefinition(readings)
+          : agentToolDefinition(language, workflow, name),
+      ),
+    );
+    byReadings.set(key, tools);
   }
   return tools;
 }
 
 /**
- * The tools this run may use, decided from its persisted mode, workflow type and
- * statement language and nothing else.
+ * The tools this run may use, decided from its persisted mode, workflow type,
+ * statement language and engine and nothing else.
  *
- * The parameter is the run record (narrowed to the three fields that matter) rather
+ * The parameter is the run record (narrowed to the four fields that matter) rather
  * than bare strings, so the values can only have come from persisted state. There is
  * no parameter through which a request body could contribute a tool, which is what
  * "a client-supplied tool list is ignored, not merged" means here.
@@ -972,9 +1085,9 @@ function workflowTools(
  * run a tool.
  */
 export function selectAgentTools(
-  run: Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage">,
+  run: Pick<AgentRunRecord, "mode" | "workflowType" | "statementLanguage" | "engine">,
 ): readonly AgentToolDefinition[] {
-  return run.mode === "agent" ? workflowTools(run.statementLanguage, run.workflowType) : NO_TOOLS;
+  return run.mode === "agent" ? workflowTools(run.statementLanguage, run.workflowType, run.engine) : NO_TOOLS;
 }
 
 // ============================================================================
@@ -1393,12 +1506,18 @@ function isStatementFailure(error: unknown): error is DatabaseError {
  * should not be "fixed" by acquiring earlier: acquiring before the decision would
  * open a pool for every denied call, which is exactly what the spy-provider
  * invariant exists to forbid.
+ *
+ * The statement goes through `runReadOnlyStatement`, which refuses an answer past the
+ * run's row or byte budget and stops waiting at its statement timeout, in the sentences
+ * the providers raise, so an over-budget answer is a repairable database error that
+ * reaches neither a row mapper nor the model.
  */
 async function runStatement(
   context: AgentToolContext,
   validatedInput: unknown,
   budget: ExecutionBudget,
   phase: { statementSent: boolean },
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   argument: AgentStatementArgument,
   mode?: ReadOnlyStatementMode,
 ): Promise<QueryResult> {
@@ -1425,7 +1544,18 @@ async function runStatement(
   // separates a wrong agent credential from `permission denied for table secrets`
   // without inspecting message text.
   phase.statementSent = true;
-  return provider.queryReadOnly(sql, readOnlyBudgetFor(context, budget), mode);
+  // Through the one core call of the read-only path, which holds the provider's answer to the rows, bytes and time
+  // this run handed out, so an over-budget answer is refused before any of it is mapped or rendered. The provider's
+  // call keeps this execution counted until it settles, also when the time refusal answered the run first.
+  return runReadOnlyStatement(provider, {
+    type: context.connection.type,
+    scrub: providerTextScrub(context.connection, "profiled"),
+    statement: sql,
+    budget: readOnlyBudgetFor(context, budget),
+    mode,
+    wait: "statement-timeout",
+    holdUntilSettled,
+  });
 }
 
 /**
@@ -1452,8 +1582,8 @@ export async function executeAgentOperation(
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
     ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
-    invoke: (validatedInput, budget, phase) => {
-      const answered = runStatement(context, validatedInput, budget, phase, argument, request.mode);
+    invoke: (validatedInput, budget, phase, holdUntilSettled) => {
+      const answered = runStatement(context, validatedInput, budget, phase, holdUntilSettled, argument, request.mode);
       const { mapRows } = request;
       return mapRows === undefined ? answered : answered.then((result) => withMappedRows(result, mapRows));
     },
@@ -1510,10 +1640,19 @@ export interface AuditedAgentCall {
   readonly target?: { readonly catalog?: string; readonly schema?: string };
   /** The server's own grounding read. See `AgentOperationRequest.grounding`. */
   readonly grounding?: boolean;
+  /**
+   * A statement this call sends that its descriptor's input does not carry, set by the operations-profile statistics
+   * read alone: it is audited under `db.schema.read`, whose input is empty, and sends a composed statement through
+   * `provider.query`. The statement is validated with `agentQueryReadSqlInput`, the input contract `sql.query.read`
+   * applies, before the pipeline is consulted, and a refusal is the pipeline's own input denial (`refuseAuditedInput`):
+   * audited, answered and recorded in the repair ledger as one, with nothing acquired, charged or sent.
+   */
+  readonly guardedStatement?: { readonly sql: string; readonly composed?: ComposedStatementAdmission };
   readonly invoke: (
     validatedInput: unknown,
     budget: ExecutionBudget,
     phase: { statementSent: boolean },
+    holdUntilSettled: AuditedInvocation["holdUntilSettled"],
   ) => Promise<QueryResult>;
 }
 
@@ -1583,7 +1722,7 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     const holders = snapshot.objects
       .filter((entry) => entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()))
       .slice(0, 6)
-      .map((entry) => entry.name);
+      .map((entry) => nameForPrompt(entry.name));
     if (holders.length === 0) return undefined;
     return `${missing} is in ${holders.join(", ")} — join through one of those, or qualify it.`;
   }
@@ -1611,13 +1750,13 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
     const holders = snapshot.objects
       .filter((entry) => entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()))
       .slice(0, 6)
-      .map((entry) => entry.name);
+      .map((entry) => nameForPrompt(entry.name));
     return holders.length === 0
       ? undefined
       : `${missing} is in ${holders.join(", ")} — "${qualifier}" is not one of them.`;
   }
   // Bounded: a wide table's whole column list would bury the sentence that carries it.
-  const named = table.columns.slice(0, 12).map((column) => column.name);
+  const named = table.columns.slice(0, 12).map((column) => nameForPrompt(column.name));
   /*
     And WHERE the column it wanted actually lives, when the inventory has it elsewhere.
     Measured: one model asked for `department.emp_no` twice in one run, having been told after
@@ -1630,9 +1769,9 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
       (entry) => entry !== table && entry.columns.some((column) => column.name.toLowerCase() === missing.toLowerCase()),
     )
     .slice(0, 6)
-    .map((entry) => entry.name);
+    .map((entry) => nameForPrompt(entry.name));
   const found = elsewhere.length === 0 ? "" : ` ${missing} is in ${elsewhere.join(", ")} — join through one of those.`;
-  return `"${table.name}" has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
+  return `${quoteIdentifierForPrompt(table.name)} has no ${missing}. Its columns are ${named.join(", ")}.${found}`;
 }
 
 /**
@@ -1643,8 +1782,13 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
  * model has to author: a narrower query, or a different way of asking for the catalog. The
  * inventory branch is not, which is the whole distinction.
  *
- * Takes no connection: neither branch reads our own state. They are derived from the shape of the
- * engine's message and from the engine this connection IS, which is why neither can be free.
+ * Takes no connection: neither branch reads our own state, which is why neither can be free. The row
+ * branch is decided by the failure's error kind, a row budget refusal of the provider's or of Studio's
+ * own, and names the bound that refusal's own sentence states (`rowBudgetIn`), never the run's row
+ * budget: a provider may refuse at a lower bound of its own (InfluxQL's cell cut, a search engine's
+ * result limit), and a LIMIT it refuses again costs another repair attempt. A row budget refusal whose
+ * sentence states no bound gets no row advice, since no LIMIT is known to pass. The catalog branch is
+ * derived from the engine's message and from the engine this connection IS.
  *
  * The row-budget sentence is the statement language's own, since the way to ask for fewer rows is
  * written in that language. The catalog branch is the language's own too, and only SQL has one (its pack's
@@ -1655,17 +1799,35 @@ const READ_ALLOWANCE_ADVICE =
   "That read was refused by this server before it was sent; the database was not asked. This run cannot pay for a read that large: ask for a smaller one that fits what is left, or answer from what you have already read.";
 
 const REFUSED_BEFORE_SEND_ADVICE =
-  "That statement was refused by this server before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
+  "That statement was refused by the provider above before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
 
 function otherStatementAdvice(
+  kind: ErrorKind,
   message: string,
   engine: string,
   statement: string,
   language: AgentStatementLanguageId,
 ): string | undefined {
-  const overBudget = /row budget: \d+ rows > (\d+) allowed/.exec(message);
-  if (overBudget !== null) return languageServer(language).rowCapAdvice(statement, overBudget[1]);
+  const rowBudget = rowBudgetIn(kind, message);
+  if (rowBudget !== undefined) return languageServer(language).rowCapAdvice(statement, String(rowBudget.allowed));
+  if (kind === "row-budget-refusal" || kind === "studio-row-budget-refusal") return undefined;
   return languageServerPack(language).catalogAdvice?.(message, engine);
+}
+
+/**
+ * The error kind of a refused tool outcome's failure, from its ledger refusal's record: `undefined` for any other
+ * outcome, and for a `database-error` refusal that carries no record.
+ */
+export function refusedErrorKind(outcome: AgentToolOutcome): ErrorKind | undefined {
+  if (outcome.kind !== "refused" || outcome.refusal.class !== "database-error") return undefined;
+  return outcome.refusal.record?.kind;
+}
+
+/** Whether the statement guard refuses a call's guarded statement; a call with none has nothing to refuse. */
+function guardRefuses(statement: AuditedAgentCall["guardedStatement"]): boolean {
+  if (statement === undefined) return false;
+  const input = statement.composed === undefined ? { sql: statement.sql } : statement;
+  return !agentQueryReadSqlInput.safeParse(input).success;
 }
 
 /**
@@ -1674,6 +1836,23 @@ function otherStatementAdvice(
  */
 function repairLedgerKey(call: AuditedAgentCall, statementFingerprint: string): string {
   return call.composedByServer === true ? `composed:${statementFingerprint}` : statementFingerprint;
+}
+
+/**
+ * Settles once the run has no live execution, or once the time the run has left has passed, whichever comes first.
+ * A run's execution outlives the call that made it only while a provider call it holds still runs.
+ */
+async function untilRunIdle(context: AgentToolContext): Promise<void> {
+  if (context.tracker.usage(context.runId).activeExecutions === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const outOfTime = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, context.deadline.remainingMs());
+  });
+  try {
+    await Promise.race([context.tracker.whenIdle(context.runId), outOfTime]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function runAuditedAgentCall(
@@ -1693,6 +1872,12 @@ export async function runAuditedAgentCall(
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);
 
   const actor: ExecutionActor = { sessionId: context.actor.sessionId, role: context.actor.role, mode: "agent" };
+
+  // A read this run stopped waiting for at its timeout keeps the run's one execution live until its provider call
+  // settles (`holdUntilSettled` in `executeAuditedOperation`). The loop is sequential, so the next call waits for that
+  // call, as a run waits on its statement, within the time the run has left; the deadline admission below then reads
+  // what the wait cost.
+  await untilRunIdle(context);
 
   // The ceilings this run is bounded by, chosen by its OWN persisted workflow. Read
   // once here so that the deadline admission, the clamp and the denial text a model
@@ -1760,29 +1945,39 @@ export async function runAuditedAgentCall(
   */
   const chargedBeforeMs = context.tracker.usage(context.runId).totalElapsedMs;
 
+  const evaluation = {
+    registry: context.registry,
+    policy,
+    actor,
+    scope: context.scope,
+    request: {
+      operationId: call.operationId,
+      target: { connectionId: context.scope.connectionId, ...call.target },
+      input: call.input,
+    },
+    capabilities: context.capabilities,
+  };
+
+  // Every provider text this call can carry to the ledger or the prompt passes core's scrub of the connection's
+  // credential first (src/lib/db/operations/provider-text.ts).
+  const scrub = providerTextScrub(context.connection, "profiled");
   let outcome: Awaited<ReturnType<typeof executeAuditedOperation<QueryResult>>>;
   try {
-    outcome = await executeAuditedOperation<QueryResult>(
-      {
-        registry: context.registry,
-        policy,
-        actor,
-        scope: context.scope,
-        request: {
-          operationId: call.operationId,
-          target: { connectionId: context.scope.connectionId, ...call.target },
-          input: call.input,
-        },
-        capabilities: context.capabilities,
-      },
-      {
-        runId: context.runId,
-        tracker: context.tracker,
-        artifacts: context.artifacts,
-        clock: context.clock,
-      },
-      ({ validatedInput, budget }) => call.invoke(validatedInput, budget, phase),
-    );
+    outcome = guardRefuses(call.guardedStatement)
+      ? refuseAuditedInput(evaluation)
+      : await executeAuditedOperation<QueryResult>(
+          evaluation,
+          {
+            runId: context.runId,
+            tracker: context.tracker,
+            artifacts: context.artifacts,
+            clock: context.clock,
+          },
+          // Scrubbed here, before the pipeline stores the result: the artifact store, the artifact route and the model
+          // text all read the scrubbed warnings from this one place.
+          async ({ validatedInput, budget, holdUntilSettled }) =>
+            withScrubbedWarnings(scrub, await call.invoke(validatedInput, budget, phase, holdUntilSettled)),
+        );
   } catch (error) {
     // A curated reading the run chose not to keep. First, because it is a decision
     // this layer made about a call that DID happen — not an environment failure and
@@ -1844,19 +2039,30 @@ export async function runAuditedAgentCall(
       So `columns` decides the cost, and the advice the model reads is still whichever of the three
       applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
-    // This server refused the statement before it was sent (a provider's own fence, or the run's read allowance), so
-    // the sentence is this server's and the database never saw the statement: it is not fenced as the database's
-    // words, the refusal records it as not sent, and its advice is the server's. It still costs a repair attempt,
-    // because the repair is a statement the model has to author.
-    const ownRefusal = error instanceof RefusedBeforeSendError;
-    const columns = ownRefusal ? undefined : columnsThatExist(error.message, context.connection);
-    const advice = ownRefusal
-      ? error instanceof ReadAllowanceExceededError
+    // The failure's text, scrubbed once: every later reader (the ledger, the advice, the prompt) reads this, never
+    // `error.message`, so a credential the provider's text carried reaches none of them.
+    const message = scrubProviderText(scrub, error.message);
+    // Refused before it was sent (a provider's own fence, or the run's read allowance), so the database never saw the
+    // statement: it is not fenced as the database's words, and the refusal records it as not sent and who refused it.
+    // The read allowance is this server's own sentence, said in its voice; a provider's refusal is the provider's
+    // text, fenced naming the provider. A sent statement whose answer this server refused by its own row, byte or time
+    // budget is this server's sentence too, said in its voice and recorded as Studio's; any other failure of a sent
+    // statement is the database's text, fenced naming the provider that relayed it. Every one of them still costs a
+    // repair attempt, because the repair is a statement the model has to author.
+    // The failure's class as its error record, built with the same scrub: the row advice and the ledger decide what
+    // the failure is by it, never by `message`, which stays beside it for the model's repair.
+    const record = errorRecord(scrub, error);
+    const notSent = error instanceof RefusedBeforeSendError;
+    const studioRefused = isStudioRefusal(error);
+    const columns = notSent ? undefined : columnsThatExist(message, context.connection);
+    const advice = notSent
+      ? studioRefused
         ? READ_ALLOWANCE_ADVICE
         : REFUSED_BEFORE_SEND_ADVICE
       : (columns ??
         otherStatementAdvice(
-          error.message,
+          record.kind,
+          message,
           context.connection.type,
           call.fingerprintSource,
           call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE,
@@ -1872,13 +2078,19 @@ export async function runAuditedAgentCall(
       refusal: {
         class: "database-error",
         statementFingerprint: fingerprint,
-        message: error.message,
+        message,
         elapsedMs: context.tracker.usage(context.runId).totalElapsedMs - chargedBeforeMs,
         // Recorded rather than left to be inferred: whether the inventory was in hand decides what
         // this failure cost, and it depends on a process-wide cache a run cannot see. See the
         // field's own note in `types.ts`.
         answered,
-        ...(ownRefusal ? { sent: false as const } : {}),
+        ...(notSent
+          ? { sent: false as const, refusedBy: studioRefused ? ("studio" as const) : ("provider" as const) }
+          : studioRefused
+            ? { refusedBy: "studio" as const }
+            : {}),
+        // Closed fields only, so a failure whose text was withheld still records its kind, code and outcome.
+        record,
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
@@ -1886,13 +2098,21 @@ export async function runAuditedAgentCall(
       // The advice follows OUTSIDE the fence, because it is this server's sentence and not the
       // engine's: putting it inside would attribute our instruction to the database.
       modelText: [
-        ownRefusal
-          ? error.message
-          : fenceUntrustedContent(error.message, {
-              label: "database error",
-              operationId: call.operationId,
-              reference: fingerprint,
-            }),
+        studioRefused
+          ? message
+          : notSent
+            ? fenceProviderText(message, {
+                label: "refusal before sending",
+                operationId: call.operationId,
+                reference: fingerprint,
+                author: providerAuthor(context.connection.type),
+              })
+            : fenceUntrustedContent(message, {
+                label: "database error",
+                operationId: call.operationId,
+                reference: fingerprint,
+                relayedBy: providerAuthor(context.connection.type),
+              }),
         // EVERY model, unlike the worked examples three tools below. Those are a whole call built
         // from the run's own ledger and long enough to crowd a small model's turn, so they stay
         // behind a lever a measurement opened. This is one sentence naming columns the operator's
@@ -1954,6 +2174,7 @@ export async function runAuditedAgentCall(
           label: `${call.label ?? "result"} warnings`,
           operationId: artifact.operationId,
           reference: artifact.correlationId,
+          relayedBy: providerAuthor(context.connection.type),
         })}`;
   return {
     kind: "completed",
@@ -1968,6 +2189,7 @@ export async function runAuditedAgentCall(
       label: `${call.label ?? "result"}, ${result.rowCount} row(s)`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
+      relayedBy: providerAuthor(context.connection.type),
     })}${warned}`,
   };
 }
@@ -2396,9 +2618,17 @@ export async function readCatalogForGrounding(
  * `work`, or `overrun()` once `grantedMs` has passed, whichever comes first.
  *
  * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
- * is not cancelled, and this run simply stops waiting for it.
+ * is not cancelled, and this run simply stops waiting for it. `work` is handed to `holdUntilSettled` first, so the
+ * run's `maxConcurrentExecutions` counts it until the provider's call settles, as it counts a read-only statement
+ * (`runReadOnlyStatement`), and the run's next call and its end wait for it.
  */
-async function withinGrantedTime<T>(work: Promise<T>, grantedMs: number, overrun: () => Error): Promise<T> {
+async function withinGrantedTime<T>(
+  work: Promise<T>,
+  grantedMs: number,
+  overrun: () => Error,
+  holdUntilSettled: AuditedInvocation["holdUntilSettled"],
+): Promise<T> {
+  holdUntilSettled(work);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const overran = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(overrun()), grantedMs);
@@ -2453,7 +2683,8 @@ export type AgentObjectInventoryRead =
     }
   /** This engine declares no object kinds, so there is nothing to tag and nothing was read. */
   | { readonly kind: "unsupported" }
-  | { readonly kind: "unavailable"; readonly modelText: string }
+  /** `errorKind`: the kind of the failure that refused the read, when a database error's record names one. */
+  | { readonly kind: "unavailable"; readonly modelText: string; readonly errorKind?: ErrorKind }
   | { readonly kind: "timed-out"; readonly grantedMs: number };
 
 /**
@@ -2557,7 +2788,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
       input: {},
       label: "provider object inventory",
       grounding: true,
-      invoke: async (_validatedInput, budget, phase) => {
+      invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
         // Which profile grounds the run, decided by what the run is (`groundsUnderExecutionProfile`): a
         // statement-sending agent run on an engine with a statement language grounds under ITS OWN boundary, so the
         // acquisition opens the execution profile, whose connect proves the engine and the principal, and a run
@@ -2578,13 +2809,21 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
         // provider method here takes a budget, so what this bounds is THE RUN and not the
         // database. The walk is not cancelled - it goes on reading until the engine or the
-        // driver ends it - and this run simply stops waiting for it. Without the race there is
+        // driver ends it - and this run simply stops waiting for it, while the walk still
+        // counts against the run's concurrency until it settles. Without the race there is
         // no bound at all, which is the only worse answer.
         try {
           const walked = await withinGrantedTime(
-            walkObjectInventory(provider, context.capabilities, declared, objectReadArguments(context)),
+            walkObjectInventory(
+              provider,
+              context.capabilities,
+              declared,
+              objectReadArguments(context),
+              providerTextScrub(context.connection, "profiled"),
+            ),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
+            holdUntilSettled,
           );
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
@@ -2612,7 +2851,12 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
     throw error;
   }
 
-  if (outcome.kind !== "completed") return { kind: "unavailable", modelText: outcome.modelText };
+  if (outcome.kind !== "completed") {
+    const errorKind = refusedErrorKind(outcome);
+    return errorKind === undefined
+      ? { kind: "unavailable", modelText: outcome.modelText }
+      : { kind: "unavailable", modelText: outcome.modelText, errorKind };
+  }
   return defaultContainer === undefined
     ? { kind: "completed", inventory }
     : { kind: "completed", inventory, defaultContainer };
@@ -2649,6 +2893,7 @@ async function walkObjectInventory(
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
   readArguments: readonly [ObjectReadOptions] | readonly [],
+  scrub: ProviderTextScrub,
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
@@ -2661,7 +2906,9 @@ async function walkObjectInventory(
     return {
       inventory: {
         objects: [],
-        kinds: declared.map((spec) => inventoryKind(spec, capabilities, { unavailable: needs })),
+        kinds: declared.map((spec) =>
+          inventoryKind(spec, capabilities, { unavailable: scrubProviderText(scrub, needs) }),
+        ),
       },
     };
   }
@@ -2669,7 +2916,7 @@ async function walkObjectInventory(
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
-  const grounding = await enumerateGroundingContainers(provider, capabilities);
+  const grounding = await enumerateGroundingContainers(provider, capabilities, scrub);
   const { unlistedParents, unlistedParentsNotNamed } = grounding;
   const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
@@ -2696,20 +2943,22 @@ async function walkObjectInventory(
       // A kind whose names are withheld is counted and never listed, so no name of it reaches a model.
       if (kindNamesWithheld(spec)) {
         if (count === undefined) withheldUncounted.add(spec.id);
-        else if (isCountUnavailable(count)) unavailable.set(spec.id, count.unavailable);
+        else if (isCountUnavailable(count)) unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         else {
           withheld.set(spec.id, (withheld.get(spec.id) ?? 0) + count.count);
-          if (isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+          if (isCountSampled(count)) sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
         }
         continue;
       }
       // The exception the docblock names: the refusal this count met is the refusal the listing
       // would meet, so no listing is sent and the sentence travels on the kind (#1089 4.7).
       if (count !== undefined && isCountUnavailable(count) && kindCountIsListing(capabilities, spec.id)) {
-        unavailable.set(spec.id, count.unavailable);
+        unavailable.set(spec.id, scrubProviderText(scrub, count.unavailable));
         continue;
       }
-      if (count !== undefined && isCountSampled(count)) sampledFrom.set(spec.id, count.sampledFrom);
+      if (count !== undefined && isCountSampled(count)) {
+        sampledFrom.set(spec.id, scrubProviderText(scrub, count.sampledFrom));
+      }
       if (pairs >= INVENTORY_PAIR_LIMIT) {
         truncated = { limit: INVENTORY_PAIR_LIMIT, reason: PAIR_TRUNCATION_REASON };
         break;
@@ -2736,7 +2985,9 @@ async function walkObjectInventory(
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
         // incomplete reading, and a model told otherwise reads a missing column as an absent one.
-        if (batch.truncated !== undefined) truncated = batch.truncated;
+        if (batch.truncated !== undefined) {
+          truncated = { limit: batch.truncated.limit, reason: scrubProviderText(scrub, batch.truncated.reason) };
+        }
       }
       const byPath = new Map(details.map((detail) => [pathKey(detail.path), detail]));
       for (const object of listed) {
@@ -2753,7 +3004,10 @@ async function walkObjectInventory(
           // A column the engine only inferred from sampled data is named by the data, so it never enters the
           // inventory a model is grounded on.
           columns: machineColumns(detail?.columns ?? []),
-          indexes: detail?.indexes ?? [],
+          // A refused index read carries the provider's sentence, scrubbed like every other provider text here.
+          indexes: isIndexesUnavailable(detail?.indexes)
+            ? { unavailable: scrubProviderText(scrub, detail.indexes.unavailable) }
+            : (detail?.indexes ?? []),
           foreignKeys: detail?.foreignKeys ?? [],
           // `rowCount` and `sizeBytes` are deliberately NOT carried, and the reason is the
           // fingerprint: a snapshot's identity is over the schema, so a row estimate on it
@@ -2851,6 +3105,7 @@ function inventoryKind(
 async function enumerateGroundingContainers(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
+  scrub: ProviderTextScrub,
 ): Promise<{
   readonly enumeration: ContainerEnumeration;
   readonly parentDefault?: readonly string[];
@@ -2876,7 +3131,11 @@ async function enumerateGroundingContainers(
       } catch (error) {
         if (!(error instanceof DatabaseError) || scopeReadsUnder(capabilities.agentWalkScope, parent)) throw error;
         if (unlistedParents.length < UNLISTED_PARENTS_NAMED_MAX) {
-          unlistedParents.push({ path: parent.path.join("."), label, reason: unlistedReason(error.message) });
+          unlistedParents.push({
+            path: parent.path.join("."),
+            label,
+            reason: unlistedReason(scrubProviderText(scrub, error.message)),
+          });
         } else {
           unlistedParentsNotNamed = { count: (unlistedParentsNotNamed?.count ?? 0) + 1, label, labelPlural };
         }
@@ -2984,10 +3243,13 @@ export type AgentStatisticsStatement = "availability" | "estimates";
  * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
  * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
  * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
- * through `provider.query`, because the operations profile opens no read-only statement path, and it is bounded the
- * way the curated reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
+ * through `provider.query`, because the operations profile opens no read-only statement path, after the statement
+ * guard admits it as `sql.query.read`'s input contract admits the same statement on the execution profile (a refusal
+ * is the pipeline's audited input denial, and nothing is acquired or sent), and it is bounded the way the curated
+ * reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
  * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
- * read that did not complete.
+ * read that did not complete. The read counts against the run's concurrency until its provider call settles, as a
+ * read-only statement does (`withinGrantedTime`).
  */
 export async function readStatisticsForGrounding(
   context: AgentToolContext,
@@ -3001,13 +3263,21 @@ export async function readStatisticsForGrounding(
   }
   const sql =
     statement === "availability" ? availabilityProbe(dialect) : composeCatalogRead(dialect, { kind: "statistics" });
+  // The estimates are the dialect's catalog read, so they carry the admission `readCatalog` gives that read; the probe
+  // is validated plain, as `readStatementForGrounding` sends it. Supplied: `readSchemaStatistics` asks only where the
+  // composer serves this dialect.
+  const admission =
+    statement === "estimates"
+      ? catalogReadAdmission((engineServerDialect(dialect).catalogRead as AgentCatalogRead).commandShaped, sql)
+      : {};
   return runAuditedAgentCall(context, {
     operationId: "db.schema.read",
     fingerprintSource: `statistics:${statement}:${context.connection.id}`,
     input: {},
+    guardedStatement: { sql, ...admission },
     label: statement === "availability" ? STATISTICS_AVAILABILITY_LABEL : CATALOG_LABELS.statistics,
     grounding: true,
-    invoke: async (_validatedInput, budget, phase) => {
+    invoke: async (_validatedInput, budget, phase, holdUntilSettled) => {
       const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
       const startedAtMs = context.clock?.() ?? Date.now();
       phase.statementSent = true;
@@ -3016,7 +3286,9 @@ export async function readStatisticsForGrounding(
         read = await withinGrantedTime(
           provider.query(sql),
           budget.statementTimeoutMs,
-          () => new TimeoutError("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+          () =>
+            new StudioTimeoutRefusal("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+          holdUntilSettled,
         );
       } catch (error) {
         throw asReadingFailure(error, dialect);
@@ -3047,6 +3319,18 @@ function availabilityProbe(dialect: DatabaseConnection["type"]): string {
   return probe;
 }
 
+/**
+ * The admission a composed catalog read carries: minted here, right after composing, and only where the overlay
+ * declares its catalog statement a command. The fence then admits this one statement by identity, and a retry's
+ * rewrite, which is another statement, meets the fence unchanged.
+ */
+function catalogReadAdmission(
+  commandShaped: boolean | undefined,
+  sql: string,
+): { readonly composed?: ComposedStatementAdmission } {
+  return commandShaped === true ? { composed: admitComposedStatement(sql) } : {};
+}
+
 async function readCatalog(
   context: AgentToolContext,
   selectorSchema: z.ZodType<{ kind?: AgentCatalogKind; schema?: string; table?: string }>,
@@ -3072,10 +3356,8 @@ async function readCatalog(
     grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
     ...(mapRows === undefined ? {} : { mapRows }),
-    // Minted here, right after composing, and only where the overlay declares its catalog statement a command: the
-    // fence then admits this one statement by identity, and a retry's rewrite, which is another statement, meets the
-    // fence unchanged.
-    ...(commandShaped === true ? { composed: admitComposedStatement(sql) } : {}),
+    // Minted right after composing, where the overlay declares its catalog statement a command (`catalogReadAdmission`).
+    ...catalogReadAdmission(commandShaped, sql),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.
@@ -3569,6 +3851,16 @@ export async function inspectOperationsTool(context: AgentToolContext, input: un
   const parsed = parseToolInput(agentCuratedReadInput, input);
   if (!parsed.ok) return unavailable("INVALID_TOOL_INPUT", parsed.problems);
   const selector = parsed.value;
+  // Before the audited call, so a kind the run's engine does not offer acquires no provider, charges no budget and
+  // makes no repair entry: the definition this run was handed never offered it.
+  const offered = agentReadingsOf(context.engine);
+  if (!offered.includes(selector.kind)) {
+    const label = typeIdRow(CONNECTION_FORM, context.engine).label;
+    return unavailable(
+      "READING_NOT_OFFERED",
+      `"${selector.kind}" is not a reading the ${label} connection offers agent mode; it offers ${members(offered)}.`,
+    );
+  }
   const reading = CURATED_READINGS[selector.kind];
   const scope = reading.scope?.(context.labels);
   return runAuditedAgentCall(context, {
@@ -3748,9 +4040,14 @@ export function planTableProfile(
   // qualifier is not unknown, the object is not un-profilable and the table is not missing.
   // The run read every candidate and cannot say which the caller meant, and the candidates
   // are the only thing that repairs it, so they are what is said. They are this inventory's
-  // own addresses, so a model can copy one back verbatim.
+  // own addresses, quoted where they are not plain names, and `resolveProfileTarget` reads
+  // that quoting back, so a model can copy one back verbatim, except where one candidate's
+  // raw name is another's quoted form (see `resolveProfileTarget`).
   if (resolution.kind === "ambiguous") {
-    return unavailable("TABLE_SPELLING_AMBIGUOUS", resolution.candidates.map((entry) => entry.name).join(", "));
+    return unavailable(
+      "TABLE_SPELLING_AMBIGUOUS",
+      resolution.candidates.map((entry) => nameForPrompt(entry.name)).join(", "),
+    );
   }
   const target = resolution.kind === "resolved" ? resolution.target : null;
   if (target === null) {
@@ -3796,7 +4093,7 @@ export function planTableProfile(
     // convention this database uses, which is what a misspelling needs. Only names this
     // tool would ACCEPT: offering one it would then refuse is the two-dead-refusals
     // sequence the qualifier split was written to end.
-    const offer = profilable.slice(0, 6).map((entry) => entry.name);
+    const offer = profilable.slice(0, 6).map((entry) => nameForPrompt(entry.name));
     return unavailable("TABLE_NOT_INVENTORIED", offer.length === 0 ? undefined : `it lists ${offer.join(", ")}`);
   }
 
@@ -3835,7 +4132,7 @@ export async function profileTableTool(
   const outcome = await executeAgentOperation(context, {
     operationId: "sql.table.profile",
     sql: plan.sql,
-    label: `profile of ${target.entry.name}`,
+    label: `profile of ${nameForPrompt(target.entry.name)}`,
     ...(target.schema === undefined ? {} : { target: { schema: target.schema } }),
   });
   if (outcome.kind !== "completed") return outcome;
@@ -3869,8 +4166,9 @@ export async function profileTableTool(
         label: "profiled table name",
         operationId: "sql.table.profile",
         reference: outcome.artifact.correlationId,
+        relayedBy: providerAuthor(context.connection.type),
       }),
-      describeFindings(findings, "sql.table.profile"),
+      describeFindings(findings, "sql.table.profile", providerAuthor(context.connection.type)),
     ].join(" "),
   };
 }
@@ -3989,7 +4287,7 @@ export function recommendChangeTool(
       unverifiableCitation(run.events, [{ evidence: parsed.value.evidence }]),
     );
   }
-  return card.record(run.events, parsed.value);
+  return card.record(run.events, parsed.value, providerAuthor(context.connection.type));
 }
 
 /**
@@ -4341,8 +4639,11 @@ function isNumericColumn(rows: readonly Record<string, unknown>[], column: strin
   return numeric > values.length * 0.8;
 }
 
-/** The column-name refusal, listing the real names — engine text, so fenced. */
-function chartColumnRefusal(artifact: AgentArtifactReference): AgentAnswerOutcome & { kind: "unavailable" } {
+/** The column-name refusal, listing the real names: engine text, so fenced naming the provider that relayed them. */
+function chartColumnRefusal(
+  artifact: AgentArtifactReference,
+  relayedBy: string,
+): AgentAnswerOutcome & { kind: "unavailable" } {
   const names = artifact.summary.columnNames;
   return {
     kind: "unavailable",
@@ -4351,6 +4652,7 @@ function chartColumnRefusal(artifact: AgentArtifactReference): AgentAnswerOutcom
       label: `the ${names.length} column name(s) of result ${artifact.correlationId}`,
       operationId: artifact.operationId,
       reference: artifact.correlationId,
+      relayedBy,
     })}`,
   };
 }
@@ -4373,7 +4675,9 @@ function refuseChartSpec(
 ): (AgentAnswerOutcome & { kind: "unavailable" }) | null {
   const columns = new Set(artifact.summary.columnNames);
   const named = [spec.x, ...spec.y];
-  if (named.some((column) => !columns.has(column))) return chartColumnRefusal(artifact);
+  if (named.some((column) => !columns.has(column))) {
+    return chartColumnRefusal(artifact, providerAuthor(context.connection.type));
+  }
   if (artifact.summary.rowCount < 2) return unavailable("CHART_TOO_FEW_ROWS");
   if (spec.type === "pie" && spec.y.length !== 1) return unavailable("CHART_SHAPE_MISMATCH");
 

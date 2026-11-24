@@ -11,9 +11,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { editorExecutionContext } from "@/lib/api/execution-context";
-import { ExecutionProfileError } from "@/lib/db/errors";
-import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/factory";
+import { ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
+import { getOrCreateProvider } from "@/lib/db/factory";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
@@ -214,6 +214,14 @@ describe("reachableTypes", () => {
     expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set());
   });
 
+  test("reachableTypes leaves out a seed whose type names no provider", async () => {
+    writeSeedFile(dir, [
+      { id: "acme", type: "acmefoo" },
+      { id: "shop", type: "sqlite", database: join(dir, "shop.db") },
+    ]);
+    expect(await new McpConnectionContext(alice).reachableTypes()).toEqual(new Set(["sqlite"]));
+  });
+
   test("answers unreadable for a seed file that cannot be parsed", async () => {
     const path = join(dir, "broken.json");
     writeFileSync(path, "{ this is not json");
@@ -256,27 +264,6 @@ describe("acquire", () => {
 
       expect(gate.calls).toBe(1);
       expect(new Set(providers).size).toBe(1);
-    } finally {
-      gate.release();
-      gate.restore();
-    }
-  });
-
-  test("the same hold without the join opens twelve providers, so the case above can tell the two apart", async () => {
-    seedShop();
-    const connection = await shopConnection(new McpConnectionContext(alice));
-    const gate = gateMethod(SQLiteProvider.prototype, "connect");
-    try {
-      const acquisitions = Array.from({ length: 12 }, () =>
-        acquireExecutionProfileProvider(connection, "agent-read-only", {}, editorExecutionContext(alice, connection)),
-      );
-      await gate.entered;
-      await holdGate();
-      expect(gate.calls).toBe(12);
-      gate.release();
-      const providers = new Set(await Promise.all(acquisitions));
-      expect(providers.size).toBe(12);
-      await Promise.all([...providers].map((provider) => provider.disconnect()));
     } finally {
       gate.release();
       gate.restore();
@@ -763,5 +750,61 @@ describe("the context's source", () => {
       expect(source).not.toContain(seam);
     }
     expect(existsSync(join(ROOT, "src/lib/mcp/guards/cancellation.ts"))).toBe(false);
+  });
+});
+
+describe("a connection whose type names no provider (FND-1)", () => {
+  const listed = (type: unknown, fields: Record<string, unknown> = {}): ManagedConnection =>
+    ({
+      id: "seed:acme",
+      name: "Acme Store",
+      type,
+      host: "db.acme.internal",
+      createdAt: new Date(),
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+      ...fields,
+    }) as unknown as ManagedConnection;
+
+  test("both open checks refuse a type that is no type id by name before their table is read", () => {
+    for (const type of ["acmefoo", "constructor", undefined] as unknown[]) {
+      for (const check of [assertAgentCredentialWhereRequired, assertReadRootsWhereRequired]) {
+        let thrown: unknown;
+        try {
+          check(listed(type));
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(UnknownProviderError);
+        expect((thrown as UnknownProviderError).message).toBe(typeIdRefusal(type)?.sentence as string);
+      }
+    }
+  });
+
+  test("an acquisition refuses a connection whose type names no provider before any secret is read", async () => {
+    const realFetch = globalThis.fetch;
+    const vaultCalls: string[] = [];
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = "not-a-real-token";
+    resetVaultCache();
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      vaultCalls.push(String(input));
+      return new Response("{}", { status: 503 });
+    }) as unknown as typeof fetch;
+    try {
+      const context = new McpConnectionContext(alice);
+      const refusal = await context
+        .acquire(listed("acmefoo", { password: "${vault:secret/data/acme#password}" }), "agent-read-only")
+        .catch((error: unknown) => error);
+      expect(refusal).toBeInstanceOf(UnknownProviderError);
+      expect((refusal as UnknownProviderError).message).toBe(unknownTypeSentence("acmefoo"));
+      expect(vaultCalls).toEqual([]);
+    } finally {
+      globalThis.fetch = realFetch;
+      delete process.env.VAULT_ADDR;
+      delete process.env.VAULT_TOKEN;
+      resetVaultCache();
+    }
   });
 });

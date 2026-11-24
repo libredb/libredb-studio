@@ -116,7 +116,81 @@ export interface ServerStorageProvider extends PasskeyStore {
    * account keeps its rows so re-enabling restores them.
    */
   deleteAccount(email: string, options?: AccountWriteOptions): Promise<void>;
+  /**
+   * The store's credential envelope state, from its `storage_meta` row `credential_envelope`: no
+   * row is `v1-accepted`, `v2` is `v1-retired`, and any other value throws by name (a store written
+   * by a newer format).
+   */
+  readEnvelopeState(): Promise<CredentialEnvelopeState>;
+  /**
+   * The operator re-seal (docs/STORAGE.md, "Re-sealing the store"), in one transaction holding the
+   * store's write lock: on a store already retired, nothing is read, written or backed up;
+   * otherwise every `connections` row and every account's factors are passed to `rewrite`,
+   * `rewrite.beforeRetire` runs, a complete backup of the store as it was is written under
+   * `backupLabel`, the rows the rewrite changes are written, and the state becomes `v1-retired`.
+   * Any error rolls every change back and is rethrown; a throw from `rewrite` leaves no backup
+   * either.
+   */
+  rewriteStoredCredentials(
+    rewrite: StoredCredentialRewrite,
+    backupLabel: string,
+  ): Promise<StoredCredentialRewriteResult>;
 }
+
+/**
+ * Whether the store still opens version 1 envelopes and unsealed values (`v1-accepted`), or has
+ * been re-sealed and refuses them by name (`v1-retired`).
+ */
+export type CredentialEnvelopeState = "v1-accepted" | "v1-retired";
+
+/** The `storage_meta` key whose row records the credential envelope state. */
+export const CREDENTIAL_ENVELOPE_KEY = "credential_envelope";
+/** Its value once the operator re-seal retired version 1. */
+export const RETIRED_ENVELOPE_MARKER = "v2";
+
+/**
+ * The state a `credential_envelope` row records: none is `v1-accepted`, `v2` is `v1-retired`, and
+ * any other value throws by name, because a store written by a newer format must not be read as one
+ * this version understands. The state is read when the store is first opened, at the first request
+ * that needs it (or at boot when STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 is
+ * set), so the throw fails those requests; the health and readiness routes do not open the store.
+ */
+export function envelopeStateOf(marker: string | undefined): CredentialEnvelopeState {
+  if (marker === undefined) return "v1-accepted";
+  if (marker === RETIRED_ENVELOPE_MARKER) return "v1-retired";
+  throw new Error(
+    `The store's storage_meta row ${CREDENTIAL_ENVELOPE_KEY} is ${JSON.stringify(marker)}, a credential envelope state this version does not know; it was written by a newer version, so this one refuses to open the store, and every request that needs the store fails with this error.`,
+  );
+}
+
+/** The sealed factor columns of one account row, as stored. */
+export interface StoredFactorRow {
+  email: string;
+  totpSecret: string | null;
+  totpPending: string | null;
+}
+
+/**
+ * What the re-seal does to each stored row, called synchronously inside the provider's transaction.
+ * Each returns the replacement, or null to leave the row as it is.
+ */
+export interface StoredCredentialRewrite {
+  /** One user_storage row of collection `connections`: its owner and its `data` text as stored. */
+  connections(userId: string, data: string): string | null;
+  /** One account's factor columns as stored. */
+  factors(row: StoredFactorRow): Pick<StoredFactorRow, "totpSecret" | "totpPending"> | null;
+  /**
+   * Called once after every row and account, before the state becomes `v1-retired`, inside the same transaction: a
+   * throw rolls every change back and leaves no backup, so the re-seal can refuse to retire version 1 over what the
+   * rows held.
+   */
+  beforeRetire(): void;
+}
+
+export type StoredCredentialRewriteResult =
+  | { kind: "already-retired" }
+  /** `backup` names where the complete copy of the store as it was is: a file path, or a table name pattern. */
+  | { kind: "rewritten"; backup: string };
 
 export interface AccountWriteOptions {
   /**
@@ -144,6 +218,18 @@ export class AccountWriteConflict extends Error {
   constructor() {
     super("The account row changed after it was read");
     this.name = "AccountWriteConflict";
+  }
+}
+
+/**
+ * A connections list a write refused, because one of its connections cannot be sealed for its place: a secret that is
+ * not text, or a connection that has no binding. The message names the list index and never a value; the API answers it
+ * as a 400, since the request, not the server, is at fault. Nothing was written.
+ */
+export class ConnectionWriteRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ConnectionWriteRefused";
   }
 }
 

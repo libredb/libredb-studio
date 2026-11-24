@@ -259,7 +259,7 @@ mock.module("lucide-react", () => {
 });
 
 // ── Imports AFTER mocks ─────────────────────────────────────────────────────
-import { describe, test, expect, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { render, fireEvent, createEvent, cleanup, act, waitFor, within } from "@testing-library/react";
 import { ResultsGrid, type CellChange } from "@/components/ResultsGrid";
 import {
@@ -267,7 +267,9 @@ import {
   getHeaderFitColumnSize,
   RESULT_COLUMN_RESIZE_MAX_SIZE,
 } from "@/components/results-grid/column-sizing";
-import type { QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryResult } from "@/lib/types";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { OUTSIDE_THE_UNION, refusalOf, shapeOfRefusal } from "../helpers/outside-the-union";
 
 // ── Test data ───────────────────────────────────────────────────────────────
 
@@ -3368,5 +3370,113 @@ describe("ResultsGrid", () => {
         `${getContentFitColumnSize("doc", undefined, false, [long], RESULT_COLUMN_RESIZE_MAX_SIZE)}px`,
       );
     });
+  });
+});
+
+// ResultsGrid is published and types `databaseType` as a DatabaseType, which only a caller outside TypeScript's checks
+// can break (FND-1, D-a). Such a value is refused by name as the grid renders, before the result-order reader runs
+// beside a paging offer, and the host's error boundary receives the error.
+describe("ResultsGrid and a databaseType outside DatabaseType (FND-1)", () => {
+  /** A test's own error boundary, which records what it caught. */
+  class RecordingBoundary extends React.Component<
+    { children?: React.ReactNode; onCaught: (error: unknown) => void },
+    { caught: boolean }
+  > {
+    state = { caught: false };
+    static getDerivedStateFromError() {
+      return { caught: true };
+    }
+    componentDidCatch(error: unknown) {
+      this.props.onCaught(error);
+    }
+    render() {
+      return this.state.caught ? React.createElement("p", { "data-testid": "boundary-caught" }) : this.props.children;
+    }
+  }
+
+  const ROWS = OUTSIDE_THE_UNION.filter(([, value]) =>
+    ["acmefoo", "constructor", "", null, 5].includes(value as never),
+  );
+  let caught: unknown[];
+  let consoleError: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    caught = [];
+    // React reports an error its boundary caught on console.error; the boundary's record is what is asserted.
+    consoleError = spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleError.mockRestore();
+    cleanup();
+  });
+
+  /** A pageable, unordered result, so the order reader would run under `databaseType`. */
+  function gridUnder(databaseType: unknown) {
+    return React.createElement(
+      RecordingBoundary,
+      { onCaught: (error: unknown) => caught.push(error) },
+      React.createElement(ResultsGrid, {
+        result: mockPaginatedResult,
+        onLoadMore: mock(() => {}),
+        supportsResultPagination: true,
+        resultQuery: "SELECT * FROM users",
+        databaseType: databaseType as DatabaseType,
+      }),
+    );
+  }
+
+  test("ROWS holds the five values named for this table", () => {
+    expect(ROWS.map(([label]) => label)).toEqual([
+      "acmefoo",
+      "constructor",
+      "the empty string",
+      "null",
+      "the number 5",
+    ]);
+  });
+
+  test.each(ROWS)("refuses %s by name as it renders", (_label, value) => {
+    const { queryByTestId } = render(gridUnder(value));
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(UnknownProviderError);
+    expect(shapeOfRefusal(caught[0] as UnknownProviderError)).toEqual(refusalOf(value));
+    expect(queryByTestId("boundary-caught")).not.toBeNull();
+    expect(queryByTestId("page-offer")).toBeNull();
+  });
+
+  // With no paging offer the result-order reader never runs, so the check at the top of render is the only place a
+  // refusal can come from.
+  test.each(ROWS)("refuses %s by name as it renders a result with no paging offer", (_label, value) => {
+    const { queryByTestId } = render(
+      React.createElement(
+        RecordingBoundary,
+        { onCaught: (error: unknown) => caught.push(error) },
+        React.createElement(ResultsGrid, { result: mockResult, databaseType: value as DatabaseType }),
+      ),
+    );
+    expect(caught).toHaveLength(1);
+    expect(caught[0]).toBeInstanceOf(UnknownProviderError);
+    expect(shapeOfRefusal(caught[0] as UnknownProviderError)).toEqual(refusalOf(value));
+    expect(queryByTestId("boundary-caught")).not.toBeNull();
+  });
+
+  test("a type id renders a result with no paging offer", () => {
+    const { queryByTestId } = render(
+      React.createElement(
+        RecordingBoundary,
+        { onCaught: (error: unknown) => caught.push(error) },
+        React.createElement(ResultsGrid, { result: mockResult, databaseType: "postgres" }),
+      ),
+    );
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("boundary-caught")).toBeNull();
+  });
+
+  test("a type id renders the grid and reads its order", () => {
+    const { queryByTestId } = render(gridUnder("postgres"));
+    expect(caught).toHaveLength(0);
+    expect(queryByTestId("page-offer")).not.toBeNull();
+    expect(queryByTestId("order-notice")).not.toBeNull();
   });
 });

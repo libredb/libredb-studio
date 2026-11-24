@@ -224,8 +224,8 @@ describe("the engine connection string modules", () => {
     expect(specifiers.filter((specifier) => specifier !== "./types" && specifier !== TYPES)).toEqual([]);
   });
 
-  test("no engine module imports the no-connection or unknown-type spec", () => {
-    const targets = new Set([join(REGISTRY, "no-connection.ts"), join(REGISTRY, "unknown-type.ts")]);
+  test("no engine module imports the no-connection spec", () => {
+    const targets = new Set([join(REGISTRY, "no-connection.ts")]);
     const found = MODULES.flatMap(({ id, path }) =>
       importFacts(path, readFileSync(path, "utf8"))
         .filter(({ specifier }) => targets.has(resolveLocal(path, specifier) ?? ""))

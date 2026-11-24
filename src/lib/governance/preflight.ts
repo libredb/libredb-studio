@@ -19,7 +19,7 @@
  * while governance is off, so a Studio without GOVERNANCE_SOURCE starts exactly as before.
  */
 import { authProviderSetting, authProviderValue } from "@/lib/config/auth-provider";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { typeIdRefusal } from "@/lib/db/type-id";
 import {
   governanceAllowedEngines,
   governanceEnabled,
@@ -36,8 +36,6 @@ import { governanceKeyring } from "@/lib/governance/keyring";
 const CUSTOM_CONNECTIONS_OFF = new Set(["false", "0", "off", "no"]);
 /** The spellings that switch MCP (`src/lib/mcp/config.ts`) or the agent (`src/lib/agent/config.ts`) off. */
 const SWITCH_OFF = new Set(["false", "off", "0"]);
-
-const KNOWN_ENGINES: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
 
 /** Whether a variable holds a value; an empty one counts as unset, as it does for every reader of these variables. */
 const isSet = (value: string | undefined): value is string => value !== undefined && value !== "";
@@ -62,11 +60,15 @@ function refusalOf(read: () => unknown): string | null {
   }
 }
 
-/** An allowed engine Studio has no connection type for is a typo, and every row of the engine it meant is skipped. */
+/**
+ * An allowed engine that names no provider this Studio has is a typo or another Studio's engine, and every row of the
+ * engine it meant would be skipped: the banner names each in the sentence `typeIdRefusal` gives it, the one every
+ * Studio surface refuses such a type with.
+ */
 function unknownEnginesProblem(): string | null {
-  const unknown = governanceAllowedEngines().filter((engine) => !KNOWN_ENGINES.has(engine));
-  if (unknown.length === 0) return null;
-  return `GOVERNANCE_ALLOWED_ENGINES names engines Studio has no connection type for: ${unknown.join(", ")}; list connection type ids such as postgres`;
+  const sentences = governanceAllowedEngines().flatMap((engine) => typeIdRefusal(engine)?.sentence ?? []);
+  if (sentences.length === 0) return null;
+  return `GOVERNANCE_ALLOWED_ENGINES must name connection type ids such as postgres: ${sentences.join(" ")}`;
 }
 
 /** Every reason this environment contradicts governance mode, each starting with the variable to fix. */

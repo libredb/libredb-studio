@@ -48,6 +48,24 @@ describe("resolve-connection with custom connections switched off", () => {
     expect((error as SeedConnectionError).code).toBe("CUSTOM_CONNECTIONS_DISABLED");
   });
 
+  it("refuses a connection whose type names no provider for the switch, which is decided first (FND-1)", async () => {
+    const own = {
+      id: "user-conn",
+      name: "Acme",
+      type: "acmefoo",
+      host: "acme.example",
+      createdAt: new Date(),
+    } as unknown as DatabaseConnection;
+
+    const error = await resolveConnection({ connection: own }, { role: "admin", username: "test" }).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(SeedConnectionError);
+    expect((error as SeedConnectionError).statusCode).toBe(403);
+    expect((error as SeedConnectionError).code).toBe("CUSTOM_CONNECTIONS_DISABLED");
+  });
+
   it("logs who was refused and never the address they asked for", async () => {
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {

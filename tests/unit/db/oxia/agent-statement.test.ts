@@ -7,7 +7,7 @@ import {
   OXIA_AGENT_SENTENCES,
   type OxiaAgentReading,
   readOxiaAgentStatement,
-} from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+} from "@/lib/languages/oxiacli/agent-statement";
 
 const reads = (text: string): OxiaAgentReading => readOxiaAgentStatement(text);
 

@@ -26,6 +26,8 @@
  *   deadline (`AbortSignal.timeout`) from a cancellation.
  * - A TLS failure stays a failure carrying the runtime's code, and nothing is retried over
  *   plain HTTP (#1085 S8).
+ * - A 101 that announces an upgrade fails at once as a network failure, and the switched
+ *   connection is closed.
  * - A failure message is made of a status, a code, an origin or a number, never of a header
  *   value, a response body or the runtime's own message: `fetch` quoted a header value it
  *   refused (measured on bun 1.4.2), and these messages reach the log and the client.
@@ -35,10 +37,12 @@
  */
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
+import type { Socket } from "node:net";
 import { urlToHttpOptions } from "node:url";
 import { rejectRedirect } from "@/lib/db/http/endpoint";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 
 /** One request, built whole by the caller. */
@@ -216,16 +220,20 @@ async function readCapped(body: Response["body"], maxBytes: number): Promise<str
   }
 }
 
-async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
+async function sendPlain(request: OutboundRequest, egress: EgressDecision): Promise<InboundResponse> {
   let response: Response;
   try {
-    response = await httpTransportFetch(request.url, {
-      method: request.method,
-      headers: request.headers,
-      body: request.body,
-      redirect: "manual",
-      signal: request.signal,
-    });
+    response = await httpTransportFetch(
+      request.url,
+      {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        redirect: "manual",
+        signal: request.signal,
+      },
+      egress,
+    );
   } catch (error) {
     throw failureFrom(error, request.signal);
   }
@@ -251,7 +259,7 @@ async function sendPlain(request: OutboundRequest): Promise<InboundResponse> {
   }
 }
 
-function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<InboundResponse> {
+function sendOverTls(tls: TlsMaterial, request: OutboundRequest, egress: EgressDecision): Promise<InboundResponse> {
   return new Promise<InboundResponse>((resolve, reject) => {
     const { protocol, hostname, port, path } = urlToHttpOptions(request.url);
     let clientRequest: ClientRequest | undefined;
@@ -284,7 +292,7 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
           method: request.method,
           headers: request.headers,
           ...tls,
-          ...guardedNodeOptions(hostname),
+          ...guardedNodeOptions(hostname, egress),
         },
         (incoming) => {
           response = incoming;
@@ -319,6 +327,13 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
         },
       );
       clientRequest.on("error", failWith);
+      // node:https hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event,
+      // never to the response callback, and without a listener emits no error either, so the request would wait for
+      // its deadline. The switched socket is no longer the request's, so it is destroyed here.
+      clientRequest.on("upgrade", (_answer: IncomingMessage, socket: Socket) => {
+        socket.destroy();
+        fail(new RequestFailure("network", NETWORK_FAILURE));
+      });
       request.signal.addEventListener("abort", onAbort, { once: true });
       clientRequest.end(request.body);
     } catch (error) {
@@ -329,9 +344,13 @@ function sendOverTls(tls: TlsMaterial, request: OutboundRequest): Promise<Inboun
   });
 }
 
-/** null: plaintext through the global fetch, read at call time. Non-null: node:https with that material. */
-export function createSendRequest(tls: TlsMaterial | null): SendRequest {
-  const send: SendRequest = tls === null ? sendPlain : (request) => sendOverTls(tls, request);
+/**
+ * null: plaintext through the global fetch, read at call time. Non-null: node:https with that material. Either path
+ * follows `egress`, the decision the provider was built with.
+ */
+export function createSendRequest(tls: TlsMaterial | null, egress: EgressDecision): SendRequest {
+  const send: SendRequest =
+    tls === null ? (request) => sendPlain(request, egress) : (request) => sendOverTls(tls, request, egress);
   return async (request) => {
     // An already-aborted signal never fires "abort" again, and node:https would send the request regardless.
     if (request.signal.aborted) throw abortFailure(request.signal);

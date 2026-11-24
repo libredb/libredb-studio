@@ -5,6 +5,7 @@ import { ChevronRight, LoaderCircle, RotateCw } from "lucide-react";
 import { appFetch } from "@/lib/config/base-path";
 import { AGENT_HISTORY_PAGE_DEFAULT } from "@/lib/agent/execution-policy";
 import type { AgentConversationSummary, AgentRunRecord } from "@/lib/agent/types";
+import { ApiErrorCode } from "@/lib/api/error-codes";
 
 /**
  * The run history panel (#830): the finished conversations this session can
@@ -100,6 +101,26 @@ function readNextCursor(payload: unknown): string | null {
   return typeof wire.nextCursor === "string" ? wire.nextCursor : null;
 }
 
+/**
+ * What a failed reopen says. A run whose ledger names a statement language, workflow or goal rule this Studio does not
+ * have is answered 409 `AGENT_RUN_UNAVAILABLE` with a sentence naming the id, which is shown as it is; every other
+ * failure reads as one sentence.
+ */
+function reopenFailureSentence(status: number, payload: unknown): string {
+  if (
+    status === 409 &&
+    typeof payload === "object" &&
+    payload !== null &&
+    "code" in payload &&
+    payload.code === ApiErrorCode.AGENT_RUN_UNAVAILABLE &&
+    "error" in payload &&
+    typeof payload.error === "string"
+  ) {
+    return payload.error;
+  }
+  return "That run could not be reopened.";
+}
+
 /** A stable, locale-agnostic rendering of a finish timestamp for the list. */
 function formatTimestamp(atMs: number): string {
   const date = new Date(atMs);
@@ -190,7 +211,7 @@ export function AgentHistory() {
       const res = await appFetch(`/api/agent/runs/${encodeURIComponent(runId)}`);
       const payload = (await res.json()) as unknown;
       if (!res.ok) {
-        if (isCurrent()) setError("That run could not be reopened.");
+        if (isCurrent()) setError(reopenFailureSentence(res.status, payload));
         return;
       }
       if (typeof payload !== "object" || payload === null || !("record" in payload)) {

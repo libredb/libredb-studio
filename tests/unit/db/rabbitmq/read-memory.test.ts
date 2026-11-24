@@ -25,6 +25,8 @@ import { RABBITMQ_BODY_PREFIX_BYTES, RABBITMQ_RESULT_BUDGET_BYTES } from "@/lib/
 
 const ALLOWANCE_BYTES = 48 * 1_000_000;
 const HELPER = join(import.meta.dir, "..", "..", "..", "helpers", "rabbitmq-fake-peer.ts");
+/** The decision each child hands its dial: the one a factory-built provider holds while the variable is unset. */
+const EGRESS_DECISIONS = join(import.meta.dir, "..", "..", "..", "helpers", "egress-decisions.ts");
 const READ_LOOP = join(
   import.meta.dir,
   "..",
@@ -61,6 +63,7 @@ async function measure(
   read: typeof import("@/lib/db/providers/stream/rabbitmq/amqp/read-loop").readStream,
   dial: typeof import("@/lib/db/providers/stream/rabbitmq/amqp/dial").dialAmqp,
   clock: typeof import("@/lib/db/providers/stream/rabbitmq/limits").SYSTEM_CLOCK,
+  egress: import("@/lib/db/types").EgressDecision,
 ): Promise<Measured> {
   const MIB = 1024 * 1024;
   const one = (body: Uint8Array) => h.message({ deliveryTag: BigInt(1), offset: BigInt(0), body });
@@ -95,7 +98,15 @@ async function measure(
     const peer = await h.startFakePeer(scripts[script] ?? []);
     try {
       return await read({
-        endpoint: { host: "127.0.0.1", port: peer.port, tls: null, username: "u", password: "p", display: "local" },
+        endpoint: {
+          host: "127.0.0.1",
+          port: peer.port,
+          tls: null,
+          username: "u",
+          password: crypto.randomUUID(),
+          display: "local",
+          egress,
+        },
         vhost: "/",
         stream: "st",
         from: { kind: "keyword", value: "first" },
@@ -153,8 +164,9 @@ beforeAll(async () => {
         `import { readStream } from ${JSON.stringify(READ_LOOP)};`,
         `import { dialAmqp } from ${JSON.stringify(join(READ_LOOP, "..", "dial.ts"))};`,
         `import { SYSTEM_CLOCK } from ${JSON.stringify(join(READ_LOOP, "..", "..", "limits.ts"))};`,
+        `import { ALLOWS_PRIVATE_HOSTS } from ${JSON.stringify(EGRESS_DECISIONS)};`,
         `const measure = ${measure.toString()};`,
-        "const result = await measure(process.argv[2], h, readStream, dialAmqp, SYSTEM_CLOCK);",
+        "const result = await measure(process.argv[2], h, readStream, dialAmqp, SYSTEM_CLOCK, ALLOWS_PRIVATE_HOSTS);",
         'process.stdout.write(JSON.stringify(result) + "\\n");',
         "process.exit(0);",
         "",

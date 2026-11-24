@@ -133,7 +133,7 @@ describe("the token", () => {
 });
 
 describe("SPARK_FIELD_SENTENCES", () => {
-  test("holds the seven field refusals word for word, frozen", () => {
+  test("holds the five field refusals word for word, frozen", () => {
     expect(Object.isFrozen(SPARK_FIELD_SENTENCES)).toBe(true);
     expect(SPARK_FIELD_SENTENCES).toStrictEqual({
       hostEmpty:
@@ -144,10 +144,6 @@ describe("SPARK_FIELD_SENTENCES", () => {
         "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
       namespaceFormat:
         "Namespace takes a Spark SQL namespace: parts joined by dots, each a letter or _ followed by letters, digits or _, or written in backticks with a backtick doubled; at most 8 parts. Nothing was sent.",
-      userNotTaken:
-        "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
-      tunnelNotOpened:
-        "This connection's SSH tunnel is on, but the connection arrived without its tunnel, so Apache Spark was not dialled directly: the tunnel opens only when both Host and Port are set.",
       queryTimeout: "Query timeout must be a whole number between 1 and 2147483647 milliseconds.",
     });
   });
@@ -176,12 +172,19 @@ describe("TLS identity", () => {
 });
 
 describe("the SSH tunnel", () => {
-  test("a tunnel that is off, or whose switch is null, is no tunnel, and an array is no tunnel object", () => {
-    expect(build({ sshTunnel: { ...TUNNEL_ON.sshTunnel, enabled: false } })).toStrictEqual(build());
-    expect(build({ sshTunnel: { enabled: null } })).toStrictEqual(build());
-    expect(refusal({ sshTunnel: [TUNNEL_ON.sshTunnel] }).message).toBe(
-      "The connection's sshTunnel must be an object; nothing was sent.",
-    );
+  // Core decides the tunnel before any provider is built and refuses one that is on and was not opened
+  // (tests/security/provider-tunnel-decisions.test.ts), so the far end alone says a tunnel carries the connection.
+  test("reads no sshTunnel: the far end alone says a tunnel was opened (FND-2 slice 5)", () => {
+    for (const sshTunnel of [
+      TUNNEL_ON.sshTunnel,
+      { enabled: "yes" },
+      { enabled: false },
+      { enabled: null },
+      "on",
+      [],
+    ]) {
+      expect(build({ sshTunnel })).toStrictEqual(build());
+    }
   });
 
   test("the far end is read as Host and Port are: lower-cased, and refused with the shared sentences", () => {
@@ -202,15 +205,11 @@ describe("every field refusal, before any socket", () => {
     ["no host", { host: undefined }, SPARK_FIELD_SENTENCES.hostEmpty],
     ["a null host", { host: null }, SPARK_FIELD_SENTENCES.hostEmpty],
     ["a blank host", { host: "   " }, SPARK_FIELD_SENTENCES.hostEmpty],
-    ["a user", { user: "alice" }, SPARK_FIELD_SENTENCES.userNotTaken],
-    ["a user of spaces", { user: " " }, SPARK_FIELD_SENTENCES.userNotTaken],
-    ["a user that is not text", { user: 42 }, SPARK_FIELD_SENTENCES.userNotTaken],
     ["a catalog with a dot", { database: "a.b" }, SPARK_FIELD_SENTENCES.catalogFormat],
     ["a catalog with a control character", { database: "a\tb" }, SPARK_FIELD_SENTENCES.catalogFormat],
     ["a catalog of 256 characters", { database: "c".repeat(256) }, SPARK_FIELD_SENTENCES.catalogFormat],
     ["a malformed namespace", { schema: "a..b" }, SPARK_FIELD_SENTENCES.namespaceFormat],
     ["a namespace of nine parts", { schema: "a.b.c.d.e.f.g.h.i" }, SPARK_FIELD_SENTENCES.namespaceFormat],
-    ["a tunnel that did not open", TUNNEL_ON, SPARK_FIELD_SENTENCES.tunnelNotOpened],
   ] as const)("%s", (_name, overrides, sentence) => {
     const error = refusal(overrides);
     expect(error.message).toBe(sentence);
@@ -236,12 +235,6 @@ describe("every field refusal, before any socket", () => {
     ["password", { password: 42 }, "The connection's password must be a string; nothing was sent."],
     ["database", { database: 42 }, "The connection's database must be a string; nothing was sent."],
     ["schema", { schema: 42 }, "The connection's schema must be a string; nothing was sent."],
-    ["sshTunnel", { sshTunnel: "on" }, "The connection's sshTunnel must be an object; nothing was sent."],
-    [
-      "sshTunnel.enabled",
-      { sshTunnel: { enabled: "yes" } },
-      "The connection's sshTunnel.enabled must be true or false; nothing was sent.",
-    ],
     ["ssl", { ssl: "on" }, "The connection's ssl must be an object; nothing was sent."],
   ] as const)("a %s of the wrong type is refused by its type, naming the field", (_field, overrides, sentence) => {
     expect(refusal(overrides).message).toBe(sentence);
@@ -249,7 +242,6 @@ describe("every field refusal, before any socket", () => {
 
   test("no sentence repeats the value it refuses", () => {
     for (const [overrides, value] of [
-      [{ user: "alice-the-admin" }, "alice-the-admin"],
       [{ database: "secret.catalog" }, "secret.catalog"],
       [{ schema: "bad..ns" }, "bad..ns"],
     ] as const) {
@@ -260,10 +252,8 @@ describe("every field refusal, before any socket", () => {
 
 describe("the rules run in one fixed order, so the earlier of two refusals answers", () => {
   test.each([
-    ["the tunnel before the host", TUNNEL_ON, { host: "" }],
     ["the host before the port", { host: "" }, { port: 70000 }],
-    ["the port before the user", { port: 70000 }, { user: "alice" }],
-    ["the user before the token", { user: "alice" }, { password: "a\nb" }],
+    ["the port before the token", { port: 70000 }, { password: "a\nb" }],
     ["the token before the catalog", { password: "a\nb" }, { database: "a.b" }],
     ["the catalog before the namespace", { database: "a.b" }, { schema: "a..b" }],
     ["the namespace before the TLS panel", { schema: "a..b" }, { ssl: { mode: "bogus" } }],

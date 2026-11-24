@@ -4,19 +4,35 @@ import os from "node:os";
 import path from "node:path";
 import { createLocalWorld } from "@workflow/world-local";
 import { persistedRunFacts, workflowAvailability } from "@/lib/agent/agent-manifest";
-import { forgetHeldSnapshots } from "@/lib/agent/context-snapshot";
+import {
+  connectionIdentity,
+  fingerprintInventory,
+  forgetHeldSnapshots,
+  holdSnapshotForConnection,
+} from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_RUN_READ_ALLOWANCE, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { runInvestigation } from "@/lib/agent/investigation";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { AgentRunService } from "@/lib/agent/run-service";
 import { AgentRunStore } from "@/lib/agent/run-store";
-import type { AgentRunEvent } from "@/lib/agent/types";
+import type {
+  AgentContextSnapshot,
+  AgentInventory,
+  AgentRunEvent,
+  AgentRunMode,
+  AgentRunWorkflowType,
+  AgentToolRefusal,
+} from "@/lib/agent/types";
+import { UNTRUSTED_PROVIDER_TEXT_BEGIN, UNTRUSTED_PROVIDER_TEXT_END } from "@/lib/agent/untrusted-content";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { PROVIDER_TEXT_WITHHELD } from "@/lib/db/operations/provider-text";
+import { secretForms } from "@/lib/db/utils/server-text";
+import { rowBudgetSentence } from "@/lib/db/read-only-budget";
 import { READ_ALLOWANCE_PREFIX, type RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult } from "@/lib/types";
@@ -120,17 +136,54 @@ function freshDataDir(): string {
   return dataDir;
 }
 
-async function startRun(service: AgentRunService) {
-  const availability = workflowAvailability("agent", "investigation", connection.type);
-  if (!availability.open) throw new Error("an investigation does not open on postgres");
+async function startRun(
+  service: AgentRunService,
+  mode: AgentRunMode = "agent",
+  workflowType: AgentRunWorkflowType = "investigation",
+) {
+  const availability = workflowAvailability(mode, workflowType, connection.type);
+  if (!availability.open) throw new Error(`a ${mode} ${workflowType} run does not open on postgres`);
   return service.start({
-    mode: "agent",
-    workflowType: "investigation",
-    ...persistedRunFacts("agent", "investigation", availability),
+    mode,
+    workflowType,
+    ...persistedRunFacts(mode, workflowType, connection.type, availability),
     actor: { sessionId: "sess_1", role: "user" },
     connectionId: connection.id,
     objective: "How many orders are there?",
   });
+}
+
+/**
+ * An inventory snapshot as a drive recorded it before the walk scrubbed its provider sentences: every sentence on it
+ * carries `password` raw.
+ */
+function rawSnapshot(password: string): AgentContextSnapshot {
+  const inventory = {
+    objects: [
+      {
+        path: ["public", "orders"],
+        name: "orders",
+        kind: "table",
+        columns: [{ name: "id", type: "integer", nullable: false, isPrimary: true }],
+        indexes: { unavailable: `index read refused for ${password}` },
+        foreignKeys: [],
+      },
+    ],
+    kinds: [
+      { id: "table", role: "relation", label: "Table", labelPlural: "Tables", sampledFrom: `a walk as ${password}` },
+      { id: "view", role: "relation", label: "View", labelPlural: "Views", unavailable: `denied for ${password}` },
+    ],
+    truncated: { limit: 1, reason: `bounded for ${password}` },
+    unreadContainers: {
+      count: 1,
+      label: "Schema",
+      labelPlural: "Schemas",
+      read: ["public"],
+      unlistedParents: [{ path: "archive", label: "Schema", reason: `could not list as ${password}` }],
+    },
+  } as AgentInventory;
+  const fingerprint = fingerprintInventory(inventory);
+  return { ...inventory, connectionId: connection.id, fingerprint, capturedAtMs: 1 };
 }
 
 async function eventsOf(store: AgentRunStore, runId: string): Promise<readonly AgentRunEvent[]> {
@@ -220,7 +273,7 @@ describe("the run read allowance", () => {
     expect(events.some((event) => event.kind === "tool-refused")).toBe(true);
     // This server refused it, before anything was sent, so it is said in the server's own voice: never fenced as
     // the database's error, and followed by what to do about it.
-    expect(promptText(next)).not.toContain("database error; operation");
+    expect(promptText(next)).not.toContain("[UNTRUSTED DATABASE CONTENT: database error");
     expect(promptText(next)).toContain("refused by this server before it was sent; the database was not asked");
     // The allowance's own advice, not the advice for any other statement refused before it was sent: the repair is a
     // smaller read.
@@ -244,9 +297,9 @@ describe("the run read allowance", () => {
     expect(promptText(replay)).not.toContain("failed at the database");
   });
 
-  test("a provider's refusal asked again is stated whole, closed with a full stop the provider's sentence lacked", async () => {
-    // A provider fence's sentence may end without a full stop, as several do; the ledger's account of it must still
-    // read as two sentences rather than running the advice on from the refusal.
+  test("a provider's refusal asked again is fenced as the provider's text, naming it", async () => {
+    // The provider's sentence is its own text, not this server's: a replay fences it as the provider's, naming the
+    // provider bundled with Studio, and this server's advice follows outside the fence.
     const { provider } = billingProvider(() => 1);
     const read = provider.queryReadOnly?.bind(provider);
     if (read === undefined) throw new Error("the double reads nothing");
@@ -258,14 +311,298 @@ describe("the run read allowance", () => {
       },
     } as DatabaseProvider;
 
-    const { turns } = await drive(fenced, [countOrders("call_1"), countOrders("call_2")]);
+    const { turns, events } = await drive(fenced, [countOrders("call_1"), countOrders("call_2")]);
 
+    expect(events.filter((event) => event.kind === "tool-refused")).toMatchObject([
+      { refusal: { class: "database-error", sent: false, refusedBy: "provider" } },
+    ]);
+    const replay = turns[2];
+    if (replay === undefined) throw new Error("the run ended before the repeated call was answered");
+    const text = promptText(replay);
+    expect(text).toContain(
+      "(run_read_query) was refused before it was sent, by the PostgreSQL provider, bundled with Studio, so the database never saw it:",
+    );
+    expect(text).toContain(
+      "[UNTRUSTED PROVIDER TEXT: refusal before sending; written by the PostgreSQL provider, bundled with Studio; operation run_read_query;",
+    );
+    expect(text).toContain(`${UNTRUSTED_PROVIDER_TEXT_BEGIN}\n${FENCE_SENTENCE}\n${UNTRUSTED_PROVIDER_TEXT_END}`);
+    expect(text).toContain(
+      `${UNTRUSTED_PROVIDER_TEXT_END}\nDraft a statement that does not do what the refusal names.`,
+    );
+  });
+
+  /** A run whose ledger holds `refusal`, written as a ledger from before this server recorded who refused. */
+  async function resumedOver(refusal: Record<string, unknown>, runConnection: DatabaseConnection = connection) {
+    return resumedOverEvents(
+      [
+        { kind: "tool-invoked", atMs: 1, stepId: "step_old", tool: "run_read_query" },
+        { kind: "tool-refused", atMs: 2, stepId: "step_old", refusal: refusal as AgentToolRefusal },
+      ],
+      runConnection,
+    );
+  }
+
+  /** The first request a resumed run whose ledger holds `events` sends the model. */
+  async function resumedOverEvents(events: readonly AgentRunEvent[], runConnection: DatabaseConnection = connection) {
+    const { provider } = billingProvider(() => 1);
+    forgetHeldSnapshots();
+    const { store, service, resources } = boot(freshDataDir(), provider);
+    const run = await startRun(service);
+    for (const event of events) {
+      // oxlint-disable-next-line no-await-in-loop -- the ledger is appended in order, one event after the other.
+      await store.appendEvent(run.runId, event);
+    }
+    const script = scriptedModel(answersProse("No report."), answersProse("No report."));
+    await runInvestigation(run.runId, {
+      service,
+      model: await modelOver(script.fetch),
+      resources: { ...resources, connection: runConnection },
+    }).catch(() => undefined);
+    const first = script.turns[0];
+    if (first === undefined) throw new Error("the resumed run never asked the model");
+    return promptText(first);
+  }
+
+  test("a refusal recorded before refusedBy existed is read as the provider's text on a resumed run", async () => {
+    const text = await resumedOver({
+      class: "database-error",
+      statementFingerprint: "fp_old",
+      message: FENCE_SENTENCE,
+      sent: false,
+    });
+
+    expect(text).toContain("Step step_old (run_read_query) was refused before it was sent, by the PostgreSQL provider");
+    expect(text).toContain(`${UNTRUSTED_PROVIDER_TEXT_BEGIN}\n${FENCE_SENTENCE}\n${UNTRUSTED_PROVIDER_TEXT_END}`);
+  });
+
+  test("a refusal Studio recorded is restated in Studio's voice on a resumed run", async () => {
+    const sentence = `${READ_ALLOWANCE_PREFIX}: this run cannot pay for that read`;
+    const text = await resumedOver({
+      class: "database-error",
+      statementFingerprint: "fp_old",
+      message: sentence,
+      sent: false,
+      refusedBy: "studio",
+    });
+
+    expect(text).toContain(
+      `Step step_old (run_read_query) was refused before it was sent, so the database never saw it: ${sentence}. Draft a statement`,
+    );
+    expect(text).not.toContain(UNTRUSTED_PROVIDER_TEXT_BEGIN);
+  });
+
+  test("a database error restated on a resume is fenced naming the provider", async () => {
+    const text = await resumedOver({
+      class: "database-error",
+      statementFingerprint: "fp_old",
+      message: 'column "ordr_id" does not exist',
+    });
+
+    expect(text).toContain("Step step_old (run_read_query) failed at the database.");
+    expect(text).toContain(
+      "[UNTRUSTED DATABASE CONTENT: database error; relayed by the PostgreSQL provider, bundled with Studio; operation run_read_query; reference fp_old]",
+    );
+  });
+
+  test("a profile already taken names the provider on a resume", async () => {
+    const text = await resumedOverEvents([
+      {
+        kind: "table-profiled",
+        atMs: 1,
+        artifact: {
+          correlationId: "profile_1",
+          runId: "arun_1",
+          operationId: "sql.table.profile",
+          summary: { rowCount: 4, columnNames: ["n"], elapsedMs: 3 },
+        },
+        profile: { table: "orders", depth: "basic", rowCount: 4, columns: [], findings: [] },
+      } as AgentRunEvent,
+    ]);
+
+    expect(text).toContain(
+      "[UNTRUSTED DATABASE CONTENT: profile already taken; relayed by the PostgreSQL provider, bundled with Studio; operation sql.table.profile; reference profile_1]",
+    );
+  });
+
+  test("the relations block is fenced naming the provider", async () => {
+    const snapshot = rawSnapshot(crypto.randomUUID());
+    const text = await resumedOverEvents([
+      { kind: "context-captured", atMs: 1, fingerprint: snapshot.fingerprint, tableCount: 1, snapshot },
+    ]);
+
+    expect(text).toContain(
+      `[UNTRUSTED DATABASE CONTENT: schema relations; relayed by the PostgreSQL provider, bundled with Studio; operation agent/context-snapshot; reference ${snapshot.fingerprint}]`,
+    );
+    expect(text).toContain(
+      `[UNTRUSTED DATABASE CONTENT: schema inventory; relayed by the PostgreSQL provider, bundled with Studio; operation agent/context-snapshot; reference ${snapshot.fingerprint}]`,
+    );
+  });
+
+  test("the conversation's earlier steps name no provider", async () => {
+    const { provider } = billingProvider(() => 1);
+    forgetHeldSnapshots();
+    const { service, resources } = boot(freshDataDir(), provider);
+    const availability = workflowAvailability("agent", "investigation", connection.type);
+    if (!availability.open) throw new Error("an agent investigation does not open on postgres");
+    const run = await service.start({
+      mode: "agent",
+      workflowType: "investigation",
+      ...persistedRunFacts("agent", "investigation", connection.type, availability),
+      actor: { sessionId: "sess_1", role: "user" },
+      connectionId: connection.id,
+      objective: "And by region?",
+      thread: { threadId: "thread_1", steps: [], text: "Step 1 asked: How many orders are there?" },
+    });
+    const script = scriptedModel(answersProse("No report."), answersProse("No report."));
+    await runInvestigation(run.runId, {
+      service,
+      model: await modelOver(script.fetch),
+      resources,
+    }).catch(() => undefined);
+    const first = script.turns[0];
+    if (first === undefined) throw new Error("the run never asked the model");
+
+    expect(promptText(first)).toContain(
+      "[UNTRUSTED DATABASE CONTENT: earlier steps; operation agent/thread; reference thread_1]",
+    );
+  });
+
+  test("a sent statement whose answer Studio refused is restated in Studio's voice on a resume", async () => {
+    const sentence = rowBudgetSentence(201, 200);
+    const text = await resumedOver({
+      class: "database-error",
+      statementFingerprint: "fp_old",
+      message: sentence,
+      refusedBy: "studio",
+    });
+
+    expect(text).toContain(
+      `Step step_old (run_read_query) was sent, and this server refused its answer by its own budget: ${sentence}. Narrow the statement, or answer from what you have already read.`,
+    );
+    expect(text).not.toContain("[UNTRUSTED DATABASE CONTENT: database error");
+  });
+
+  test("a sent statement whose answer Studio refused is restated in Studio's voice when it is asked again", async () => {
+    const { provider } = billingProvider(() => 1);
+    const read = provider.queryReadOnly?.bind(provider);
+    if (read === undefined) throw new Error("the double reads nothing");
+    const rowsBudget = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows;
+    const overBudget = {
+      ...provider,
+      queryReadOnly: async (sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> => {
+        if (sql !== MODEL_SQL) return read(sql, budget);
+        const rows = Array.from({ length: rowsBudget + 1 }, (_, n) => ({ n }));
+        return { rows, fields: ["n"], rowCount: rows.length, executionTime: 1 };
+      },
+    } as DatabaseProvider;
+
+    const { turns, events } = await drive(overBudget, [countOrders("call_1"), countOrders("call_2")]);
+
+    expect(events.filter((event) => event.kind === "tool-refused")).toMatchObject([
+      { refusal: { class: "database-error", refusedBy: "studio" } },
+    ]);
     const replay = turns[2];
     if (replay === undefined) throw new Error("the run ended before the repeated call was answered");
     expect(promptText(replay)).toContain(
-      `(run_read_query) was refused before it was sent, so the database never saw it: ${FENCE_SENTENCE}. Draft a statement that does not do what the refusal names.`,
+      `(run_read_query) was sent, and this server refused its answer by its own budget: ${rowBudgetSentence(rowsBudget + 1, rowsBudget)}.`,
     );
+    expect(promptText(replay)).not.toContain("[UNTRUSTED DATABASE CONTENT: database error");
   });
+
+  test("a database error recorded without refusedBy is restated fenced as the database's", async () => {
+    // The same sentence a provider raises, recorded without saying who refused: read the conservative way.
+    const sentence = rowBudgetSentence(201, 200);
+    const text = await resumedOver({ class: "database-error", statementFingerprint: "fp_old", message: sentence });
+
+    expect(text).toContain("Step step_old (run_read_query) failed at the database.");
+    expect(text).toContain(
+      "[UNTRUSTED DATABASE CONTENT: database error; relayed by the PostgreSQL provider, bundled with Studio; operation run_read_query; reference fp_old]",
+    );
+    expect(text).not.toContain("refused its answer by its own budget");
+  });
+
+  test("a resumed run withholds a credential an older ledger recorded", async () => {
+    const password = crypto.randomUUID();
+    const credentialed: DatabaseConnection = { ...connection, password };
+    for (const refusal of [
+      { class: "database-error", statementFingerprint: "fp_old", message: `refused for ${password}`, sent: false },
+      { class: "database-error", statementFingerprint: "fp_old", message: `login failed: ${password}` },
+    ]) {
+      // oxlint-disable-next-line no-await-in-loop -- each resumed run resets the module's held snapshots and boots its own store, so one must finish before the next starts.
+      const text = await resumedOver(refusal, credentialed);
+      expect(text).toContain(PROVIDER_TEXT_WITHHELD);
+      for (const form of secretForms([password])) expect(text).not.toContain(form);
+    }
+  });
+
+  test("a resumed run withholds a credential an older ledger's inventory snapshot recorded in a provider's sentence", async () => {
+    const password = crypto.randomUUID();
+    const credentialed: DatabaseConnection = { ...connection, password };
+    const { provider } = billingProvider(() => 0);
+    forgetHeldSnapshots();
+    const { store, service, resources } = boot(freshDataDir(), provider);
+    const run = await startRun(service);
+    const snapshot = rawSnapshot(password);
+    await store.appendEvent(run.runId, {
+      kind: "context-captured",
+      atMs: 1,
+      fingerprint: snapshot.fingerprint,
+      tableCount: 1,
+      snapshot,
+    });
+    const script = scriptedModel(answersProse("No report."), answersProse("No report."));
+    await runInvestigation(run.runId, {
+      service,
+      model: await modelOver(script.fetch),
+      resources: { ...resources, connection: credentialed },
+    }).catch(() => undefined);
+    const first = script.turns[0];
+    if (first === undefined) throw new Error("the resumed run never asked the model");
+    const text = promptText(first);
+
+    expect(text).toContain("orders");
+    expect(text).toContain(PROVIDER_TEXT_WITHHELD);
+    for (const form of secretForms([password])) expect(text).not.toContain(form);
+  });
+
+  for (const workflowType of ["investigation", "operations"] as const) {
+    for (const source of ["recorded", "held"] as const) {
+      test(`a plan run of the ${workflowType} workflow grounded on a ${source} snapshot withholds a credential its provider sentences carry raw`, async () => {
+        const password = crypto.randomUUID();
+        const credentialed: DatabaseConnection = { ...connection, password };
+        const { provider } = billingProvider(() => 0);
+        forgetHeldSnapshots();
+        const { store, service, resources } = boot(freshDataDir(), provider);
+        const run = await startRun(service, "planning", workflowType);
+        const snapshot = rawSnapshot(password);
+        if (source === "recorded") {
+          await store.appendEvent(run.runId, {
+            kind: "context-captured",
+            atMs: 1,
+            fingerprint: snapshot.fingerprint,
+            tableCount: 1,
+            snapshot,
+          });
+        } else {
+          holdSnapshotForConnection(snapshot, connectionIdentity(credentialed));
+        }
+        const script = scriptedModel(answersProse("No plan."), answersProse("No plan."));
+        await runInvestigation(run.runId, {
+          service,
+          model: await modelOver(script.fetch),
+          resources: { ...resources, connection: credentialed },
+        }).catch(() => undefined);
+        const first = script.turns[0];
+        if (first === undefined) throw new Error(`the plan run over a ${source} snapshot never asked the model`);
+        const text = promptText(first);
+
+        expect(text).toContain("orders");
+        expect(text).toContain(PROVIDER_TEXT_WITHHELD);
+        for (const form of secretForms([password])) expect(text).not.toContain(form);
+        forgetHeldSnapshots();
+      });
+    }
+  }
 
   test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {
     const { provider, reads } = billingProvider(() => 5);

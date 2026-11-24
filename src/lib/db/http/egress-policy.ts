@@ -3,15 +3,20 @@ import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { request as httpRequest, type RequestOptions } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP, type LookupFunction } from "node:net";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { urlToHttpOptions } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
-import { DatabaseConfigError } from "@/lib/db/errors";
+import { DatabaseConfigError, DatabaseError } from "@/lib/db/errors";
+import type { EgressDecision } from "@/lib/db/types";
 
-const FLAG = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
+/**
+ * The decision type, re-exported for `src/lib/db/auth`, whose seam guard (AUTH1 in
+ * tests/unit/db/auth/seam-guard.test.ts) lets it import `@/lib/db/http/*` but not `@/lib/db/types`.
+ */
+export type { EgressDecision };
+
 /** The guard's refusal of a non-public destination, worded for any transport the guard serves: it names no protocol. */
 export const BLOCKED_HOST = "Invalid host: this database destination is blocked by DB_HTTP_BLOCK_PRIVATE_HOSTS";
-const BLOCKED_CONFIG = `Invalid ${FLAG}: expected true or false`;
 
 /**
  * The loopback networks, read by two rules: the blocked list below, and `plaintextSecretRefusal` in `./endpoint`,
@@ -60,14 +65,6 @@ for (const [network, prefix] of [
   blocked.addSubnet(network, prefix, "ipv6");
 for (const [network, prefix, family] of LOOPBACK_NETWORKS) blocked.addSubnet(network, prefix, family);
 
-/** Unset and false preserve local-first connections. Invalid opt-in values fail closed. */
-function blockPrivateHttpHosts(): boolean {
-  const value = process.env[FLAG]?.trim().toLowerCase();
-  if (value === undefined || value === "" || value === "false" || value === "off" || value === "0") return false;
-  if (value === "true" || value === "on" || value === "1") return true;
-  throw new DatabaseConfigError(BLOCKED_CONFIG);
-}
-
 /**
  * Whether the guard refuses an address of family 4 or 6. An IPv6 address with a zone index is refused whatever its
  * address: the zone makes it link-scoped, and Bun's BlockList ignores the zone, so ::1%lo would pass it there.
@@ -77,9 +74,28 @@ function isBlocked(address: string, family: number): boolean {
   return blocked.check(address, family === 4 ? "ipv4" : "ipv6");
 }
 
-/** Block all non-public address forms before a socket can be opened. */
-export function assertPublicLiteralHost(host: string): void {
-  if (!blockPrivateHttpHosts()) return;
+/**
+ * The refusal of a provider asked to build a guarded transport or dial with no egress decision, or of a node transport
+ * built without one in its options' `egress`: built outside the provider factory, which hands core's decision to every
+ * provider that takes a context (`ProviderBuildContext` in `@/lib/db/types`).
+ */
+export const EGRESS_DECISION_MISSING =
+  "This provider was built without the egress decision Studio takes from DB_HTTP_BLOCK_PRIVATE_HOSTS, so it dials nothing";
+
+/**
+ * The decision a provider was built with, for the guard: `egress` itself, or, when the provider was built without one,
+ * a `DatabaseConfigError` with `EGRESS_DECISION_MISSING`. A provider calls it when it builds its transport or dial, never
+ * at construction, and the shared node transport calls it when it is built (`createNodeTransport` and
+ * `createNodeByteTransport` in `./node-transport`); there is no default decision.
+ */
+export function requireEgressDecision(egress: EgressDecision | undefined): EgressDecision {
+  if (egress === undefined) throw new DatabaseConfigError(EGRESS_DECISION_MISSING);
+  return egress;
+}
+
+/** Block all non-public address forms before a socket can be opened, when `egress` blocks private destinations. */
+export function assertPublicLiteralHost(host: string, egress: EgressDecision): void {
+  if (!egress.blocksPrivateHosts) return;
   const address = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
   const family = isIP(address);
   if (family !== 0 && isBlocked(address, family)) {
@@ -125,11 +141,17 @@ function checkedLookup(check: (addresses: readonly LookupAddress[]) => void): Lo
 /** The checked DNS answer is returned to the socket itself, preventing a second lookup/rebind. */
 export const publicAddressLookup: LookupFunction = checkedLookup(assertPublicDnsAnswers);
 
-/** Disable socket reuse so an earlier unguarded connection cannot bypass lookup. */
-export function guardedNodeOptions(hostname: string | null | undefined): Pick<RequestOptions, "lookup" | "agent"> {
-  if (!blockPrivateHttpHosts()) return {};
+/**
+ * Disable socket reuse so an earlier unguarded connection cannot bypass lookup, when `egress` blocks private
+ * destinations; with an allowing decision the options are empty.
+ */
+export function guardedNodeOptions(
+  hostname: string | null | undefined,
+  egress: EgressDecision,
+): Pick<RequestOptions, "lookup" | "agent"> {
+  if (!egress.blocksPrivateHosts) return {};
   if (!hostname) throw new DatabaseConfigError(BLOCKED_HOST);
-  assertPublicLiteralHost(hostname);
+  assertPublicLiteralHost(hostname, egress);
   return { lookup: publicAddressLookup, agent: false };
 }
 
@@ -139,8 +161,10 @@ export const UNUSABLE_ANSWER = "Invalid host: the name did not resolve to a usab
 
 /**
  * The three sentences of the shared egress refusal. A provider that wraps its own failures passes a DatabaseConfigError
- * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence
- * is not among them: it is a configuration fault of the server, not a refused destination.
+ * whose message is one of these through unchanged, so the user reads the guard's own words. The invalid-flag sentence,
+ * `INVALID_EGRESS_SETTING` in `@/lib/db/egress-decision`, is not among them: it is a configuration fault of the server,
+ * not a refused destination. Nor is `EGRESS_DECISION_MISSING`: it names a provider built outside the factory, not a
+ * refused destination.
  */
 export const EGRESS_REFUSAL_SENTENCES: ReadonlySet<string> = new Set([BLOCKED_HOST, LINK_LOCAL_HOST, UNUSABLE_ANSWER]);
 
@@ -209,35 +233,69 @@ export const guardedLinkLocalRefusingLookup: LookupFunction = checkedLookup((add
 });
 
 /**
- * The egress rule for one socket dial to `host`, which may be an IPv6 literal with or without its brackets. The literal
- * checks run first, because an IP literal never reaches a lookup: with DB_HTTP_BLOCK_PRIVATE_HOSTS on the guard's, which
- * also refuses an empty host, and then with `refusesLinkLocal` the link-local check whatever the flag says, so the
+ * The egress rule for one socket dial to `host`, which may be an IPv6 literal with or without its brackets. `egress` is
+ * the decision the dialling provider was built with; the rule reads no setting. The literal checks run first, because
+ * an IP literal never reaches a lookup: with a decision that blocks private destinations the guard's, which also
+ * refuses an empty host, and then with `refusesLinkLocal` the link-local check whatever the decision says, so the
  * guard's sentence wins where both refuse. The answer is the lookup the socket dials through, which checks the address
- * it dials and hands that address to the socket: both checks with the flag on and `refusesLinkLocal`, the link-local
- * one alone with the flag off, the guard's alone without `refusesLinkLocal`, and undefined, the runtime's own lookup,
- * with neither.
+ * it dials and hands that address to the socket: both checks with a blocking decision and `refusesLinkLocal`, the
+ * link-local one alone with an allowing decision, the guard's alone without `refusesLinkLocal`, and undefined, the
+ * runtime's own lookup, with neither.
  */
-export function socketEgress(host: string, rules: { readonly refusesLinkLocal: boolean }): LookupFunction | undefined {
-  const { lookup: guardLookup } = guardedNodeOptions(host);
+export function socketEgress(
+  host: string,
+  rules: { readonly refusesLinkLocal: boolean },
+  egress: EgressDecision,
+): LookupFunction | undefined {
+  const { lookup: guardLookup } = guardedNodeOptions(host, egress);
   if (!rules.refusesLinkLocal) return guardLookup;
   assertNotLinkLocalLiteral(host);
   return guardLookup === undefined ? linkLocalRefusingLookup : guardedLinkLocalRefusingLookup;
 }
 
 /**
+ * A body the server named gzip, deflate or br that did not decode. zlib's reason and code are in the message and its
+ * error is the cause, so a caller that reports only a code still finds one; the error carries no zlib code of its own,
+ * because `Readable.toWeb` replaces an error with a zlib code by a TypeError with an empty message.
+ */
+class AnswerDecodingError extends DatabaseError {
+  constructor(encoding: string, failure: Error & { readonly code?: string }) {
+    super(`The server's ${encoding} answer could not be decoded: ${failure.message} (${failure.code})`);
+    this.cause = failure;
+    this.name = "AnswerDecodingError";
+    Object.setPrototypeOf(this, AnswerDecodingError.prototype);
+  }
+}
+
+/**
+ * A 101 that switched the connection to another protocol, which no HTTP database transport reads. Not a
+ * DatabaseConfigError, so each caller wraps it as its own network failure.
+ */
+class SwitchedProtocolsError extends DatabaseError {
+  constructor() {
+    super("The server switched the connection to another protocol instead of answering, so no answer was read");
+    this.name = "SwitchedProtocolsError";
+    Object.setPrototypeOf(this, SwitchedProtocolsError.prototype);
+  }
+}
+
+/**
  * The restricted mode uses Node's request socket so its DNS lookup can validate and
  * pin the address. The default path remains the transport's native fetch, including
- * its test injection point and normal local-network behavior.
+ * its test injection point and normal local-network behavior. On the restricted path a
+ * 101 that announces an upgrade rejects at once with SwitchedProtocolsError, as the
+ * native fetch fails one at once. `egress` is the decision the calling provider was
+ * built with, and it decides which path a request takes.
  */
-export function httpTransportFetch(input: string | URL, init: RequestInit = {}): Promise<Response> {
-  if (!blockPrivateHttpHosts()) return globalThis.fetch(input, init);
+export function httpTransportFetch(input: string | URL, init: RequestInit, egress: EgressDecision): Promise<Response> {
+  if (!egress.blocksPrivateHosts) return globalThis.fetch(input, init);
 
   const url = new URL(String(input));
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new DatabaseConfigError(BLOCKED_HOST);
   const target = urlToHttpOptions(url);
   const options: RequestOptions = {
     ...target,
-    ...guardedNodeOptions(target.hostname),
+    ...guardedNodeOptions(target.hostname, egress),
     method: init.method ?? "GET",
     headers: Object.fromEntries(new Headers(init.headers)),
     signal: init.signal ?? undefined,
@@ -252,23 +310,46 @@ export function httpTransportFetch(input: string | URL, init: RequestInit = {}):
           if (Array.isArray(value)) value.forEach((item) => headers.append(name, item));
           else if (value !== undefined) headers.set(name, value);
         }
-        let body: Readable = incoming;
         const encoding = headers.get("content-encoding")?.toLowerCase();
-        if (encoding === "gzip") body = incoming.pipe(createGunzip());
-        else if (encoding === "deflate") body = incoming.pipe(createInflate());
-        else if (encoding === "br") body = incoming.pipe(createBrotliDecompress());
-        if (body !== incoming) {
-          // A capped reader may cancel the decoded stream. Tear down the source
-          // socket too, and forward a socket failure to a reader waiting on it.
-          incoming.on("error", (error) => body.destroy(error));
-          body.on("close", () => incoming.destroy());
+        const createDecoder =
+          encoding === "gzip"
+            ? createGunzip
+            : encoding === "deflate"
+              ? createInflate
+              : encoding === "br"
+                ? createBrotliDecompress
+                : undefined;
+        if (createDecoder !== undefined) {
           headers.delete("content-encoding");
           headers.delete("content-length");
         }
         const status = incoming.statusCode ?? 0;
-        const noBody = [204, 205, 304].includes(status) || options.method === "HEAD";
+        let body: Readable | null = incoming;
+        // request.method is Node's own upper-cased value, so the body decision matches its parser's.
+        if ([204, 205, 304].includes(status) || request.method === "HEAD") {
+          // The answer has no body, so the message is closed here and no decoder is built: a decoder fed
+          // no input fails with "unexpected end of file", and with no reader to take that error it would
+          // be thrown out of the stream's event handler instead of reaching the caller.
+          incoming.destroy();
+          body = null;
+        } else if (encoding !== undefined && createDecoder !== undefined) {
+          const decoder = createDecoder();
+          const decoded = new PassThrough();
+          incoming.pipe(decoder).pipe(decoded);
+          // The decoded stream goes to the reader below in this same turn, so it always has a listener and
+          // its failures reach whoever reads the body. A decoding failure reaches it as a named error, a
+          // socket failure as itself. A capped reader may cancel it: tear down the decoder and the source
+          // socket too.
+          decoder.on("error", (failure) => decoded.destroy(new AnswerDecodingError(encoding, failure)));
+          incoming.on("error", (error) => decoded.destroy(error));
+          decoded.on("close", () => {
+            decoder.destroy();
+            incoming.destroy();
+          });
+          body = decoded;
+        }
         resolve(
-          new Response(noBody ? null : (Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>), {
+          new Response(body === null ? null : (Readable.toWeb(body) as unknown as ReadableStream<Uint8Array>), {
             status,
             statusText: incoming.statusMessage,
             headers,
@@ -280,6 +361,13 @@ export function httpTransportFetch(input: string | URL, init: RequestInit = {}):
       }
     });
     request.on("error", reject);
+    // node:http hands a 101 that announces an upgrade (Connection: upgrade and an Upgrade header) to this event, never
+    // to the response callback, and without a listener it emits no error either, so the promise would never settle.
+    // The switched socket is no longer the request's, so it is destroyed here.
+    request.on("upgrade", (_answer, socket) => {
+      socket.destroy();
+      reject(new SwitchedProtocolsError());
+    });
     // Every current HTTP database transport sends only a string body, if any.
     if (init.body !== undefined && init.body !== null && typeof init.body !== "string") {
       request.destroy();

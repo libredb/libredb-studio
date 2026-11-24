@@ -10,8 +10,8 @@ import {
   readKubectlRun,
   readPagingClause,
   withPagingClause,
-} from "@/lib/db/providers/platform/kubernetes/console/paging";
-import { parseKubectl } from "@/lib/db/providers/platform/kubernetes/console/parse";
+} from "@/lib/languages/kubectl/paging";
+import { parseKubectl } from "@/lib/languages/kubectl/parse";
 
 describe("the clause", () => {
   test("is one last comment line, so the prepared text still parses as the statement", () => {

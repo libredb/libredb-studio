@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import type { MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import type { MonitoringData } from "@/lib/db/types";
 // The formatter is shared with `TablesTab` and every provider rather than local to this
 // tab: both tabs used to keep a byte-identical threshold cascade that stopped at GB and
@@ -17,11 +18,17 @@ import { formatBytes } from "@/lib/db/utils/pool-manager";
 import { PanelUnavailable } from "../PanelUnavailable";
 
 interface StorageTabProps {
+  /**
+   * The panels the connection's engine offers, its `ENGINE_FACETS` row. Five figures on this tab come off the table
+   * statistics, so where the engine does not offer them (Kafka and Redis offer storage and no table statistics) none of
+   * them is drawn. Required, so no caller can draw every panel by leaving it out.
+   */
+  offer: MonitoringPanelOffer;
   data: MonitoringData | null;
   loading: boolean;
 }
 
-export function StorageTab({ data, loading }: StorageTabProps) {
+export function StorageTab({ offer, data, loading }: StorageTabProps) {
   if (loading && !data) {
     return <StorageSkeleton />;
   }
@@ -37,8 +44,10 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   // engine's own sentence. See MonitoringData in src/lib/db/types.ts.
   //
   // `overview` is not a panel of its own on this tab: what it feeds is the Storage Breakdown,
-  // so that is where its sentence goes. The DB Size card keeps the "N/A" it already draws for
-  // a byte figure it does not have, because a stat card has nowhere to put a sentence.
+  // so that is where its sentence goes. Where the engine offers no table statistics there is no
+  // Storage Breakdown, and the sentence goes under the stat cards instead. The DB Size card keeps
+  // the "N/A" it already draws for a byte figure it does not have, because a stat card has nowhere
+  // to put a sentence.
   const overviewUnavailable = data?.overview === undefined ? data?.errors?.overview : undefined;
   const storageUnavailable = data?.storage === undefined ? data?.errors?.storage : undefined;
   const tablesUnavailable = data?.tables === undefined ? data?.errors?.tables : undefined;
@@ -119,6 +128,9 @@ export function StorageTab({ data, loading }: StorageTabProps) {
   const otherBytes = totalSize - totalTableSize - totalIndexSize;
   const remainderKnown = breakdownKnown && otherBytes >= 0;
 
+  // The table statistics were never read where the engine does not offer them.
+  const offersTables = offer.tables === "offered";
+
   return (
     <div className="p-3 sm:p-6 space-y-4 sm:space-y-6">
       {/* Stats Cards */}
@@ -133,13 +145,15 @@ export function StorageTab({ data, loading }: StorageTabProps) {
           </CardContent>
         </Card>
 
-        <Card className="p-0">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
-            <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
-          </CardHeader>
-          <CardContent className="p-2 sm:p-4 pt-0">
-            {/*
+        {offersTables && (
+          <>
+            <Card className="p-0">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
+                <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Tables</CardTitle>
+                <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-green" />
+              </CardHeader>
+              <CardContent className="p-2 sm:p-4 pt-0">
+                {/*
               The FIGURE is this tab's own sum of per-table bytes and stays gated on the size
               being known at all, which is the card's subject: Tables as part of the database.
               The percentage below it is gated harder, on `totalSize > 0`, because a share of a
@@ -147,29 +161,31 @@ export function StorageTab({ data, loading }: StorageTabProps) {
               real per-table bytes this line used to read "700.00 MB" over "0.0%", which is a
               fabricated denominator under an honest numerator (measured in the DOM).
             */}
-            <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-tables">
-              {sizeKnown && tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
-            </div>
-            {totalSize > 0 && tableSizeKnown && (
-              <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablePercent.toFixed(1)}%</p>
-            )}
-          </CardContent>
-        </Card>
+                <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-tables">
+                  {sizeKnown && tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
+                </div>
+                {totalSize > 0 && tableSizeKnown && (
+                  <p className="text-xs sm:text-xs text-muted-foreground mt-1">{tablePercent.toFixed(1)}%</p>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card className="p-0">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
-            <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Indexes</CardTitle>
-            <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-purple" />
-          </CardHeader>
-          <CardContent className="p-2 sm:p-4 pt-0">
-            <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-indexes">
-              {sizeKnown && indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
-            </div>
-            {totalSize > 0 && indexSizeKnown && (
-              <p className="text-xs sm:text-xs text-muted-foreground mt-1">{indexPercent.toFixed(1)}%</p>
-            )}
-          </CardContent>
-        </Card>
+            <Card className="p-0">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
+                <CardTitle className="text-xs sm:text-xs font-medium text-muted-foreground">Indexes</CardTitle>
+                <Archive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4 text-hue-purple" />
+              </CardHeader>
+              <CardContent className="p-2 sm:p-4 pt-0">
+                <div className="text-lg sm:text-2xl font-medium truncate" data-testid="storage-stat-indexes">
+                  {sizeKnown && indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
+                </div>
+                {totalSize > 0 && indexSizeKnown && (
+                  <p className="text-xs sm:text-xs text-muted-foreground mt-1">{indexPercent.toFixed(1)}%</p>
+                )}
+              </CardContent>
+            </Card>
+          </>
+        )}
 
         <Card className="p-0">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 p-2 sm:p-4 pb-1 sm:pb-2">
@@ -184,50 +200,53 @@ export function StorageTab({ data, loading }: StorageTabProps) {
         </Card>
       </div>
 
+      {!offersTables && overviewUnavailable && <PanelUnavailable message={overviewUnavailable} />}
+
       {/* Storage Breakdown */}
-      <Card className="p-0">
-        <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-            <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-            Storage Breakdown
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-3 sm:p-4 pt-0 space-y-3 sm:space-y-4">
-          {overviewUnavailable ? (
-            <PanelUnavailable message={overviewUnavailable} />
-          ) : sizeKnown ? (
-            <div className="space-y-2 sm:space-y-3">
-              <div>
-                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                  <span className="flex items-center gap-1 sm:gap-2">
-                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-green-tint" />
-                    Tables
-                  </span>
-                  <span className="font-medium" data-testid="storage-breakdown-tables">
-                    {tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
-                  </span>
+      {offersTables && (
+        <Card className="p-0">
+          <CardHeader className="p-3 sm:p-4 pb-2">
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
+              <HardDrive strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
+              Storage Breakdown
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-3 sm:p-4 pt-0 space-y-3 sm:space-y-4">
+            {overviewUnavailable ? (
+              <PanelUnavailable message={overviewUnavailable} />
+            ) : sizeKnown ? (
+              <div className="space-y-2 sm:space-y-3">
+                <div>
+                  <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                    <span className="flex items-center gap-1 sm:gap-2">
+                      <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-green-tint" />
+                      Tables
+                    </span>
+                    <span className="font-medium" data-testid="storage-breakdown-tables">
+                      {tableSizeKnown ? formatBytes(totalTableSize) : "N/A"}
+                    </span>
+                  </div>
+                  <Progress value={tablePercent} className="h-1.5 sm:h-2" />
                 </div>
-                <Progress value={tablePercent} className="h-1.5 sm:h-2" />
-              </div>
 
-              <div>
-                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                  <span className="flex items-center gap-1 sm:gap-2">
-                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-purple-tint" />
-                    Indexes
-                  </span>
-                  <span className="font-medium" data-testid="storage-breakdown-indexes">
-                    {indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
-                  </span>
+                <div>
+                  <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                    <span className="flex items-center gap-1 sm:gap-2">
+                      <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-hue-purple-tint" />
+                      Indexes
+                    </span>
+                    <span className="font-medium" data-testid="storage-breakdown-indexes">
+                      {indexSizeKnown ? formatBytes(totalIndexSize) : "N/A"}
+                    </span>
+                  </div>
+                  <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-hue-purple-tint" />
                 </div>
-                <Progress value={indexPercent} className="h-1.5 sm:h-2 [&>div]:bg-hue-purple-tint" />
-              </div>
 
-              <div>
-                <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
-                  <span className="flex items-center gap-1 sm:gap-2">
-                    <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
-                    {/*
+                <div>
+                  <div className="flex items-center justify-between text-xs sm:text-xs mb-1">
+                    <span className="flex items-center gap-1 sm:gap-2">
+                      <div className="w-2 h-2 sm:w-3 sm:h-3 rounded-sm bg-muted-foreground" />
+                      {/*
                       Engine-neutral on purpose. This row is arithmetic - the database bytes the
                       per-table data and index figures do not account for - and what fills it
                       differs per engine: TOAST and the free space map on PostgreSQL, the schema,
@@ -238,31 +257,32 @@ export function StorageTab({ data, loading }: StorageTabProps) {
                       wording per engine would have to come from `ProviderLabels`, the way the
                       slow-query empty state does, and this tab is passed no labels.
                     */}
-                    <span className="hidden sm:inline" data-testid="storage-breakdown-other-label">
-                      Other (unattributed)
+                      <span className="hidden sm:inline" data-testid="storage-breakdown-other-label">
+                        Other (unattributed)
+                      </span>
+                      <span className="sm:hidden" data-testid="storage-breakdown-other-label-compact">
+                        Other
+                      </span>
                     </span>
-                    <span className="sm:hidden" data-testid="storage-breakdown-other-label-compact">
-                      Other
+                    <span className="font-medium" data-testid="storage-breakdown-other">
+                      {remainderKnown ? formatBytes(otherBytes) : "N/A"}
                     </span>
-                  </span>
-                  <span className="font-medium" data-testid="storage-breakdown-other">
-                    {remainderKnown ? formatBytes(otherBytes) : "N/A"}
-                  </span>
+                  </div>
+                  <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
                 </div>
-                <Progress value={otherPercent} className="h-1.5 sm:h-2 [&>div]:bg-muted-foreground" />
               </div>
-            </div>
-          ) : (
-            // The engine answered and published no byte figure - Apache Cassandra is the case
-            // (#424) - which is a different fact from the refusal above and gets this tab's own
-            // copy rather than a sentence there is none of.
-            <div className="text-center py-8 text-muted-foreground">
-              <HardDrive strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No storage size information available.</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+            ) : (
+              // The engine answered and published no byte figure - Apache Cassandra is the case
+              // (#424) - which is a different fact from the refusal above and gets this tab's own
+              // copy rather than a sentence there is none of.
+              <div className="text-center py-8 text-muted-foreground">
+                <HardDrive strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No storage size information available.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Tablespaces */}
       <Card className="p-0">
@@ -339,82 +359,84 @@ export function StorageTab({ data, loading }: StorageTabProps) {
       </Card>
 
       {/* Top Tables by Size */}
-      <Card className="p-0">
-        <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
-            <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
-            Largest Tables
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0 sm:p-4 sm:pt-0">
-          {tablesUnavailable ? (
-            <PanelUnavailable message={tablesUnavailable} />
-          ) : tables.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Database strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
-              <p className="text-xs">No table information available.</p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Table</TableHead>
-                    <TableHead className="text-right text-xs">Size</TableHead>
-                    <TableHead className="text-right text-xs hidden sm:table-cell">% of DB</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {tables
-                    .slice()
-                    .sort((a, b) => b.totalSizeBytes - a.totalSizeBytes)
-                    .slice(0, 10)
-                    .map((table) => {
-                      // `tableSizeBytes` is what says whether this engine publishes per-table
-                      // bytes at all: a total is the table's own pages plus its indexes, so an
-                      // engine that cannot measure the first cannot have measured the sum. When
-                      // it is absent the share is left as "-" rather than drawn from the
-                      // placeholder the required `totalSizeBytes` field still has to carry.
-                      //
-                      // A share also needs a database total to divide by, and this cell used to
-                      // draw one without: with `databaseSizeBytes` absent or 0 the guard forced
-                      // the share to 0 and every row rendered "0.0%" beside an empty bar -
-                      // measured against a refused overview, two rows with real bytes each
-                      // claiming to be 0.0% of a database whose size nothing had reported. The
-                      // same defect as the remainder's full bar above, in a shape a text
-                      // assertion CAN see.
-                      const shareKnown = totalSize > 0 && table.tableSizeBytes !== undefined;
-                      const percent = shareKnown ? (table.totalSizeBytes / totalSize) * 100 : 0;
-                      return (
-                        <TableRow key={`${table.schemaName}.${table.tableName}`}>
-                          <TableCell className="py-2">
-                            <div className="flex flex-col">
-                              <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
-                                {table.tableName}
-                              </span>
-                              <span className="text-xs sm:text-xs text-muted-foreground">{table.schemaName}</span>
-                            </div>
-                          </TableCell>
-                          <TableCell className="text-right text-xs py-2">{table.totalSize}</TableCell>
-                          <TableCell className="text-right hidden sm:table-cell py-2">
-                            {shareKnown ? (
-                              <div className="flex items-center justify-end gap-1 sm:gap-2">
-                                <Progress value={percent} className="w-12 sm:w-16 h-1.5 sm:h-2" />
-                                <span className="text-xs w-10 sm:w-12">{percent.toFixed(1)}%</span>
+      {offersTables && (
+        <Card className="p-0">
+          <CardHeader className="p-3 sm:p-4 pb-2">
+            <CardTitle className="text-xs sm:text-xs font-medium flex items-center gap-2">
+              <Database strokeWidth={1.5} className="h-3 w-3 sm:h-4 sm:w-4" />
+              Largest Tables
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 sm:p-4 sm:pt-0">
+            {tablesUnavailable ? (
+              <PanelUnavailable message={tablesUnavailable} />
+            ) : tables.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Database strokeWidth={1.5} className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                <p className="text-xs">No table information available.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Table</TableHead>
+                      <TableHead className="text-right text-xs">Size</TableHead>
+                      <TableHead className="text-right text-xs hidden sm:table-cell">% of DB</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tables
+                      .slice()
+                      .sort((a, b) => b.totalSizeBytes - a.totalSizeBytes)
+                      .slice(0, 10)
+                      .map((table) => {
+                        // `tableSizeBytes` is what says whether this engine publishes per-table
+                        // bytes at all: a total is the table's own pages plus its indexes, so an
+                        // engine that cannot measure the first cannot have measured the sum. When
+                        // it is absent the share is left as "-" rather than drawn from the
+                        // placeholder the required `totalSizeBytes` field still has to carry.
+                        //
+                        // A share also needs a database total to divide by, and this cell used to
+                        // draw one without: with `databaseSizeBytes` absent or 0 the guard forced
+                        // the share to 0 and every row rendered "0.0%" beside an empty bar -
+                        // measured against a refused overview, two rows with real bytes each
+                        // claiming to be 0.0% of a database whose size nothing had reported. The
+                        // same defect as the remainder's full bar above, in a shape a text
+                        // assertion CAN see.
+                        const shareKnown = totalSize > 0 && table.tableSizeBytes !== undefined;
+                        const percent = shareKnown ? (table.totalSizeBytes / totalSize) * 100 : 0;
+                        return (
+                          <TableRow key={`${table.schemaName}.${table.tableName}`}>
+                            <TableCell className="py-2">
+                              <div className="flex flex-col">
+                                <span className="font-medium text-xs sm:text-xs truncate max-w-[100px] sm:max-w-[200px]">
+                                  {table.tableName}
+                                </span>
+                                <span className="text-xs sm:text-xs text-muted-foreground">{table.schemaName}</span>
                               </div>
-                            ) : (
-                              "-"
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                            </TableCell>
+                            <TableCell className="text-right text-xs py-2">{table.totalSize}</TableCell>
+                            <TableCell className="text-right hidden sm:table-cell py-2">
+                              {shareKnown ? (
+                                <div className="flex items-center justify-end gap-1 sm:gap-2">
+                                  <Progress value={percent} className="w-12 sm:w-16 h-1.5 sm:h-2" />
+                                  <span className="text-xs w-10 sm:w-12">{percent.toFixed(1)}%</span>
+                                </div>
+                              ) : (
+                                "-"
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

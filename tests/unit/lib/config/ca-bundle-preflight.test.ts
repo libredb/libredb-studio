@@ -3,6 +3,8 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { verifyExtraCaCertsAtBoot } from "@/lib/config/ca-bundle-preflight";
+import { forgetTrustMaterial, trustMaterial } from "@/lib/db/trust-material";
+import { logger } from "@/lib/logger";
 
 /**
  * Node reads NODE_EXTRA_CA_CERTS once at start and, when the file is missing or
@@ -11,18 +13,26 @@ import { verifyExtraCaCertsAtBoot } from "@/lib/config/ca-bundle-preflight";
  * fails later, far from the cause. The preflight refuses to boot instead, so the
  * container restarts until the bundle is there (on OpenShift the Cluster Network
  * Operator fills the trusted-CA ConfigMap after the pod may have started).
+ *
+ * The preflight's read is core's read of the trust material (`src/lib/db/trust-material.ts`), kept for the life of the
+ * process, so every case forgets the kept outcome first, as a new process would start.
  */
 describe("config/ca-bundle-preflight verifyExtraCaCertsAtBoot", () => {
   const original = process.env.NODE_EXTRA_CA_CERTS;
   let dir: string;
+  let info: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "libredb-ca-"));
+    forgetTrustMaterial();
+    info = spyOn(logger, "info").mockImplementation(() => {});
   });
 
   afterEach(() => {
+    info.mockRestore();
     if (original === undefined) delete process.env.NODE_EXTRA_CA_CERTS;
     else process.env.NODE_EXTRA_CA_CERTS = original;
+    forgetTrustMaterial();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -118,6 +128,70 @@ describe("config/ca-bundle-preflight verifyExtraCaCertsAtBoot", () => {
 
   test("accepts a bundle", () => {
     bundle("-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n");
+    const { result, exitCalls, banner } = run();
+    expect(result).toBe(true);
+    expect(exitCalls).toEqual([]);
+    expect(banner).toBe("");
+  });
+
+  test("the boot read is the read core keeps: the certificates of the accepted bundle, whatever the file says later", () => {
+    const certificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    const file = bundle(`${certificate}\n`);
+    const { result, exitCalls } = run();
+    expect(result).toBe(true);
+    expect(exitCalls).toEqual([]);
+    writeFileSync(file, "");
+    expect(trustMaterial()).toEqual({ certificates: [certificate] });
+  });
+
+  test("refuses a certificate block with no END line", () => {
+    const file = bundle(
+      "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIB\n",
+    );
+    const { result, exitCalls, banner } = run();
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain(file);
+    expect(banner).toContain("a -----BEGIN CERTIFICATE----- block in the file has no -----END CERTIFICATE----- line");
+    // Node.js trusts the complete blocks before the broken one, so the banner claims neither "no bundle" nor "no CA".
+    expect(banner).toContain("NODE_EXTRA_CA_CERTS names a file Studio does not accept as a certificate bundle");
+    expect(banner).toContain(" Node would warn and trust none or only part of it, or, for a legacy label,");
+    expect(banner).not.toContain("names no certificate bundle");
+  });
+
+  test("refuses a block under the legacy X509 CERTIFICATE label, naming the label to write instead", () => {
+    const file = bundle("-----BEGIN X509 CERTIFICATE-----\nMIIB\n-----END X509 CERTIFICATE-----\n");
+    const { result, exitCalls, banner } = run();
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain(file);
+    expect(banner).toContain(
+      "the file holds a -----BEGIN X509 CERTIFICATE----- block, which Node.js trusts and Studio does not take; relabel it -----BEGIN CERTIFICATE----- and -----END CERTIFICATE-----",
+    );
+    // Node.js trusts the legacy block without a warning, so the banner names Db2's connections, not a warning.
+    expect(banner).toContain(
+      [
+        " Node would warn and trust none or only part of it, or, for a legacy label,",
+        " trust a CA that Studio's Db2 connections would not, so TLS connections",
+        " behind the private CA would fail later. Fix it either way:",
+      ].join("\n"),
+    );
+  });
+
+  test("accepts a bundle that begins with a UTF-8 byte order mark, as Node.js does", () => {
+    const certificate = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----";
+    bundle(`\uFEFF${certificate}\n`);
+    const { result, exitCalls, banner } = run();
+    expect(result).toBe(true);
+    expect(exitCalls).toEqual([]);
+    expect(banner).toBe("");
+    expect(trustMaterial()).toEqual({ certificates: [certificate] });
+  });
+
+  test("accepts a bundle whose comment quotes the BEGIN marker", () => {
+    bundle(
+      "# append each CA as a -----BEGIN CERTIFICATE----- block\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+    );
     const { result, exitCalls, banner } = run();
     expect(result).toBe(true);
     expect(exitCalls).toEqual([]);

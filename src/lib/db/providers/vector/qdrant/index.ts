@@ -25,8 +25,9 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { requireEgressDecision } from "@/lib/db/http/egress-policy";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -43,7 +44,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
-  ProviderExecutionContext,
+  ProviderBuildContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -196,7 +197,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
-    private readonly execution: ProviderExecutionContext = {},
+    private readonly execution: ProviderBuildContext = {},
     private readonly createClient: QdrantClientFactory = createRestQdrantClient,
   ) {
     super(config, options);
@@ -266,6 +267,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
       const options = buildQdrantConnectionOptions(this.config, {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
+        egress: requireEgressDecision(this.execution.egress),
       });
       if (this.readOnlyProfile && !Object.hasOwn(options.headers, "api-key")) throw keylessAgentRefusal();
       client = this.createClient(options, QDRANT_ROUTE_TEMPLATES);
@@ -537,13 +539,13 @@ export class QdrantProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: Studio never reads Qdrant's slow-request log. `getLabels().slowQueriesEmptyState` says why. */
+  /** Empty: Studio never reads Qdrant's slow-request log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: Qdrant reports no client sessions. `getLabels().sessionsEmptyState` says so. */
+  /** Empty: Qdrant reports no client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

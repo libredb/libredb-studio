@@ -65,7 +65,7 @@ import type {
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
-import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { assertReadOnlyBudget } from "@/lib/db/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { type EtcdAgentAnswer, ETCD_METADATA_ONLY, etcdAgentFailure, etcdAgentResult } from "./agent-metadata-read";
 import { ETCD_PROOF_SENTENCES, etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
@@ -920,13 +920,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     return {};
   }
 
-  /** Empty: etcd keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
+  /** Empty: etcd keeps no query log, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
     this.ensureConnected();
     return [];
   }
 
-  /** Empty: etcd does not report client sessions. `getLabels().sessionsEmptyState` says so in the panel. */
+  /** Empty: etcd does not report client sessions, and the panel is not offered (`ENGINE_FACETS`), so core never reads this and nothing draws it. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
     this.ensureConnected();
     return [];

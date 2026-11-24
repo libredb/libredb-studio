@@ -1,10 +1,12 @@
-import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { resetCache as resetSeedCache } from "@/lib/seed";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
 /**
  * An inline connection without an id is answered 400 CONFIG_ERROR, "Connection ID is required", by
@@ -22,6 +24,10 @@ import { resetCache as resetSeedCache } from "@/lib/seed";
  * session, `resolveConnection` and the factory are the real ones, per the acceptance criteria; the
  * connection is an inline PostgreSQL record whose refusal happens before any socket is opened.
  */
+
+// The editor query and the multi-query script read the process's host core, so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({

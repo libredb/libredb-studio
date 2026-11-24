@@ -17,7 +17,7 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import { graphObjectSegment } from "@/lib/db/graph/objects";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
-import { evaluateInfluxql } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
+import { evaluateInfluxql } from "@/lib/languages/influxql/policy";
 import { CypherNameError } from "@/lib/db/graph/cypher/quote";
 import type { generateRowActionQuery } from "@/lib/query-generators";
 
@@ -3065,5 +3065,55 @@ describe("runRowAction", () => {
         ),
       ).toThrow('no row action "exec" is declared for the kind "pods"');
     });
+  });
+});
+
+describe("the generators follow the active connection's type, never the port its declaration names", () => {
+  // `defaultMetadata` declares PostgreSQL's port, 5432, so only the connection's type can write another engine's forms.
+  const orderItems: DetailedObject[] = [
+    {
+      name: "Order Items",
+      kind: "table",
+      path: ["app", "Order Items"],
+      columns: [{ name: "Order Date", type: "date", nullable: true, isPrimary: false }],
+      indexes: [],
+    },
+  ];
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test("a tree click", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection({ type: "mysql" }), metadata: defaultMetadata, schema: [] }),
+    );
+    act(() =>
+      result.current.handleTableClick(
+        ["app", "Order Items"],
+        mock(() => {}),
+      ),
+    );
+    expect(result.current.tabs[1].query).toBe("SELECT * FROM app.`Order Items`;");
+  });
+
+  test("Generate Query", () => {
+    const { result } = renderHook(() =>
+      useTabManager({
+        activeConnection: makeConnection({ type: "mysql" }),
+        metadata: defaultMetadata,
+        schema: orderItems,
+      }),
+    );
+    act(() => result.current.handleGenerateSelect(["app", "Order Items"]));
+    expect(result.current.tabs[1].query).toBe("SELECT\n  `Order Date`\nFROM app.`Order Items`\nWHERE 1=1\nLIMIT 100;");
+  });
+
+  test("Generate Count Query", () => {
+    const { result } = renderHook(() =>
+      useTabManager({ activeConnection: makeConnection({ type: "mssql" }), metadata: defaultMetadata, schema: [] }),
+    );
+    act(() => result.current.handleGenerateCount(["app", "Order Items"]));
+    expect(result.current.tabs[1].query).toBe("SELECT COUNT_BIG(*) AS row_count\nFROM app.[Order Items];");
   });
 });

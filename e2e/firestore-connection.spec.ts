@@ -2,6 +2,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { validateFirestoreConnection } from "../src/lib/db/providers/document/firestore/connection-options";
 import { resolveFirestoreAuth } from "../src/lib/db/providers/document/firestore/credential-policy";
 import { resolveSeams } from "../src/lib/db/providers/document/firestore/seams";
+import { openConnectionDialog } from "./helpers/connection-dialog";
 
 /**
  * The Firestore connection dialog in a browser: the driver is offered, its three fields carry spec 4.1's labels and
@@ -35,8 +36,7 @@ async function openFirestore(page: Page) {
   await page.getByRole("button", { name: "Sign In" }).click();
   await page.waitForURL("/");
   await expect(page.locator("text=Query 1").first()).toBeVisible({ timeout: 10_000 });
-  const sidebarButtons = page.locator("text=LibreDB Studio").locator("..").locator("..").locator("button");
-  await sidebarButtons.last().click();
+  await openConnectionDialog(page);
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 5000 });
   await dialog.getByRole("button", { name: "Firestore", exact: true }).click();
