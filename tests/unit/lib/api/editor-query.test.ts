@@ -884,6 +884,7 @@ describe("runEditorQuery on the host core", () => {
           },
           objects: { tree: "not-offered" },
           maintenance: { run: "not-offered", preview: "not-offered" },
+          monitoring: { panel: "not-offered", poolStats: "not-offered" },
         },
         execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
       },

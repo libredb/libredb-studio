@@ -1,17 +1,19 @@
 /**
  * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57,
- * C-67 and C-68).
+ * C-67, C-68 and C-71).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The refinement may also narrow the session's
  * maintenance to the placements its server accepts, which `sessionMaintenance` applies to the engine's declaration.
  * The host keeps the session's calls with the session, with no cache and no invalidation event, and holds every request
  * to them with `checkExecuteRequest` before the call, so a package is never sent a field it does not honour, and every
- * console facet call to it with `checkConsoleFacet`, every object facet call with `checkObjectsFacet` and every
- * maintenance facet call with `checkMaintenanceFacet`, so a package is never called on a facet the session does not
- * offer. It holds every maintenance run and preview request to the session's maintenance with
- * `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is never sent an operation or a
- * placement its session's maintenance does not offer.
+ * console facet call to it with `checkConsoleFacet`, every object facet call with `checkObjectsFacet`, every
+ * maintenance facet call with `checkMaintenanceFacet` and every monitoring facet call with `checkMonitoringFacet`, so a
+ * package is never called on a facet the session does not offer. It holds every maintenance run and preview request to
+ * the session's maintenance with `checkMaintenanceRunRequest` and `checkMaintenancePreviewRequest`, so a package is
+ * never sent an operation or a placement its session's maintenance does not offer, and every monitoring panel request
+ * to the panels the session's engine offers with `checkMonitoringPanelRequest`, so a package is never asked for a panel
+ * its engine does not offer.
  */
 import type {
   Calls,
@@ -19,8 +21,9 @@ import type {
   FacetOffer,
   MaintenanceOperation,
   MaintenanceSpec,
+  MonitoringPanels,
 } from "../manifest/manifest-types.generated";
-import { isPlainRecord, pointerTo, readOwn } from "./records";
+import { isPlainRecord, pointerTo, readOwn, valueOf } from "./records";
 import { type CallRefusal, CallRefusalError } from "./refusals";
 import {
   CONSOLE_FACETS,
@@ -34,6 +37,9 @@ import {
   type MaintenanceFacet,
   type MaintenancePreviewRequest,
   type MaintenanceRunRequest,
+  MONITORING_FACETS,
+  type MonitoringFacet,
+  type MonitoringPanelRequest,
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
@@ -96,6 +102,32 @@ export function checkObjectsFacet(calls: Calls, facet: ObjectsFacet): readonly C
 export function checkMaintenanceFacet(calls: Calls, facet: MaintenanceFacet): readonly CallRefusal[] {
   if (calls.maintenance[facet] === "offered") return [];
   return [{ rule: "facet-not-offered", pointer: pointerTo("/maintenance", facet), name: `maintenance.${facet}` }];
+}
+
+/**
+ * The refusal of a call to the monitoring facet `facet` when `calls`, the session's calls, do not offer it, a
+ * refinement's narrowing included: one `facet-not-offered` at the facet's pointer into the calls, named by its call
+ * name; none when the session offers it. The request is the host's own typed object and is not read here.
+ */
+export function checkMonitoringFacet(calls: Calls, facet: MonitoringFacet): readonly CallRefusal[] {
+  if (calls.monitoring[facet] === "offered") return [];
+  return [{ rule: "facet-not-offered", pointer: pointerTo("/monitoring", facet), name: `monitoring.${facet}` }];
+}
+
+/**
+ * The refusal of a panel request `panels`, the monitoring panels of the session's engine, does not offer: one
+ * `request-panel-not-offered` at `/panel` unless the request's `panel` is text naming an own data property of `panels`
+ * whose value is `offered`, each read by its descriptor, so a panel the engine declares not-offered, an absent `panel`,
+ * one that is no text and one an object inherits, such as `__proto__`, are refused and nothing throws; none otherwise.
+ * The refusal names the pointer, never a value of the request.
+ */
+export function checkMonitoringPanelRequest(
+  panels: MonitoringPanels,
+  request: MonitoringPanelRequest,
+): readonly CallRefusal[] {
+  const panel = valueOf(readOwn(request, "panel"));
+  if (typeof panel === "string" && valueOf(readOwn(panels, panel)) === "offered") return [];
+  return [{ rule: "request-panel-not-offered", pointer: "/panel" }];
 }
 
 /**
@@ -290,6 +322,13 @@ function readMaintenance(value: unknown, declared: Calls, pointer: string, refus
   );
 }
 
+/** The refusals of a refinement's `calls.monitoring`. */
+function readMonitoring(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  readClosed(value, MONITORING_FACETS, pointer, refusals, (facet, offer, at) =>
+    readOffer(offer, declared.monitoring[facet], at, refusals),
+  );
+}
+
 /**
  * The reader of each segment a refinement's `calls` may have, one per segment of the manifest's calls, in schema order.
  * It satisfies a type over every segment, so a segment the calls gain fails typecheck here until it has a reader of
@@ -299,6 +338,7 @@ const SEGMENT_READERS = Object.freeze({
   console: readConsole,
   objects: readObjects,
   maintenance: readMaintenance,
+  monitoring: readMonitoring,
 } satisfies {
   readonly [S in keyof Calls]: (value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]) => void;
 });
@@ -500,6 +540,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
   const narrowed = refine?.calls?.console;
   const narrowedObjects = refine?.calls?.objects;
   const narrowedMaintenance = refine?.calls?.maintenance;
+  const narrowedMonitoring = refine?.calls?.monitoring;
   const honours = narrowed?.execute?.honours ?? declared.console.execute.honours;
   return Object.freeze({
     console: Object.freeze({
@@ -514,6 +555,10 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
     maintenance: Object.freeze({
       run: narrowedMaintenance?.run ?? declared.maintenance.run,
       preview: narrowedMaintenance?.preview ?? declared.maintenance.preview,
+    }),
+    monitoring: Object.freeze({
+      panel: narrowedMonitoring?.panel ?? declared.monitoring.panel,
+      poolStats: narrowedMonitoring?.poolStats ?? declared.monitoring.poolStats,
     }),
   });
 }

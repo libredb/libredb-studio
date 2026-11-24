@@ -69,6 +69,7 @@ async function runCase(deps: ChildDeps, name: string): Promise<ChildReport> {
     },
   };
   const manifest = JSON.parse(JSON.stringify(deps.manifest));
+  manifest.calls.monitoring.panel = "not-offered";
   manifest.engines[0].facets.monitoring.overview = "not-offered";
   const served = deps.serve(deps.defineProvider(manifest, impl), {
     observe: (frame) => {

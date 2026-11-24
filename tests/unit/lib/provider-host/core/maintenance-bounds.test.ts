@@ -34,6 +34,7 @@ const child = boundedChild({
         },
         objects: { tree: "not-offered" },
         maintenance: { run: "offered", preview: "offered" },
+        monitoring: { panel: "not-offered", poolStats: "not-offered" },
       },
       maintenance: {
         maintenance: ["release"],

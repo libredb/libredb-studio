@@ -3,8 +3,8 @@
  * (docs/providers/CONTRACT.md, clause C-10), and a maintenance narrowing only withdraws what the session's engine
  * declares (clause C-68).
  *
- * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree and both
- * maintenance facets; each case asserts the exact refusal list, every pointer rooted at the refinement.
+ * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree, both
+ * maintenance facets and both monitoring facets; each case asserts the exact refusal list, every pointer rooted at the refinement.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -30,6 +30,7 @@ const DECLARED: Calls = Object.freeze({
   }),
   objects: Object.freeze({ tree: "offered" }),
   maintenance: Object.freeze({ run: "offered", preview: "offered" }),
+  monitoring: Object.freeze({ panel: "offered", poolStats: "offered" }),
 });
 
 /** Declared calls that honour only `params`. */
@@ -85,7 +86,10 @@ function deepFrozen(value: unknown): boolean {
 describe("checkRefinement and sessionCalls", () => {
   test("a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones", () => {
     const narrowing: Refinement = {
-      calls: { console: { cancel: "not-offered", execute: { honours: ["params"] } } },
+      calls: {
+        console: { cancel: "not-offered", execute: { honours: ["params"] } },
+        monitoring: { poolStats: "not-offered" },
+      },
     };
 
     for (const refine of [undefined, {}, { calls: {} }, { calls: { console: {} } }, { calls: { objects: {} } }]) {
@@ -105,20 +109,24 @@ describe("checkRefinement and sessionCalls", () => {
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "offered" },
+      monitoring: { panel: "offered", poolStats: "not-offered" },
     });
     expect(deepFrozen(calls)).toBe(true);
     expect(Object.isFrozen(calls.maintenance)).toBe(true);
+    expect(Object.isFrozen(calls.monitoring)).toBe(true);
     expect(DECLARED.console.cancel).toBe("offered");
     expect(DECLARED.console.execute.honours).toEqual(["params", "offset"]);
     const unfrozen: Calls = {
       console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered", transaction: "offered" },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
+      monitoring: { panel: "offered", poolStats: "not-offered" },
     };
     expect(deepFrozen(sessionCalls(unfrozen, { calls: { console: { endScope: "not-offered" } } }))).toBe(true);
     expect(Object.isFrozen(unfrozen.console.execute.honours)).toBe(false);
     expect(Object.isFrozen(unfrozen.objects)).toBe(false);
     expect(Object.isFrozen(unfrozen.maintenance)).toBe(false);
+    expect(Object.isFrozen(unfrozen.monitoring)).toBe(false);
   });
 
   test("a refinement that widens a declared value is refused as refinement-widens", () => {
@@ -198,6 +206,7 @@ describe("checkRefinement and sessionCalls", () => {
       console: { ...DECLARED.console, cancel: "not-offered" },
       objects: { tree: "not-offered" },
       maintenance: DECLARED.maintenance,
+      monitoring: DECLARED.monitoring,
     });
     expect(
       checkRefinement(notOffering, { calls: { objects: { tree: "offered" }, console: { endScope: "offered" } } }),
@@ -280,6 +289,53 @@ describe("checkRefinement and sessionCalls", () => {
     expect(reads).toBe(0);
   });
 
+  test("a refinement may withdraw monitoring.panel and monitoring.poolStats, and never offer one the manifest does not", () => {
+    const notOffering: Calls = { ...DECLARED, monitoring: { panel: "not-offered", poolStats: "not-offered" } };
+    let reads = 0;
+    const accessor = (key: string): object =>
+      Object.defineProperty({}, key, {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return "not-offered";
+        },
+      });
+
+    for (const facet of ["panel", "poolStats"] as const) {
+      const other = facet === "panel" ? "poolStats" : "panel";
+      const withdraw = { calls: { monitoring: { [facet]: "not-offered" } } };
+      const offer = { calls: { monitoring: { [facet]: "offered" } } };
+      const pointer = `/calls/monitoring/${facet}`;
+
+      expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
+      const withdrawn = sessionCalls(DECLARED, withdraw as Refinement);
+      expect(withdrawn.monitoring[facet]).toBe("not-offered");
+      expect(withdrawn.monitoring[other]).toBe("offered");
+      expect(deepFrozen(withdrawn)).toBe(true);
+      expect(DECLARED.monitoring[facet]).toBe("offered");
+      expect(checkRefinement(DECLARED, offer)).toEqual([]);
+      expect(checkRefinement(notOffering, withdraw)).toEqual([]);
+      expect(checkRefinement(notOffering, offer)).toEqual([refused("refinement-widens", pointer)]);
+      for (const value of ["maybe", true, null]) {
+        expect(checkRefinement(DECLARED, { calls: { monitoring: { [facet]: value } } })).toEqual([
+          refused("refinement-unreadable", pointer),
+        ]);
+      }
+      expect(checkRefinement(DECLARED, { calls: { monitoring: accessor(facet) } })).toEqual([
+        refused("refinement-unreadable", pointer),
+      ]);
+    }
+    expect(sessionCalls(DECLARED, undefined).monitoring).toEqual({ panel: "offered", poolStats: "offered" });
+    expect(sessionCalls(DECLARED, { calls: { monitoring: {} } }).monitoring).toEqual(DECLARED.monitoring);
+    expect(checkRefinement(DECLARED, { calls: { monitoring: "panel" } })).toEqual([
+      refused("refinement-unreadable", "/calls/monitoring"),
+    ]);
+    expect(checkRefinement(DECLARED, { calls: { monitoring: { sessions: "offered" } } })).toEqual([
+      refused("refinement-key-unknown", "/calls/monitoring/sessions", "sessions"),
+    ]);
+    expect(reads).toBe(0);
+  });
+
   test("an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read", () => {
     let reads = 0;
     const counted = (items: unknown[]): unknown[] =>
@@ -327,6 +383,9 @@ describe("checkRefinement and sessionCalls", () => {
     for (const value of [{ tree: "offered" }, { tree: "maybe" }, "tree", null]) {
       expect(checkRefinement(DECLARED, { calls: { queries: value } })).toEqual([
         refused("refinement-key-unknown", "/calls/queries", "queries"),
+      ]);
+      expect(checkRefinement(DECLARED, { calls: { health: value } })).toEqual([
+        refused("refinement-key-unknown", "/calls/health", "health"),
       ]);
     }
   });

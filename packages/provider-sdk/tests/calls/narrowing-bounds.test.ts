@@ -38,6 +38,7 @@ function runCase(deps: ChildDeps, name: string): ChildReport {
       console: { execute: { honours: [] }, cancel: "offered", endScope: "offered", transaction: "offered" },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     };
     return { name, refusals: deps.checkRefinement(declared as never, refine) };
   }

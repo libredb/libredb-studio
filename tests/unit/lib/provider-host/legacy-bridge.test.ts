@@ -15,6 +15,7 @@ import {
   BATCH_MAX_BYTES,
   type CallContext,
   checkMaintenanceFacet,
+  checkMonitoringFacet,
   checkObjectsFacet,
   encodedRowBytes,
   envReader,
@@ -159,6 +160,7 @@ describe("bridgedConsole", () => {
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -175,6 +177,7 @@ describe("bridgedConsole", () => {
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
@@ -220,6 +223,27 @@ describe("bridgedConsole", () => {
       expect(typeof session.run).toBe("function");
       expect(session.preview === undefined).toBe(!previews);
     }
+  });
+
+  test("a bridged session offers no monitoring facet, since the monitoring and pool-stats routes still call the provider's members themselves", () => {
+    const getPoolStats = mock(() => ({ total: 1, idle: 1, active: 0, waiting: 0 }));
+    const pooled = fake(resultOf([]), { getPoolStats });
+    const sessions = [
+      bridgedConsole(fake(resultOf([])), {}),
+      bridgedConsole(pooled, {}),
+      bridgedConsole(transactionalFake().provider, {}),
+    ];
+
+    for (const { session } of sessions) {
+      expect(session.calls.monitoring).toEqual({ panel: "not-offered", poolStats: "not-offered" });
+      expect(Object.isFrozen(session.calls.monitoring)).toBe(true);
+      for (const facet of ["panel", "poolStats"] as const) {
+        expect(checkMonitoringFacet(session.calls, facet)).toEqual([
+          { rule: "facet-not-offered", pointer: `/monitoring/${facet}`, name: `monitoring.${facet}` },
+        ]);
+      }
+    }
+    expect(getPoolStats).not.toHaveBeenCalled();
   });
 
   test("a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference", async () => {

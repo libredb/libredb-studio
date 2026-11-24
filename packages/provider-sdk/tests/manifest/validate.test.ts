@@ -3672,6 +3672,24 @@ describe("the calls segment", () => {
     ]);
     expect(refusalsFor(manifest((m) => (m.calls.maintenance = { run: "offered", preview: "offered" })))).toEqual([]);
   });
+  test("calls that leave out monitoring, or monitoring that leaves out panel or poolStats, are refused as missing-key", () => {
+    expect(refusalsFor(manifest((m) => delete m.calls.monitoring))).toEqual([
+      refusal("missing-key", "/calls", "monitoring"),
+    ]);
+    expect(refusalsFor(manifest((m) => delete m.calls.monitoring.panel))).toEqual([
+      refusal("missing-key", "/calls/monitoring", "panel"),
+    ]);
+    expect(refusalsFor(manifest((m) => delete m.calls.monitoring.poolStats))).toEqual([
+      refusal("missing-key", "/calls/monitoring", "poolStats"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.monitoring.sessions = "offered")))).toEqual([
+      refusal("unknown-key", "/calls/monitoring", "sessions"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.monitoring.panel = "maybe")))).toEqual([
+      refusal("value-not-allowed", "/calls/monitoring/panel"),
+    ]);
+    expect(refusalsFor(manifest((m) => (m.calls.monitoring = { panel: "offered", poolStats: "offered" })))).toEqual([]);
+  });
 });
 
 describe("proxy variables", () => {

@@ -18,6 +18,8 @@ export const SERVED_CALLS = Object.freeze([
   "objects.tree",
   "maintenance.run",
   "maintenance.preview",
+  "monitoring.panel",
+  "monitoring.poolStats",
   "result.next",
   "result.close",
 ] as const);

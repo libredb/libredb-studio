@@ -31,6 +31,8 @@ import {
   type MaintenancePreviewRequest,
   type MaintenanceRunAnswer,
   type MaintenanceRunRequest,
+  type MonitoringPanelAnswer,
+  type MonitoringPanelRequest,
   type OpenAnswer,
   type OpenContext,
   PAGE_MAX_BYTES,
@@ -82,7 +84,11 @@ function fixture(
     readonly tree?: boolean;
     readonly run?: boolean;
     readonly preview?: boolean;
+    readonly panel?: boolean;
+    readonly poolStats?: boolean;
     readonly honours?: string[];
+    /** Whether the engine offers the overview and the table statistics panels, and no other. */
+    readonly offersPanels?: boolean;
     /** Whether the engine lists maintenance: vacuum and analyze on a row and whole, kill on neither, release on a row. */
     readonly listsMaintenance?: boolean;
   } = {},
@@ -95,7 +101,10 @@ function fixture(
   manifest.calls.objects.tree = options.tree === false ? "not-offered" : "offered";
   manifest.calls.maintenance.run = options.run === false ? "not-offered" : "offered";
   manifest.calls.maintenance.preview = options.preview === false ? "not-offered" : "offered";
-  manifest.engines[0].facets.monitoring.overview = "not-offered";
+  manifest.calls.monitoring.panel = options.panel === false ? "not-offered" : "offered";
+  manifest.calls.monitoring.poolStats = options.poolStats === false ? "not-offered" : "offered";
+  manifest.engines[0].facets.monitoring.overview = options.offersPanels === true ? "offered" : "not-offered";
+  manifest.engines[0].facets.monitoring.tables = options.offersPanels === true ? "offered" : "not-offered";
   if (options.listsMaintenance === true) {
     const placed: [string, boolean, boolean, boolean][] = [
       ["vacuum", true, true, false],
@@ -143,6 +152,8 @@ function fixture(
     tree: () => ({ containers: [] }),
     run: () => ({ success: true, executionTime: 1, message: marker() }),
     preview: () => ({ summary: marker(), facts: [] }),
+    panel: () => ({ storage: [] }),
+    poolStats: () => ({ total: 1, idle: 1, active: 0, waiting: 0 }),
   };
   const impl: Json = {
     open: async (ctx: OpenContext) => {
@@ -200,6 +211,20 @@ function fixture(
     };
   }
   impl.maintenance = maintenance;
+  const monitoring: Json = {};
+  if (options.panel !== false) {
+    monitoring.panel = async (h: unknown, request: unknown, ctx: CallContext) => {
+      seen.push({ call: "monitoring.panel", handle: h, request, ctx });
+      return answers.panel();
+    };
+  }
+  if (options.poolStats !== false) {
+    monitoring.poolStats = async (h: unknown, ...rest: unknown[]) => {
+      seen.push({ call: "monitoring.poolStats", handle: h, ctx: rest[0] as CallContext, request: rest.slice(1) });
+      return answers.poolStats();
+    };
+  }
+  impl.monitoring = monitoring;
   return { module: defineProvider(manifest, impl as ProviderImpl<unknown>), seen, handle, answers };
 }
 
@@ -1002,6 +1027,165 @@ describe("serve", () => {
     expect(fx.seen.map((item) => item.call)).toEqual(["open", "maintenance.run"]);
   });
 
+  test("a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies", async () => {
+    const fx = fixture({ offersPanels: true });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const startTime = new Date(1_700_000_000_000);
+    const calls: [MonitoringPanelRequest, MonitoringPanelAnswer][] = [
+      [
+        { panel: "overview" },
+        {
+          overview: {
+            version: marker(),
+            uptime: marker(),
+            startTime,
+            maxConnections: 0,
+            databaseSize: marker(),
+            tableCount: 3,
+            indexCount: 1,
+          },
+        },
+      ],
+      [
+        { panel: "tables", schema: marker() },
+        {
+          tables: [
+            {
+              schemaName: marker(),
+              tableName: marker(),
+              totalSize: "8 kB",
+              totalSizeBytes: 8192,
+              lastAnalyze: new Date(1_700_000_001_000),
+            },
+          ],
+        },
+      ],
+      [{ panel: "tables" }, { tables: [] }],
+    ];
+    const pool = { total: 5, idle: 2, active: 3, waiting: 0, max: 10 };
+
+    for (const [sent, answer] of calls) {
+      fx.answers.panel = () => answer;
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so each frame pair and answer is its own call's.
+      const got = await impl.monitoring?.panel?.(opened.handle, sent, callContext());
+      expect(got).toEqual(answer);
+      expect(got).not.toBe(answer);
+    }
+    fx.answers.poolStats = () => pool;
+    const counted = await impl.monitoring?.poolStats?.(opened.handle, callContext());
+    const seen = fx.seen.slice(1);
+    const overview = (calls[0] as [MonitoringPanelRequest, { overview: { startTime: Date } }])[1].overview;
+
+    expect(counted).toEqual(pool);
+    expect(counted).not.toBe(pool);
+    expect(frames.slice(before).map((frame) => `${frame.direction} ${frame.call}`)).toEqual([
+      ...calls.flatMap(() => ["to-provider monitoring.panel", "to-host monitoring.panel"]),
+      "to-provider monitoring.poolStats",
+      "to-host monitoring.poolStats",
+    ]);
+    expect(Object.keys(JSON.parse((frames.at(-2) as ServedFrame).text)).sort()).toEqual(["call", "context", "session"]);
+    expect(overview.startTime).toBe(startTime);
+    expect(seen.map((item) => item.call)).toEqual([...calls.map(() => "monitoring.panel"), "monitoring.poolStats"]);
+    for (const [index, item] of seen.slice(0, calls.length).entries()) {
+      const sent = (calls[index] as [MonitoringPanelRequest, MonitoringPanelAnswer])[0];
+      expect(item.handle).toBe(fx.handle);
+      expect(item.request).toEqual(sent);
+      expect(item.request).not.toBe(sent);
+      expect(deepFrozen(item.request)).toBe(true);
+      expect(Object.isFrozen(item.ctx)).toBe(true);
+    }
+    const poolSeen = seen.at(-1) as Seen;
+    expect(poolSeen.handle).toBe(fx.handle);
+    expect(poolSeen.request).toEqual([]);
+    expect(Object.isFrozen(poolSeen.ctx)).toBe(true);
+
+    fx.answers.panel = () => calls[0]?.[1];
+    const decoded = (await impl.monitoring?.panel?.(opened.handle, { panel: "overview" }, callContext())) as {
+      overview: { startTime: Date };
+    };
+    expect(decoded.overview.startTime).toBeInstanceOf(Date);
+    expect(decoded.overview.startTime).not.toBe(startTime);
+    expect(decoded.overview.startTime.getTime()).toBe(startTime.getTime());
+
+    fx.answers.panel = () => ({ overview: { version: marker() }, tables: [] });
+    const twoForms = await failure(async () =>
+      impl.monitoring?.panel?.(opened.handle, { panel: "overview" }, callContext()),
+    );
+    expect((twoForms as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "monitoring.panel", part: "answer", pointer: "" },
+    ]);
+    fx.answers.poolStats = () => ({ total: 1, idle: 1, active: 0, waiting: 0, min: 0 });
+    const unknownKey = await failure(async () => impl.monitoring?.poolStats?.(opened.handle, callContext()));
+    expect((unknownKey as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-key-unknown", call: "monitoring.poolStats", part: "answer", pointer: "/min", name: "min" },
+    ]);
+    const unreadableLimit = await failure(async () =>
+      impl.monitoring?.panel?.(
+        opened.handle,
+        { panel: "tables", schema: 7 } as unknown as MonitoringPanelRequest,
+        callContext(),
+      ),
+    );
+    expect((unreadableLimit as FrameRefusalError).refusals).toEqual([
+      { rule: "frame-value-unreadable", call: "monitoring.panel", part: "request", pointer: "/schema" },
+    ]);
+  });
+
+  test("a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame", async () => {
+    for (const facet of ["panel", "poolStats"] as const) {
+      // A package that declares monitoring.panel not-offered cannot list an engine's panel, so only poolStats's has panels.
+      const declaredNot = fixture({ [facet]: false, offersPanels: facet === "poolStats" });
+      const withdrawn = fixture({ offersPanels: true });
+      withdrawn.answers.open = () => ({
+        handle: withdrawn.handle,
+        refine: { calls: { monitoring: { [facet]: "not-offered" } } },
+      });
+      const notServed = served(declaredNot);
+      const narrowed = served(withdrawn);
+      // oxlint-disable-next-line no-await-in-loop -- one facet at a time, so each case's frames are its own.
+      const narrowedSession = await narrowed.impl.open(openContext());
+      const before = narrowed.frames.length;
+      const call = (): Promise<unknown> | undefined =>
+        facet === "panel"
+          ? narrowed.impl.monitoring?.panel?.(narrowedSession.handle, { panel: "overview" }, callContext())
+          : narrowed.impl.monitoring?.poolStats?.(narrowedSession.handle, callContext());
+
+      // oxlint-disable-next-line no-await-in-loop -- one facet at a time, so each case's frames are its own.
+      const refused = await failure(async () => call());
+
+      expect(notServed.impl.monitoring?.[facet]).toBeUndefined();
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([
+        { rule: "facet-not-offered", pointer: `/monitoring/${facet}`, name: `monitoring.${facet}` },
+      ]);
+      expect(narrowed.frames.length).toBe(before);
+      expect(withdrawn.seen.map((item) => item.call)).toEqual(["open"]);
+    }
+
+    const fx = fixture({ offersPanels: true });
+    const { impl, frames } = served(fx);
+    const opened = await impl.open(openContext());
+    const before = frames.length;
+    const requests = [
+      { panel: "performance" },
+      { panel: "activeSessions", limit: 50 },
+      { panel: "__proto__" },
+      {},
+    ] as unknown as MonitoringPanelRequest[];
+    for (const sent of requests) {
+      // oxlint-disable-next-line no-await-in-loop -- one call at a time, so no frame of one is read as another's.
+      const refused = await failure(async () => impl.monitoring?.panel?.(opened.handle, sent, callContext()));
+      expect(refused).toBeInstanceOf(CallRefusalError);
+      expect((refused as CallRefusalError).refusals).toEqual([
+        { rule: "request-panel-not-offered", pointer: "/panel" },
+      ]);
+    }
+    expect(frames.length).toBe(before);
+    expect(fx.seen.map((item) => item.call)).toEqual(["open"]);
+  });
+
   test("a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed", async () => {
     const fx = fixture();
     const { impl, frames } = served(fx);
@@ -1701,6 +1885,8 @@ describe("serve", () => {
       tree: false,
       run: false,
       preview: false,
+      panel: false,
+      poolStats: false,
     });
     const servedBoth = serve(both.module);
     const servedNeither = serve(neither.module);
@@ -1714,9 +1900,13 @@ describe("serve", () => {
     expect(Object.keys(servedBoth.maintenance ?? {})).toEqual(["run", "preview"]);
     expect(Object.keys(servedNeither.maintenance ?? {})).toEqual([]);
     expect(Object.keys(serve(fixture({ preview: false }).module).maintenance ?? {})).toEqual(["run"]);
+    expect(Object.keys(servedBoth.monitoring ?? {})).toEqual(["panel", "poolStats"]);
+    expect(Object.keys(servedNeither.monitoring ?? {})).toEqual([]);
+    expect(Object.keys(serve(fixture({ panel: false }).module).monitoring ?? {})).toEqual(["poolStats"]);
     expect(Object.isFrozen(servedBoth)).toBe(true);
     expect(Object.isFrozen(servedBoth.console)).toBe(true);
     expect(Object.isFrozen(servedBoth.objects)).toBe(true);
     expect(Object.isFrozen(servedBoth.maintenance)).toBe(true);
+    expect(Object.isFrozen(servedBoth.monitoring)).toBe(true);
   });
 });

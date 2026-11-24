@@ -22,10 +22,12 @@
  * The host's side refuses, before any frame and before anything else it checks, a call whose deadline has passed or
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
- * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`), and every maintenance
- * request to the session's maintenance (`checkMaintenanceRunRequest`, `checkMaintenancePreviewRequest`), reads `open`'s refinement
- * with `sessionCalls` and `sessionMaintenance`, the latter against the maintenance of the engine the open context names,
- * which it refuses before any frame when the module's manifest does not declare it,
+ * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`, `checkMonitoringFacet`),
+ * every maintenance request to the session's maintenance (`checkMaintenanceRunRequest`,
+ * `checkMaintenancePreviewRequest`) and every monitoring panel request to the panels the session's engine offers
+ * (`checkMonitoringPanelRequest`), reads `open`'s refinement with `sessionCalls` and `sessionMaintenance`, the latter
+ * against the maintenance of the engine the open context names, which it refuses before any frame when the module's
+ * manifest does not declare it,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
@@ -37,7 +39,7 @@
  * delivered whole, its token and served sources included, for the host's late handler to close. Each served instance
  * keeps its sessions in its own tables, so a token of one is foreign to another.
  */
-import type { Calls, ProviderManifest } from "../manifest/manifest-types.generated";
+import type { Calls, MonitoringPanels, ProviderManifest } from "../manifest/manifest-types.generated";
 import { cleanupContext, refuseCallStart } from "../calls/deadline";
 import { checkProviderModule, ProviderDefinitionError } from "../calls/define-provider";
 import { freezeContext, freezeData } from "../calls/freeze";
@@ -49,6 +51,8 @@ import {
   checkMaintenanceFacet,
   checkMaintenancePreviewRequest,
   checkMaintenanceRunRequest,
+  checkMonitoringFacet,
+  checkMonitoringPanelRequest,
   checkObjectsFacet,
   sessionCalls,
   sessionMaintenance,
@@ -71,9 +75,13 @@ import type {
   MaintenancePreviewRequest,
   MaintenanceRunAnswer,
   MaintenanceRunRequest,
+  MonitoringImpl,
+  MonitoringPanelAnswer,
+  MonitoringPanelRequest,
   ObjectsImpl,
   OpenAnswer,
   OpenContext,
+  PoolStats,
   ProviderImpl,
   ProviderModule,
   ResultSource,
@@ -109,11 +117,15 @@ export interface ServedHandle {
 /** The context members that are host services, never framed. */
 const SERVICES: readonly string[] = Object.freeze(["signal", "env"] satisfies (keyof CallContext)[]);
 
-/** What the host's side keeps of an open session: its calls, and its maintenance, narrowed as its open answered. */
+/**
+ * What the host's side keeps of an open session: its calls and its maintenance, narrowed as its open answered, and the
+ * monitoring panels of the engine it was opened as.
+ */
 interface HostSession {
   readonly id: string;
   readonly calls: Calls;
   readonly maintenance: EngineMaintenance;
+  readonly monitoring: MonitoringPanels;
 }
 
 /** The maintenance each engine of `manifest` declares, by its id: the two maintenance members of its facets. */
@@ -124,6 +136,11 @@ function engineMaintenance(manifest: ProviderManifest): ReadonlyMap<string, Engi
       { maintenance: engine.facets.maintenance, maintenanceSpecs: engine.facets.maintenanceSpecs },
     ]),
   );
+}
+
+/** The monitoring panels each engine of `manifest` declares, by its id. */
+function enginePanels(manifest: ProviderManifest): ReadonlyMap<string, MonitoringPanels> {
+  return new Map(manifest.engines.map((engine) => [engine.id, engine.facets.monitoring]));
 }
 
 /** The limit's data, the copy the encoder is handed: its numbers, without the host's measure. */
@@ -175,10 +192,12 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   const manifest = module.manifest as ProviderManifest;
   const declared = sessionCalls(manifest.calls, undefined);
   const engines = engineMaintenance(manifest);
+  const panels = enginePanels(manifest);
   const impl = module.impl;
   const consoleImpl = impl.console;
   const objectsImpl = impl.objects;
   const maintenanceImpl = impl.maintenance;
+  const monitoringImpl = impl.monitoring;
   const provider = Object.freeze({
     open: impl.open,
     close: impl.close,
@@ -189,6 +208,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     tree: objectsImpl?.tree,
     run: maintenanceImpl?.run,
     preview: maintenanceImpl?.preview,
+    panel: monitoringImpl?.panel,
+    poolStats: monitoringImpl?.poolStats,
   });
   const observe = options.observe;
 
@@ -266,7 +287,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       | "console.transaction"
       | "objects.tree"
       | "maintenance.run"
-      | "maintenance.preview",
+      | "maintenance.preview"
+      | "monitoring.panel",
     check: (session: HostSession) => readonly CallRefusal[],
     fn: (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
     owner: unknown,
@@ -277,7 +299,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       | TransactionRequest
       | TreeRequest
       | MaintenanceRunRequest
-      | MaintenancePreviewRequest,
+      | MaintenancePreviewRequest
+      | MonitoringPanelRequest,
     ctx: CallContext,
   ): Promise<Answer> {
     refuseCallStart(ctx);
@@ -293,6 +316,30 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     const providerCtx = providerContext<CallContext>(receive(call, "context", sent.context, ctx, SERVICES), ctx);
     const providerRequest = freezeData(receive(call, "request", sent.request, request));
     const answer = await fn.call(owner, handles.get(session.id), providerRequest, providerCtx);
+    const received = cross(call, "to-host", { answer: encodeValue(answer) });
+    return receive(call, "answer", received.answer, answer) as Answer;
+  }
+
+  /**
+   * One call on the session `handle` with no request part, held first to the host's session by `check`: the context
+   * frame, the provider's call `fn` on its decoded copy, with `owner` as its `this`, and the answer frame, read and
+   * compared, decoded for the host.
+   */
+  async function contextCall<Answer>(
+    call: "monitoring.poolStats",
+    check: (session: HostSession) => readonly CallRefusal[],
+    fn: (handle: unknown, ctx: CallContext) => Promise<unknown>,
+    owner: unknown,
+    handle: unknown,
+    ctx: CallContext,
+  ): Promise<Answer> {
+    refuseCallStart(ctx);
+    const session = hostSession(call, handle);
+    const refusals = check(session);
+    if (refusals.length > 0) throw new CallRefusalError(refusals);
+    const sent = cross(call, "to-provider", { call, session: session.id, context: encodeValue(contextData(ctx)) });
+    const providerCtx = providerContext<CallContext>(receive(call, "context", sent.context, ctx, SERVICES), ctx);
+    const answer = await fn.call(owner, handles.get(session.id), providerCtx);
     const received = cross(call, "to-host", { answer: encodeValue(answer) });
     return receive(call, "answer", received.answer, answer) as Answer;
   }
@@ -434,7 +481,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
       const calls = sessionCalls(declared, refine);
       const maintenance = sessionMaintenance(engine, refine);
       const token: ServedHandle = Object.freeze({ session: id });
-      sessions.set(token, { id, calls, maintenance });
+      sessions.set(token, { id, calls, maintenance, monitoring: panels.get(ctx.engine) as MonitoringPanels });
       return { ...decoded, handle: token };
     } catch (error) {
       return throwAfterClosing(error, [closeSession]);
@@ -587,11 +634,45 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
             ),
         }),
   };
+  const { panel, poolStats } = provider;
+  const servedMonitoring: MonitoringImpl<ServedHandle> = {
+    ...(panel === undefined
+      ? {}
+      : {
+          panel: (handle: ServedHandle, request: MonitoringPanelRequest, ctx: CallContext) =>
+            facetCall<MonitoringPanelAnswer>(
+              "monitoring.panel",
+              (session) => {
+                const offered = checkMonitoringFacet(session.calls, "panel");
+                return offered.length > 0 ? offered : checkMonitoringPanelRequest(session.monitoring, request);
+              },
+              panel as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
+              monitoringImpl,
+              handle,
+              request,
+              ctx,
+            ),
+        }),
+    ...(poolStats === undefined
+      ? {}
+      : {
+          poolStats: (handle: ServedHandle, ctx: CallContext) =>
+            contextCall<PoolStats>(
+              "monitoring.poolStats",
+              (session) => checkMonitoringFacet(session.calls, "poolStats"),
+              poolStats as (handle: unknown, ctx: CallContext) => Promise<unknown>,
+              monitoringImpl,
+              handle,
+              ctx,
+            ),
+        }),
+  };
   return Object.freeze({
     open,
     close,
     console: Object.freeze(served),
     objects: Object.freeze(servedObjects),
     maintenance: Object.freeze(servedMaintenance),
+    monitoring: Object.freeze(servedMonitoring),
   });
 }

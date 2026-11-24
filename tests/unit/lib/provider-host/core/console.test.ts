@@ -59,6 +59,7 @@ function callsOf(options: { readonly honours?: ("params" | "offset")[]; readonly
     },
     objects: { tree: "not-offered" },
     maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };
 }
 

@@ -29,6 +29,7 @@ function callsOf(endScope = true): Calls {
     },
     objects: { tree: "not-offered" },
     maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
   };
 }
 
