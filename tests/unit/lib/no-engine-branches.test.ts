@@ -185,11 +185,11 @@ export const REGISTRIES: readonly Listed[] = [
       "each engine's UI-free connection form row, composed from the generated connection forms and typed over the type-id union",
   },
   {
-    path: "src/lib/db/connection-form.ts",
-    declaration: "ConnectionFormFunctionTable",
+    path: "src/lib/db/function-table.ts",
+    declaration: "FunctionTable",
     count: 1,
     reason:
-      "the type of Studio's function table, which binds each function a declaration names to Studio's own, per engine",
+      "the type of Studio's function tables, which bind each function a declaration names to Studio's own, per engine",
   },
   { path: "src/lib/db/connection-form.ts", declaration: "CONNECTION_PICKER_ORDER", count: 1, reason: DISPLAY_ORDER },
   {
