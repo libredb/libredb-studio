@@ -1502,7 +1502,8 @@ Studio places the row bound before the run of such clauses at a statement's end,
 
 ### S-6 (informative): How a host runs a clause pattern
 
-A host compiles each clause pattern once, when it reads the declaration, never per statement, and anchors it behind a character that is not whitespace, so a match starts only where a whitespace run starts.
+A host compiles each clause pattern once, when it reads the declaration, never per statement, and anchors the whole pattern behind a character that is not whitespace and at the statement's end, so a match starts only where a whitespace run starts and ends only at the end, whatever alternatives the pattern has.
+Anchoring only a pattern's first alternative would try each later one from every position of a whitespace run, in time quadratic in the run's length, and would let an earlier alternative that does not end the statement strip the text after it; `tests/unit/db/limiter-clause-anchoring-bounds.test.ts` holds both in a bounded child.
 Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 Every clause pattern Studio declares is, by its census, the source and flags of a pattern its limiter runs today, and each was measured to run in time linear in the statement's length.
 
