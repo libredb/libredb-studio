@@ -14,8 +14,17 @@
  * minted a run's scope ends it through the host core's endScope call (clause C-60). `objects.tree` is offered on every
  * session, since every legacy provider holds the five tree members. `maintenance.run` is offered on every session,
  * since every legacy provider holds `runMaintenance`, and `maintenance.preview` exactly where the provider holds
- * `previewMaintenance`. Neither monitoring facet is offered: the monitoring and pool-stats routes still call the
- * provider's members themselves.
+ * `previewMaintenance`. `monitoring.panel` is offered on every session, since every legacy provider holds the seven
+ * panel members, and `monitoring.poolStats` exactly where the provider holds a pool statistics read (`getPoolStats`, a
+ * function on the provider or its prototype); the session's panels are its engine's `ENGINE_FACETS` row
+ * (`engineFacetsFor`). No `health` call is served: the health and fleet health routes and Test Connection still call
+ * the provider's members themselves.
+ *
+ * Its panel call runs the panel's own member with today's argument through `readPanel`, the one mapping
+ * `getMonitoringData` reads through too, and answers the member's answer by reference under the panel's key. Its pool
+ * statistics call answers the provider's own `getPoolStats()` by reference, a synchronous throw answered as the call's
+ * rejection. Neither calls `forCatalog`, and each passes a provider's error by reference. The facade that reads them is
+ * `providerMonitoring` in src/lib/api/provider-monitoring.ts.
  *
  * Its maintenance run calls `runMaintenance` with exactly three arguments, the request's operation, target and
  * container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh
@@ -82,7 +91,9 @@ import {
   type MaintenanceRunAnswer,
   type MaintenanceRunRequest,
   type MaintenanceAccepted,
+  type MonitoringPanelRequest,
   PAGE_MAX_BYTES,
+  type PoolStats,
   type PumpLimits,
   type ResultSource,
   type RowBatch,
@@ -97,6 +108,8 @@ import {
 import type { SessionState } from "@libredb/provider-sdk/errors";
 import type { MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { readPanel } from "@/lib/db/engine-facets/monitoring";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
 import {
   type DatabaseProvider,
@@ -113,6 +126,7 @@ import {
 import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
+import type { MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
 import type { QueryResult, QueryWarning } from "@/lib/types";
 
@@ -137,7 +151,7 @@ export interface AnsweredRun {
  * not the bridge's to hold: the caller lays it beside the session.
  */
 export interface BridgedConsole {
-  readonly session: ConsoleSession & ObjectsSession & Omit<MaintenanceSession, "maintenance">;
+  readonly session: ConsoleSession & ObjectsSession & Omit<MaintenanceSession, "maintenance"> & MonitoringSession;
   readonly run: LegacyRun;
   /**
    * What the execute that answered left, for the facade to answer from.
@@ -366,15 +380,26 @@ function legacyRun(provider: DatabaseProvider, request: MaintenanceRunRequest): 
   return provider.runMaintenance(request.operation, request.target, request.container);
 }
 
+/** A provider's pool statistics read, which `DatabaseProvider` does not declare. */
+interface PoolStatsReader {
+  getPoolStats(): PoolStats;
+}
+
+/** Whether `provider` reads its pool statistics: `getPoolStats` is a function on it or its prototype. */
+function readsPoolStats(provider: DatabaseProvider): provider is DatabaseProvider & PoolStatsReader {
+  return "getPoolStats" in provider && typeof (provider as Partial<PoolStatsReader>).getPoolStats === "function";
+}
+
 /**
- * `provider` served as one session of console execute, cancel and transaction, of the object tree and of maintenance,
- * its execute run with a copy of `options`, the caller's own page options.
+ * `provider` served as one session of console execute, cancel and transaction, of the object tree, of maintenance and
+ * of monitoring, its execute run with a copy of `options`, the caller's own page options.
  */
 export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepareOptions): BridgedConsole {
   const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
   const transactional: TransactionProvider | undefined = isTransactionProvider(provider) ? provider : undefined;
   const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
   const previewer = provider.previewMaintenance === undefined ? undefined : provider.previewMaintenance.bind(provider);
+  const pooled: PoolStatsReader | undefined = readsPoolStats(provider) ? provider : undefined;
   const run: LegacyRun = { cancelSent: false };
 
   async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
@@ -423,7 +448,7 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: previewer === undefined ? "not-offered" : "offered" },
-      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+      monitoring: { panel: "offered", poolStats: pooled === undefined ? "not-offered" : "offered" },
     },
     undefined,
   );
@@ -448,6 +473,9 @@ export function bridgedConsole(provider: DatabaseProvider, options: QueryPrepare
       execute,
       tree: (request: TreeRequest) => legacyTree(provider, request),
       run: (request: MaintenanceRunRequest) => legacyRun(provider, request),
+      panels: engineFacetsFor(provider.type).monitoring,
+      panel: (request: MonitoringPanelRequest) => readPanel(provider, request),
+      ...(pooled === undefined ? {} : { poolStats: async (): Promise<PoolStats> => pooled.getPoolStats() }),
       ...(previewer === undefined
         ? {}
         : {

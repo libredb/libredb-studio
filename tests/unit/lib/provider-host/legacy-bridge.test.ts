@@ -22,6 +22,7 @@ import {
   type ExecuteAnswer,
   type ExecuteRequest,
   freezeData,
+  type MonitoringPanelRequest,
   PAGE_MAX_BYTES,
   pumpPage,
   type ResultSource,
@@ -45,6 +46,7 @@ import {
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import { runEditorQuery } from "@/lib/api/editor-query";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
 import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
@@ -160,7 +162,7 @@ describe("bridgedConsole", () => {
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
-      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+      monitoring: { panel: "offered", poolStats: "not-offered" },
     });
     expect(plain.session.calls.console.cancel).toBe("not-offered");
     expect(typeof cancelling.session.cancel).toBe("function");
@@ -177,7 +179,7 @@ describe("bridgedConsole", () => {
       },
       objects: { tree: "offered" },
       maintenance: { run: "offered", preview: "not-offered" },
-      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+      monitoring: { panel: "offered", poolStats: "not-offered" },
     });
     expect(typeof ending.session.endScope).toBe("function");
     expect(Object.isFrozen(cancelling.session.calls)).toBe(true);
@@ -225,25 +227,116 @@ describe("bridgedConsole", () => {
     }
   });
 
-  test("a bridged session offers no monitoring facet, since the monitoring and pool-stats routes still call the provider's members themselves", () => {
+  test("a bridged session offers monitoring.panel for every provider and monitoring.poolStats exactly where the provider reads its pool statistics", () => {
     const getPoolStats = mock(() => ({ total: 1, idle: 1, active: 0, waiting: 0 }));
-    const pooled = fake(resultOf([]), { getPoolStats });
-    const sessions = [
-      bridgedConsole(fake(resultOf([])), {}),
-      bridgedConsole(pooled, {}),
-      bridgedConsole(transactionalFake().provider, {}),
+    const own = fake(resultOf([]), { getPoolStats });
+    const inherited = Object.setPrototypeOf(fake(resultOf([])), { getPoolStats }) as DatabaseProvider;
+    const cases = [
+      { pools: false, bridged: bridgedConsole(fake(resultOf([])), {}) },
+      { pools: true, bridged: bridgedConsole(own, {}) },
+      { pools: true, bridged: bridgedConsole(inherited, {}) },
+      { pools: false, bridged: bridgedConsole(fake(resultOf([]), { getPoolStats: marker() }), {}) },
+      { pools: false, bridged: bridgedConsole(transactionalFake().provider, {}) },
     ];
 
-    for (const { session } of sessions) {
-      expect(session.calls.monitoring).toEqual({ panel: "not-offered", poolStats: "not-offered" });
+    for (const { pools, bridged } of cases) {
+      const { session } = bridged;
+      expect(session.calls.monitoring).toEqual({ panel: "offered", poolStats: pools ? "offered" : "not-offered" });
       expect(Object.isFrozen(session.calls.monitoring)).toBe(true);
-      for (const facet of ["panel", "poolStats"] as const) {
-        expect(checkMonitoringFacet(session.calls, facet)).toEqual([
-          { rule: "facet-not-offered", pointer: `/monitoring/${facet}`, name: `monitoring.${facet}` },
-        ]);
-      }
+      expect(checkMonitoringFacet(session.calls, "panel")).toEqual([]);
+      expect(checkMonitoringFacet(session.calls, "poolStats")).toEqual(
+        pools ? [] : [{ rule: "facet-not-offered", pointer: "/monitoring/poolStats", name: "monitoring.poolStats" }],
+      );
+      expect(typeof session.panel).toBe("function");
+      expect(session.poolStats === undefined).toBe(!pools);
     }
     expect(getPoolStats).not.toHaveBeenCalled();
+  });
+
+  test("a bridged session's panels are its engine's row", () => {
+    for (const type of ["postgres", "cassandra"] as const) {
+      const { session } = bridgedConsole(createMockProvider({ type }), {});
+      expect(session.panels).toBe(engineFacetsFor(type).monitoring);
+    }
+    expect(Object.values(engineFacetsFor("postgres").monitoring).every((offer) => offer === "offered")).toBe(true);
+    expect(
+      Object.values(engineFacetsFor("cassandra").monitoring).filter((offer) => offer === "not-offered"),
+    ).toHaveLength(4);
+  });
+
+  test("a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key", async () => {
+    const MEMBER = {
+      overview: "getOverview",
+      performance: "getPerformanceMetrics",
+      slowQueries: "getSlowQueries",
+      activeSessions: "getActiveSessions",
+      tables: "getTableStats",
+      indexes: "getIndexStats",
+      storage: "getStorageStats",
+    } as const;
+    const schema = marker();
+    const cases: readonly { request: MonitoringPanelRequest; args: unknown[] }[] = [
+      { request: { panel: "overview" }, args: [] },
+      { request: { panel: "performance" }, args: [] },
+      { request: { panel: "slowQueries", limit: 7 }, args: [{ limit: 7 }] },
+      { request: { panel: "activeSessions", limit: 13 }, args: [{ limit: 13 }] },
+      { request: { panel: "tables" }, args: [{ schema: undefined }] },
+      { request: { panel: "indexes", schema }, args: [{ schema }] },
+      { request: { panel: "storage" }, args: [] },
+    ];
+
+    await Promise.all(
+      cases.map(async ({ request, args }) => {
+        const answer = { marker: marker() };
+        const failed = new Error(marker());
+        const members = Object.fromEntries(
+          Object.values(MEMBER).map((member) => [member, mock(async () => answer)]),
+        ) as Record<(typeof MEMBER)[keyof typeof MEMBER], ReturnType<typeof mock>>;
+        const forCatalog = mock(async () => fake(resultOf([])));
+        const provider = fake(resultOf([]), { ...members, forCatalog });
+        const { session } = bridgedConsole(provider, {});
+        const panel = session.panel as NonNullable<typeof session.panel>;
+
+        const got = await panel(freezeData(request), contextOf());
+
+        const member = MEMBER[request.panel];
+        expect(Object.keys(got)).toEqual([request.panel]);
+        expect((got as Record<string, unknown>)[request.panel]).toBe(answer);
+        expect(callsOf(members[member])).toEqual([args]);
+        for (const other of Object.values(MEMBER).filter((name) => name !== member)) {
+          expect(members[other]).not.toHaveBeenCalled();
+        }
+        expect(forCatalog).not.toHaveBeenCalled();
+        expect(provider.query).not.toHaveBeenCalled();
+
+        members[member].mockImplementation(async () => {
+          throw failed;
+        });
+        expect(await failure(() => panel(freezeData(request), contextOf()))).toBe(failed);
+      }),
+    );
+  });
+
+  test("a bridged pool statistics call answers the provider's own statistics by reference, and a throw as its rejection", async () => {
+    const stats = { total: 4, idle: 1, active: 3, waiting: 2, max: 10 };
+    const forCatalog = mock(async () => fake(resultOf([])));
+    const getPoolStats = mock(() => stats);
+    const provider = fake(resultOf([]), { getPoolStats, forCatalog });
+    const { session } = bridgedConsole(provider, {});
+    const poolStats = session.poolStats as NonNullable<typeof session.poolStats>;
+
+    expect(await poolStats(contextOf())).toBe(stats);
+    expect(callsOf(getPoolStats)).toEqual([[]]);
+    expect(forCatalog).not.toHaveBeenCalled();
+    expect(provider.getOverview).not.toHaveBeenCalled();
+
+    const thrown = new Error(marker());
+    getPoolStats.mockImplementation(() => {
+      throw thrown;
+    });
+    const call = poolStats(contextOf());
+    expect(call).toBeInstanceOf(Promise);
+    expect(await failure(() => call)).toBe(thrown);
   });
 
   test("a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference", async () => {

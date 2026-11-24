@@ -944,6 +944,8 @@ describe("runEditorQuery on the host core", () => {
         treeCall: real.treeCall,
         maintenanceRunCall: real.maintenanceRunCall,
         maintenancePreviewCall: real.maintenancePreviewCall,
+        panelCall: real.panelCall,
+        poolStatsCall: real.poolStatsCall,
       },
       "test",
     );
@@ -994,6 +996,8 @@ describe("runEditorQuery on the host core", () => {
         treeCall: real.treeCall,
         maintenanceRunCall: real.maintenanceRunCall,
         maintenancePreviewCall: real.maintenancePreviewCall,
+        panelCall: real.panelCall,
+        poolStatsCall: real.poolStatsCall,
       },
       "test",
     );

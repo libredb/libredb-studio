@@ -44,6 +44,7 @@ const child = boundedChild({
     let answeredAt = 0;
     // A statement that answers at once, on a provider whose transaction ender never answers.
     const provider = {
+      type: "postgres",
       config,
       prepareQuery: (sql: string) => ({ query: sql, wasLimited: false, limit: 1, offset: 0 }),
       query: async () => {

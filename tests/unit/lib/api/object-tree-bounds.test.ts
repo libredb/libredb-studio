@@ -41,6 +41,7 @@ const child = boundedChild({
     const queryTimeout = 1_000;
     // A provider whose object listing never settles.
     const provider = {
+      type: "postgres",
       config: { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout },
       getCapabilities: () => ({}),
       listObjects: () => new Promise<never>(() => {}),

@@ -51,6 +51,7 @@ const child = boundedChild({
     const queryTimeout = 1_000;
     // A transaction provider in a transaction whose COMMIT and ROLLBACK never settle.
     const provider = {
+      type: "postgres",
       config: { id: "c", name: "c", type: "postgres", createdAt: new Date(0), queryTimeout },
       prepareQuery: (sql: string) => ({ query: sql, wasLimited: false, limit: 1, offset: 0 }),
       beginTransaction: async () => {},
