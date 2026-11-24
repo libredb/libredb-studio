@@ -251,6 +251,21 @@ Measured cost on main's dist: pack about 1.4 s, load about 1.4 s, scan under 1 s
 - CI: the `lint-and-build` job runs `build:lib`, `attw`, `lib:closure` and `lib:load`, in that order (plus a Biome format check), so the package
   surface is gated on every PR.
 
+### The published engine id type (`DatabaseType`)
+
+attw, `lib:closure` and `lib:load` check that the package resolves and loads, and none of them reads what a published type holds.
+The engine id type is the one whose members move with Studio's engines, so `tests/unit/exports-database-type.test.ts` pins it as an exported-type snapshot.
+It pins four things: the package's entries, as tsup's `entry` gives them and held one to one to the types exports of `package.json`; the form of `DatabaseType` in `src/lib/types.ts`, a union of string literals written in its own declaration, so it never moves with a table, a generated module or the engine catalog; the `index` and `types` entries exporting that one declaration; and its members and every published position whose type names it, such as `DatabaseConnection.type` and `WorkspaceConnection.type`.
+It reads source with the TypeScript checker, not the built `dist/`, so it runs in `bun run test` on every platform of the unit matrix without a build.
+The program has the package's entries as roots and `tsconfig.lib.json`'s options, and the walk follows type references from every export through every declaration of the repository it reaches, skipping function bodies, because only a declared shape is published.
+When the test was written, its positions were exactly the places where `build:lib`'s declarations name `DatabaseType`, compared by a `grep` over `dist/*.d.ts`.
+The file builds its program once, in about two seconds and 1.2 GB of resident memory on a developer machine, under a 60 s timeout per test.
+
+A difference is classed by kind, and the failure names each id or position under `added` or `removed`.
+An added id or an added position is a deliberate edit of the test's frozen list, made by the change that ships it and stated in that PR as a new member or position of a published type: not breaking for a value a consumer passes in, a new case for one it receives.
+A removed id, a removed position, or the alias or a position opened to other text is breaking and waits for the library's next major.
+The change that first gives core an engine id outside the union declares the library's alias apart from core's and keeps every published position on that alias.
+
 ## Phase 5 - knip (keep, verify)
 
 Each new tool (`biome`, `oxlint`, `attw`, `typescript-eslint`) gets a real package.json script or a config

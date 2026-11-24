@@ -263,6 +263,10 @@ export type DatabaseType = 'postgres' | 'mysql' | 'sqlite' | 'libsql' | 'duckdb'
 A type-id may contain a digit: `db2` does.
 A test or a script that parses type-ids out of source text matches them with `[a-z0-9]+`, never `[a-z]+`, or it reads `db2` as `db` and passes for the wrong reason.
 
+The union is also the engine id type the `@libredb/studio` library publishes as `DatabaseType`, frozen until the library's next major.
+Add the new type-id to the frozen list in `tests/unit/exports-database-type.test.ts`, which fails until it is there, and state it in the PR as a new member of a published type: not breaking for a value a consumer passes in, a new case for one it receives.
+The test and the rule it holds are described in docs/TOOLCHAIN.md, "The published engine id type (`DatabaseType`)".
+
 ### 1.2 — Add to `QueryTab.type` if needed
 
 **File:** `src/lib/types.ts`
@@ -1159,7 +1163,7 @@ The integration points, all of which need an entry. This is the list the Strateg
 
 **Always:**
 
-- [ ] `src/lib/types.ts` — add to the `DatabaseType` union
+- [ ] `src/lib/types.ts`: add to the `DatabaseType` union, and to the frozen list in `tests/unit/exports-database-type.test.ts`, stated in the PR as a new member of the library's published `DatabaseType`
 - [ ] `src/lib/db/providers/<family>/<type-id>.ts` (or a directory) — **new:** the provider class
 - [ ] `docs/providers/<type-id>.md` and `tests/integration/db/<type-id>-provider.test.ts`: **new:** the other two legs of the provider triad, which `tests/unit/db/provider-triad.test.ts` requires for every type-id
 - [ ] `src/lib/db/factory.ts` — add a `case` with a **dynamic** import

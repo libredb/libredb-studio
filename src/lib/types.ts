@@ -18,6 +18,18 @@ import type { StoredObject } from "@/lib/db/detailed-object";
 import type { ObjectSourceDocument } from "@/lib/db/types";
 import type { VectorColumn } from "@/lib/db/vector/types";
 
+/**
+ * The engine id type `@libredb/studio` publishes: the `index` and `types` entries export this declaration, and the
+ * package's connection, saved query, schema snapshot, provider, editor and workspace types name it.
+ *
+ * It is frozen until the library's next major, as a union of string literals written in this declaration, never
+ * derived from a table, a generated module or the engine catalog. tests/unit/exports-database-type.test.ts pins its
+ * members, its form and every published position that names it. An id is added only by the change that ships its
+ * engine, which adds it to that test's frozen list and states it in its PR as a new member of a published type.
+ * Removing an id, or opening the type or a published position to other text, waits for the library's next major. The
+ * change that first gives core an engine id outside this union declares the library's alias apart from it and keeps
+ * every published position on that alias.
+ */
 export type DatabaseType =
   | "postgres"
   | "bigquery"
