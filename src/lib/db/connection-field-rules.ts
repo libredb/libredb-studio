@@ -11,7 +11,7 @@
  * dialog's bundle and the server load the same functions. tests/unit/lib/db/connection-field-rules.test.ts holds its
  * run-time graph.
  */
-import { CONNECTION_FORM, type ConnectionFormSpec } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, type ConnectionFieldRule, type ConnectionFormSpec } from "@/lib/db/connection-form";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { typeIdRow } from "@/lib/db/type-id";
 // The storage classification, aliased because ./connection-form's own `CONNECTION_FIELDS` is the field lists: whether
@@ -65,22 +65,27 @@ export function connectionFieldRefusal(config: ConnectionFormSpec, connection: D
   const values = connection as Partial<Record<ConnectionField, unknown>>;
   for (const field of config.connectionFields) {
     const rule = config.fieldRules?.[field];
-    if (rule === undefined) continue;
-    if (!connectionFieldShown(config, field, values)) continue;
-    const value = values[field];
-    if (rule.required !== undefined && blankForRequired(field, value)) return rule.required;
-    if (holdsNoValue(value)) continue;
-    if (rule.format !== undefined && !rule.format.pattern.test(String(value))) return rule.format.sentence;
-    if (
-      rule.charRange !== undefined &&
-      (String(value).length < rule.charRange.min || String(value).length > rule.charRange.max)
-    ) {
-      return rule.charRange.sentence;
-    }
-    const checked = rule.check?.(String(value));
-    if (checked !== undefined) return checked;
+    if (rule === undefined || !connectionFieldShown(config, field, values)) continue;
+    const refusal = ruleRefusal(rule, field, values[field]);
+    if (refusal !== undefined) return refusal;
   }
   return undefined;
+}
+
+/**
+ * The refusal of `rule` for `field` holding `value`, or `undefined` when every check of the rule passes: `required`
+ * on a blank value (`blankForRequired`) first; then, on a value that holds one, its format, its length range and its
+ * named check, in that order.
+ */
+function ruleRefusal(rule: ConnectionFieldRule, field: ConnectionField, value: unknown): string | undefined {
+  if (rule.required !== undefined && blankForRequired(field, value)) return rule.required;
+  if (holdsNoValue(value)) return undefined;
+  const text = String(value);
+  if (rule.format !== undefined && !rule.format.pattern.test(text)) return rule.format.sentence;
+  if (rule.charRange !== undefined && (text.length < rule.charRange.min || text.length > rule.charRange.max)) {
+    return rule.charRange.sentence;
+  }
+  return rule.check?.(text);
 }
 
 /**
