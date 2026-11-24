@@ -764,7 +764,7 @@ describe("OPENS_LOCAL_FILE", () => {
   test("sqlite, duckdb and libredb open a local file, and no other engine does", () => {
     // Vacuity, by name: a record that answered false everywhere would pass the census above against a form that
     // also drew no file path.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type])).toEqual(["sqlite", "duckdb", "libredb"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type])).toEqual(["duckdb", "libredb", "sqlite"]);
   });
 });
 

@@ -255,7 +255,7 @@ describe("the fleet census of object column declarations", () => {
     // every Kubernetes kind opens its YAML instead. A Modbus point is one value rather than a
     // shape the tree can show beneath it (#1723).
     const empty = CENSUS_TYPES.filter((type) => EXPECTED_COLUMN_KINDS[type].length === 0);
-    expect(empty).toEqual(["oxia", "s3", "kubernetes", "mqtt", "opcua", "modbus"]);
+    expect(empty).toEqual(["kubernetes", "modbus", "mqtt", "opcua", "oxia", "s3"]);
   });
 
   test("every kind id the expectation names is a kind its provider actually declares", async () => {

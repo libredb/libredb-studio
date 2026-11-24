@@ -5,7 +5,8 @@
  * A destination starts with one of three words:
  * - `engine declaration:` the facts are in `src/lib/db/engine-declarations/<type-id>.json` today, at the members
  *   named, and `tests/unit/db/engine-declarations.test.ts` reads them back to the table. A claim's table stays, as
- *   Studio's review record that grants the request its member states.
+ *   Studio's review record that grants the request its member states. A generated projection of the declarations is
+ *   one too: its facts are the members named, authored in each declaration, and its own test holds it to them.
  * - `planned segment:` the facts move into a segment of the manifest a later contract minor adds, named in words.
  * - `core-owned:` the facts stay with Studio, for the reason given, and no manifest declares them.
  */
@@ -50,12 +51,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "DB_UI_CONFIG",
     destination: "planned segment: presentation, the icon as an SVG asset and the colour",
   },
-  {
-    module: COMPATIBILITY,
-    name: "SHIPPED",
-    destination: "engine declaration: id, one declaration per shipped type-id",
-  },
-  { module: COMPATIBILITY, name: "EXTERNAL", destination: "engine declaration: location" },
   { module: COMPATIBILITY, name: "WRITE_REACH", destination: claim("policy.writeReach") },
   { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: claim("policy.readsFileAccessPosture") },
   {
@@ -126,11 +121,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   },
   { module: CONNECTION_FIELDS_MODULE, name: "AGENT_CREDENTIAL_FORM", destination: claim("policy.agentCredentialForm") },
   {
-    module: "src/lib/db/connect-budget.ts",
-    name: "CONNECT_BUDGET",
-    destination: "engine declaration: connection.connectBudgetMs",
-  },
-  {
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",
     destination:
@@ -156,6 +146,12 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: "src/lib/db/destructive-commands.ts",
     name: "NON_SQL_DESTRUCTIVE_VOCABULARY",
     destination: STATEMENT_FAMILY,
+  },
+  {
+    module: "src/lib/db/engine-catalog/catalog.generated.ts",
+    name: "BUNDLED_CATALOG",
+    destination:
+      "engine declaration: id, location and connection.connectBudgetMs, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them",
   },
   {
     module: "src/lib/db/engine-facets/index.ts",

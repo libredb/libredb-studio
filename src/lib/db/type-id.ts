@@ -24,9 +24,9 @@
  * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. So no checked
  * accessor can live there: its tables are checked where they are read, through `typeIdRow`.
  *
- * The set is `SHIPPED_DATABASE_TYPES`, which the compiler holds to the union through an exhaustive Record, so this
- * module has no list of its own. Membership is a `Set` lookup, so a prototype key such as `"constructor"` is unknown
- * rather than answered by `Object.prototype`.
+ * The set is `SHIPPED_DATABASE_TYPES`, the engine catalog's ids, which the compiler holds to the union through the
+ * catalog's generated `Record<DatabaseType, CatalogEntry>`, so this module has no list of its own. Membership is a
+ * `Set` lookup, so a prototype key such as `"constructor"` is unknown rather than answered by `Object.prototype`.
  */
 import type { DatabaseType } from "@/lib/types";
 import { SHIPPED_DATABASE_TYPES } from "./compatibility";

@@ -1,9 +1,12 @@
 /**
- * One engine declaration per shipped type-id, generated from today's per-engine tables, and the census that reads
- * each declaration back to every table it came from (docs/providers/CONTRACT.md, clauses M-9 and M-15).
+ * One engine declaration per shipped type-id, its authored members written in it and every other member generated from
+ * today's per-engine tables, and the census that reads each declaration back to every table it came from
+ * (docs/providers/CONTRACT.md, clauses M-9 and M-15).
  *
  * `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, one
- * `#/$defs/engineDeclaration` of the provider manifest schema each. The census below does not call the generator: its
+ * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `id`, `location` and
+ * `connection.connectBudgetMs`, are read from the committed file and written back unchanged; the engine catalog
+ * projects them (tests/unit/db/engine-catalog.test.ts). The census below does not call the generator: its
  * read-back functions are written here, from the tables, so a slip in the generator cannot certify itself. Each test
  * loops over every shipped id and fails with the list of ids whose declaration and table differ.
  */
@@ -69,6 +72,9 @@ import type {
   SqlGrammar,
 } from "@libredb/provider-sdk/sql";
 import {
+  AUTHORED_MEMBERS,
+  type AuthoredMembers,
+  authoredMembersOf,
   buildAgentOverlay,
   buildDialog,
   buildEditor,
@@ -108,7 +114,6 @@ import {
   AGENT_EXECUTION_ENGINES,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
-  EXTERNAL_DATABASE_TYPES,
   HOST_PATH_FIELDS,
   MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
@@ -163,7 +168,7 @@ import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
-import { CONNECT_BUDGET, connectBudgetFor } from "@/lib/db/connect-budget";
+import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
 import type { ConsentDeadline, ExecutionUiSpec } from "@/lib/db/execution-ui/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -272,6 +277,11 @@ const FIRESTORE_EMULATOR_VARIABLE = "FIRESTORE_EMULATOR_HOST";
 /** The committed declaration of one type-id, parsed. */
 function declared(type: DatabaseType): EngineDeclaration {
   return JSON.parse(readFileSync(path.join(DIRECTORY, `${type}.json`), "utf8")) as EngineDeclaration;
+}
+
+/** The authored members of one type-id's committed declaration, the generator's source for them. */
+function authored(type: DatabaseType): AuthoredMembers {
+  return authoredMembersOf(declared(type), `${type}.json`);
 }
 
 /** The shipped ids for which `matches` answers false: the census's failure list. */
@@ -970,15 +980,67 @@ describe("the committed declarations", () => {
     ]);
   });
 
-  test("each declaration is what the generator builds from the tables", async () => {
+  test("each declaration is what the generator builds from its authored members and Studio's tables", async () => {
     const capabilities = await readEngineCapabilities();
     const stale = SHIPPED_DATABASE_TYPES.filter(
       (type) =>
         readFileSync(path.join(DIRECTORY, `${type}.json`), "utf8") !==
-        renderEngineDeclaration(buildEngineDeclaration(type, capabilities[type])),
+        renderEngineDeclaration(buildEngineDeclaration(type, capabilities[type], authored(type))),
     ).map((type) => `${ENGINE_DECLARATIONS_DIRECTORY}/${type}.json differs: run bun run engines:generate`);
 
     expect(stale).toEqual([]);
+  });
+
+  test("the authored members are id, location and connection.connectBudgetMs", () => {
+    expect([...AUTHORED_MEMBERS]).toEqual(["id", "location", "connection.connectBudgetMs"]);
+    expect(authored("bigquery")).toEqual({ id: "bigquery", location: "external", connectBudgetMs: 140_000 });
+    expect(authored("libredb")).toEqual({ id: "libredb", location: "embedded", connectBudgetMs: null });
+  });
+
+  test("a declaration's authored members are its committed file's, and every other member is the tables'", () => {
+    // A hand edit of an authored member is kept and a hand edit of a generated one is rewritten from the tables.
+    const committed = declared("postgres");
+    const edited = {
+      ...committed,
+      displayName: "Edited by hand",
+      location: "embedded",
+      connection: { ...committed.connection, connectBudgetMs: 90_000 },
+    };
+    const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
+
+    expect(built).toEqual({
+      ...committed,
+      location: "embedded",
+      connection: { ...committed.connection, connectBudgetMs: 90_000 },
+    });
+    expect(built.displayName).toBe(CONNECTION_FORM.postgres.label);
+    expect(() =>
+      buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
+    ).toThrow('postgres: the authored members given name the engine id "mysql"');
+  });
+
+  test("a committed declaration lacking an authored member, or naming another id than its file, is refused by name", () => {
+    const committed = declared("bigquery");
+    const without = (value: object, member: string) =>
+      Object.fromEntries(Object.entries(value).filter(([key]) => key !== member));
+    const withoutLocation = without(committed, "location");
+    const connectionWithoutBudget = without(committed.connection, "connectBudgetMs");
+
+    expect(() => authoredMembersOf({ ...committed, id: undefined }, "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member id",
+    );
+    expect(() => authoredMembersOf(withoutLocation, "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member location",
+    );
+    expect(() => authoredMembersOf({ ...committed, connection: connectionWithoutBudget }, "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member connection.connectBudgetMs",
+    );
+    for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
+      expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
+    }
+    expect(() => authoredMembersOf(committed, "snowflake.json")).toThrow(
+      'snowflake.json names the engine id "bigquery", not its file name',
+    );
   });
 
   test("each declaration is admitted by the schema's engine declaration and its rules", () => {
@@ -1674,11 +1736,6 @@ describe("the census", () => {
     expect(differing((type, d) => d.displayName === CONNECTION_FORM[type].label)).toEqual([]);
   });
 
-  test("location is external exactly for the external engines", () => {
-    expect(differing((type, d) => (d.location === "external") === EXTERNAL_DATABASE_TYPES.includes(type))).toEqual([]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => declared(type).location === "embedded")).toEqual(["libredb"]);
-  });
-
   test("connection.fields is the engine's CONNECTION_FIELDS row, in order", () => {
     expect(differing((type, d) => sameList(d.connection.fields, CONNECTION_FIELDS[type]))).toEqual([]);
   });
@@ -1799,12 +1856,6 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("connection.connectBudgetMs is the engine's CONNECT_BUDGET row", () => {
-    expect(differing((type, d) => d.connection.connectBudgetMs === CONNECT_BUDGET[type])).toEqual([]);
-    // Vacuity: a row states a budget of its own, so the member is not read back as a constant null.
-    expect(SHIPPED_DATABASE_TYPES.some((type) => declared(type).connection.connectBudgetMs !== null)).toBe(true);
-  });
-
   test("connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null", () => {
     expect(
       differing((type, d) => connectBudgetFor(type) === (d.connection.connectBudgetMs ?? DEFAULT_CONNECT_BUDGET_MS)),
@@ -1909,9 +1960,9 @@ describe("the census", () => {
       "postgres: the provider declares a maintenance spec for compact, which its engine's maintenance facet does not list";
 
     expect(kill).toBeDefined();
-    expect(() => buildEngineDeclaration("postgres", missing)).toThrow(missingRefusal);
+    expect(() => buildEngineDeclaration("postgres", missing, authored("postgres"))).toThrow(missingRefusal);
     expect(() => declaredMaintenanceSpecs("postgres", missing)).toThrow(missingRefusal);
-    expect(() => buildEngineDeclaration("postgres", extra)).toThrow(extraRefusal);
+    expect(() => buildEngineDeclaration("postgres", extra, authored("postgres"))).toThrow(extraRefusal);
     expect(() => declaredMaintenanceSpecs("postgres", extra)).toThrow(extraRefusal);
   });
 
@@ -2409,10 +2460,10 @@ describe("the census", () => {
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) => namedSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
     ).toEqual([
+      "kubernetes.connectionImport.load",
       "snowflake.fieldRules.host.check",
       "snowflake.hostHint",
       "snowflake.hostIdentity",
-      "kubernetes.connectionImport.load",
     ]);
   });
 
@@ -3009,9 +3060,9 @@ describe("the census", () => {
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) => sqlTextSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
     ).toEqual([
+      "mongodb.redaction.read",
       "postgres.completion.formatSegment",
       "postgres.completion.readQuotedQualifier",
-      "mongodb.redaction.read",
       "redis.redaction.read",
     ]);
   });
@@ -3742,7 +3793,9 @@ describe("the census", () => {
     const refusal = "etcd: the provider declares a write reach with no transaction path";
 
     expect(CAPABILITIES.etcd.writeReach).toBeDefined();
-    expect(() => buildEngineDeclaration("etcd", { ...CAPABILITIES.etcd, writeReach: partial })).toThrow(refusal);
+    expect(() =>
+      buildEngineDeclaration("etcd", { ...CAPABILITIES.etcd, writeReach: partial }, authored("etcd")),
+    ).toThrow(refusal);
     expect(() => declaredWritePaths("etcd", partial)).toThrow(refusal);
     // The documented absence stays open on every path.
     expect(Object.values(declaredWritePaths("etcd", undefined)).map((path) => path.reach)).toEqual([

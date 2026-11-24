@@ -291,7 +291,7 @@ describe("rendering layer is provider-agnostic", () => {
     const sources = readdirSync(renderersDir).map((f) => join(renderersDir, f));
     sources.push(join(root, "src/components/results-grid/utils.ts"));
 
-    // Every DatabaseType member, read from the exhaustive SHIPPED record rather than listed here, so a type-id
+    // Every DatabaseType member, read from the engine catalog rather than listed here, so a type-id
     // added later is forbidden the day it lands.
     const providerTypeIds = new RegExp(`\\b(${SHIPPED_DATABASE_TYPES.join("|")})\\b`, "i");
     for (const file of sources) {

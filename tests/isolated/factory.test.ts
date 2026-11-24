@@ -441,7 +441,7 @@ mock.module("@/lib/ssh/tunnel", () => ({
 }));
 
 /**
- * The real connect budget table, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so a case
+ * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so a case
  * that needs an open's deadline to pass sets it to a few tens of milliseconds for itself and puts it back after; every
  * other case reads the real budget, which no gated connect here comes near.
  */
@@ -449,7 +449,6 @@ const realConnectBudget = await import("@/lib/db/connect-budget");
 const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
 let budgetOverride: number | undefined;
 mock.module("@/lib/db/connect-budget", () => ({
-  CONNECT_BUDGET: realConnectBudget.CONNECT_BUDGET,
   openDeadlineSentence: realConnectBudget.openDeadlineSentence,
   connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
 }));

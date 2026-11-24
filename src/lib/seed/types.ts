@@ -263,7 +263,8 @@ export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType
 const atLoad = (sentence: string): string => sentence.replace(/ Nothing was sent\.$/, "");
 
 // The type ids are SHIPPED_DATABASE_TYPES, the one list, which the compiler holds to DatabaseType through an exhaustive
-// Record (src/lib/db/compatibility.ts), so a type id the product ships is never refused here for want of a hand edit.
+// Record (src/lib/db/engine-catalog/catalog.generated.ts), so a type id the product ships is never refused here for
+// want of a hand edit.
 const SeedDatabaseType = z.enum(SHIPPED_DATABASE_TYPES);
 
 const AGENT_CREDENTIAL_IN_DEFAULTS =

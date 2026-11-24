@@ -1,16 +1,4 @@
 {
- "postgres": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
- },
  "bigquery": {
   "queryLanguage": "sql",
   "queryDialect": null,
@@ -23,43 +11,7 @@
   "selectQuery": "SELECT\n  id,\n  name\nFROM c0.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.`Order\"Items`;"
  },
- "snowflake": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM \"c0\".\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\";"
- },
- "spark": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM `c0`.`Order\"Items`;",
-  "selectQuery": "SELECT\n  `id`,\n  `name`\nFROM `c0`.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
- },
- "mysql": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.`Order\"Items`;",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.`Order\"Items`;"
- },
- "sqlite": {
+ "cassandra": {
   "queryLanguage": "sql",
   "queryDialect": null,
   "tabType": "sql",
@@ -68,68 +20,8 @@
   "offersCodeGeneration": true,
   "offersCountQuery": true,
   "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
- },
- "libsql": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
- },
- "duckdb": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
- },
- "oracle": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM \"c0\".\"Order\"\"Items\"",
-  "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\""
- },
- "db2": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT id, name FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
- },
- "mssql": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.[Order\"Items];",
-  "selectQuery": "SELECT TOP 100\n  id,\n  name\nFROM c0.[Order\"Items]\nWHERE 1=1;",
-  "countQuery": "SELECT COUNT_BIG(*) AS row_count\nFROM c0.[Order\"Items];"
  },
  "clickhouse": {
   "queryLanguage": "sql",
@@ -140,6 +32,42 @@
   "offersCodeGeneration": true,
   "offersCountQuery": true,
   "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
+ },
+ "couchbase": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT META(d).id AS __id, d.* FROM `c0`.`Order\"Items` AS d;",
+  "selectQuery": "SELECT\n  META(d).id AS __id,\n  d.`id`,\n  d.`name`\nFROM `c0`.`Order\"Items` AS d\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
+ },
+ "databend": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM `c0`.`Order\"Items`;",
+  "selectQuery": "SELECT\n  `id`,\n  `name`\nFROM `c0`.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
+ },
+ "db2": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT id, name FROM c0.\"Order\"\"Items\";",
   "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
  },
@@ -155,19 +83,7 @@
   "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\";"
  },
- "trino": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\"",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\""
- },
- "cassandra": {
+ "duckdb": {
   "queryLanguage": "sql",
   "queryDialect": null,
   "tabType": "sql",
@@ -176,7 +92,7 @@
   "offersCodeGeneration": true,
   "offersCountQuery": true,
   "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nLIMIT 100;",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
  },
  "elasticsearch": {
@@ -191,78 +107,6 @@
   "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\""
  },
- "opensearch": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM c0.`Order\"Items`",
-  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.`Order\"Items`\nWHERE 1=1\nLIMIT 100",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.`Order\"Items`"
- },
- "mongodb": {
-  "queryLanguage": "json",
-  "queryDialect": null,
-  "tabType": "mongodb",
-  "monacoLanguage": "json",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"find\",\n  \"filter\": {},\n  \"options\": {\n    \"limit\": 50\n  }\n}",
-  "selectQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"find\",\n  \"filter\": {},\n  \"options\": {\n    \"projection\": {\n      \"id\": 1,\n      \"name\": 1\n    },\n    \"limit\": 100\n  }\n}",
-  "countQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"count\",\n  \"filter\": {}\n}"
- },
- "couchbase": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT META(d).id AS __id, d.* FROM `c0`.`Order\"Items` AS d;",
-  "selectQuery": "SELECT\n  META(d).id AS __id,\n  d.`id`,\n  d.`name`\nFROM `c0`.`Order\"Items` AS d\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
- },
- "redis": {
-  "queryLanguage": "json",
-  "queryDialect": "redis",
-  "tabType": "redis",
-  "monacoLanguage": "redis",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": true,
-  "offersCountQuery": false,
-  "tableQuery": "{\"command\":\"TYPE\",\"args\":[\"Order\\\"Items\"]}",
-  "selectQuery": "# Redis commands for \"Order\\\"Items\" — select a line and Run Selected.\n\n# Check the key's type\n{\"command\":\"TYPE\",\"args\":[\"Order\\\"Items\"]}\n\n# Time to live in seconds (-1 no expiry, -2 no such key)\n{\"command\":\"TTL\",\"args\":[\"Order\\\"Items\"]}\n\n# Delete the key (DEL takes a literal key name, never a pattern)\n{\"command\":\"DEL\",\"args\":[\"Order\\\"Items\"]}",
-  "countQuery": null
- },
- "prometheus": {
-  "queryLanguage": "promql",
-  "queryDialect": null,
-  "tabType": "promql",
-  "monacoLanguage": "promql",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "{__name__=\"Order\\\"Items\"}",
-  "selectQuery": "# PromQL for the metric \"Order\\\"Items\". Only the last line runs: a line starting with # is a comment.\n# To try a form below, select it after its # and use Run Selected.\n#\n# Every raw sample from the last five minutes, one column per series:\n#   {__name__=\"Order\\\"Items\"}[5m]\n# For a counter: its per-second rate over the last hour, one row a minute:\n#   rate({__name__=\"Order\\\"Items\"}[5m])[1h:1m]\n#\n# Every series of the metric as of now, one row per series:\n{__name__=\"Order\\\"Items\"}",
-  "countQuery": null
- },
- "kafka": {
-  "queryLanguage": "json",
-  "queryDialect": "kafka",
-  "tabType": "kafka",
-  "monacoLanguage": "json",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "{\n  \"topic\": \"Order\\\"Items\",\n  \"from\": \"latest\",\n  \"limit\": 50\n}",
-  "selectQuery": "{\n  \"topic\": \"Order\\\"Items\",\n  \"partition\": 0,\n  \"from\": \"earliest\",\n  \"limit\": 50\n}",
-  "countQuery": null
- },
  "etcd": {
   "queryLanguage": "json",
   "queryDialect": "etcd",
@@ -275,53 +119,17 @@
   "selectQuery": "get 'Order\"Items' --prefix --limit=50\n\n# put 'Order\"Itemsexample' value\n\n# del 'Order\"Itemsexample'\n\n# watch 'Order\"Items' --prefix\n\n# txn\n# create(\"Order\\\"Itemsexample\") = \"0\"\n#\n# put \"Order\\\"Itemsexample\" value\n#\n# get \"Order\\\"Itemsexample\"",
   "countQuery": null
  },
- "neo4j": {
-  "queryLanguage": "cypher",
-  "queryDialect": null,
-  "tabType": "cypher",
-  "monacoLanguage": "graph-cypher",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "",
-  "selectQuery": "",
-  "countQuery": null
- },
- "milvus": {
+ "firestore": {
   "queryLanguage": "json",
-  "queryDialect": "milvus",
-  "tabType": "milvus",
-  "monacoLanguage": "milvus",
+  "queryDialect": "firestore",
+  "tabType": "firestore",
+  "monacoLanguage": "firestore",
   "offersColumnProfiling": false,
   "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "POST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
-  "selectQuery": "# Collection Order\"Items has no vector field, so there is nothing to search: this reads its entities.\nPOST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
-  "countQuery": null
- },
- "qdrant": {
-  "queryLanguage": "json",
-  "queryDialect": "qdrant",
-  "tabType": "qdrant",
-  "monacoLanguage": "qdrant",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "POST /collections/Order%22Items/points/scroll\n{\"limit\": 100, \"with_payload\": true, \"with_vector\": false}",
-  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.",
-  "countQuery": null
- },
- "weaviate": {
-  "queryLanguage": "json",
-  "queryDialect": "weaviate",
-  "tabType": "weaviate",
-  "monacoLanguage": "weaviate",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "GET /v1/objects?class=Order%22Items&limit=50",
-  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.\nPOST /v1/search/Order%22Items/bm25\n{\"query\": \"your words\", \"limit\": 10}",
-  "countQuery": null
+  "offersCountQuery": true,
+  "tableQuery": "db.collection(\"Order\\\"Items\").limit(100)",
+  "selectQuery": "db.collection(\"Order\\\"Items\").limit(100)",
+  "countQuery": "db.collection(\"Order\\\"Items\").count()"
  },
  "influxdb": {
   "queryLanguage": "influxql",
@@ -347,40 +155,16 @@
   "selectQuery": "-- Newest rows of the last hour. No row means no row is newer: widen INTERVAL '1 hour' below.\nSELECT * FROM \"c0\".\"Order\"\"Items\" WHERE \"time\" >= now() - INTERVAL '1 hour' ORDER BY \"time\" DESC\n-- A wider window: WHERE \"time\" >= now() - INTERVAL '1 day'\n-- One row per minute: SELECT date_bin(INTERVAL '1 minute', \"time\") AS minute, avg(\"value\") FROM \"c0\".\"Order\"\"Items\" WHERE \"time\" >= now() - INTERVAL '1 hour' GROUP BY 1 ORDER BY 1\n-- Timestamps are UTC with no zone suffix; time AT TIME ZONE 'UTC' shows a Z.",
   "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\""
  },
- "oxia": {
+ "kafka": {
   "queryLanguage": "json",
-  "queryDialect": "oxia",
-  "tabType": "oxia",
-  "monacoLanguage": "oxia",
+  "queryDialect": "kafka",
+  "tabType": "kafka",
+  "monacoLanguage": "json",
   "offersColumnProfiling": false,
   "offersCodeGeneration": false,
   "offersCountQuery": false,
-  "tableQuery": "get 'Order\"Items'",
-  "selectQuery": "get 'Order\"Items'\n# list --prefix 'Order\"Items/'\n# range-scan --prefix 'Order\"Items/' --limit 50",
-  "countQuery": null
- },
- "databend": {
-  "queryLanguage": "sql",
-  "queryDialect": null,
-  "tabType": "sql",
-  "monacoLanguage": "sql",
-  "offersColumnProfiling": true,
-  "offersCodeGeneration": true,
-  "offersCountQuery": true,
-  "tableQuery": "SELECT * FROM `c0`.`Order\"Items`;",
-  "selectQuery": "SELECT\n  `id`,\n  `name`\nFROM `c0`.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
-  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
- },
- "s3": {
-  "queryLanguage": "json",
-  "queryDialect": "s3",
-  "tabType": "s3",
-  "monacoLanguage": "s3",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
-  "selectQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
+  "tableQuery": "{\n  \"topic\": \"Order\\\"Items\",\n  \"from\": \"latest\",\n  \"limit\": 50\n}",
+  "selectQuery": "{\n  \"topic\": \"Order\\\"Items\",\n  \"partition\": 0,\n  \"from\": \"earliest\",\n  \"limit\": 50\n}",
   "countQuery": null
  },
  "kubernetes": {
@@ -395,64 +179,40 @@
   "selectQuery": "kubectl get Order\"Items -n c0",
   "countQuery": null
  },
- "mqtt": {
+ "libredb": {
   "queryLanguage": "json",
-  "queryDialect": "mqtt",
-  "tabType": "mqtt",
-  "monacoLanguage": "json",
+  "queryDialect": "libredb",
+  "tabType": "libredb",
+  "monacoLanguage": "libredb",
   "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
+  "offersCodeGeneration": true,
   "offersCountQuery": false,
-  "tableQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
-  "selectQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
+  "tableQuery": "get Order\"Items",
+  "selectQuery": "# LibreDB commands for \"Order\\\"Items\" — select a line and Run Selected.\n\n# Read the value\nget Order\"Items\n\n# Create or update it\nput Order\"Items '{\"id\":\"example\",\"name\":\"example\"}'\n\n# Delete it\ndelete Order\"Items",
   "countQuery": null
  },
- "firestore": {
-  "queryLanguage": "json",
-  "queryDialect": "firestore",
-  "tabType": "firestore",
-  "monacoLanguage": "firestore",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
+ "libsql": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
   "offersCountQuery": true,
-  "tableQuery": "db.collection(\"Order\\\"Items\").limit(100)",
-  "selectQuery": "db.collection(\"Order\\\"Items\").limit(100)",
-  "countQuery": "db.collection(\"Order\\\"Items\").count()"
+  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
  },
- "rabbitmq": {
+ "milvus": {
   "queryLanguage": "json",
-  "queryDialect": "rabbitmq",
-  "tabType": "rabbitmq",
-  "monacoLanguage": "json",
+  "queryDialect": "milvus",
+  "tabType": "milvus",
+  "monacoLanguage": "milvus",
   "offersColumnProfiling": false,
   "offersCodeGeneration": false,
   "offersCountQuery": false,
-  "tableQuery": "{\"vhost\": \"c0\", \"stream\": \"Order\\\"Items\", \"from\": \"last\", \"limit\": 50}",
-  "selectQuery": "{\"vhost\": \"c0\", \"stream\": \"Order\\\"Items\", \"from\": \"first\", \"limit\": 50}",
-  "countQuery": null
- },
- "opcua": {
-  "queryLanguage": "json",
-  "queryDialect": "opcua",
-  "tabType": "opcua",
-  "monacoLanguage": "json",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key to open its value, or name the node id in a read request.",
-  "selectQuery": "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key to open its value, or name the node id in a read request.",
-  "countQuery": null
- },
- "mtconnect": {
-  "queryLanguage": "json",
-  "queryDialect": "mtconnect",
-  "tabType": "mtconnect",
-  "monacoLanguage": "mtconnect",
-  "offersColumnProfiling": false,
-  "offersCodeGeneration": false,
-  "offersCountQuery": false,
-  "tableQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
-  "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
+  "tableQuery": "POST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
+  "selectQuery": "# Collection Order\"Items has no vector field, so there is nothing to search: this reads its entities.\nPOST /v2/vectordb/entities/query\n{\"dbName\": \"c0\", \"collectionName\": \"Order\\\"Items\", \"filter\": \"\", \"limit\": 100}",
   "countQuery": null
  },
  "modbus": {
@@ -467,6 +227,78 @@
   "selectQuery": "{\n  \"read\": [\n    \"Order\\\"Items\"\n  ]\n}",
   "countQuery": null
  },
+ "mongodb": {
+  "queryLanguage": "json",
+  "queryDialect": null,
+  "tabType": "mongodb",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"find\",\n  \"filter\": {},\n  \"options\": {\n    \"limit\": 50\n  }\n}",
+  "selectQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"find\",\n  \"filter\": {},\n  \"options\": {\n    \"projection\": {\n      \"id\": 1,\n      \"name\": 1\n    },\n    \"limit\": 100\n  }\n}",
+  "countQuery": "{\n  \"database\": \"c0\",\n  \"collection\": \"Order\\\"Items\",\n  \"operation\": \"count\",\n  \"filter\": {}\n}"
+ },
+ "mqtt": {
+  "queryLanguage": "json",
+  "queryDialect": "mqtt",
+  "tabType": "mqtt",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
+  "selectQuery": "// MQTT has no query console. Order\"Items opens in its Source tab from the Keys panel.",
+  "countQuery": null
+ },
+ "mssql": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.[Order\"Items];",
+  "selectQuery": "SELECT TOP 100\n  id,\n  name\nFROM c0.[Order\"Items]\nWHERE 1=1;",
+  "countQuery": "SELECT COUNT_BIG(*) AS row_count\nFROM c0.[Order\"Items];"
+ },
+ "mtconnect": {
+  "queryLanguage": "json",
+  "queryDialect": "mtconnect",
+  "tabType": "mtconnect",
+  "monacoLanguage": "mtconnect",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
+  "selectQuery": "# Order\"Items: one row of this answer\nGET /c0/current",
+  "countQuery": null
+ },
+ "mysql": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.`Order\"Items`;",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.`Order\"Items`;"
+ },
+ "neo4j": {
+  "queryLanguage": "cypher",
+  "queryDialect": null,
+  "tabType": "cypher",
+  "monacoLanguage": "graph-cypher",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "",
+  "selectQuery": "",
+  "countQuery": null
+ },
  "netconf": {
   "queryLanguage": "json",
   "queryDialect": "netconf",
@@ -477,6 +309,126 @@
   "offersCountQuery": false,
   "tableQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
   "selectQuery": "{\n  \"datastore\": \"c0\",\n  \"path\": \"\",\n  \"limit\": 1000\n}",
+  "countQuery": null
+ },
+ "opcua": {
+  "queryLanguage": "json",
+  "queryDialect": "opcua",
+  "tabType": "opcua",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key to open its value, or name the node id in a read request.",
+  "selectQuery": "// An OPC UA node's value is read from the node itself, not from a generated statement: click the key to open its value, or name the node id in a read request.",
+  "countQuery": null
+ },
+ "opensearch": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.`Order\"Items`",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.`Order\"Items`\nWHERE 1=1\nLIMIT 100",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.`Order\"Items`"
+ },
+ "oracle": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM \"c0\".\"Order\"\"Items\"",
+  "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nFETCH FIRST 100 ROWS ONLY",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\""
+ },
+ "oxia": {
+  "queryLanguage": "json",
+  "queryDialect": "oxia",
+  "tabType": "oxia",
+  "monacoLanguage": "oxia",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "get 'Order\"Items'",
+  "selectQuery": "get 'Order\"Items'\n# list --prefix 'Order\"Items/'\n# range-scan --prefix 'Order\"Items/' --limit 50",
+  "countQuery": null
+ },
+ "postgres": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
+ },
+ "prometheus": {
+  "queryLanguage": "promql",
+  "queryDialect": null,
+  "tabType": "promql",
+  "monacoLanguage": "promql",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{__name__=\"Order\\\"Items\"}",
+  "selectQuery": "# PromQL for the metric \"Order\\\"Items\". Only the last line runs: a line starting with # is a comment.\n# To try a form below, select it after its # and use Run Selected.\n#\n# Every raw sample from the last five minutes, one column per series:\n#   {__name__=\"Order\\\"Items\"}[5m]\n# For a counter: its per-second rate over the last hour, one row a minute:\n#   rate({__name__=\"Order\\\"Items\"}[5m])[1h:1m]\n#\n# Every series of the metric as of now, one row per series:\n{__name__=\"Order\\\"Items\"}",
+  "countQuery": null
+ },
+ "qdrant": {
+  "queryLanguage": "json",
+  "queryDialect": "qdrant",
+  "tabType": "qdrant",
+  "monacoLanguage": "qdrant",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "POST /collections/Order%22Items/points/scroll\n{\"limit\": 100, \"with_payload\": true, \"with_vector\": false}",
+  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.",
+  "countQuery": null
+ },
+ "rabbitmq": {
+  "queryLanguage": "json",
+  "queryDialect": "rabbitmq",
+  "tabType": "rabbitmq",
+  "monacoLanguage": "json",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "{\"vhost\": \"c0\", \"stream\": \"Order\\\"Items\", \"from\": \"last\", \"limit\": 50}",
+  "selectQuery": "{\"vhost\": \"c0\", \"stream\": \"Order\\\"Items\", \"from\": \"first\", \"limit\": 50}",
+  "countQuery": null
+ },
+ "redis": {
+  "queryLanguage": "json",
+  "queryDialect": "redis",
+  "tabType": "redis",
+  "monacoLanguage": "redis",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": true,
+  "offersCountQuery": false,
+  "tableQuery": "{\"command\":\"TYPE\",\"args\":[\"Order\\\"Items\"]}",
+  "selectQuery": "# Redis commands for \"Order\\\"Items\" — select a line and Run Selected.\n\n# Check the key's type\n{\"command\":\"TYPE\",\"args\":[\"Order\\\"Items\"]}\n\n# Time to live in seconds (-1 no expiry, -2 no such key)\n{\"command\":\"TTL\",\"args\":[\"Order\\\"Items\"]}\n\n# Delete the key (DEL takes a literal key name, never a pattern)\n{\"command\":\"DEL\",\"args\":[\"Order\\\"Items\"]}",
+  "countQuery": null
+ },
+ "s3": {
+  "queryLanguage": "json",
+  "queryDialect": "s3",
+  "tabType": "s3",
+  "monacoLanguage": "s3",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
+  "offersCountQuery": false,
+  "tableQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
+  "selectQuery": "THROWS An S3 bucket or object path is [name], received [\"c0\",\"Order\\\"Items\"]",
   "countQuery": null
  },
  "snmp": {
@@ -491,6 +443,30 @@
   "selectQuery": "walk Order\"Items",
   "countQuery": null
  },
+ "snowflake": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM \"c0\".\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  \"id\",\n  \"name\"\nFROM \"c0\".\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM \"c0\".\"Order\"\"Items\";"
+ },
+ "spark": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM `c0`.`Order\"Items`;",
+  "selectQuery": "SELECT\n  `id`,\n  `name`\nFROM `c0`.`Order\"Items`\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM `c0`.`Order\"Items`;"
+ },
  "sparkplug": {
   "queryLanguage": "json",
   "queryDialect": "sparkplug",
@@ -503,16 +479,40 @@
   "selectQuery": "{\n  \"group\": \"c0\",\n  \"edgeNode\": \"Order\\\"Items\"\n}",
   "countQuery": null
  },
- "libredb": {
-  "queryLanguage": "json",
-  "queryDialect": "libredb",
-  "tabType": "libredb",
-  "monacoLanguage": "libredb",
-  "offersColumnProfiling": false,
+ "sqlite": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
   "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\";",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100;",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\";"
+ },
+ "trino": {
+  "queryLanguage": "sql",
+  "queryDialect": null,
+  "tabType": "sql",
+  "monacoLanguage": "sql",
+  "offersColumnProfiling": true,
+  "offersCodeGeneration": true,
+  "offersCountQuery": true,
+  "tableQuery": "SELECT * FROM c0.\"Order\"\"Items\"",
+  "selectQuery": "SELECT\n  id,\n  name\nFROM c0.\"Order\"\"Items\"\nWHERE 1=1\nLIMIT 100",
+  "countQuery": "SELECT COUNT(*) AS row_count\nFROM c0.\"Order\"\"Items\""
+ },
+ "weaviate": {
+  "queryLanguage": "json",
+  "queryDialect": "weaviate",
+  "tabType": "weaviate",
+  "monacoLanguage": "weaviate",
+  "offersColumnProfiling": false,
+  "offersCodeGeneration": false,
   "offersCountQuery": false,
-  "tableQuery": "get Order\"Items",
-  "selectQuery": "# LibreDB commands for \"Order\\\"Items\" — select a line and Run Selected.\n\n# Read the value\nget Order\"Items\n\n# Create or update it\nput Order\"Items '{\"id\":\"example\",\"name\":\"example\"}'\n\n# Delete it\ndelete Order\"Items",
+  "tableQuery": "GET /v1/objects?class=Order%22Items&limit=50",
+  "selectQuery": "// Collection \"Order\\\"Items\" declares no vector to search.\nPOST /v1/search/Order%22Items/bm25\n{\"query\": \"your words\", \"limit\": 10}",
   "countQuery": null
  }
 }

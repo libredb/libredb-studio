@@ -21,225 +21,35 @@
  * hold its own copy of the data.
  */
 import type { DatabaseType, HostPathField } from "@/lib/types";
+import { BUNDLED_CATALOG } from "./engine-catalog/catalog.generated";
 import type { ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
 /**
- * The drivers we ship, i.e. the engines that have a provider, a doc page and an
- * integration test of their own. Kept here beside the registry because the
- * published count is "shipped drivers + verified relatives" and both halves must
- * come from the same module or they drift.
- */
-const SHIPPED: Readonly<Record<DatabaseType, true>> = Object.freeze({
-  postgres: true,
-  bigquery: true,
-  snowflake: true,
-  spark: true,
-  mysql: true,
-  sqlite: true,
-  // libSQL (#424 Phase 5): its own provider, doc and integration test. A separate
-  // driver from `sqlite` rather than a relative of it - the two share a dialect and
-  // nothing else, since one holds a file handle and the other speaks HTTP.
-  libsql: true,
-  // DuckDB (#424): its own provider, doc and integration test. It is a driver rather
-  // than a relative of anything - it speaks no PostgreSQL or MySQL wire protocol, and
-  // there is no wire at all, so no engine can be compatible with it by pretending to
-  // be it. Nothing is recorded as a relative below for that reason.
-  duckdb: true,
-  oracle: true,
-  // IBM Db2 LUW (#786): its own provider, doc and integration test. Db2 for z/OS and for IBM i
-  // speak the same DRDA protocol and are recorded below as relatives only once a gate-4 probe has
-  // measured each, never because the protocol answers.
-  db2: true,
-  mssql: true,
-  clickhouse: true,
-  druid: true,
-  trino: true,
-  // Apache Cassandra (#424 Phase 4). ScyllaDB speaks the same CQL wire and is
-  // recorded as a relative below: the gate-4 probe ran on 2026-08-21/22 and measured
-  // eight of this provider's thirteen surfaces answering, with the five that read
-  // Cassandra's `system_views` virtual tables failing because ScyllaDB has no such
-  // keyspace. All thirteen answer since 2026-08-24 - re-probed then - but the five
-  // answer EMPTY, which is why the tier below is still `partial`.
-  cassandra: true,
-  // Two ids served by ONE provider module (`providers/sql/search/`), which is the
-  // first time "shipped" here does not mean one provider file per id. They are still
-  // two entries because the tri-sync invariant is per type-id - each has its own doc
-  // page and its own integration test - and because the published count counts what
-  // a user can pick, not how the code is laid out.
-  elasticsearch: true,
-  opensearch: true,
-  mongodb: true,
-  couchbase: true,
-  redis: true,
-  // Prometheus (#1085): its own provider, doc and integration test, and the first member of
-  // the `timeseries/` family. A relative that speaks the same HTTP API is recorded below only
-  // once a gate-4 probe has measured one, never because the API answers.
-  prometheus: true,
-  // Apache Kafka (#1088): its own provider, doc and integration test, and the first member of the
-  // `stream/` family. A broker that speaks the same protocol is recorded below as a relative only
-  // once a gate-4 probe has measured one, never because the protocol answers.
-  kafka: true,
-  // etcd (#1089): its own provider, doc and integration test, and the second member of the `keyvalue/`
-  // family. kine and Xline speak etcd's API and are recorded below as relatives only once a gate-4
-  // probe has measured each, never because the API answers.
-  etcd: true,
-  // Neo4j (#424): its own provider, doc and integration test, and the first member of the `graph/`
-  // family. Memgraph speaks Bolt and Cypher and is recorded below as a relative only once a gate-4
-  // probe has measured it, never because the protocol answers.
-  neo4j: true,
-  // Milvus (vector-family spec 5): its own provider, doc and integration test, and the first member of the
-  // `vector/` family. Zilliz Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4.
-  milvus: true,
-  // Qdrant (vector-family spec 6): its own provider, doc and integration test, a member of the `vector/` family.
-  // Qdrant Cloud speaks the same API and is recorded nowhere until a test cluster passes gate 4 (vector-family spec 6.2).
-  qdrant: true,
-  // Weaviate (#1566): its own provider, doc and integration test, the third member of the `vector/` family. Weaviate
-  // Cloud and DigitalOcean Managed Weaviate are recorded nowhere until a test cluster passes gate 4 (spec 8).
-  weaviate: true,
-  // InfluxDB (InfluxDB spec I2): its own provider class, doc and integration test; the first of two type-ids served by
-  // `timeseries/influxdb/`, one per query language. InfluxDB Cloud, Clustered and Enterprise 1.x are claimed nowhere
-  // until a gate-4 probe measures one.
-  influxdb: true,
-  // InfluxDB 3 (InfluxDB spec I2): its own provider class, doc and integration test, sharing the connection layer of
-  // `timeseries/influxdb/` with `influxdb`. A different engine generation (Rust, Arrow, DataFusion), counted as its
-  // own engine.
-  influxdb3: true,
-  // Oxia (#424): its own provider, doc and integration test, read over its gRPC client API (DECISIONS O2).
-  oxia: true,
-  // Databend: its own provider, doc and integration test, read and written over its HTTP query API.
-  databend: true,
-  // S3-compatible object storage: its own provider, doc and integration test, read over the S3 REST API.
-  s3: true,
-  // Kubernetes: its own provider, doc and integration test, the first member of the `platform/` family: a cluster read
-  // over the API server's REST API, beside the databases rather than one of them.
-  kubernetes: true,
-  // MQTT (#1635): its own provider, doc and integration test. A broker rather than a store, and the first
-  // engine here whose read cannot be proved complete, which the provider states on every read rather than
-  // hiding. No relative is recorded: every broker speaks the same standard, and a standard is not a
-  // compatibility claim about a product.
-  mqtt: true,
-  // Firestore: its own provider, doc and integration test, read over Firestore REST v1 by a client of this
-  // repository's own. Native mode only; no relative is recorded.
-  firestore: true,
-  // RabbitMQ (#1656): its own provider, doc and integration test, the second member of the `stream/` family. A
-  // service that speaks the same management API is recorded below as a relative only once a gate-4 probe has measured
-  // one, never because the API answers.
-  rabbitmq: true,
-  // OPC UA (#1677): its own provider, doc and integration test, the first member of the `industrial/` family.
-  // A plant's address space rather than a store, read through a client seam that names eight read services, so
-  // the read-only guarantee is a type rather than a setting.
-  opcua: true,
-  // MTConnect (#1722): its own provider, doc and integration test, the second member of the `industrial/` family.
-  // An agent's device model and its observations rather than a store, read through a request table of nine routes
-  // that are all GET, so the read-only guarantee is a type rather than a setting.
-  mtconnect: true,
-  modbus: true,
-  netconf: true,
-  snmp: true,
-  // Eclipse Sparkplug B (#1720): its own provider, doc and integration test, the third member of the
-  // `industrial/` family. An MQTT broker's published certificates and data rather than a store, and the
-  // read-only guarantee is the absence of code: the encoder has no function that writes a PUBLISH.
-  sparkplug: true,
-  libredb: true,
-});
-
-/**
- * Derived from an exhaustive Record on purpose. As a hand-written array this was
- * the one mandatory registration surface in the codebase with no guard at all: a
- * new type-id omitted here made the published count undercount, nothing failed,
- * and the unit test that checked the count read the same constant on both sides.
- * With the Record the compiler refuses the omission, which is the same technique
- * `src/lib/sql/fence-tags.ts` already uses over this union.
- */
-export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(Object.keys(SHIPPED) as DatabaseType[]);
-
-/**
- * Which shipped ids are databases a user already runs, and which one is not.
+ * The drivers we ship, i.e. the engines that have a provider, a doc page and an integration test of their own: the
+ * engine catalog's ids, in its order, ascending by id (docs/providers/CONTRACT.md, clause M-70). Kept here beside the
+ * registry because the published count is "shipped drivers + verified relatives" and both halves must come from the
+ * same module or they drift.
  *
- * `libredb` is the embedded store this app carries with it; every other id is an
- * external engine you point the product at. Everything published as a database
- * count means the external set - README.md's "<N> drivers reach <M> named
- * engines", the login hero's engine claim - so the split needs a
- * definition somewhere, and it belongs beside `SHIPPED` rather than in the UI that
- * prints it. That is the same reason `SHIPPED` itself lives here.
- *
- * An exhaustive Record again, so a new type-id cannot join without someone
- * answering the question. The alternative - filtering `libredb` out by name at each
- * call site - is how the two halves of a published count drift apart.
+ * The catalog is projected from the engine declarations (`./engine-catalog/catalog.generated.ts`, written by
+ * scripts/generate-engine-catalog.ts), each engine's `id` authored in its declaration. The generated record is
+ * annotated `Record<DatabaseType, CatalogEntry>`, so a member of the union with no declaration fails the typecheck
+ * there, which is how a new type-id cannot be left out of the count; a hand-written array had no guard at all.
  */
-const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
-  postgres: true,
-  bigquery: true,
-  snowflake: true,
-  spark: true,
-  mysql: true,
-  sqlite: true,
-  libsql: true,
-  // The user's own file, opened from a path they give us - the same reading as
-  // `sqlite` below, and external for the same reason.
-  duckdb: true,
-  oracle: true,
-  // A server the user already runs, reached over DRDA.
-  db2: true,
-  mssql: true,
-  clickhouse: true,
-  druid: true,
-  trino: true,
-  cassandra: true,
-  elasticsearch: true,
-  opensearch: true,
-  mongodb: true,
-  couchbase: true,
-  redis: true,
-  // A server the user already runs, reached over its HTTP API.
-  prometheus: true,
-  // A cluster the user already runs, reached over the Kafka protocol.
-  kafka: true,
-  // A cluster the user already runs, reached over etcd's gRPC API.
-  etcd: true,
-  // A server the user already runs, reached over Bolt.
-  neo4j: true,
-  // A server or cluster the user already runs, reached over Milvus's gRPC API.
-  milvus: true,
-  // A server or cluster the user already runs, reached over Qdrant's REST API.
-  qdrant: true,
-  // A server or cluster the user already runs, reached over Weaviate's REST API (and GraphQL below 1.39.7).
-  weaviate: true,
-  // A server the user already runs, reached over InfluxDB's v1 HTTP API.
-  influxdb: true,
-  // A server the user already runs, reached over InfluxDB 3's HTTP SQL API.
-  influxdb3: true,
-  // A server or cluster the user already runs, reached over Oxia's gRPC client API.
-  oxia: true,
-  // A self-hosted server or a Databend Cloud warehouse, reached over its HTTP query API.
-  databend: true,
-  // A server or service the user already runs, reached over the S3 REST API.
-  s3: true,
-  // A cluster the user already runs, reached over the Kubernetes API server's REST API.
-  kubernetes: true,
-  mqtt: true,
-  // A Firestore database the user already runs in Google Cloud, or the emulator the server names.
-  firestore: true,
-  // A broker the user already runs, reached over its management API and AMQP 0-9-1.
-  rabbitmq: true,
-  // A server the plant already runs, reached over opc.tcp at one endpoint the reader types.
-  opcua: true,
-  // An agent the plant already runs, reached over HTTP at one address the reader types.
-  mtconnect: true,
-  modbus: true,
-  netconf: true,
-  snmp: true,
-  // A broker the plant already runs, reached over MQTT at one address the reader types.
-  sparkplug: true,
-  // The one false entry. SQLite is a file rather than a server and is still
-  // external: it is the user's file, opened from a path they give us. libredb is
-  // ours, created by this app, so it is the only id that answers no here.
-  libredb: false,
-});
+export const SHIPPED_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
+  Object.keys(BUNDLED_CATALOG) as DatabaseType[],
+);
 
 /**
- * The shipped ids that are databases a user already runs, in registry order.
+ * The shipped ids that are databases a user already runs, in the catalog's order: every engine whose declaration
+ * authors `location` as `external`.
+ *
+ * `libredb` is the embedded store this app carries with it, the one engine whose declaration says `embedded`; every
+ * other id is an external engine you point the product at. SQLite and DuckDB are files rather than servers and are
+ * still external: each is the user's file, opened from a path they give us. Everything published as a database count
+ * means the external set - README.md's "<N> drivers reach <M> named engines", the login hero's engine claim - so the
+ * split needs a definition somewhere, and it belongs beside `SHIPPED_DATABASE_TYPES` rather than in the UI that prints
+ * it. Filtering `libredb` out by name at each call site is how the two halves of a published count drift apart.
  *
  * Also the DENOMINATOR the outward-facing catalog copy is counted against:
  * `tests/unit/lib/catalog-copy-engine-count.test.ts` compares this length with every
@@ -247,12 +57,12 @@ const EXTERNAL: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
  * #D47 were only ever corrected by somebody noticing.
  */
 export const EXTERNAL_DATABASE_TYPES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((type) => EXTERNAL[type]),
+  SHIPPED_DATABASE_TYPES.filter((type) => BUNDLED_CATALOG[type].location === "external"),
 );
 
-/** True for every shipped id except the embedded store. */
+/** True for every shipped id except the embedded store, and false for a value the catalog does not hold. */
 export function isExternalDatabaseType(type: DatabaseType): boolean {
-  return EXTERNAL[type] === true;
+  return Object.hasOwn(BUNDLED_CATALOG, type) && BUNDLED_CATALOG[type].location === "external";
 }
 
 /** A total record with every value mapped, keyed exactly as the record it was mapped from. */
@@ -268,7 +78,7 @@ function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map:
  * `summarizeWriteReach(ProviderCapabilities.writeReach)` gives once a provider is built.
  *
  * Static because its readers decide before a provider exists, as `READ_ONLY_ENFORCED`'s do, which is derived from it
- * below. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
+ * below. An exhaustive Record over the union, so a new type-id cannot join without someone answering,
  * and `tests/unit/db/write-reach-capability.test.ts` holds every entry equal to what that engine's provider declares,
  * and holds a `none` provider to declaring no write capability on any path. Frozen like the records above it.
  *
@@ -409,7 +219,7 @@ export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) 
  * `connection.type` at those two call sites was the alternative and is forbidden by `CLAUDE.md`; this
  * map is how the behaviour stays capability-driven, exactly as `READ_ONLY_ENFORCED` is.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * An exhaustive Record over the union, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/reads-file-access-posture-capability.test.ts` holds every entry equal
  * to what that engine's provider declares. Frozen like the records above it.
  *
@@ -488,7 +298,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its TLS wherever a connection
  * verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory").
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * An exhaustive Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/security/provider-trust-material.test.ts` holds every entry against the material that engine's provider
  * holds when the factory builds it. Frozen like the records above it.
  */
@@ -556,7 +366,7 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = Obj
  * connection can succeed for its caller, and no provider declares the fact. Reading `connection.type`
  * there was the alternative and is forbidden by `CLAUDE.md`.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * An exhaustive Record over the union, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/refuses-denied-file-access.test.ts` holds every row to what the factory and
  * `connect()` do under the context an MCP open gives a caller whose file access is denied. Frozen like the records
  * above it.
@@ -624,7 +434,7 @@ export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | 
  * refuses the second open outright, so every user of such a connection is served the one open handle. Reading
  * `connection.type` there was the alternative and is forbidden by `CLAUDE.md`.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone
+ * An exhaustive Record over the union, so a new type-id cannot join without someone
  * answering, and `tests/unit/db/compatibility.test.ts` holds every entry equal to what that engine's
  * provider declares. Frozen like the records above it.
  *
@@ -694,7 +504,7 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * tree read runs on, so a wrong `null` opens one more session for the tree, a wrong reason keeps today's sharing, and
  * neither authorizes anything.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * An exhaustive Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/unit/db/compatibility.test.ts` holds a reason for every engine `SINGLE_WRITER_FILE` names. Frozen like the
  * records above it.
  */
@@ -764,7 +574,7 @@ export const SERVES_ONE_SESSION: Readonly<Record<DatabaseType, string | null>> =
  * The embedded workspace and the published grid take the exemption from the embedder instead, as they take the
  * masking configuration, and the embedded workspace masks nothing at all; this record does not reach them.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering, and
+ * An exhaustive Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/unit/db/masking-exemption-guard.test.ts` holds every row equal to what that engine's provider declares and
  * each exempting row to the protected names it was accepted for. Frozen like the records above it, each row too.
  *
@@ -996,7 +806,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
  * The etcd provider (#1089) is the engine this record was made for, MCP being outside its first version until a
  * change of its own offered it. An entry lands with its provider's registration, which the compiler forces. Each
  * entry that answers false carries its reason beside it, so the record below is the list; every other engine answers
- * true. An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join
+ * true. An exhaustive Record over the union, so a new type-id cannot join
  * without someone answering, and frozen like the records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `mcp.exposable`, and every gate
@@ -1111,7 +921,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * `MCP_EXPOSABLE` offers it and this record answers true (`src/lib/mcp/tools/served-engines.ts`), so an engine that
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
+ * An exhaustive Record over the union, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  *
@@ -1275,7 +1085,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
  * none. So the row is per engine, and a self-hosted Databend server is marked as well, as docs/providers/databend.md
  * says.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held by
+ * An exhaustive Record over the union, frozen like the records above it, and held by
  * `tests/unit/mcp/annotations.test.ts`, which also holds its true rows to the engines docs/MCP.md and the provider
  * docs name for the hint.
  *
@@ -1338,7 +1148,7 @@ export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, bool
  * nowhere else: the seed schema refuses `mcp: true` without an agent credential at load, and the MCP context refuses
  * to acquire such a connection without one at open, with `AGENT_CREDENTIAL_REQUIRED`.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true only where
+ * An exhaustive Record over the union, frozen like the records above it, and held true only where
  * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
  * agent credential, by `tests/unit/db/compatibility.test.ts`.
  *
@@ -1402,7 +1212,7 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
  * schema refuses `mcp: true` without roots at load, the MCP context refuses to acquire such a connection at open with
  * `READ_ROOTS_REQUIRED`, and a governed record, which carries no roots, is never opted in to MCP.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true exactly where
+ * An exhaustive Record over the union, frozen like the records above it, and held true exactly where
  * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `policy.readRootsRequired`, and
@@ -1470,7 +1280,7 @@ export const READ_ROOTS_REQUIRED_SENTENCE =
  * `src/lib/db/credential-warnings.ts` exists. No seed module reads it yet; the environment-URL source of PR A2
  * will, to keep a pasted URI verbatim only where this answers true, as the form's paste keeps it.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, so a new type-id cannot join without someone answering,
+ * An exhaustive Record over the union, so a new type-id cannot join without someone answering,
  * frozen like the records above it, and held equal to the form's own answer for every type by
  * `tests/unit/db/connection-string-records.test.ts`.
  */
@@ -1532,7 +1342,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
  * `connectionString` where this answers false, naming the connection and the type, because a provider that
  * ignores the string would list a connection that opens somewhere else than the file says.
  *
- * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, held equal to every
+ * An exhaustive Record over the union, frozen like the records above it, held equal to every
  * other shipped provider's declaration by the census in `tests/unit/db/connection-string-records.test.ts`, and
  * pinned there for the two exceptions by behavioural tests: sqlite opens the file a `file:` string names, and
  * mssql builds a string-only config against localhost.
@@ -1601,7 +1411,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
  * Static because admission decides from a row before any provider exists, and reads this record rather than a type
  * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
  * icon components; `tests/unit/db/compatibility.test.ts` holds every entry equal to that file's `isFileBased()`, the
- * connection form's own answer. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it.
+ * connection form's own answer. An exhaustive Record over the union, frozen like the records above it.
  *
  * The provider factory reads it too: it admits the file such a connection names before the provider is built
  * (`admittedFileConnection` in `./provider-files`), refusing Studio's own storage files there, and hands the provider
@@ -1747,7 +1557,7 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  *   LibreDB. A stored record carrying a tunnel switched on, left by the dialog's state before the dialog stopped
  *   writing one, is refused with the way to clear it: the dialog's save writes no tunnel for such an engine.
  *
- * No sentence quotes a value of the connection. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
+ * No sentence quotes a value of the connection. An exhaustive Record over the union, frozen like the
  * records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and every
@@ -1819,7 +1629,7 @@ export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
  *
  * Static for the reason `OPENS_LOCAL_FILE` is. `tests/unit/db/compatibility.test.ts` builds every shipped provider
  * with no database and no connection string, nothing connecting, and holds this record equal to the engines whose
- * provider then reports `catalogSessions`. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the
+ * provider then reports `catalogSessions`. An exhaustive Record over the union, frozen like the
  * records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at

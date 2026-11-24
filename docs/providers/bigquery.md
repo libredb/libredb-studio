@@ -148,7 +148,7 @@ Its row in `EXECUTION_UI` is declared in [`execution-ui.ts`](../../src/lib/db/pr
 Studio waits for a `bigquery` connection to open, and for its Test connection, at most 140 seconds, longer than the host's default of 70 seconds.
 The connect lists the project's datasets and then runs a `SELECT 1` job, and each is cut at the statement timeout plus the provider's 5 s client grace, so at Studio's default 60 s statement timeout the connect can take 130 s on its own.
 The budget is those two bounds plus 10 s, so a connect that fails answers in BigQuery's words before Studio stops waiting.
-Its row in `CONNECT_BUDGET` is declared in [`src/lib/db/connect-budget.ts`](../../src/lib/db/connect-budget.ts), and the engine declaration states it as `connection.connectBudgetMs`.
+The budget is authored in the engine's declaration, [`src/lib/db/engine-declarations/bigquery.json`](../../src/lib/db/engine-declarations/bigquery.json), as `connection.connectBudgetMs`, and Studio reads it through the engine catalog that `bun run engines:generate` projects from the declarations.
 
 ## 4. Seeding
 

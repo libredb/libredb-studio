@@ -37,10 +37,10 @@ describe("CONNECTION_FORM_URI_MODE against the connection form (Spec A section 7
     // Vacuity, by name: a record that answered false everywhere would pass the census above against a form
     // that also offered nothing.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => CONNECTION_FORM_URI_MODE[type])).toEqual([
-      "libsql",
       "clickhouse",
-      "mongodb",
       "couchbase",
+      "libsql",
+      "mongodb",
     ]);
   });
 });
@@ -51,7 +51,7 @@ describe("CONNECTION_FORM_URI_MODE against the connection form (Spec A section 7
  * the file path, and mssql declares true for the form's paste but builds from the fields only. The census holds
  * every other type to its flag; each type here is pinned by a behavioural test instead.
  */
-const CENSUS_EXCEPTIONS: readonly DatabaseType[] = ["sqlite", "mssql"];
+const CENSUS_EXCEPTIONS: readonly DatabaseType[] = ["mssql", "sqlite"];
 
 const sqliteDir = mkdtempSync(join(tmpdir(), "libredb-connection-string-records-"));
 
@@ -85,7 +85,7 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
       (type, index) =>
         CONNECTION_STRING_ACCEPTED[type] !== (providers[index].getCapabilities().supportsConnectionString === true),
     );
-    expect(disagreeing).toEqual(["sqlite", "mssql"]);
+    expect(disagreeing).toEqual(["mssql", "sqlite"]);
     expect([...CENSUS_EXCEPTIONS]).toEqual(disagreeing);
   });
 
@@ -151,51 +151,51 @@ describe("CONNECTION_STRING_ACCEPTED against each provider's own declaration (Sp
 
   test("accepts a connection string on nine engines and refuses it on the other twenty-seven", () => {
     expect(SHIPPED_DATABASE_TYPES.filter((type) => CONNECTION_STRING_ACCEPTED[type])).toEqual([
-      "postgres",
-      "mysql",
-      "sqlite",
-      "libsql",
-      "oracle",
-      "db2",
       "clickhouse",
-      "mongodb",
       "couchbase",
+      "db2",
+      "libsql",
+      "mongodb",
+      "mysql",
+      "oracle",
+      "postgres",
+      "sqlite",
     ]);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => !CONNECTION_STRING_ACCEPTED[type])).toEqual([
       "bigquery",
-      "snowflake",
-      "spark",
-      "duckdb",
-      "mssql",
-      "druid",
-      "trino",
       "cassandra",
+      "databend",
+      "druid",
+      "duckdb",
       "elasticsearch",
-      "opensearch",
-      "redis",
-      "prometheus",
-      "kafka",
       "etcd",
-      "neo4j",
-      "milvus",
-      "qdrant",
-      "weaviate",
+      "firestore",
       "influxdb",
       "influxdb3",
-      "oxia",
-      "databend",
-      "s3",
+      "kafka",
       "kubernetes",
-      "mqtt",
-      "firestore",
-      "rabbitmq",
-      "opcua",
-      "mtconnect",
-      "modbus",
-      "netconf",
-      "snmp",
-      "sparkplug",
       "libredb",
+      "milvus",
+      "modbus",
+      "mqtt",
+      "mssql",
+      "mtconnect",
+      "neo4j",
+      "netconf",
+      "opcua",
+      "opensearch",
+      "oxia",
+      "prometheus",
+      "qdrant",
+      "rabbitmq",
+      "redis",
+      "s3",
+      "snmp",
+      "snowflake",
+      "spark",
+      "sparkplug",
+      "trino",
+      "weaviate",
     ]);
   });
 

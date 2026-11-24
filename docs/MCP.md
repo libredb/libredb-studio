@@ -17,7 +17,7 @@ In the rest of this guide, `agent-read-only` is Studio's least-privilege read pr
   It speaks revision 2026-07-28 and, without sessions, the 2025 revisions 2025-11-25 and 2025-06-18 that most clients still use.
 - The tools, as a token lists them and with their hints described after this list:
   - `list_connections` lists the connections opted in for MCP that your token's role may use, without credentials.
-    It works for every engine but Oxia, Firestore, Modbus and NETCONF, whose connections the seed file cannot opt in.
+    It works for every engine but Firestore, Modbus, NETCONF and Oxia, whose connections the seed file cannot opt in.
     Each connection's `read_tool` names the statement tool below that runs a statement on it, and is `null` where `inspect_schema` is the only read or where the connection carries `unavailable`.
     `unavailable` is a sentence that says why no tool can read the connection and what an operator changes, and `inspect_schema` and every statement tool refuse that connection with it as soon as the connection resolves, before anything is acquired.
     A SQLite seed carries it for every token but an admin's, and for an admin's token too where the seed's `roles` name any role but admin ([Opting connections in](#opting-connections-in)).
