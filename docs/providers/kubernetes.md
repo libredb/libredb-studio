@@ -284,10 +284,12 @@ Link-local and instance metadata addresses are never dialled, whatever the varia
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `kubernetes` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`kubernetes.json`](../../src/lib/db/engine-declarations/kubernetes.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `kubernetes`, and its declaration's `editor.fenceAliases`, `kubectl`.
+Its query dialect row, the `kubectl` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code, Generate Count Query or SQL export format: its grids are the API server's own columns, so no profile, model or count statement of its grammar applies, and neither export format does.
 A block tagged `kubernetes` holds one statement of the kubectl subset the editor runs as it is, and `kubectl` spells the command the Kubernetes console speaks, which only `kubernetes` runs.
 No `yaml` or `sh` tag names it: neither names an engine.
 What a tree click and Generate Query write is `KUBECTL_GENERATORS`, the `kubectl` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/platform/kubernetes/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `kubectl`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/platform/kubernetes/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `kubectl`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/platform/kubernetes/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 
@@ -336,7 +338,8 @@ The grid pages the list form of a single-type `get` with a paging line of Studio
 A statement reads at most 5,000 rows; a page at or past that answers a sentence to narrow the list with `-l` or `--field-selector`.
 
 Query history masks the values of `--token`, `--password`, `--client-key`, `--client-certificate`, `--from-literal` and `--docker-password` in every spelling, though the console refuses every line that carries them; a tab keeps what was typed, a saved query keeps what was saved, and the embedded workspace writes no history.
-Those flags are the console's own `CREDENTIAL_FLAGS` list in the kubectl family module ([`src/lib/languages/kubectl/commands.ts`](../../src/lib/languages/kubectl/commands.ts)), which the dialect's row in `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) reads, so the two cannot drift.
+Those flags are stated in the `kubectl` dialect row of this engine's declaration, `editor.dialect.historyMask`, which `QUERY_DIALECTS` ([`src/lib/db/query-dialects.ts`](../../src/lib/db/query-dialects.ts)) projects, M-77.
+They are the console's own `CREDENTIAL_FLAGS` list in the kubectl family module ([`src/lib/languages/kubectl/commands.ts`](../../src/lib/languages/kubectl/commands.ts)), and the test "the dialect declares exactly the console's credential flags" holds the two lists equal, flag by flag and in order.
 
 ### 5.1 SQL grammar
 

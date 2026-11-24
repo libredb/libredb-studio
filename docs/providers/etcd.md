@@ -250,10 +250,12 @@ A principal written as a `${...}` reference is left to the proof when the connec
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `etcd` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`etcd.json`](../../src/lib/db/engine-declarations/etcd.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `etcd`, and its declaration's `editor.fenceAliases`, `etcdctl`.
+Its query dialect row, the `etcd` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: a group's columns are the fixed shape of a read result and model nothing an application stores (#1089).
 A block tagged `etcd` holds one etcdctl command the editor runs as it is (#1089), and `etcdctl` names the agent's etcdctl command language, which only `etcd` runs.
 `sh`, `bash` and `shell` name no engine, which is the reason `sql` names none.
 What a tree click and Generate Query write is `ETCD_GENERATORS`, the `etcd` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/keyvalue/etcd/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `etcd`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/keyvalue/etcd/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `etcd`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/keyvalue/etcd/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

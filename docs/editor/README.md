@@ -29,9 +29,9 @@ package, which does not ship `public/` — set `NEXT_PUBLIC_MONACO_VS_PATH`.
 | Asset staging | `scripts/copy-monaco.mjs` |
 | Completion provider | `src/lib/editor/sql-completions.ts` |
 | Tab type / language ladder | `src/lib/editor/tab-language.ts` |
-| Dialect editor registry (each tab type's Monaco language) | `src/lib/editor/dialect-editors.ts` |
-| Editor language registry (each language's registration, completion, formatter and accent) | `src/lib/db/editor-language/index.ts`, one `editor-language.ts` row beside each owning provider |
-| Query dialect registry (each dialect's tab type and row-menu gates) | `src/lib/db/query-dialects.ts` |
+| Dialect editor registry (each tab type's Monaco language) | `src/lib/editor/dialect-editors.ts`, projected from the declarations' `editor.language` into `src/lib/db/engine-catalog/query-editor.generated.ts` |
+| Editor language registry (each language's registration, completion, formatter and accent) | `src/lib/db/editor-language/index.ts`, one `editor-language.ts` code row beside each owning provider, composed with the accent and console the declarations' `editor.language` states |
+| Query dialect registry (each dialect's tab type and row-menu gates) | `src/lib/db/query-dialects.ts`, projected from the declarations' `editor.dialect` into `src/lib/db/engine-catalog/query-editor.generated.ts` |
 | Non-SQL command languages | `src/lib/db/providers/embedded/libredb-editor-syntax.ts`, `src/lib/db/providers/keyvalue/redis-editor-syntax.ts`, `src/lib/db/providers/keyvalue/etcd/editor-syntax.ts`, `src/lib/db/providers/keyvalue/oxia/editor-syntax.ts`, `src/lib/db/providers/objectstore/s3/editor-syntax.ts`, `src/lib/db/providers/platform/kubernetes/editor-syntax.ts` |
 | PromQL language | `src/lib/db/providers/timeseries/prometheus/editor-syntax.ts` |
 | Alias extraction | `src/lib/sql/alias-extractor.ts` |

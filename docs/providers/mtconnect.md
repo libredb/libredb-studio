@@ -243,9 +243,13 @@ The agent at the far end is not checked here: a link-local or metadata address t
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mtconnect` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mtconnect.json`](../../src/lib/db/engine-declarations/mtconnect.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mtconnect`, and its declaration's `editor.fenceAliases`, `mtconnectread`.
+Its query dialect row, the `mtconnect` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: its grids are the agent's own observations, and a request line is a URL with no statement form.
+It keeps both SQL export formats, as OPC UA's and MQTT's rows do: a read answers one row per observation with the same columns every time, and an export is not a write.
+A request line names a device, a route and query keys and no credential, so the row states no history mask.
 A block tagged `mtconnect` holds one request line in the agent's own URL grammar, which the console runs as it is, and `mtconnectread` names the agent's MTConnect read request language, which only `mtconnect` runs.
 What a tree click and Generate Query write is `MTCONNECT_GENERATORS`, the `mtconnect` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/mtconnect/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `mtconnect`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/industrial/mtconnect/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `mtconnect`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/industrial/mtconnect/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

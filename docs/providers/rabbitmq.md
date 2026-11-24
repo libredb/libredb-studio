@@ -165,6 +165,8 @@ A `readOnly: true` seed with the `guest`/`guest` pair is refused, as the dialog 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `rabbitmq` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`rabbitmq.json`](../../src/lib/db/engine-declarations/rabbitmq.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `rabbitmq`, and its declaration's `editor.fenceAliases`, `rabbitread`.
+Its query dialect row, the `rabbitmq` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code, Generate Count Query or SQL export format: a stream's columns are the fixed shape of a read result.
+Its read request renders in Monaco's built-in `json`.
 A block tagged `rabbitmq` holds one JSON read request the editor runs as it is, and `rabbitread` names the agent's RabbitMQ read request language, which only `rabbitmq` runs.
 What a tree click and Generate Query write is `RABBITMQ_GENERATORS`, the `rabbitmq` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/stream/rabbitmq/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 

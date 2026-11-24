@@ -434,6 +434,10 @@ A connection a browser or a client supplies inline that carries any of the three
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `opcua` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`opcua.json`](../../src/lib/db/engine-declarations/opcua.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `opcua`, and its declaration's `editor.fenceAliases`, `opcuaread`.
+Its query dialect row, the `opcua` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: its grids are the server's own DataValues, so no profile, model or count statement of its grammar applies.
+It keeps both SQL export formats, as MQTT's row does: a value read answers one row per node with the same six columns every time, so exporting those rows as INSERT statements is as meaningful as for any other tabular answer, and an export is not a write.
+A request names node ids and no credential, so the row states no history mask.
+Its read request renders in Monaco's built-in `json`.
 A block tagged `opcua` holds one JSON read request, which the console runs as it is, and `opcuaread` names the agent's OPC UA read request language, which only `opcua` runs.
 What a tree click and Generate Query write is `OPCUA_GENERATORS`, the `opcua` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/opcua/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 

@@ -654,9 +654,11 @@ D74 gave the single-statement route the same `finally` as the script route, and 
 Naming `COMMIT` would tell them to type a command their engine does not have.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`redis.json`](../../src/lib/db/engine-declarations/redis.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `redis`, and its declaration's `editor.fenceAliases`, `rediscli`.
+Its query dialect row, the `redis` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, keeps Generate Code, because the code generator names a row rather than addressing it (#427), and offers no Profile or Generate Count Query.
 `rediscli` names the agent's Redis command language, which only `redis` runs.
 What a tree click and Generate Query write is `REDIS_GENERATORS`, the `redis` row of `DIALECT_GENERATORS`, declared in [`redis-generators.ts`](../../src/lib/db/providers/keyvalue/redis-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `redis`, is the row in `EDITOR_LANGUAGES` declared in [`redis-editor-language.ts`](../../src/lib/db/providers/keyvalue/redis-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `redis`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`redis-editor-language.ts`](../../src/lib/db/providers/keyvalue/redis-editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 The agent's consent card has no consent deadline chip or sentence for it.
 
 ---

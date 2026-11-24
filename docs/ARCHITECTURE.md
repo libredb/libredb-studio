@@ -222,9 +222,11 @@ A descriptor field that only one engine sets is a sign that its rule belongs in 
 `ObjectPathShapeEngine.attachedSegment` (#978) is the one pre-existing exception: a per-engine acceptance policy carried in provider descriptors rather than in the declaration, and moving it into the declaration is separate work.
 
 The editor's query dialects follow the same rule through three registries, each a `Record` the compiler holds complete.
-`QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`) gives each declared `queryDialect` its tab type and its three row-menu answers.
+`QUERY_DIALECTS` (`src/lib/db/query-dialects.ts`) gives each declared `queryDialect` its tab type, its three row-menu answers, its SQL export answer and its history mask.
 `DIALECT_EDITORS` (`src/lib/editor/dialect-editors.ts`) gives each tab type its Monaco language, keyed by tab type because that is what a restored tab carries.
-`EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`) gives each Monaco language its registration, completion source, formatter and answer card accent, each row declared beside the provider that owns the language (`sql` and `json`, which no one engine owns, in that directory), so the shared editor imports the registry and never a provider module.
+Both are projected from the `editor.dialect` and `editor.language` each engine declaration states, generated into `src/lib/db/engine-catalog/query-editor.generated.ts` (docs/providers/CONTRACT.md, M-77).
+`EDITOR_LANGUAGES` (`src/lib/db/editor-language/index.ts`) gives each Monaco language its registration, completion source, formatter and answer card accent: the code of each is declared beside the provider that owns the language (`sql` and `json`, which no one engine owns, in that directory), so the shared editor imports the registry and never a provider module.
+Each language's accent and whether it is a console dialect are the ones the declarations state, composed with its code when the module loads.
 `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
 `LANGUAGE_GENERATORS` beside it does the same for each query language an engine writes its own text in, MongoDB's JSON documents included.
 `SQL_ENGINE_GENERATORS` holds the SQL forms and identifier quoting one SQL engine writes apart from the shared ones, keyed by type id and read through `typeIdRow`, so a connection's forms follow its type and never the port its declaration names, and a value outside the union is refused by name.
@@ -603,7 +605,7 @@ src/
     ├── llm/                 # LLM provider module
     ├── editor/              # SQL completion, the tab-type/language ladder, the tab-type registry
     │                       # (dialect-editors.ts) and the shared console language; each other language is a row of
-    │                       # EDITOR_LANGUAGES (src/lib/db/editor-language/), declared beside its provider
+    │                       # EDITOR_LANGUAGES (src/lib/db/editor-language/), its code declared beside its provider
     ├── schema-diff/         # Diff engine + migration SQL generator
     ├── export/              # The writers behind every "save this to disk": RFC 4180 CSV,
     │                        #   the SQL INSERT/DDL forms, and the one blob-download path
