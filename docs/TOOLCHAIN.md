@@ -721,12 +721,14 @@ A root file that imports a package by name needs the package in the root `devDep
 Three generators keep the SDK's contract, the engine declarations and Studio's tables in step, each committed output held byte for byte by a test that renders it in memory, as the governance manifest is:
 
 - `bun run manifest:types` (`scripts/generate-manifest-types.ts`) renders the manifest's TypeScript types and the schema's digest from `packages/provider-sdk/src/manifest/manifest.schema.json`; `tests/unit/provider-sdk/manifest-types.test.ts` fails on drift.
-- `scripts/generate-engine-catalog.ts` admits every engine declaration through the SDK's validator once and writes, from the members each declaration authors, the engine catalog, `src/lib/db/engine-catalog/catalog.generated.ts`, and the data-only connection tables, `src/lib/db/engine-catalog/connection.generated.ts`, the second laid out as Biome lays it out; `--out` names a directory that receives both, and `tests/unit/db/engine-catalog.test.ts` fails on drift in either.
+- `scripts/generate-engine-catalog.ts` writes, from the members each declaration authors, the engine catalog, `src/lib/db/engine-catalog/catalog.generated.ts`, and the data-only connection tables, `src/lib/db/engine-catalog/connection.generated.ts` and `src/lib/db/engine-catalog/connection-flags.generated.ts`, the second holding the three tables `src/lib/db/compatibility.ts` reads, both laid out as Biome lays them out; `--out` names a directory that receives all three, and `tests/unit/db/engine-catalog.test.ts` fails on drift in any of them.
 - `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, each declaration's authored members kept from its committed file and every other member from the per-engine tables and each provider's unconnected declarations; `tests/unit/db/engine-declarations.test.ts` fails on drift.
 
-`bun run engines:generate` runs the catalog generator, then the declaration generator.
+`bun run engines:generate` runs the catalog generator's `--write`, then the declaration generator, then the catalog generator's `--check`.
 The order is the declaration generator's need: it builds every provider through the factory, which builds only an engine the catalog holds, and it checks each dialog entry and field rule against the projected connection fields.
-One run of each is exact, because the catalog reads only authored members, which the declaration generator writes back unchanged.
+`--write` reads each file's authored members without admitting the whole file, because a file whose authored members just changed still holds the generated members the previous ones gave, which the validator refuses beside them.
+`--check` admits every engine declaration through the SDK's validator and holds both modules to the admitted set, so the run ends with the written declarations admitted, or exits 1 with the validator's refusal.
+One run is exact, because the catalog reads only authored members, which the declaration generator writes back unchanged.
 
 All three run inside `bun run test`, so none needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.

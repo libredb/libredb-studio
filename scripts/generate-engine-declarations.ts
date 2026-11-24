@@ -7,14 +7,16 @@
  * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `location`, and of `connection` its `fields`,
  * `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`, `readsTrustMaterial`,
  * `credentialWarnings` and `connectBudgetMs`), are written in the declaration itself: this script reads them from the
- * committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, refuses by name a
- * file that lacks one or whose `id` is not its file name, and writes them back unchanged. Every other member is built
- * from the tables. The engine catalog and the connection tables (scripts/generate-engine-catalog.ts, clauses M-70 and
- * M-71) project the authored members, and `bun run engines:generate` runs that command first: this script builds every
+ * committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with
+ * `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id`
+ * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine catalog
+ * and the connection tables (scripts/generate-engine-catalog.ts, clauses M-70 and M-71) project the authored members,
+ * and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this script builds every
  * provider through the factory, which builds only an engine the catalog holds, and reads `CONNECTION_FIELDS`, the
  * projection of each `connection.fields`, to refuse a dialog entry or a field rule for a field the engine does not
- * list. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
- * written for the new engine; the catalog generator admits it and this script writes every other member.
+ * list, and `--check` admits every declaration this script wrote. A new engine's declaration therefore starts as a copy
+ * of another engine's file with its authored members written for the new engine; the catalog generator projects it,
+ * this script writes every other member, and the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -231,88 +233,14 @@ import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-e
 import { resolveTabType } from "../src/lib/editor/tab-language";
 import { ALIAS_ENGINES, QUERY_FENCE_ALIASES } from "../src/lib/sql/fence-tags";
 import type { DatabaseType, QueryTab } from "../src/lib/types";
-import { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
+import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
-export { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
-
-/** The members a declaration authors, as dotted paths: read from its committed file, never built from a table. */
-export const AUTHORED_MEMBERS = [
-  "id",
-  "location",
-  "connection.fields",
-  "connection.seedOnly",
-  "connection.refused",
-  "connection.connectionString.accepted",
-  "connection.connectionString.dialogOffersUri",
-  "connection.readsTrustMaterial",
-  "connection.credentialWarnings",
-  "connection.connectBudgetMs",
-] as const;
-
-type Connection = EngineDeclaration["connection"];
-
-/** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
-export interface AuthoredMembers {
-  readonly id: string;
-  readonly location: EngineDeclaration["location"];
-  readonly connection: {
-    readonly fields: Connection["fields"];
-    readonly seedOnly: Connection["seedOnly"];
-    readonly refused: Connection["refused"];
-    readonly connectionString: {
-      readonly accepted: Connection["connectionString"]["accepted"];
-      readonly dialogOffersUri: Connection["connectionString"]["dialogOffersUri"];
-    };
-    readonly readsTrustMaterial: Connection["readsTrustMaterial"];
-    readonly credentialWarnings: Connection["credentialWarnings"];
-    readonly connectBudgetMs: Connection["connectBudgetMs"];
-  };
-}
-
-/** Whether `value` is an object, not an array, holding `member` as an own property. */
-function holds(value: unknown, member: string): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.hasOwn(value, member);
-}
-
-/**
- * The authored members of `value`, the parsed text of the declaration file `file`, each read at its dotted path and
- * given as the file states it; the SDK's validator, which admits the file before this runs, holds each to its type.
- *
- * @throws {Error} Naming the file and the member, for a value that lacks an authored member, the first in
- * `AUTHORED_MEMBERS` order; naming the file and the id, for a value whose `id` is not the file's name.
- */
-export function authoredMembersOf(value: unknown, file: string): AuthoredMembers {
-  const read = (member: (typeof AUTHORED_MEMBERS)[number]): unknown => {
-    let current: unknown = value;
-    for (const step of member.split(".")) {
-      if (!holds(current, step) || current[step] === undefined) {
-        throw new Error(`${file} lacks its authored member ${member}`);
-      }
-      current = current[step];
-    }
-    return current;
-  };
-  const authored: AuthoredMembers = {
-    id: read("id") as string,
-    location: read("location") as EngineDeclaration["location"],
-    connection: {
-      fields: read("connection.fields") as Connection["fields"],
-      seedOnly: read("connection.seedOnly") as Connection["seedOnly"],
-      refused: read("connection.refused") as Connection["refused"],
-      connectionString: {
-        accepted: read("connection.connectionString.accepted") as boolean,
-        dialogOffersUri: read("connection.connectionString.dialogOffersUri") as boolean,
-      },
-      readsTrustMaterial: read("connection.readsTrustMaterial") as boolean,
-      credentialWarnings: read("connection.credentialWarnings") as Connection["credentialWarnings"],
-      connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
-    },
-  };
-  if (`${authored.id}.json` !== file) {
-    throw new Error(`${file} names the engine id ${JSON.stringify(authored.id)}, not its file name`);
-  }
-  return authored;
-}
+export {
+  AUTHORED_MEMBERS,
+  type AuthoredMembers,
+  authoredMembersOf,
+  ENGINE_DECLARATIONS_DIRECTORY,
+} from "./generate-engine-catalog";
 
 /** The authored members of the committed declaration of `type`, read from the repository's declarations directory. */
 function committedAuthoredMembers(type: DatabaseType): AuthoredMembers {

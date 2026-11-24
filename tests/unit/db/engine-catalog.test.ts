@@ -3,35 +3,51 @@
  * connection tables, projected from the engine declarations the catalog generator admits (docs/providers/CONTRACT.md,
  * clauses M-70 and M-71).
  *
- * `scripts/generate-engine-catalog.ts` admits every committed declaration through the SDK's digest-checked validator,
- * projects the admitted set with `projectCatalog` and `projectConnectionTables` and renders the projections into
- * `src/lib/db/engine-catalog/catalog.generated.ts` and `connection.generated.ts`, the modules Studio's readers read.
- * This file holds the projections, the admission, the generated modules' bytes and the readers that answer from them.
+ * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog` and
+ * `projectConnectionTables`, renders the projections into `src/lib/db/engine-catalog/catalog.generated.ts`,
+ * `connection.generated.ts` and `connection-flags.generated.ts`, the modules Studio's readers read, and holds each to
+ * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
+ * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
+ * copy of the sources it reads.
  */
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync, copyFileSync } from "node:fs";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
+import type { EngineDeclaration, FieldName } from "@libredb/provider-sdk/manifest";
 import {
   admittedDeclarations,
+  authoredDeclarations,
   ENGINE_CATALOG_MODULE,
+  ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
   renderCatalog,
+  renderConnectionFlags,
   renderConnectionTables,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
 import {
   BUNDLED_CONNECTION_FIELDS,
-  BUNDLED_CONNECTION_STRING_ACCEPTED,
   BUNDLED_CREDENTIAL_WARNINGS,
-  BUNDLED_DIALOG_OFFERS_URI,
-  BUNDLED_READS_TRUST_MATERIAL,
   BUNDLED_REFUSED_FIELDS,
   BUNDLED_SEED_ONLY,
 } from "@/lib/db/engine-catalog/connection.generated";
+import {
+  BUNDLED_CONNECTION_STRING_ACCEPTED,
+  BUNDLED_DIALOG_OFFERS_URI,
+  BUNDLED_READS_TRUST_MATERIAL,
+} from "@/lib/db/engine-catalog/connection-flags.generated";
 import { type ConnectionTables, projectCatalog, projectConnectionTables } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 
@@ -59,6 +75,53 @@ function scratchDirectory(): { readonly directory: string; readonly remove: () =
     copyFileSync(path.join(DIRECTORY, `${declaration.id}.json`), path.join(directory, `${declaration.id}.json`));
   }
   return { directory, remove: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+/**
+ * A scratch copy of the sources the generators read, its node_modules linked to the repository's, so
+ * `bun run engines:generate` runs with the copy as its repository root and never writes the committed tree.
+ */
+function generatingCopy(): {
+  readonly root: string;
+  readonly generate: () => { readonly exitCode: number; readonly stderr: string };
+  readonly remove: () => void;
+} {
+  const root = mkdtempSync(path.join(tmpdir(), "engines-generate-"));
+  for (const entry of ["package.json", "tsconfig.json", "scripts", "src", "packages", "tests/helpers"]) {
+    cpSync(path.join(ROOT, entry), path.join(root, entry), {
+      recursive: true,
+      filter: (source) => path.basename(source) !== "node_modules",
+    });
+  }
+  symlinkSync(path.join(ROOT, "node_modules"), path.join(root, "node_modules"), "junction");
+  return {
+    root,
+    generate: () => {
+      const run = Bun.spawnSync([process.execPath, "run", "engines:generate"], {
+        cwd: root,
+        env: { ...process.env, SEED_CONFIG_PATH: "" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return { exitCode: run.exitCode, stderr: run.stderr.toString() };
+    },
+    remove: () => rmSync(root, { recursive: true, force: true }),
+  };
+}
+
+/** Writes the copy's mongodb declaration with authSource dropped from its connection fields, localDataCenter added. */
+function editMongodbFields(root: string): FieldName[] {
+  const file = path.join(root, ENGINE_DECLARATIONS_DIRECTORY, "mongodb.json");
+  const committed = JSON.parse(readFileSync(file, "utf8"));
+  const fields: FieldName[] = [
+    ...committed.connection.fields.filter((field: FieldName) => field !== "authSource"),
+    "localDataCenter",
+  ];
+  writeFileSync(
+    file,
+    `${JSON.stringify({ ...committed, connection: { ...committed.connection, fields } }, null, 2)}\n`,
+  );
+  return fields;
 }
 
 describe("the engine catalog, projected from the admitted declarations", () => {
@@ -215,17 +278,55 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(() => admittedDeclarations(directory)).toThrow(
         'kafka.json declares the engine id "mqtt", which is not its file name',
       );
+      expect(() => authoredDeclarations(directory)).toThrow('kafka.json names the engine id "mqtt", not its file name');
+
+      const unlocated = JSON.parse(kafka);
+      delete unlocated.location;
+      writeFileSync(path.join(directory, "kafka.json"), JSON.stringify(unlocated));
+      expect(() => authoredDeclarations(directory)).toThrow("kafka.json lacks its authored member location");
 
       writeFileSync(path.join(directory, "kafka.json"), kafka);
       writeFileSync(path.join(directory, "notes.txt"), "kept\n");
       expect(() => admittedDeclarations(directory)).toThrow("notes.txt is not a declaration");
+      expect(() => authoredDeclarations(directory)).toThrow("notes.txt is not a declaration");
 
       rmSync(path.join(directory, "notes.txt"));
       writeFileSync(path.join(directory, "acmefoo.json"), "{");
       expect(() => admittedDeclarations(directory)).toThrow(/^acmefoo\.json is not JSON: /);
+      expect(() => authoredDeclarations(directory)).toThrow(/^acmefoo\.json is not JSON: /);
 
       rmSync(path.join(directory, "acmefoo.json"));
       expect(admittedDeclarations(directory)).toEqual([...ADMITTED]);
+    } finally {
+      scratch.remove();
+    }
+  });
+
+  test("--write's authored members of a declaration the validator refuses until its generated members are rewritten", () => {
+    const scratch = scratchDirectory();
+    try {
+      const { directory } = scratch;
+      const mongodb = admitted("mongodb");
+      const fields: FieldName[] = [
+        ...mongodb.connection.fields.filter((field) => field !== "authSource"),
+        "localDataCenter",
+      ];
+      writeFileSync(
+        path.join(directory, "mongodb.json"),
+        JSON.stringify({ ...mongodb, connection: { ...mongodb.connection, fields } }),
+      );
+
+      // The dialog the declaration generator wrote for the previous fields still places authSource.
+      expect(() => admittedDeclarations(directory)).toThrow(
+        /^mongodb\.json is refused by the provider manifest schema: .*has no placement in the engine's connection dialog\.$/,
+      );
+      const authored = authoredDeclarations(directory);
+      expect(authored.map((d) => d.id)).toEqual(ADMITTED.map((d) => d.id));
+      expect(projectConnectionTables(authored).fields.mongodb).toEqual(fields);
+      // The authored members of an unedited file are the admitted declaration's, so both modes project one set alike.
+      writeFileSync(path.join(directory, "mongodb.json"), JSON.stringify(mongodb));
+      expect(projectConnectionTables(authoredDeclarations(directory))).toEqual(projectConnectionTables(ADMITTED));
+      expect(projectCatalog(authoredDeclarations(directory))).toEqual(projectCatalog(ADMITTED));
     } finally {
       scratch.remove();
     }
@@ -239,8 +340,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(committed).toContain("bun run engines:generate");
   });
 
-  test("the committed connection module is what the generator renders from the admitted declarations", () => {
+  test("the committed connection modules are what the generator renders from the admitted declarations", () => {
     const committed = readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8");
+    const flags = readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8");
     const tables = projectConnectionTables(ADMITTED);
     const bundled: ConnectionTables = {
       fields: BUNDLED_CONNECTION_FIELDS,
@@ -253,28 +355,45 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     };
 
     expect(committed === renderConnectionTables(tables)).toBe(true);
+    expect(flags === renderConnectionFlags(tables)).toBe(true);
     expect(bundled).toEqual(tables);
     // Each record keyed as the projection keys it, in ascending id order.
     for (const name of Object.keys(tables) as (keyof ConnectionTables)[]) {
       expect(Object.keys(bundled[name])).toEqual(Object.keys(tables[name]));
     }
     expect(committed).toContain("bun run engines:generate");
+    expect(flags).toContain("bun run engines:generate");
+    // Each record is written into exactly one of the two modules: the flags module holds the three compatibility.ts
+    // reads, the connection module the other four.
+    const exported = (text: string) => [...text.matchAll(/^export const (\w+)/gm)].map((match) => match[1]);
+    expect(exported(committed)).toEqual([
+      "BUNDLED_CONNECTION_FIELDS",
+      "BUNDLED_SEED_ONLY",
+      "BUNDLED_REFUSED_FIELDS",
+      "BUNDLED_CREDENTIAL_WARNINGS",
+    ]);
+    expect(exported(flags)).toEqual([
+      "BUNDLED_READS_TRUST_MATERIAL",
+      "BUNDLED_CONNECTION_STRING_ACCEPTED",
+      "BUNDLED_DIALOG_OFFERS_URI",
+    ]);
   });
 
   test("the connection module refuses by name a value it cannot write as the formatter lays it out", () => {
     const tables = projectConnectionTables(ADMITTED);
     const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
     const planted = (table: Partial<ConnectionTables>) => () => renderConnectionTables({ ...tables, ...table });
+    const plantedFlag = (table: Partial<ConnectionTables>) => () => renderConnectionFlags({ ...tables, ...table });
 
     expect(planted(refusal("A back\\slash."))).toThrow(
       'The connection module cannot write "A back\\\\slash.": it holds',
     );
     expect(planted(refusal("Caf\u00e9."))).toThrow("it holds a character it does not quote");
     expect(planted(refusal("A tab\there."))).toThrow("it holds a character it does not quote");
-    expect(planted({ readsTrustMaterial: { ...tables.readsTrustMaterial, "acme-foo": true } })).toThrow(
+    expect(plantedFlag({ readsTrustMaterial: { ...tables.readsTrustMaterial, "acme-foo": true } })).toThrow(
       'The connection module cannot write the member "acme-foo"',
     );
-    expect(planted({ dialogOffersUri: { ...tables.dialogOffersUri, qdrant: 1 as unknown as boolean } })).toThrow(
+    expect(plantedFlag({ dialogOffersUri: { ...tables.dialogOffersUri, qdrant: 1 as unknown as boolean } })).toThrow(
       "The connection module cannot write 1",
     );
     // A sentence holding more double quotes than single ones is written in single quotes, as the formatter writes it.
@@ -330,12 +449,16 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(written.exitCode).toBe(0);
       const catalog = path.join(dir, "catalog.generated.ts");
       const connection = path.join(dir, "connection.generated.ts");
-      expect(written.stdout.toString()).toBe(`Wrote ${catalog}\nWrote ${connection}\n`);
+      const flags = path.join(dir, "connection-flags.generated.ts");
+      expect(written.stdout.toString()).toBe(`Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\n`);
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
+      expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
       expect(readFileSync(catalog, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CATALOG_MODULE), "utf8"));
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
-      expect(current.stdout.toString()).toBe(`${catalog} is up to date\n${connection} is up to date\n`);
+      expect(current.stdout.toString()).toBe(
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n`,
+      );
 
       const text = readFileSync(connection, "utf8");
       writeFileSync(connection, text.replace("Nothing was sent.", "Nothing at all was sent."));
@@ -345,17 +468,104 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         `${connection} is not what the engine declarations project\nrun: bun run engines:generate\n`,
       );
 
+      writeFileSync(connection, text);
+      writeFileSync(flags, readFileSync(flags, "utf8").replace("db2: true", "db2: false"));
+      const staleFlags = run("--check", "--out", dir);
+      expect(staleFlags.exitCode).toBe(1);
+      expect(staleFlags.stderr.toString()).toBe(
+        `${flags} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
       rmSync(connection);
       rmSync(catalog);
+      rmSync(flags);
       const missing = run("--check", "--out", dir);
       expect(missing.exitCode).toBe(1);
       expect(missing.stderr.toString()).toBe(
-        `${catalog} is not what the engine declarations project\n${connection} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+        `${catalog} is not what the engine declarations project\n${connection} is not what the engine declarations project\n${flags} is not what the engine declarations project\nrun: bun run engines:generate\n`,
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 20000);
+
+  test("bun run engines:generate regenerates an authored connection.fields change in one run: a placeable field added and a placed one removed", () => {
+    const copy = generatingCopy();
+    try {
+      const fields = editMongodbFields(copy.root);
+      // Studio's side: mongodb's form places localDataCenter and no longer places or hints authSource.
+      const formFile = path.join(copy.root, "src/lib/db/connection-form.ts");
+      const form = readFileSync(formFile, "utf8");
+      const placement = 'fieldPlacement: { authSource: "open" },';
+      const hint =
+        '      authSource:\n        "The database the user was created in, usually admin. Leave empty when the credentials live in the database above.",\n';
+      expect(form.split(placement).length).toBe(2);
+      expect(form.split(hint).length).toBe(2);
+      writeFileSync(
+        formFile,
+        form.replace(placement, 'fieldPlacement: { localDataCenter: "open" },').replace(hint, ""),
+      );
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const regenerated = admittedDeclarations(directory);
+      const mongodb = regenerated.find((d) => d.id === "mongodb");
+      expect(mongodb?.connection.fields).toEqual(fields);
+      expect(mongodb?.connection.dialog.placement).toEqual([{ field: "localDataCenter", where: "open" }]);
+      expect(mongodb?.connection.dialog.hints.map(({ field }) => field)).not.toContain("authSource");
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_MODULE), "utf8")).toBe(
+        renderConnectionTables(projectConnectionTables(regenerated)),
+      );
+      expect(readFileSync(path.join(copy.root, ENGINE_CONNECTION_FLAGS_MODULE), "utf8")).toBe(
+        readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"),
+      );
+      expect(readFileSync(path.join(copy.root, ENGINE_CATALOG_MODULE), "utf8")).toBe(
+        readFileSync(path.join(ROOT, ENGINE_CATALOG_MODULE), "utf8"),
+      );
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "mongodb")) {
+        const file = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, file), "utf8")).toBe(readFileSync(path.join(DIRECTORY, file), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 with the validator's refusal when Studio's tables do not follow an authored change", () => {
+    const copy = generatingCopy();
+    try {
+      // The authored side changes and mongodb's form is left as it was: authSource is still placed, so the declaration
+      // generator refuses the form's first entry for it, and localDataCenter has no placement.
+      editMongodbFields(copy.root);
+      const unplaced = copy.generate();
+      expect(unplaced.exitCode).toBe(1);
+      expect(unplaced.stderr).toContain(
+        'mongodb: the fieldHints entry for "authSource" names a field the engine does not list',
+      );
+
+      // With the form's authSource entries gone and localDataCenter still unplaced, every generator writes, and the
+      // final admission refuses the declaration the run wrote.
+      const formFile = path.join(copy.root, "src/lib/db/connection-form.ts");
+      const form = readFileSync(formFile, "utf8");
+      const placement = '    fieldPlacement: { authSource: "open" },\n';
+      const hint =
+        '      authSource:\n        "The database the user was created in, usually admin. Leave empty when the credentials live in the database above.",\n';
+      writeFileSync(formFile, form.replace(placement, "").replace(hint, ""));
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain(
+        "mongodb.json is refused by the provider manifest schema: The placeable field at /connection/fields/6 has no placement in the engine's connection dialog.",
+      );
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and up to six generator runs take a few seconds; well inside ten times that.
+  }, 60000);
 
   test("SHIPPED_DATABASE_TYPES is the catalog's engines in its order", () => {
     expect<string[]>([...SHIPPED_DATABASE_TYPES]).toEqual(Object.keys(BUNDLED_CATALOG));

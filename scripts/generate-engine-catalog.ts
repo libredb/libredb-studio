@@ -1,28 +1,37 @@
 #!/usr/bin/env bun
 /**
  * Writes Studio's projections of the committed engine declarations: src/lib/db/engine-catalog/catalog.generated.ts,
- * the engine catalog (docs/providers/CONTRACT.md, clause M-70), and src/lib/db/engine-catalog/connection.generated.ts,
- * the data-only connection tables (clause M-71).
+ * the engine catalog (docs/providers/CONTRACT.md, clause M-70), and the data-only connection tables (clause M-71), in
+ * two modules: src/lib/db/engine-catalog/connection.generated.ts, the fields, seed-only fields, refused fields and
+ * credential warnings, and src/lib/db/engine-catalog/connection-flags.generated.ts, the three yes or no answers
+ * src/lib/db/compatibility.ts reads, so that module's readers load the three records and never the other four.
  *
- * Admission happens here, once for every module: every `.json` file of src/lib/db/engine-declarations is parsed and
- * admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes before it
- * compiles them, and the admitted set is projected with `projectCatalog` and `projectConnectionTables`
- * (src/lib/db/engine-catalog/projection.ts). The command refuses, by name, an entry that is not a `.json` file, a file
- * that is not JSON, a declaration the schema refuses, with the validator's refusal sentences, and a declaration whose
- * `id` is not its file name; the projections refuse two declarations of one id. Studio's runtime reads no declaration
- * file: the browser cannot compile the schema under Studio's content security policy, which allows no `eval`, and the
- * published library and the standalone server carry no schema file, so every reader reads a generated module, which
- * tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
+ * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations
+ * is parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
+ * before it compiles them, and each module is held to the projection of the admitted set with `projectCatalog` and
+ * `projectConnectionTables` (src/lib/db/engine-catalog/projection.ts). `--write` projects each file's authored members,
+ * `AUTHORED_MEMBERS`, without admitting the whole file: the validator holds the authored members to members the
+ * declaration generator writes (each dialog entry to `connection.fields`, each host path field to
+ * `connection.seedOnly`), so a file whose authored members just changed is refused until that generator has rewritten
+ * the rest. The command refuses,
+ * by name, an entry that is not a `.json` file, a file that is not JSON, and a declaration whose `id` is not its file
+ * name; `--write` a file that lacks an authored member, `--check` a declaration the schema refuses, with the
+ * validator's refusal sentences; the projections refuse two declarations of one id. Studio's runtime reads no
+ * declaration file: the browser cannot compile the schema under Studio's content security policy, which allows no
+ * `eval`, and the published library and the standalone server carry no schema file, so every reader reads a generated
+ * module, which tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
  *
  * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
- * of the union with no declaration fails the typecheck at the record. The connection module is laid out as the
- * repository's formatter lays it out: a value that fits within the line width stays on one line, one that does not
+ * of the union with no declaration fails the typecheck at the record. The two connection modules are laid out as the
+ * repository's formatter lays them out: a value that fits within the line width stays on one line, one that does not
  * breaks one element or member per line, and a member whose string does not fit puts the string on the next line.
  *
- * `bun run engines:generate` runs this command before scripts/generate-engine-declarations.ts: the declaration
- * generator builds every provider through the factory, which builds only an engine the catalog holds, and both
- * projections read only the members a declaration authors, which the declaration generator writes back unchanged, so
- * one run of this command first is exact.
+ * `bun run engines:generate` runs `--write` before scripts/generate-engine-declarations.ts and `--check` after it. The
+ * declaration generator builds every provider through the factory, which builds only an engine the catalog holds, and
+ * checks each dialog entry and field rule against the projected connection fields, so the projections come first; both
+ * read only the members a declaration authors, which the declaration generator writes back unchanged, so one run is
+ * exact; and `--check` then admits the whole written set, so the run exits 1 with the validator's refusal sentences
+ * when the authored members and Studio's tables still disagree.
  *
  * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
  * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
@@ -33,6 +42,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileManifestValidator, type EngineDeclaration, refusalSentence } from "@libredb/provider-sdk/manifest";
 import {
+  type AuthoredDeclaration,
   type ConnectionTables,
   type EngineCatalog,
   projectCatalog,
@@ -48,6 +58,9 @@ export const ENGINE_CATALOG_MODULE = "src/lib/db/engine-catalog/catalog.generate
 /** The generated connection tables module in the repository. */
 export const ENGINE_CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
 
+/** The generated connection flags module in the repository: the connection tables src/lib/db/compatibility.ts reads. */
+export const ENGINE_CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.generated.ts";
+
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
 const WRITE_COMMAND = "bun run engines:generate";
@@ -56,13 +69,112 @@ const HEADER = [
   `// Generated by scripts/generate-engine-catalog.ts from ${ENGINE_DECLARATIONS_DIRECTORY}; never edit it by hand.`,
   `// Change a declaration's authored member and run: ${WRITE_COMMAND}`,
 ];
-/** The formatter's line width (biome.json), which the connection module's layout keeps to. */
+/** The formatter's line width (biome.json), which the connection modules' layout keeps to. */
 const LINE_WIDTH = 120;
 /**
  * The width under which the formatter keeps a member's string on its key's line however long it is: its indent width,
  * 2, plus the 3 characters a break must save (`user:` keeps its sentence, `message:` breaks before it).
  */
 const SHORT_KEY_WIDTH = 5;
+
+/** The members a declaration authors, as dotted paths: read from its committed file, never built from a table. */
+export const AUTHORED_MEMBERS = [
+  "id",
+  "location",
+  "connection.fields",
+  "connection.seedOnly",
+  "connection.refused",
+  "connection.connectionString.accepted",
+  "connection.connectionString.dialogOffersUri",
+  "connection.readsTrustMaterial",
+  "connection.credentialWarnings",
+  "connection.connectBudgetMs",
+] as const;
+
+type Connection = EngineDeclaration["connection"];
+
+/** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
+export type AuthoredMembers = AuthoredDeclaration;
+
+/** Whether `value` is an object, not an array, holding `member` as an own property. */
+function holds(value: unknown, member: string): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value) && Object.hasOwn(value, member);
+}
+
+/**
+ * The authored members of `value`, the parsed text of the declaration file `file`, each read at its dotted path and
+ * given as the file states it; the SDK's validator, which admits the whole file once the declaration generator has
+ * written it, holds each to its type.
+ *
+ * @throws {Error} Naming the file and the member, for a value that lacks an authored member, the first in
+ * `AUTHORED_MEMBERS` order; naming the file and the id, for a value whose `id` is not the file's name.
+ */
+export function authoredMembersOf(value: unknown, file: string): AuthoredMembers {
+  const read = (member: (typeof AUTHORED_MEMBERS)[number]): unknown => {
+    let current: unknown = value;
+    for (const step of member.split(".")) {
+      if (!holds(current, step) || current[step] === undefined) {
+        throw new Error(`${file} lacks its authored member ${member}`);
+      }
+      current = current[step];
+    }
+    return current;
+  };
+  const authored: AuthoredMembers = {
+    id: read("id") as string,
+    location: read("location") as EngineDeclaration["location"],
+    connection: {
+      fields: read("connection.fields") as Connection["fields"],
+      seedOnly: read("connection.seedOnly") as Connection["seedOnly"],
+      refused: read("connection.refused") as Connection["refused"],
+      connectionString: {
+        accepted: read("connection.connectionString.accepted") as boolean,
+        dialogOffersUri: read("connection.connectionString.dialogOffersUri") as boolean,
+      },
+      readsTrustMaterial: read("connection.readsTrustMaterial") as boolean,
+      credentialWarnings: read("connection.credentialWarnings") as Connection["credentialWarnings"],
+      connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
+    },
+  };
+  if (`${authored.id}.json` !== file) {
+    throw new Error(`${file} names the engine id ${JSON.stringify(authored.id)}, not its file name`);
+  }
+  return authored;
+}
+
+/**
+ * The parsed text of every entry of `directory`, in file name order, with its file name.
+ *
+ * @throws {Error} Naming the entry, for an entry that is not a `.json` file and a file that is not JSON.
+ */
+function declarationFiles(directory: string): { readonly file: string; readonly value: unknown }[] {
+  return readdirSync(directory)
+    .sort()
+    .map((file) => {
+      if (!file.endsWith(".json")) throw new Error(`${file} is not a declaration`);
+      const text = readFileSync(path.join(directory, file), "utf8");
+      try {
+        return { file, value: JSON.parse(text) as unknown };
+      } catch (error) {
+        throw new Error(`${file} is not JSON: ${(error as Error).message}`, { cause: error });
+      }
+    });
+}
+
+/**
+ * The authored members of every declaration of `directory`, in file name order, read without admitting the file:
+ * `--write` projects these, since a file whose authored members just changed still holds the generated members the
+ * previous ones gave until the declaration generator rewrites them, and the validator refuses that mix. The whole set
+ * is admitted afterwards, by `--check`, which `bun run engines:generate` runs last.
+ *
+ * @throws {Error} Naming the entry, for an entry that is not a `.json` file, a file that is not JSON, a file that lacks
+ * an authored member and a file whose `id` is not its file name.
+ */
+export function authoredDeclarations(
+  directory: string = path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY),
+): AuthoredMembers[] {
+  return declarationFiles(directory).map(({ file, value }) => authoredMembersOf(value, file));
+}
 
 /**
  * Every declaration of `directory`, admitted through the SDK's validator, in file name order.
@@ -74,30 +186,20 @@ export function admittedDeclarations(
   directory: string = path.join(REPO_ROOT, ENGINE_DECLARATIONS_DIRECTORY),
 ): EngineDeclaration[] {
   const validator = compileManifestValidator(readFileSync(SCHEMA_FILE));
-  return readdirSync(directory)
-    .sort()
-    .map((file) => {
-      if (!file.endsWith(".json")) throw new Error(`${file} is not a declaration`);
-      const text = readFileSync(path.join(directory, file), "utf8");
-      let value: unknown;
-      try {
-        value = JSON.parse(text);
-      } catch (error) {
-        throw new Error(`${file} is not JSON: ${(error as Error).message}`, { cause: error });
-      }
-      const verdict = validator.validateEngine(value);
-      if (!verdict.admitted) {
-        throw new Error(
-          `${file} is refused by the provider manifest schema: ${verdict.refusals.map(refusalSentence).join(" ")}`,
-        );
-      }
-      if (`${verdict.engine.id}.json` !== file) {
-        throw new Error(
-          `${file} declares the engine id ${JSON.stringify(verdict.engine.id)}, which is not its file name`,
-        );
-      }
-      return verdict.engine;
-    });
+  return declarationFiles(directory).map(({ file, value }) => {
+    const verdict = validator.validateEngine(value);
+    if (!verdict.admitted) {
+      throw new Error(
+        `${file} is refused by the provider manifest schema: ${verdict.refusals.map(refusalSentence).join(" ")}`,
+      );
+    }
+    if (`${verdict.engine.id}.json` !== file) {
+      throw new Error(
+        `${file} declares the engine id ${JSON.stringify(verdict.engine.id)}, which is not its file name`,
+      );
+    }
+    return verdict.engine;
+  });
 }
 
 /** The text of the generated module for `catalog`: a header, two type imports and one frozen record. */
@@ -199,7 +301,7 @@ function laidOut(value: unknown, indent: number, head: string, tail: string, key
 }
 
 /**
- * One exported record of the connection module: its docblock, its declaration up to the record, and what follows it.
+ * One exported record of a connection module: its docblock, its declaration up to the record, and what follows it.
  *
  * @throws {Error} When the docblock's or the declaration's line is wider than the line width, which the formatter
  * would break.
@@ -221,8 +323,8 @@ function renderedRecord(
 }
 
 /**
- * The text of the generated connection module for `tables`: a header, type imports only, and seven frozen records,
- * each read by exactly one owner module.
+ * The text of the generated connection module for `tables`: a header, type imports only, and four frozen records, each
+ * read by exactly one owner module.
  */
 export function renderConnectionTables(tables: ConnectionTables): string {
   return [
@@ -256,6 +358,18 @@ export function renderConnectionTables(tables: ConnectionTables): string {
       tables.credentialWarnings,
       " satisfies Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>>",
     ),
+    "",
+  ].join("\n");
+}
+
+/**
+ * The text of the generated connection flags module for `tables`: a header, one type import, and the three frozen
+ * records src/lib/db/compatibility.ts reads.
+ */
+export function renderConnectionFlags(tables: ConnectionTables): string {
+  return [
+    ...HEADER,
+    'import type { DatabaseType } from "@/lib/types";',
     "",
     ...renderedRecord(
       "Whether each engine's provider is handed trust material, `connection.readsTrustMaterial` (M-71).",
@@ -309,10 +423,13 @@ function main(argv: readonly string[]): number {
   const { mode, out } = parsed;
   const fileOf = (module: string) =>
     out === undefined ? path.join(REPO_ROOT, module) : path.join(path.resolve(out), path.basename(module));
-  const declarations = admittedDeclarations();
+  const declarations: readonly AuthoredDeclaration[] =
+    mode === "--check" ? admittedDeclarations() : authoredDeclarations();
+  const tables = projectConnectionTables(declarations);
   const modules = [
     { file: fileOf(ENGINE_CATALOG_MODULE), text: renderCatalog(projectCatalog(declarations)) },
-    { file: fileOf(ENGINE_CONNECTION_MODULE), text: renderConnectionTables(projectConnectionTables(declarations)) },
+    { file: fileOf(ENGINE_CONNECTION_MODULE), text: renderConnectionTables(tables) },
+    { file: fileOf(ENGINE_CONNECTION_FLAGS_MODULE), text: renderConnectionFlags(tables) },
   ];
 
   if (mode === "--check") {

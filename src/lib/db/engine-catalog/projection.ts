@@ -12,17 +12,20 @@
  * provider is handed the operator's trust material (`connection.readsTrustMaterial`), and whether its provider opens a
  * connection string and its dialog offers one (`connection.connectionString.accepted` and `dialogOffersUri`).
  *
- * Every member either projection reads is one a declaration authors (scripts/generate-engine-declarations.ts,
- * `AUTHORED_MEMBERS`), so neither reads anything the declaration generator writes, and none of them is a claim.
+ * Every member either projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
+ * `AUTHORED_MEMBERS`), so neither reads anything the declaration generator writes, and none of them is a claim. Each
+ * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
+ * members the catalog generator's `--write` reads from a file whose generated members are not yet rewritten.
  *
  * Both projections are pure: their keys are the ids in ascending code-unit order, so the same set gives the same
  * answer whatever order it is admitted in, and removing a declaration gives exactly what a fresh build from the rest
  * gives. Two declarations of one id are refused by name before any entry is built. Every record, row and member they
  * answer is frozen.
  *
- * `scripts/generate-engine-catalog.ts` admits every committed declaration through the SDK's validator, projects the set
- * here and renders the results into `catalog.generated.ts` and `connection.generated.ts`, the modules Studio's readers
- * read. A loader that admits a provider package at run time projects its set through these same functions.
+ * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
+ * results into `catalog.generated.ts`, `connection.generated.ts` and `connection-flags.generated.ts`, the modules
+ * Studio's readers read, and holds each module to the projection of the set it admits through the SDK's validator. A
+ * loader that admits a provider package at run time projects its set through these same functions.
  */
 import type {
   ConnectBudget,
@@ -31,6 +34,26 @@ import type {
   EngineLocation,
   FieldName,
 } from "@libredb/provider-sdk/manifest";
+
+type Connection = EngineDeclaration["connection"];
+
+/** The members of a declaration the projections read, every one a member the declaration authors. */
+export interface AuthoredDeclaration {
+  readonly id: string;
+  readonly location: EngineLocation;
+  readonly connection: {
+    readonly fields: Connection["fields"];
+    readonly seedOnly: Connection["seedOnly"];
+    readonly refused: Connection["refused"];
+    readonly connectionString: {
+      readonly accepted: Connection["connectionString"]["accepted"];
+      readonly dialogOffersUri: Connection["connectionString"]["dialogOffersUri"];
+    };
+    readonly readsTrustMaterial: Connection["readsTrustMaterial"];
+    readonly credentialWarnings: Connection["credentialWarnings"];
+    readonly connectBudgetMs: Connection["connectBudgetMs"];
+  };
+}
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -59,7 +82,10 @@ export interface SeedOnlyTemplate {
 export interface ConnectionTables {
   readonly fields: Readonly<Record<string, readonly FieldName[]>>;
   readonly seedOnly: Readonly<Record<string, SeedOnlyTemplate | null>>;
-  /** Each refused field mapped to its sentence, in the order the declaration lists them, which is the order core checks. */
+  /**
+   * Each refused field mapped to its sentence, in the order the declaration lists them, which is the order core
+   * checks.
+   */
   readonly refused: Readonly<Record<string, Readonly<Partial<Record<FieldName, string>>>>>;
   /** A row only for an engine that declares at least one warning. */
   readonly credentialWarnings: Readonly<Record<string, readonly CredentialWarning[]>>;
@@ -73,7 +99,7 @@ export interface ConnectionTables {
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-function inIdOrder(declarations: readonly EngineDeclaration[]): EngineDeclaration[] {
+function inIdOrder(declarations: readonly AuthoredDeclaration[]): AuthoredDeclaration[] {
   const seen = new Set<string>();
   for (const declaration of declarations) {
     if (seen.has(declaration.id)) throw new Error(`The engine id ${JSON.stringify(declaration.id)} is declared twice.`);
@@ -82,10 +108,13 @@ function inIdOrder(declarations: readonly EngineDeclaration[]): EngineDeclaratio
   return [...declarations].sort((a, b) => (a.id < b.id ? -1 : 1));
 }
 
-/** One frozen record over `ordered`, each declaration's value read by `read`, or no entry where `read` answers undefined. */
+/**
+ * One frozen record over `ordered`, each declaration's value read by `read`, or no entry where `read` answers
+ * undefined.
+ */
 function recordOf<Value>(
-  ordered: readonly EngineDeclaration[],
-  read: (declaration: EngineDeclaration) => Value | undefined,
+  ordered: readonly AuthoredDeclaration[],
+  read: (declaration: AuthoredDeclaration) => Value | undefined,
 ): Readonly<Record<string, Value>> {
   const entries: [string, Value][] = [];
   for (const declaration of ordered) {
@@ -100,7 +129,7 @@ function recordOf<Value>(
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-export function projectCatalog(declarations: readonly EngineDeclaration[]): EngineCatalog {
+export function projectCatalog(declarations: readonly AuthoredDeclaration[]): EngineCatalog {
   return recordOf(inIdOrder(declarations), (declaration) =>
     Object.freeze({ location: declaration.location, connectBudgetMs: declaration.connection.connectBudgetMs }),
   );
@@ -133,7 +162,7 @@ function warningOf(warning: CredentialWarning): CredentialWarning {
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
-export function projectConnectionTables(declarations: readonly EngineDeclaration[]): ConnectionTables {
+export function projectConnectionTables(declarations: readonly AuthoredDeclaration[]): ConnectionTables {
   const ordered = inIdOrder(declarations);
   return Object.freeze({
     fields: recordOf(ordered, ({ connection }) => Object.freeze([...connection.fields])),

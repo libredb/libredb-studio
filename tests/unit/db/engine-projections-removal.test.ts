@@ -4,7 +4,7 @@
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
- * generated module, and none may depend on the order the declarations are admitted in. What is kept on purpose is held
+ * generated modules, and none may depend on the order the declarations are admitted in. What is kept on purpose is held
  * too: a stored connection of an engine the catalog no longer holds stays in the user's list, shown as Unavailable.
  */
 import { describe, expect, test } from "bun:test";
@@ -14,8 +14,10 @@ import { compileManifestValidator, type EngineDeclaration } from "@libredb/provi
 import {
   admittedDeclarations,
   ENGINE_CATALOG_MODULE,
+  ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_MODULE,
   renderCatalog,
+  renderConnectionFlags,
   renderConnectionTables,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
@@ -97,6 +99,9 @@ describe("each projection of the admitted declarations, built with and without a
     expect(renderConnectionTables(removed) === readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8")).toBe(
       true,
     );
+    expect(
+      renderConnectionFlags(removed) === readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"),
+    ).toBe(true);
   });
 
   test("the connection tables are the same whatever order the declarations are admitted in", () => {

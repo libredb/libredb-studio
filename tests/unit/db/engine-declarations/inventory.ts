@@ -22,6 +22,7 @@ export interface InventoryEntry {
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
 const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
 const CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
+const CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.generated.ts";
 
 /** The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. */
 function claim(member: string): string {
@@ -154,29 +155,29 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
       "engine declaration: id, location and connection.connectBudgetMs, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them",
   },
   {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_CONNECTION_STRING_ACCEPTED",
+    destination: projected("connection.connectionString.accepted"),
+  },
+  {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_DIALOG_OFFERS_URI",
+    destination: projected("connection.connectionString.dialogOffersUri"),
+  },
+  {
+    module: CONNECTION_FLAGS_MODULE,
+    name: "BUNDLED_READS_TRUST_MATERIAL",
+    destination: projected("connection.readsTrustMaterial"),
+  },
+  {
     module: CONNECTION_MODULE,
     name: "BUNDLED_CONNECTION_FIELDS",
     destination: projected("connection.fields"),
   },
   {
     module: CONNECTION_MODULE,
-    name: "BUNDLED_CONNECTION_STRING_ACCEPTED",
-    destination: projected("connection.connectionString.accepted"),
-  },
-  {
-    module: CONNECTION_MODULE,
     name: "BUNDLED_CREDENTIAL_WARNINGS",
     destination: projected("connection.credentialWarnings"),
-  },
-  {
-    module: CONNECTION_MODULE,
-    name: "BUNDLED_DIALOG_OFFERS_URI",
-    destination: projected("connection.connectionString.dialogOffersUri"),
-  },
-  {
-    module: CONNECTION_MODULE,
-    name: "BUNDLED_READS_TRUST_MATERIAL",
-    destination: projected("connection.readsTrustMaterial"),
   },
   {
     module: CONNECTION_MODULE,

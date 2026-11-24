@@ -46,12 +46,16 @@ interface DeclarationReader {
 /** The catalog's members, M-70: members every declaration authors, M-15. */
 const CATALOG_MEMBERS = ["id", "location", "connection.connectBudgetMs"] as const;
 
-/** The data-only connection tables' members, M-71: members every declaration authors, M-15. */
+/** The members of the data-only connection tables the connection module holds, M-71: authored members, M-15. */
 const CONNECTION_TABLE_MEMBERS = [
   "connection.fields",
   "connection.seedOnly",
   "connection.refused",
   "connection.credentialWarnings",
+] as const;
+
+/** The members of the connection tables the connection flags module holds, the three compatibility.ts reads, M-71. */
+const CONNECTION_FLAG_MEMBERS = [
   "connection.readsTrustMaterial",
   "connection.connectionString.accepted",
   "connection.connectionString.dialogOffersUri",
@@ -69,7 +73,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "connection.connectionString.dialogOffersUri",
     ],
     reason:
-      "the shipped engines and each engine's location, read from the engine catalog, and three connection records, read from the connection tables",
+      "the shipped engines and each engine's location, read from the engine catalog, and three connection records, read from the connection flags",
   },
   {
     path: "src/lib/db/connect-budget.ts",
@@ -92,13 +96,18 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "the engine catalog, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/connection-flags.generated.ts",
+    members: CONNECTION_FLAG_MEMBERS,
+    reason: "the connection tables compatibility.ts reads, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/connection.generated.ts",
     members: CONNECTION_TABLE_MEMBERS,
-    reason: "the data-only connection tables, generated from the admitted declarations",
+    reason: "the other data-only connection tables, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/engine-catalog/projection.ts",
-    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS],
+    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS, ...CONNECTION_FLAG_MEMBERS],
     reason: "projects the admitted declarations into the engine catalog and the connection tables",
   },
 ];

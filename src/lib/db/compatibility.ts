@@ -26,7 +26,7 @@ import {
   BUNDLED_CONNECTION_STRING_ACCEPTED,
   BUNDLED_DIALOG_OFFERS_URI,
   BUNDLED_READS_TRUST_MATERIAL,
-} from "./engine-catalog/connection.generated";
+} from "./engine-catalog/connection-flags.generated";
 import type { ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
@@ -305,8 +305,8 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * the Factory").
  *
  * Each row is the engine's `connection.readsTrustMaterial`, authored in its declaration and projected into
- * `./engine-catalog/connection.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen Record
- * over the union, so a new type-id cannot join without someone answering, and
+ * `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
+ * Record over the union, so a new type-id cannot join without someone answering, and
  * `tests/security/provider-trust-material.test.ts` holds every entry against the material that engine's provider
  * holds when the factory builds it.
  */
@@ -714,9 +714,9 @@ export const MASKING_EXEMPT_COLUMNS: Readonly<
  * `PROFILE_ENGINE_NOT_REVIEWED` and plan mode and the operations workflow run ungrounded; it is not
  * routed to `agent-operations` instead, because a composed statement is a statement.
  *
- * Held in this module, which imports nothing but types and the generated engine catalog modules on purpose: it is read
- * by the unauthenticated login hero, and a provider module here would drag `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so
- * no code widens it at run time.
+ * Held in this module, which imports nothing but types, the generated engine catalog and the generated connection
+ * flags on purpose: it is read by the unauthenticated login hero, and a provider module here would drag
+ * `oracledb`/`mssql` toward that bundle. Frozen like the records beside it, so no code widens it at run time.
  */
 export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
   "postgres",
@@ -1244,9 +1244,9 @@ export const READ_ROOTS_REQUIRED_SENTENCE =
  * will, to keep a pasted URI verbatim only where this answers true, as the form's paste keeps it.
  *
  * Each row is the engine's `connection.connectionString.dialogOffersUri`, authored in its declaration and projected
- * into `./engine-catalog/connection.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
- * Record over the union, so a new type-id cannot join without someone answering, held equal to the form's own answer
- * for every type by `tests/unit/db/connection-string-records.test.ts`.
+ * into `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive
+ * frozen Record over the union, so a new type-id cannot join without someone answering, held equal to the form's own
+ * answer for every type by `tests/unit/db/connection-string-records.test.ts`.
  */
 export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_DIALOG_OFFERS_URI;
 
@@ -1259,8 +1259,8 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
  * ignores the string would list a connection that opens somewhere else than the file says.
  *
  * Each row is the engine's `connection.connectionString.accepted`, authored in its declaration and projected into
- * `./engine-catalog/connection.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen Record
- * over the union, held equal to every other shipped provider's declaration by the census in
+ * `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
+ * Record over the union, held equal to every other shipped provider's declaration by the census in
  * `tests/unit/db/connection-string-records.test.ts`, and pinned there for the two exceptions by behavioural tests:
  * sqlite opens the file a `file:` string names (docs/providers/sqlite.md), and mssql builds a string-only config
  * against localhost (docs/providers/mssql.md).
