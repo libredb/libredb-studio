@@ -129,6 +129,10 @@ export interface AgentCatalogRead {
    * the statement `compose` answered (`admitComposedStatement` in `db/operations/statement-guard.ts`), so the same
    * text written by the model is refused as before. A composer it covers answers one statement, carries no comment,
    * and quotes every name it takes, which `engine-pack-contract.test.ts` holds.
+   *
+   * A claim (docs/providers/CONTRACT.md, clauses M-53 and M-54): an engine declaration requests it at
+   * `agent.overlay.dialect.catalogRead.commandShaped`, and this overlay grants it as Studio's review record while the
+   * overlay is outside any provider package.
    */
   readonly commandShaped?: true;
   /**

@@ -101,7 +101,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "influxql"
+    "statementLanguage": "influxql",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

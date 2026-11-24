@@ -363,7 +363,7 @@ An engine declares at most one `no-secret` warning, and each warning reads only 
 The manifest holds no code: where an engine has a function, its declaration names it, and the package exports it.
 A name is a lower-case letter followed by up to 63 letters or digits, `functionName` in the schema, and it is local to its engine, so two engines of one package may each have a function of one name.
 A package names its functions freely.
-Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause, and, for the migration DDL functions, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, `columnDef`, `createIndex`, `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable`, and, for the SQL generator forms, `generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`.
+Studio's own declarations name each function by the slot it fills: `<field>Check` for a field rule's check, `hostHint`, `hostIdentity`, `importer` for the connection import, `urlTls`, `pasteReader` and `seedCheck` for the connection string's URL TLS reader, paste reader and seed check, `redactionReader` for a command redaction's reader, `formatSegment` and `readQuotedQualifier` for the completion readers, and, for the SQL writing functions, `escapeLiteral`, `unescapeLiteral`, `quoteIdentifier`, `placeholder`, `temporalLiteral`, `insertDocuments`, `boundEdit`, `binaryLiteral`, `rewriteDeclared`, `declareFromSample`, `typedLiteral`, `columnWriters` and `createTableKeyClause` for the create table key's clause, and, for the migration DDL functions, `createTablePrimaryKey` and `createTableForeignKey` for a written CREATE TABLE's key writers, `createTableRefusal` for a refused one's line, `columnDef`, `createIndex`, `dropIndex`, `addForeignKey`, `dropForeignKey`, `addColumn`, `dropColumn`, `modifyColumn` and `dropTable`, and, for the SQL generator forms, `generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`, and, for the agent overlay, `catalogColumns`, `catalogRelations`, `catalogIndexes` and `catalogStatistics` for the catalog read's composers, `declaredSchema`, `retryMatches`, `retryRewrite` and `mapRows`, `emailShapeTest` and `digitRunShapeTest` for a profile's shape tests, `statisticsBuild`, `captureBuild` and `groundingOverride`.
 Studio's census holds every name its declarations give to the very function Studio runs, by identity and never by the function's own name, and finds no function Studio runs that a declaration does not name.
 
 - schema `/$defs/functionName`
@@ -380,6 +380,8 @@ Studio's census holds every name its declarations give to the very function Stud
 - test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an agent overlay declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own overlay module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every function an engine's server overlay holds is named at its slot by its engine's declaration, and no slot the overlay leaves empty is named"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -706,6 +708,7 @@ Each claim has a restrictive value, the answer under which the gates that read i
 `sqlText.redaction`: `none`, so the query event log keeps nothing of the statement's text; its record is the `redaction` of the engine's `SQL_GRAMMAR` row.
 `policy.agentCredentialForm`: `none`, so every agent credential is refused at every agent acquisition; its record is `AGENT_CREDENTIAL_FORM`, whose null row a declaration writes `pair`.
 `policy.maskingExemptColumns`: null, so every column the masking rules match stays masked; its record is `MASKING_EXEMPT_COLUMNS`.
+`agent.overlay.dialect.catalogRead.commandShaped`: false, so the statement fence admits no composed catalog command and refuses it as it refuses the model's; its record is the engine's server overlay in Studio's agent overlay registry.
 Every restrictive value is a request the schema admits.
 
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
@@ -734,6 +737,8 @@ Every restrictive value is a request the schema admits.
 - test `tests/unit/lib/query-events/redact.test.ts` "every redaction vector produces its redacted text and fingerprint"
 - test `tests/isolated/factory.test.ts` "libredb takes no agent credential and refuses %s before it connects"
 - test `tests/unit/components/results-grid-masking-exemption.test.ts` "the rules themselves are untouched: with no declaration the same column is still masked"
+- test `tests/unit/lib/agent/composed-catalog-admission-drive.test.ts` "an overlay that does not declare its catalog read a command gets the ordinary refusal"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a catalog read that claims no command, the claim's restrictive value, is admitted"
 
 ### M-54 (informative): How a host grants a claim
 
@@ -744,7 +749,7 @@ A write reach request is capped at the grant: a request of `none` on an engine w
 A set of things a gate admits, refuses or keeps apart, `connection.hostPathFields`, is read as the union of the request and the grant, and a set of things a gate offers, `facets.agentReadings`, as their intersection.
 A claim whose values M-53 does not order, such as two statement languages, two agent credential forms or two redactions other than `none`, is read as its grant where the request equals it, and at its restrictive value otherwise.
 An SSH tunnel request that is refused keeps its own sentence, a request offered against a refused grant takes the record's sentence, and one offered where no grant exists takes the host's own sentence.
-A record whose rows are declared beside each provider in Studio's source, `ENGINE_FACETS` and `SQL_GRAMMAR`, is Studio's review record while those rows are outside any provider package.
+A record whose rows are declared beside each provider or engine in Studio's source, `ENGINE_FACETS`, `SQL_GRAMMAR` and the agent overlay registry, is Studio's review record while those rows are outside any provider package.
 The change that moves a provider whose row records a claim into a package, or the first change that makes Studio read that claim from a declaration, whichever comes first, keeps the claim's row in a core record keyed by the engine, so a package never carries its own grant.
 Studio reads no declaration's claims yet, M-52, so nothing checks this rule, and the change that first makes Studio read them applies it and adds its enforcer.
 
@@ -936,6 +941,74 @@ A provider whose engine family's servers accept different maintenance may measur
 A refused placement is withdrawn, an operation left with none leaves the list, and nothing is added or widened, so every label, confirmation and preview stays as declared.
 The maintenance routes after connect, and the Operations and Tables tabs through the monitoring answer, read the connected provider's narrowed declaration.
 The declaration states the maintenance before any connection, and no member states a connection's narrowing, as M-63 leaves billed compute to the connected provider.
+
+### M-67 (normative): An engine's agent overlay
+
+`agent.overlay` states how agent mode composes on the engine.
+It is null exactly where the engine speaks no statement language.
+Otherwise it states the engine's SQL dialect, null on every family but SQL, and a named derivation of its family's grounding, or null where the engine keeps its family's.
+Every function is named by the slot it fills and the package exports it, M-31.
+The client view of a dialect and an engine's family are derived, the client view supplied exactly where the server member is, and no member states them.
+No member states whether agent mode runs on the engine: the engines agent and MCP statements run on are `AGENT_EXECUTION_ENGINES` alone, C-39.
+The other members Studio's overlay type lets an engine override are not in this contract.
+For every engine Studio ships, the census reads each member back through Studio's overlay registries and holds each name to the very function the engine's overlay holds.
+
+- schema `/$defs/agentOverlay`
+- schema `/$defs/agent/properties/overlay`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent overlay member Studio's declaration has no place for is refused as unknown-key"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine that speaks a statement language with no agent overlay is refused as agent-overlay-missing"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent overlay on an engine that speaks no statement language is refused as agent-overlay-unspoken"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL engine with no dialect is refused as agent-dialect-missing"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a dialect on an engine of another family is refused as agent-dialect-unspoken"
+- test `tests/unit/db/engine-declarations.test.ts` "the server registry holds each engine module's overlay, member by member"
+- test `tests/unit/db/engine-declarations.test.ts` "every data member of each declared dialect is what the server registry's dialect holds, null where it is unsupported"
+- test `tests/unit/db/engine-declarations.test.ts` "every engine's server facet, through runServerPack, is its family's with exactly the derivations its declaration names"
+- test `tests/unit/db/engine-declarations.test.ts` "each engine's family and client dialect, through the client registry, are its declared language and the client view of its declared dialect"
+- test `tests/unit/db/engine-declarations.test.ts` "the SQL catalog and composer requirements and the composed capture hold on exactly the engines whose declared dialect supplies them"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration's agent overlay holds exactly the members of the schema's overlay and SQL dialect"
+- test `tests/unit/db/engine-declarations.test.ts` "an agent overlay member the declaration has no place for, a grounding given as a value, and a pattern flag it does not take are refused by name by the generator"
+- test `tests/unit/db/engine-declarations.test.ts` "agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it"
+
+### M-68 (normative): The SQL dialect
+
+Its catalog read names a composer per catalog kind, an optional schema fold, an optional retry and an optional row mapper, and says whether its statement is a command.
+Its estimating plan is a prefix that opens with EXPLAIN and holds no word that executes the plan, or a session mode, since one strip built from every engine's prefix serves every engine.
+Its profile names two shape tests and the type patterns of the columns it leaves out.
+Its statistics name a builder and an optional probe and note.
+Its capture lists the catalog kinds it reads in order, a builder, and the engine's words for the object kinds the provider declares, each word once.
+A member is null where the engine composes none.
+A statistics reading or a capture is stated only beside a catalog read.
+
+- schema `/$defs/sqlDialect`
+- schema `/$defs/catalogRead`
+- schema `/$defs/planEstimatePrefix`
+- schema `/$defs/captureKindWord`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an estimating plan that is neither an EXPLAIN prefix nor the session mode is refused as no-variant"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statistics reading without a catalog read is refused as statistics-without-catalog-read"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a catalog capture without a catalog read is refused as catalog-capture-without-catalog-read"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a kind word given twice is refused as capture-kind-word-duplicate, at the later one"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an estimating prefix that executes the plan is refused as plan-estimate-prefix-executes"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a profile type pattern that does not compile is refused as pattern-invalid"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's agent overlay is held to its rules, at pointers into it"
+- test `tests/unit/lib/agent/engine-overlays.test.ts` "an engine that reads statistics also reads its catalog, since the statistics read is a catalog kind"
+- test `tests/unit/lib/agent/engine-overlays.test.ts` "an engine that captures its catalog also composes every kind it captures"
+
+### M-69 (normative): A composed statement meets the statement fence
+
+Every statement a dialect composes is checked as a statement the model wrote is.
+The catalog read and its statistics kind are checked as a bounded read, the estimating plan and the profile as a bounded read that refuses plan execution, and the statistics probe as a plain read.
+So a dialect widens what agent mode composes on an engine it already runs on, never where it runs or what the fence admits.
+The one exception is a catalog read whose statement is a command: the fence admits that one statement by identity, still refusing a comment or a word with a side effect, and the claim is `commandShaped`, M-53.
+
+- test `tests/unit/db/operations/statement-guard.test.ts` "only the plan-execution schema admits EXPLAIN ANALYZE"
+- test `tests/unit/db/operations/statement-guard.test.ts` "the query read admits the statement the server composed, though its verb is no read"
+- test `tests/unit/db/operations/statement-guard.test.ts` "the same text with no admission is refused as it always was"
+- test `tests/unit/db/operations/statement-guard.test.ts` "an admission a caller wrote itself is refused, as any text a model sends would be"
+- test `tests/unit/db/operations/statement-guard.test.ts` "only the query read takes an admission: plan inspection and the profile keep the strict read input"
+- test `tests/unit/db/operations/statement-guard.test.ts` "only the catalog read mints an admission, for the catalog statement itself or for its statistics kind"
+- test `tests/unit/lib/agent/composed-catalog-admission-drive.test.ts` "the identical command written by the model is refused before it is sent, as it always was"
+- test `tests/unit/lib/agent/elasticsearch-catalog-read.test.ts` "each composed command is admitted by identity, and refused as model text"
+- test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
 
 ## Values
 
@@ -2512,7 +2585,7 @@ The host's reader of a native provider's tree answer, which arrives with the fir
 
 These chapters are added by the changes that bring their enforcers:
 
-- The machine redaction a provider declares once built and the object kinds a maintenance spec names, with the object model; the agent overlay; and presentation (an icon and a colour).
+- The machine redaction a provider declares once built and the object kinds a maintenance spec names, with the object model; and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
@@ -2565,6 +2638,8 @@ Against the manifest sketch the design started from:
 - Billed compute is answered per connection and stated by no member, M-63.
 - Each maintenance operation's spec is an entry naming its operation, and every operation the maintenance list names has one, M-64.
 - A maintenance spec's placements, confirmation and preview are the provider's statements, never claims, and only kill is placed nowhere, M-64 and M-65.
+- An engine's agent overlay is a member of its agent segment, its dialect's functions named and its client view derived, never declared, M-67 and M-68.
+- Whether a catalog read's statement is a command is the agent overlay's one claim, read from Studio's overlay registry, M-53 and M-69.
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
 - The object tree is one facet, `objects.tree`, whose request names its action; the sketch named five wire methods, `objects/containers`, `objects/count`, `objects/list`, `objects/describe` and `objects/describeMany`, C-61.
 

@@ -80,6 +80,19 @@
  * row, the user and password together, is written `pair`, and `maskingExemptColumns` from `MASKING_EXEMPT_COLUMNS`
  * (clauses M-58 and M-59).
  *
+ * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
+ * (clause M-67): null where the engine speaks no statement language; otherwise its dialect, null where the overlay holds
+ * none, each dialect member null where the overlay says `"unsupported"`, and its grounding override, null where the
+ * engine keeps its family's. Each function is named by its slot: `catalogColumns`, `catalogRelations`, `catalogIndexes`
+ * and `catalogStatistics` for the catalog read's composers, `declaredSchema`, `retryMatches`, `retryRewrite` and
+ * `mapRows`, `emailShapeTest` and `digitRunShapeTest` for a profile's shape tests, `statisticsBuild`, `captureBuild` and
+ * `groundingOverride`. The command flag is written as `=== true`, each profile type pattern as its source and flags, an
+ * optional member the overlay leaves out null, and the capture's kind words as `{ word, kind }` entries in the record's
+ * key order. The registry is no provider module, so the sentence above on provider modules stays true. The generator
+ * refuses by name a member of the overlay it has no place for, the two overridable members besides grounding among
+ * them until the contract states them, a plan form that is neither prefix nor session-mode, a grounding given as a
+ * value, and a profile type pattern whose flags are not none, i, u or iu.
+ *
  * The facets come from the engine's `ENGINE_FACETS` row, except the maintenance specs, which are the provider's own
  * statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64): one per operation of the row's
  * maintenance list, in that order, a title, description, confirmation or kinds the provider leaves out written null and
@@ -123,7 +136,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
+  AgentOverlay,
   BoundedPattern,
+  CatalogCapture,
+  CatalogRead,
   ClausePattern,
   ConnectionDialog,
   ConnectionStringOffer,
@@ -138,19 +154,30 @@ import type {
   MigrationDdl,
   NameQuote,
   PlaceableFieldName,
+  PlanEstimate,
+  ProfileComposition,
+  ProfileTypePattern,
   QueryDialectRow,
   Safeguards,
   SelectFieldName,
+  SqlDialect,
   SqlGenerators,
   SqlText,
   SqlWriting,
   StatementRedaction,
+  StatisticsReading,
   TypeFamilies,
   TypePattern,
   WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
+import type { AgentCatalogRead, AgentPlanEstimate } from "../src/lib/agent/composed-sql-primitives";
+import { engineServerOverlay } from "../src/lib/agent/languages/engines/server";
+import type { AgentEngineServerDialect, Unsupported } from "../src/lib/agent/languages/pack";
+import type { AgentCatalogCapture } from "../src/lib/agent/catalog-rows";
+import type { AgentStatisticsReading } from "../src/lib/agent/schema-stats";
+import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import {
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
@@ -1092,6 +1119,171 @@ export function buildSqlGenerators(
   };
 }
 
+/** The members of each part of an agent overlay the declaration places: a key a part's list lacks would be dropped. */
+const AGENT_OVERLAY_MEMBERS = {
+  overlay: ["dialect", "grounding"],
+  dialect: ["catalogRead", "planEstimate", "profileComposition", "statistics", "catalogCapture"],
+  catalogRead: ["compose", "declaredSchema", "retry", "commandShaped", "mapRows"],
+  compose: ["columns", "relations", "indexes", "statistics"],
+  retry: ["matches", "rewrite"],
+  prefix: ["kind", "prefix"],
+  sessionMode: ["kind", "mode"],
+  profileComposition: ["shapeTests", "incomparableType", "uncountableType"],
+  shapeTests: ["email", "digitRun"],
+  statistics: ["probe", "build", "limitNote"],
+  catalogCapture: ["kinds", "build", "kindWords"],
+} as const satisfies Readonly<Record<string, readonly string[]>>;
+
+/**
+ * Throws an error naming the engine and the member where `part`, at the dotted path `at` of an agent overlay, has a key
+ * the declaration does not write. The keys are read with `Object.keys`, so a key a spread carried in is read too.
+ */
+function refuseUnplacedAgentOverlayMembers(
+  type: DatabaseType,
+  part: object,
+  at: string,
+  members: readonly string[],
+): void {
+  for (const key of Object.keys(part)) {
+    if (!members.includes(key)) {
+      throw new Error(`${type}: the agent overlay member "${at}${key}" has no place in the engine declaration`);
+    }
+  }
+}
+
+/** A profile's type pattern as its source and flags, or a thrown error naming the pattern where its flags are not allowed. */
+function profileTypePattern(pattern: RegExp, member: string, type: DatabaseType): ProfileTypePattern {
+  const { source, flags } = pattern;
+  if (!TYPE_PATTERN_FLAGS.includes(flags)) {
+    throw new Error(`${type}: the profile type pattern ${member} has flags "${flags}", which are not none, i, u or iu`);
+  }
+  return { source, flags: flags as ProfileTypePattern["flags"] };
+}
+
+/** A catalog read in the declaration's form: each function named by its slot, an optional member it leaves out null. */
+function catalogRead(type: DatabaseType, read: AgentCatalogRead | Unsupported): CatalogRead {
+  if (read === "unsupported") return null;
+  refuseUnplacedAgentOverlayMembers(type, read, "dialect.catalogRead.", AGENT_OVERLAY_MEMBERS.catalogRead);
+  refuseUnplacedAgentOverlayMembers(type, read.compose, "dialect.catalogRead.compose.", AGENT_OVERLAY_MEMBERS.compose);
+  if (read.retry !== undefined) {
+    refuseUnplacedAgentOverlayMembers(type, read.retry, "dialect.catalogRead.retry.", AGENT_OVERLAY_MEMBERS.retry);
+  }
+  return {
+    compose: {
+      columns: "catalogColumns",
+      relations: "catalogRelations",
+      indexes: "catalogIndexes",
+      statistics: "catalogStatistics",
+    },
+    declaredSchema: read.declaredSchema === undefined ? null : "declaredSchema",
+    retry: read.retry === undefined ? null : { matches: "retryMatches", rewrite: "retryRewrite" },
+    commandShaped: read.commandShaped === true,
+    mapRows: read.mapRows === undefined ? null : "mapRows",
+  };
+}
+
+/**
+ * An estimating plan in the declaration's form: its prefix, or the session mode. One case per form Studio's
+ * `AgentPlanEstimate` allows, so a form Studio adds fails typecheck here, and a form the type does not allow that
+ * reaches the generator at run time is a thrown error naming the engine, never written as another form.
+ */
+function planEstimate(type: DatabaseType, estimate: AgentPlanEstimate | Unsupported): PlanEstimate {
+  if (estimate === "unsupported") return null;
+  switch (estimate.kind) {
+    case "prefix":
+      refuseUnplacedAgentOverlayMembers(type, estimate, "dialect.planEstimate.", AGENT_OVERLAY_MEMBERS.prefix);
+      return { kind: "prefix", prefix: estimate.prefix };
+    case "session-mode":
+      refuseUnplacedAgentOverlayMembers(type, estimate, "dialect.planEstimate.", AGENT_OVERLAY_MEMBERS.sessionMode);
+      return { kind: "session-mode", mode: estimate.mode };
+    default: {
+      const unknown: never = estimate;
+      throw new Error(
+        `${type}: the agent overlay member "dialect.planEstimate.kind" is "${(unknown as { kind: string }).kind}", neither prefix nor session-mode`,
+      );
+    }
+  }
+}
+
+/** A profile composition in the declaration's form: the shape tests named by their slots, each pattern by its source and flags. */
+function profileComposition(type: DatabaseType, profile: AgentProfileComposition | Unsupported): ProfileComposition {
+  if (profile === "unsupported") return null;
+  const at = "dialect.profileComposition.";
+  refuseUnplacedAgentOverlayMembers(type, profile, at, AGENT_OVERLAY_MEMBERS.profileComposition);
+  refuseUnplacedAgentOverlayMembers(type, profile.shapeTests, `${at}shapeTests.`, AGENT_OVERLAY_MEMBERS.shapeTests);
+  return {
+    shapeTests: { email: "emailShapeTest", digitRun: "digitRunShapeTest" },
+    incomparableType: profileTypePattern(profile.incomparableType, "incomparableType", type),
+    uncountableType:
+      profile.uncountableType === undefined
+        ? null
+        : profileTypePattern(profile.uncountableType, "uncountableType", type),
+  };
+}
+
+/** A statistics reading in the declaration's form: its probe, its builder named by its slot, and its note or null. */
+function statisticsReading(type: DatabaseType, reading: AgentStatisticsReading | Unsupported): StatisticsReading {
+  if (reading === "unsupported") return null;
+  refuseUnplacedAgentOverlayMembers(type, reading, "dialect.statistics.", AGENT_OVERLAY_MEMBERS.statistics);
+  return { probe: reading.probe, build: "statisticsBuild", limitNote: reading.limitNote ?? null };
+}
+
+/** A catalog capture in the declaration's form: its kinds in order, its builder named by its slot, its kind words in key order. */
+function catalogCapture(type: DatabaseType, capture: AgentCatalogCapture | Unsupported): CatalogCapture {
+  if (capture === "unsupported") return null;
+  refuseUnplacedAgentOverlayMembers(type, capture, "dialect.catalogCapture.", AGENT_OVERLAY_MEMBERS.catalogCapture);
+  return {
+    kinds: [...capture.kinds],
+    build: "captureBuild",
+    kindWords: Object.entries(capture.kindWords).map(([word, kind]) => ({ word, kind })),
+  };
+}
+
+/** An SQL dialect in the declaration's form, member by member in the order of the schema's `sqlDialect`. */
+function sqlDialect(type: DatabaseType, dialect: AgentEngineServerDialect): SqlDialect {
+  refuseUnplacedAgentOverlayMembers(type, dialect, "dialect.", AGENT_OVERLAY_MEMBERS.dialect);
+  return {
+    catalogRead: catalogRead(type, dialect.catalogRead),
+    planEstimate: planEstimate(type, dialect.planEstimate),
+    profileComposition: profileComposition(type, dialect.profileComposition),
+    statistics: statisticsReading(type, dialect.statistics),
+    catalogCapture: catalogCapture(type, dialect.catalogCapture),
+  };
+}
+
+/**
+ * One engine's agent overlay, read from its server overlay in Studio's agent overlay registry (`engineServerOverlay`, a
+ * parameter, so a test can hand the generator another): null where the engine speaks no statement language; otherwise
+ * its dialect, null where the overlay holds none, and its grounding override named by its slot, `groundingOverride`, or
+ * null where the overlay leaves the family's. A member the declaration has no place for, an overlay on an engine that
+ * speaks no statement language, a plan form that is neither prefix nor session-mode, a grounding given as a value
+ * rather than a derivation, and a profile type pattern whose flags the contract does not allow are thrown errors naming
+ * the engine.
+ */
+export function buildAgentOverlay(
+  type: DatabaseType,
+  overlay: ReturnType<typeof engineServerOverlay> = engineServerOverlay(type),
+): AgentOverlay {
+  if (AGENT_STATEMENT_LANGUAGE[type] === null) {
+    if (Object.keys(overlay).length > 0) {
+      throw new Error(
+        `${type}: the engine speaks no statement language, so its agent overlay has no place in the engine declaration`,
+      );
+    }
+    return null;
+  }
+  refuseUnplacedAgentOverlayMembers(type, overlay, "", AGENT_OVERLAY_MEMBERS.overlay);
+  if (overlay.grounding !== undefined && typeof overlay.grounding !== "function") {
+    throw new Error(
+      `${type}: the agent overlay gives grounding as a value, which the declaration names only as a derivation`,
+    );
+  }
+  return {
+    dialect: overlay.dialect === undefined ? null : sqlDialect(type, overlay.dialect),
+    grounding: overlay.grounding === undefined ? null : "groundingOverride",
+  };
+}
+
 /** One write path's answer as the provider declares it, in the declaration's form: a proof the provider names none of null. */
 function writePathEvidence(path: WritePathReach): WritePathEvidence {
   if (path.reach === "gated") return { reach: "gated", gate: { module: path.gate.module, symbol: path.gate.symbol } };
@@ -1246,7 +1438,7 @@ export function buildEngineDeclaration(type: DatabaseType, capabilities: Provide
       maintenanceSpecs: buildMaintenanceSpecs(type, capabilities),
       agentReadings: [...facets.agentReadings],
     },
-    agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type] },
+    agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type], overlay: buildAgentOverlay(type) },
     editor: buildEditor(type, capabilities),
     sqlText: buildSqlText(type),
     sqlWriting: buildSqlWriting(type),

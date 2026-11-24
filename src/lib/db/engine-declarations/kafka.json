@@ -99,7 +99,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "kafkaread"
+    "statementLanguage": "kafkaread",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

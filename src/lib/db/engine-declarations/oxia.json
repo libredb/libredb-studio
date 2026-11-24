@@ -119,7 +119,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "oxiacli"
+    "statementLanguage": "oxiacli",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

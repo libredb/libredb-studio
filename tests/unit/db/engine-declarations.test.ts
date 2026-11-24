@@ -17,6 +17,8 @@ import {
   type AgentCredentialFormClaim,
   type BlockCommentRule,
   type BracketRule,
+  type CatalogCompose,
+  type CatalogKind,
   compileManifestValidator,
   type CreateTable,
   type CredentialWarning as ManifestCredentialWarning,
@@ -41,6 +43,7 @@ import {
   type MonacoLanguageId,
   type NonFiniteLiterals,
   type PlaceableFieldName,
+  type PlanEstimateSessionMode,
   type PolicyClaims,
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
@@ -49,6 +52,7 @@ import {
   type ScriptFacts,
   type ScriptUnit,
   type SelectFieldName,
+  type SqlDialect,
   type StatementLanguage,
   type StatementRedaction,
   type TypeFamilies,
@@ -65,6 +69,7 @@ import type {
   SqlGrammar,
 } from "@libredb/provider-sdk/sql";
 import {
+  buildAgentOverlay,
   buildDialog,
   buildEditor,
   buildEngineDeclaration,
@@ -89,6 +94,12 @@ import {
   type AgentStatementLanguageId,
   workflowAvailability,
 } from "@/lib/agent/agent-manifest";
+import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
+import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
+import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
+import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
+import type { AgentEngineServerDialect, SqlServerDialect } from "@/lib/agent/languages/pack";
+import { languageServerPack } from "@/lib/agent/languages/server";
 import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
@@ -510,15 +521,55 @@ function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
   return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
 }
 
+/** The shipped engines that speak a statement language, each with the family its `AGENT_STATEMENT_LANGUAGE` row names. */
+const LANGUAGE_ENGINES: readonly (readonly [DatabaseType, AgentStatementLanguageId])[] = SHIPPED_DATABASE_TYPES.flatMap(
+  (type) => {
+    const family = AGENT_STATEMENT_LANGUAGE[type];
+    return family === null ? [] : [[type, family] as const];
+  },
+);
+
+/**
+ * Each engine's agent server overlay as its own module exports it, the module found by the agent leg's triad path
+ * (`src/lib/agent/languages/<family>/engines/<type-id>.ts`, the rule tests/unit/lib/agent/engine-docs.test.ts reads) and
+ * imported by its absolute path, never through the registry the generator reads: every agent overlay slot the census's
+ * slot table names is resolved on this overlay. Only the engines that speak a statement language have one.
+ */
+const MODULE_AGENT_OVERLAYS: ReadonlyMap<DatabaseType, unknown> = new Map(
+  await Promise.all(
+    LANGUAGE_ENGINES.map(
+      async ([type, family]) =>
+        [
+          type,
+          (
+            (await import(path.join(ROOT, `src/lib/agent/languages/${family}/engines/${type}.ts`))) as Record<
+              string,
+              unknown
+            >
+          )[`${type.toUpperCase()}_SERVER_OVERLAY`],
+        ] as const,
+    ),
+  ),
+);
+
+/** The engine module's agent server overlay of `type`, which the census holds to be the registry's overlay. */
+function moduleAgentOverlay(type: DatabaseType): object {
+  const overlay = MODULE_AGENT_OVERLAYS.get(type);
+  if (typeof overlay !== "object" || overlay === null) throw new Error(`${type}: no agent overlay module exports one`);
+  return overlay;
+}
+
 /**
  * The row of `table` that `type`'s own engine module exports, on which the census resolves that table's slots; undefined
- * only for an SQL generator row the engine does not have, since every shipped engine has a row of the other two tables.
+ * only for an SQL generator row the engine does not have and for the agent overlay of an engine that speaks no
+ * statement language, since every shipped engine has a row of the other two tables.
  */
 function moduleRow(table: SlotTable, type: DatabaseType): object | undefined {
   const rows: Readonly<Record<SlotTable, () => object | undefined>> = {
     SQL_WRITING: () => moduleSqlWriting(type),
     MIGRATION_DDL: () => moduleMigrationDdl(type),
     SQL_ENGINE_GENERATORS: () => (sqlGeneratorRow(type) === undefined ? undefined : moduleSqlGenerators(type)),
+    AGENT_SERVER_OVERLAY: () => (MODULE_AGENT_OVERLAYS.has(type) ? moduleAgentOverlay(type) : undefined),
   };
   return rows[table]();
 }
@@ -577,6 +628,90 @@ function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name:
     const name = valueAt(d.sqlGenerators, path);
     return typeof name === "string" ? [[path, name] as const] : [];
   });
+}
+
+/** The function members of a declaration's `agent.overlay`, by their dotted paths, read off the schema. */
+const AGENT_OVERLAY_FUNCTION_PATHS = schemaFunctionPaths("agentOverlay");
+
+/** Every function name a declaration's `agent.overlay` states, with the dotted path it is stated at; none where null. */
+function agentOverlayNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
+  return AGENT_OVERLAY_FUNCTION_PATHS.flatMap((path) => {
+    const name = valueAt(d.agent.overlay, path);
+    return typeof name === "string" ? [[path, name] as const] : [];
+  });
+}
+
+/**
+ * The members of Studio's SQL server dialect, written here apart from the generator and typed so a member Studio adds
+ * or removes fails to compile until the census lists it.
+ */
+const SQL_SERVER_DIALECT_MEMBERS: Readonly<Record<keyof SqlServerDialect, true>> = {
+  catalogRead: true,
+  planEstimate: true,
+  profileComposition: true,
+  statistics: true,
+  catalogCapture: true,
+};
+
+/**
+ * The data members of a server dialect in the declaration's form, written here from Studio's overlay types rather than
+ * from the generator: each member null where the dialect says `"unsupported"`, the command flag as `=== true`, each
+ * type pattern by its source and flags, a probe or note the reading leaves out null, the capture's kinds in order and
+ * its kind words as the record's entries in key order. The functions are left out: the slot tests hold them.
+ */
+function dialectData(dialect: AgentEngineServerDialect): unknown {
+  const { catalogRead, planEstimate, profileComposition, statistics, catalogCapture } = dialect;
+  const pattern = (value: RegExp) => ({ source: value.source, flags: value.flags });
+  return {
+    catalogRead: catalogRead === "unsupported" ? null : { commandShaped: catalogRead.commandShaped === true },
+    planEstimate: planEstimate === "unsupported" ? null : { ...planEstimate },
+    profileComposition:
+      profileComposition === "unsupported"
+        ? null
+        : {
+            incomparableType: pattern(profileComposition.incomparableType),
+            uncountableType:
+              profileComposition.uncountableType === undefined ? null : pattern(profileComposition.uncountableType),
+          },
+    statistics:
+      statistics === "unsupported" ? null : { probe: statistics.probe, limitNote: statistics.limitNote ?? null },
+    catalogCapture:
+      catalogCapture === "unsupported"
+        ? null
+        : {
+            kinds: [...catalogCapture.kinds],
+            kindWords: Object.entries(catalogCapture.kindWords).map(([word, kind]) => ({ word, kind })),
+          },
+  };
+}
+
+/** The data members a declaration's SQL dialect states, in the form `dialectData` writes, its function names left out. */
+function declaredDialectData(dialect: NonNullable<SqlDialect>): unknown {
+  const { catalogRead, planEstimate, profileComposition, statistics, catalogCapture } = dialect;
+  return {
+    catalogRead: catalogRead === null ? null : { commandShaped: catalogRead.commandShaped },
+    planEstimate,
+    profileComposition:
+      profileComposition === null
+        ? null
+        : {
+            incomparableType: profileComposition.incomparableType,
+            uncountableType: profileComposition.uncountableType,
+          },
+    statistics: statistics === null ? null : { probe: statistics.probe, limitNote: statistics.limitNote },
+    catalogCapture:
+      catalogCapture === null ? null : { kinds: catalogCapture.kinds, kindWords: catalogCapture.kindWords },
+  };
+}
+
+/** The client view of a declared SQL dialect: each member the client asks about supported exactly where it is stated. */
+function clientViewOf(dialect: NonNullable<SqlDialect>): unknown {
+  const supported = (member: unknown) => (member === null ? "unsupported" : "supported");
+  return {
+    catalogRead: supported(dialect.catalogRead),
+    planEstimate: supported(dialect.planEstimate),
+    catalogCapture: supported(dialect.catalogCapture),
+  };
 }
 
 /** The dotted paths of the slots of `table` in the census's slot table. */
@@ -1115,6 +1250,83 @@ describe("the committed declarations", () => {
     );
   });
 
+  test("an agent overlay member the declaration has no place for, a grounding given as a value, and a pattern flag it does not take are refused by name by the generator", () => {
+    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
+    const postgres = engineServerOverlay("postgres");
+    const mssql = engineServerOverlay("mssql");
+    const dialectOf = (type: DatabaseType) => {
+      const dialect = engineServerOverlay(type).dialect;
+      if (dialect === undefined) throw new Error(`${type} has no dialect`);
+      return dialect;
+    };
+    const catalogRead = dialectOf("postgres").catalogRead;
+    const profile = dialectOf("mssql").profileComposition;
+    if (catalogRead === "unsupported" || profile === "unsupported") throw new Error("postgres and mssql compose these");
+    const flagged = (member: "incomparableType" | "uncountableType") => ({
+      ...mssql,
+      dialect: { ...dialectOf("mssql"), profileComposition: { ...profile, [member]: /text/g } },
+    });
+
+    expect(buildAgentOverlay("bigquery")).toBeNull();
+    expect(() => buildAgentOverlay("bigquery", postgres)).toThrow(
+      "bigquery: the engine speaks no statement language, so its agent overlay has no place in the engine declaration",
+    );
+    expect(buildAgentOverlay("kafka")).toEqual({ dialect: null, grounding: null });
+    expect(buildAgentOverlay("cassandra")?.grounding).toBe("groundingOverride");
+    for (const member of ["workflowToolRules", "answerNotADataRead"]) {
+      expect(() =>
+        buildAgentOverlay("postgres", { ...postgres, [member]: (base: unknown) => base } as typeof postgres),
+      ).toThrow(`postgres: the agent overlay member "${member}" has no place in the engine declaration`);
+    }
+    expect(() => buildAgentOverlay("postgres", { ...postgres, [key]: null } as typeof postgres)).toThrow(
+      `postgres: the agent overlay member "${key}" has no place in the engine declaration`,
+    );
+    expect(() =>
+      buildAgentOverlay("postgres", {
+        ...postgres,
+        dialect: { ...dialectOf("postgres"), [key]: "unsupported" },
+      } as typeof postgres),
+    ).toThrow(`postgres: the agent overlay member "dialect.${key}" has no place in the engine declaration`);
+    expect(() =>
+      buildAgentOverlay("postgres", {
+        ...postgres,
+        dialect: { ...dialectOf("postgres"), catalogRead: { ...catalogRead, [key]: true } },
+      } as typeof postgres),
+    ).toThrow(`postgres: the agent overlay member "dialect.catalogRead.${key}" has no place in the engine declaration`);
+    expect(() =>
+      buildAgentOverlay("postgres", {
+        ...postgres,
+        dialect: {
+          ...dialectOf("postgres"),
+          catalogRead: { ...catalogRead, compose: { ...catalogRead.compose, [key]: () => "" } },
+        },
+      } as typeof postgres),
+    ).toThrow(
+      `postgres: the agent overlay member "dialect.catalogRead.compose.${key}" has no place in the engine declaration`,
+    );
+    expect(() =>
+      buildAgentOverlay("mssql", {
+        ...mssql,
+        dialect: { ...dialectOf("mssql"), planEstimate: { kind: "partial", mode: "estimate-plan" } },
+      } as unknown as typeof mssql),
+    ).toThrow(
+      'mssql: the agent overlay member "dialect.planEstimate.kind" is "partial", neither prefix nor session-mode',
+    );
+    expect(() =>
+      buildAgentOverlay("cassandra", {
+        ...engineServerOverlay("cassandra"),
+        grounding: languageServerPack("sql").grounding,
+      } as ReturnType<typeof engineServerOverlay>),
+    ).toThrow(
+      "cassandra: the agent overlay gives grounding as a value, which the declaration names only as a derivation",
+    );
+    for (const member of ["incomparableType", "uncountableType"] as const) {
+      expect(() => buildAgentOverlay("mssql", flagged(member) as typeof mssql)).toThrow(
+        `mssql: the profile type pattern ${member} has flags "g", which are not none, i, u or iu`,
+      );
+    }
+  });
+
   test("the generator refuses, by name, an editor language or tab type member it has no place for", () => {
     const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
     const language = {
@@ -1440,6 +1652,13 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
     request: (d) => d.sqlText.redaction,
     record: (type) => declaredRedaction(SQL_GRAMMAR[type].redaction),
   },
+  "agent.overlay.dialect.catalogRead.commandShaped": {
+    request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,
+    record: (type) => {
+      const catalogRead = engineServerDialect(type).catalogRead;
+      return catalogRead !== "unsupported" && catalogRead.commandShaped === true;
+    },
+  },
 };
 
 /** A record over the shipped ids, each id's value read from its committed declaration by `read`. */
@@ -1698,6 +1917,167 @@ describe("the census", () => {
 
   test("agent.statementLanguage is the engine's AGENT_STATEMENT_LANGUAGE row", () => {
     expect(differing((type, d) => d.agent.statementLanguage === AGENT_STATEMENT_LANGUAGE[type])).toEqual([]);
+  });
+
+  test("every name an agent overlay declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own overlay module exports there", () => {
+    const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        agentOverlayNames(declared(type)).flatMap(([path, name]) => {
+          const held = valueAt(engineServerOverlay(type), path);
+          const isSlot = slots[name]?.table === "AGENT_SERVER_OVERLAY" && slots[name]?.path === path;
+          const overlayModule = moduleRow("AGENT_SERVER_OVERLAY", type);
+          const resolved =
+            isSlot && overlayModule !== undefined ? slotFunction(overlayModule, name as DeclaredSlotName) : undefined;
+          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+        }),
+      ),
+    ).toEqual([]);
+    // Vacuity: the schema states every agent overlay slot of the table as a function member, and some engine names
+    // each of them.
+    expect(sorted(AGENT_OVERLAY_FUNCTION_PATHS)).toEqual(sorted(tablePaths("AGENT_SERVER_OVERLAY")));
+    const named = new Set(SHIPPED_DATABASE_TYPES.flatMap((type) => agentOverlayNames(declared(type)).map(([p]) => p)));
+    expect(sorted([...named])).toEqual(sorted(tablePaths("AGENT_SERVER_OVERLAY")));
+  });
+
+  test("every function an engine's server overlay holds is named at its slot by its engine's declaration, and no slot the overlay leaves empty is named", () => {
+    expect(
+      LANGUAGE_ENGINES.flatMap(([type]) =>
+        functionPaths(engineServerOverlay(type), "").flatMap((path) => {
+          const name = slotNameAt("AGENT_SERVER_OVERLAY", path);
+          return name !== undefined && valueAt(declared(type).agent.overlay, path) === name ? [] : [`${type}:${path}`];
+        }),
+      ),
+    ).toEqual([]);
+    expect(
+      SHIPPED_DATABASE_TYPES.flatMap((type) =>
+        agentOverlayNames(declared(type)).flatMap(([path, name]) =>
+          typeof valueAt(engineServerOverlay(type), path) === "function" ? [] : [`${type}:${path}=${name}`],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  test("the server registry holds each engine module's overlay, member by member", () => {
+    const differs = (type: DatabaseType): boolean => {
+      const registry = engineServerOverlay(type) as Readonly<Record<string, unknown>>;
+      const overlayModule = MODULE_AGENT_OVERLAYS.get(type) as Readonly<Record<string, unknown>> | undefined;
+      if (overlayModule === undefined) return Object.keys(registry).length > 0;
+      return (
+        !sameList(Object.keys(registry), Object.keys(overlayModule)) ||
+        Object.keys(overlayModule).some((member) => registry[member] !== overlayModule[member])
+      );
+    };
+
+    expect(SHIPPED_DATABASE_TYPES.filter(differs)).toEqual([]);
+    expect(MODULE_AGENT_OVERLAYS.size).toBe(LANGUAGE_ENGINES.length);
+    expect(SHIPPED_DATABASE_TYPES.length).toBeGreaterThan(LANGUAGE_ENGINES.length);
+  });
+
+  test("every data member of each declared dialect is what the server registry's dialect holds, null where it is unsupported", () => {
+    expect(
+      differing((type, d) => {
+        const { overlay } = d.agent;
+        if (AGENT_STATEMENT_LANGUAGE[type] === null) return overlay === null;
+        if (overlay === null) return false;
+        const held = engineServerOverlay(type).dialect;
+        if (overlay.dialect === null) return held === undefined;
+        return held !== undefined && sameValue(declaredDialectData(overlay.dialect), dialectData(held));
+      }),
+    ).toEqual([]);
+    // Vacuity: some engine states each plan form, the command flag, an uncountable pattern, a probe, a note and a
+    // capture, and some SQL engine composes none of them.
+    const dialects = SHIPPED_DATABASE_TYPES.flatMap((type) => {
+      const dialect = declared(type).agent.overlay?.dialect;
+      return dialect === null || dialect === undefined ? [] : [dialect];
+    });
+    expect(dialects.some((dialect) => dialect.planEstimate?.kind === "prefix")).toBe(true);
+    expect(dialects.some((dialect) => dialect.planEstimate?.kind === "session-mode")).toBe(true);
+    expect(dialects.some((dialect) => dialect.planEstimate === null)).toBe(true);
+    expect(dialects.some((dialect) => dialect.catalogRead?.commandShaped === true)).toBe(true);
+    expect(dialects.some((dialect) => dialect.catalogRead?.commandShaped === false)).toBe(true);
+    expect(dialects.some((dialect) => (dialect.profileComposition?.uncountableType ?? null) !== null)).toBe(true);
+    expect(dialects.some((dialect) => (dialect.statistics?.probe ?? null) !== null)).toBe(true);
+    expect(dialects.some((dialect) => (dialect.statistics?.limitNote ?? null) !== null)).toBe(true);
+    expect(dialects.some((dialect) => dialect.catalogCapture !== null)).toBe(true);
+    expect(dialects.some((dialect) => dialect.catalogCapture === null)).toBe(true);
+  });
+
+  test("every engine's server facet, through runServerPack, is its family's with exactly the derivations its declaration names", () => {
+    const wrong = LANGUAGE_ENGINES.flatMap(([type, family]) => {
+      const facet = runServerPack(family, type) as unknown as Readonly<Record<string, unknown>>;
+      const base = languageServerPack(family) as unknown as Readonly<Record<string, unknown>>;
+      const overlay = declared(type).agent.overlay as unknown as Readonly<Record<string, unknown>> | null;
+      return ENGINE_OVERRIDABLE_SERVER_MEMBERS.flatMap((member) => {
+        const name = overlay !== null && Object.hasOwn(overlay, member) ? overlay[member] : null;
+        if (name === null) return facet[member] === base[member] ? [] : [`${type}:${member}`];
+        const overlayModule = moduleRow("AGENT_SERVER_OVERLAY", type);
+        const derive =
+          overlayModule !== undefined && typeof name === "string" && slotNameAt("AGENT_SERVER_OVERLAY", member) === name
+            ? slotFunction(overlayModule, name)
+            : undefined;
+        return typeof derive === "function" && Bun.deepEquals(facet[member], derive(base[member]))
+          ? []
+          : [`${type}:${member}=${String(name)}`];
+      });
+    });
+
+    expect(wrong).toEqual([]);
+    expect(LANGUAGE_ENGINES.some(([type]) => declared(type).agent.overlay?.grounding !== null)).toBe(true);
+  });
+
+  test("each engine's family and client dialect, through the client registry, are its declared language and the client view of its declared dialect", () => {
+    expect(
+      differing((type, d) => {
+        const { statementLanguage, overlay } = d.agent;
+        if (engineFamily(type) !== statementLanguage) return false;
+        if (statementLanguage === null) return true;
+        const client = engineClientPack(type).dialect;
+        const dialect = overlay?.dialect ?? null;
+        return dialect === null ? client === undefined : sameValue(client, clientViewOf(dialect));
+      }),
+    ).toEqual([]);
+  });
+
+  test("the SQL catalog and composer requirements and the composed capture hold on exactly the engines whose declared dialect supplies them", () => {
+    const supplying = (supplies: (dialect: NonNullable<SqlDialect>) => boolean): string[] =>
+      sorted(
+        SHIPPED_DATABASE_TYPES.filter((type) => {
+          const dialect = declared(type).agent.overlay?.dialect ?? null;
+          return dialect !== null && supplies(dialect);
+        }),
+      );
+    const catalog = supplying((dialect) => dialect.catalogRead !== null);
+
+    expect(sorted(AGENT_REQUIREMENT_ENGINES["sql-catalog"])).toEqual(catalog);
+    expect(sorted(AGENT_REQUIREMENT_ENGINES["sql-composers"])).toEqual(
+      supplying((dialect) => dialect.catalogRead !== null && dialect.planEstimate !== null),
+    );
+    expect(sorted(enginesSupporting("catalogCapture"))).toEqual(
+      supplying((dialect) => dialect.catalogCapture !== null),
+    );
+    expect(catalog.length).toBeGreaterThan(0);
+  });
+
+  test("each declaration's agent overlay holds exactly the members of the schema's overlay and SQL dialect", () => {
+    const overlayMembers = sorted(Object.keys(SCHEMA.$defs.agentOverlay?.properties ?? {}));
+    const dialectMembers = sorted(Object.keys(SQL_SERVER_DIALECT_MEMBERS));
+
+    expect(overlayMembers).toEqual(["dialect", "grounding"]);
+    expect(sorted(SCHEMA.$defs.agentOverlay?.required ?? [])).toEqual(overlayMembers);
+    expect(
+      overlayMembers.filter((member) => ![...ENGINE_OVERRIDABLE_SERVER_MEMBERS, "dialect"].includes(member)),
+    ).toEqual([]);
+    expect(sorted(Object.keys(SCHEMA.$defs.sqlDialect?.properties ?? {}))).toEqual(dialectMembers);
+    expect(sorted(SCHEMA.$defs.sqlDialect?.required ?? [])).toEqual(dialectMembers);
+    expect(
+      differing((_type, d) => {
+        const { overlay } = d.agent;
+        if (overlay === null) return true;
+        if (!sameList(sorted(Object.keys(overlay)), overlayMembers)) return false;
+        return overlay.dialect === null || sameList(sorted(Object.keys(overlay.dialect)), dialectMembers);
+      }),
+    ).toEqual([]);
   });
 
   test("connection.dialog.order is the form's dialogOrder", () => {
@@ -2870,9 +3250,10 @@ describe("the census", () => {
     };
 
     expect(names.filter((name) => !SHIPPED_DATABASE_TYPES.some((type) => fills(type, name)))).toEqual([]);
-    expect(names.length).toBe(29);
+    expect(names.length).toBe(42);
     expect(names.filter((name) => DECLARED_SLOTS[name].table === "MIGRATION_DDL").length).toBe(12);
     expect(names.filter((name) => DECLARED_SLOTS[name].table === "SQL_ENGINE_GENERATORS").length).toBe(4);
+    expect(names.filter((name) => DECLARED_SLOTS[name].table === "AGENT_SERVER_OVERLAY").length).toBe(13);
   });
 
   test("every member of an SQL writing row has its member in the declaration", () => {
@@ -3418,20 +3799,29 @@ describe("the census", () => {
     expect(readBack.filter(([, ids]) => ids.length > 0).map(([claim, ids]) => `${claim}: ${ids.join(", ")}`)).toEqual(
       [],
     );
-    expect(readBack.length).toBe(8);
+    expect(readBack.length).toBe(9);
   });
 
   test("each claim the census reads back is a member of the schema's engine declaration", () => {
-    const segments = SCHEMA.$defs.engineDeclaration?.properties ?? {};
+    // A dotted claim is walked member by member from the engine declaration, each member's `$ref` followed into the
+    // definition it names, a nullable definition included, and its last member must be a property of where it ends.
     const isMember = (claim: string): boolean => {
-      const [segment, member, ...rest] = claim.split(".");
-      const reference = (segments[segment] as { $ref?: string } | undefined)?.$ref ?? "";
-      const definition = SCHEMA.$defs[reference.replace("#/$defs/", "")];
-      return rest.length === 0 && member !== undefined && Object.hasOwn(definition?.properties ?? {}, member);
+      const members = claim.split(".");
+      let definition = SCHEMA.$defs.engineDeclaration;
+      for (const [index, member] of members.entries()) {
+        const properties = definition?.properties ?? {};
+        if (!Object.hasOwn(properties, member)) return false;
+        if (index === members.length - 1) return true;
+        const reference = (properties[member] as { $ref?: string }).$ref ?? "";
+        definition = SCHEMA.$defs[reference.replace("#/$defs/", "")];
+      }
+      return false;
     };
 
     expect(Object.keys(SEGMENT_CLAIM_RECORDS).filter((claim) => !isMember(claim))).toEqual([]);
-    expect(Object.keys(SEGMENT_CLAIM_RECORDS).length).toBe(8);
+    expect(Object.keys(SEGMENT_CLAIM_RECORDS).length).toBe(9);
+    expect(isMember("agent.overlay.dialect.catalogRead.unknown")).toBe(false);
+    expect(isMember("agent.overlay.dialect.catalogRead")).toBe(true);
   });
 
   test("READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open", () => {
@@ -3632,7 +4022,15 @@ describe("the vocabularies", () => {
       Equal<Exclude<AgentCredentialFormClaim, "pair">, ProviderAgentCredentialForm>,
       Equal<Exclude<keyof MaintenanceSpec, "operation">, keyof MaintenanceOperationSpec>,
       Equal<Exclude<MaintenanceConfirmation, null>, NonNullable<MaintenanceOperationSpec["confirmation"]>>,
+      Equal<keyof NonNullable<SqlDialect>, keyof SqlServerDialect>,
+      Equal<CatalogKind, AgentCatalogKind>,
+      Equal<keyof CatalogCompose, AgentCatalogKind>,
+      Equal<PlanEstimateSessionMode["mode"], Extract<AgentPlanEstimate, { kind: "session-mode" }>["mode"]>,
     ] = [
+      true,
+      true,
+      true,
+      true,
       true,
       true,
       true,
@@ -3671,7 +4069,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 36 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 40 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

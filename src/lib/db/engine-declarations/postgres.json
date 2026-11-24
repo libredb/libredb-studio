@@ -131,7 +131,77 @@
     ]
   },
   "agent": {
-    "statementLanguage": "sql"
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": null,
+          "retry": {
+            "matches": "retryMatches",
+            "rewrite": "retryRewrite"
+          },
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": {
+          "kind": "prefix",
+          "prefix": "EXPLAIN (FORMAT JSON)"
+        },
+        "profileComposition": {
+          "shapeTests": {
+            "email": "emailShapeTest",
+            "digitRun": "digitRunShapeTest"
+          },
+          "incomparableType": {
+            "source": "\\b(jsonb?|xml|point|line|lseg|box|path|polygon|circle)\\b",
+            "flags": "i"
+          },
+          "uncountableType": null
+        },
+        "statistics": {
+          "probe": null,
+          "build": "statisticsBuild",
+          "limitNote": null
+        },
+        "catalogCapture": {
+          "kinds": [
+            "columns",
+            "relations",
+            "indexes"
+          ],
+          "build": "captureBuild",
+          "kindWords": [
+            {
+              "word": "r",
+              "kind": "table"
+            },
+            {
+              "word": "p",
+              "kind": "table"
+            },
+            {
+              "word": "v",
+              "kind": "view"
+            },
+            {
+              "word": "m",
+              "kind": "materialized_view"
+            },
+            {
+              "word": "S",
+              "kind": "sequence"
+            }
+          ]
+        }
+      },
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

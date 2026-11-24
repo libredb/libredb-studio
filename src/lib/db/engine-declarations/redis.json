@@ -93,7 +93,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "rediscli"
+    "statementLanguage": "rediscli",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "EXEC",

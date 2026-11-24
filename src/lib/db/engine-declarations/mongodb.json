@@ -148,7 +148,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "mongo"
+    "statementLanguage": "mongo",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

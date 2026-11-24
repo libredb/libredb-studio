@@ -134,7 +134,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "milvusrpc"
+    "statementLanguage": "milvusrpc",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

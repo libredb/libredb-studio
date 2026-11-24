@@ -16,12 +16,16 @@
 import { createHash } from "node:crypto";
 import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
 import {
+  type CaptureKindWord,
   type EngineDeclaration,
   MANIFEST_SCHEMA_SHA256,
   type MaintenanceOperation,
   type MaintenanceSpec,
   type MaskingExemption,
+  type ProfileComposition,
   type ProviderManifest,
+  type SqlDialect,
+  type StatementLanguage,
   type TypeFamilies,
   type WritePaths,
   type WriteReachClaim,
@@ -89,6 +93,14 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "maintenance-typed-confirmation-unasked",
   "maintenance-typed-target-unasked",
   "maintenance-preview-unplaced",
+  "agent-overlay-missing",
+  "agent-overlay-unspoken",
+  "agent-dialect-missing",
+  "agent-dialect-unspoken",
+  "statistics-without-catalog-read",
+  "catalog-capture-without-catalog-read",
+  "capture-kind-word-duplicate",
+  "plan-estimate-prefix-executes",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -648,8 +660,85 @@ function maintenanceRuleRefusals(engine: EngineDeclaration, at: string): SchemaR
 }
 
 /**
- * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, claims and safeguards
- * the schema cannot state, at pointers under `at`.
+ * The statement language whose family has members bound to its dialect, so the only one whose engines state a dialect
+ * in their agent overlay. A second family that gains dialect members is a contract change.
+ */
+const DIALECT_LANGUAGE: StatementLanguage = "sql";
+
+/** A word that makes EXPLAIN run the plan rather than estimate it, in any case. */
+const PLAN_EXECUTING_WORD = /\bANALY[SZ]E\b/i;
+
+/**
+ * The rule of a profile's type patterns the schema cannot state, at pointers under `at`, the profile's own: each
+ * pattern compiles with its flags.
+ */
+function profilePatternRefusals(profile: NonNullable<ProfileComposition>, at: string): SchemaRefusal[] {
+  return (["incomparableType", "uncountableType"] as const).flatMap((member) => {
+    const pattern = profile[member];
+    return pattern !== null && compiled(pattern.source, pattern.flags) === null
+      ? [schemaRefusal("pattern-invalid", `${at}/${member}/source`)]
+      : [];
+  });
+}
+
+/** The rule of a capture's kind words the schema cannot state, at pointers under `at`: each word once, the later refused. */
+function kindWordRefusals(kindWords: readonly CaptureKindWord[], at: string): SchemaRefusal[] {
+  const seen = new Set<string>();
+  return kindWords.flatMap(({ word }, index) => {
+    const repeated = seen.has(word);
+    seen.add(word);
+    return repeated ? [schemaRefusal("capture-kind-word-duplicate", `${at}/${index}/word`)] : [];
+  });
+}
+
+/**
+ * The rules of an SQL dialect the schema cannot state, at pointers under `at`, the dialect's own: an estimating prefix
+ * holds no word that executes the plan, since one strip built from every engine's prefix serves every engine; each
+ * profile type pattern compiles; a statistics reading and a capture are stated only beside a catalog read, since the
+ * statistics are its statistics kind and the capture composes through it; and a capture gives each kind word once.
+ */
+function sqlDialectRefusals(dialect: NonNullable<SqlDialect>, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { catalogRead, planEstimate, profileComposition, statistics, catalogCapture } = dialect;
+  if (planEstimate?.kind === "prefix" && PLAN_EXECUTING_WORD.test(planEstimate.prefix)) {
+    refusals.push(schemaRefusal("plan-estimate-prefix-executes", `${at}/planEstimate/prefix`));
+  }
+  if (profileComposition !== null) {
+    refusals.push(...profilePatternRefusals(profileComposition, `${at}/profileComposition`));
+  }
+  if (catalogRead === null && statistics !== null) {
+    refusals.push(schemaRefusal("statistics-without-catalog-read", `${at}/statistics`));
+  }
+  if (catalogRead === null && catalogCapture !== null) {
+    refusals.push(schemaRefusal("catalog-capture-without-catalog-read", `${at}/catalogCapture`));
+  }
+  if (catalogCapture !== null) {
+    refusals.push(...kindWordRefusals(catalogCapture.kindWords, `${at}/catalogCapture/kindWords`));
+  }
+  return refusals;
+}
+
+/**
+ * The rules of an engine's agent overlay the schema cannot state, at pointers under `at`: an overlay is stated exactly
+ * where the engine speaks a statement language, a dialect exactly where that language is the SQL family's, and an SQL
+ * dialect is held to its own rules.
+ */
+function agentOverlayRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const { statementLanguage, overlay } = engine.agent;
+  const pointer = `${at}/agent/overlay`;
+  if (statementLanguage === null) return overlay === null ? [] : [schemaRefusal("agent-overlay-unspoken", pointer)];
+  if (overlay === null) return [schemaRefusal("agent-overlay-missing", pointer)];
+  const { dialect } = overlay;
+  if (statementLanguage !== DIALECT_LANGUAGE) {
+    return dialect === null ? [] : [schemaRefusal("agent-dialect-unspoken", `${pointer}/dialect`)];
+  }
+  if (dialect === null) return [schemaRefusal("agent-dialect-missing", `${pointer}/dialect`)];
+  return sqlDialectRefusals(dialect, `${pointer}/dialect`);
+}
+
+/**
+ * The rules of one engine's connection, editor, SQL text, SQL writing facts, maintenance specs, agent overlay, claims
+ * and safeguards the schema cannot state, at pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -682,6 +771,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
   refusals.push(...maintenanceRuleRefusals(engine, at));
+  refusals.push(...agentOverlayRuleRefusals(engine, at));
   refusals.push(...claimRuleRefusals(engine, at));
   refusals.push(...safeguardRuleRefusals(engine, at));
   return refusals;
@@ -944,5 +1034,21 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The typed target at ${at} is admitted only on a spec placed on a row alone: only that spec's operation is sent from its objects' rows alone, whose dialog asks for the object's own name.`;
     case "maintenance-preview-unplaced":
       return `The maintenance preview at ${at} is declared for a spec no per-row control shows it on.`;
+    case "agent-overlay-missing":
+      return `The agent overlay at ${at} is null for an engine that speaks a statement language, whose overlay the provider contract requires.`;
+    case "agent-overlay-unspoken":
+      return `The agent overlay at ${at} is stated for an engine that speaks no statement language.`;
+    case "agent-dialect-missing":
+      return `The dialect at ${at} is null for an engine of the SQL family, whose dialect-bound members the provider contract requires.`;
+    case "agent-dialect-unspoken":
+      return `The dialect at ${at} is stated for an engine whose family has no member bound to its dialect.`;
+    case "statistics-without-catalog-read":
+      return `The statistics reading at ${at} is stated beside no catalog read, whose statistics kind it reads.`;
+    case "catalog-capture-without-catalog-read":
+      return `The catalog capture at ${at} is stated beside no catalog read, through which it reads the catalog.`;
+    case "capture-kind-word-duplicate":
+      return `The kind word at ${at} is already given by an earlier kind word of the capture.`;
+    case "plan-estimate-prefix-executes":
+      return `The estimating prefix at ${at} holds ANALYZE or ANALYSE, a word that runs the plan rather than estimating it.`;
   }
 }

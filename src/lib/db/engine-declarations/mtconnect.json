@@ -75,7 +75,11 @@
     "agentReadings": []
   },
   "agent": {
-    "statementLanguage": "mtconnectread"
+    "statementLanguage": "mtconnectread",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

@@ -98,7 +98,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "snmpget"
+    "statementLanguage": "snmpget",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

@@ -124,7 +124,45 @@
     ]
   },
   "agent": {
-    "statementLanguage": "sql"
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": "declaredSchema",
+          "retry": null,
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": {
+          "kind": "prefix",
+          "prefix": "EXPLAIN QUERY PLAN"
+        },
+        "profileComposition": {
+          "shapeTests": {
+            "email": "emailShapeTest",
+            "digitRun": "digitRunShapeTest"
+          },
+          "incomparableType": {
+            "source": "\\b(jsonb?|xml|point|line|lseg|box|path|polygon|circle)\\b",
+            "flags": "i"
+          },
+          "uncountableType": null
+        },
+        "statistics": {
+          "probe": "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'",
+          "build": "statisticsBuild",
+          "limitNote": "This engine records no per-column distinct count or null fraction at all, so none is shown for any column here, and none can be obtained without reading the data."
+        },
+        "catalogCapture": null
+      },
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

@@ -91,7 +91,11 @@
     ]
   },
   "agent": {
-    "statementLanguage": "modbusread"
+    "statementLanguage": "modbusread",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

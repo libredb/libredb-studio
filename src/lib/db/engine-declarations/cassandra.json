@@ -97,7 +97,28 @@
     ]
   },
   "agent": {
-    "statementLanguage": "sql"
+    "statementLanguage": "sql",
+    "overlay": {
+      "dialect": {
+        "catalogRead": {
+          "compose": {
+            "columns": "catalogColumns",
+            "relations": "catalogRelations",
+            "indexes": "catalogIndexes",
+            "statistics": "catalogStatistics"
+          },
+          "declaredSchema": null,
+          "retry": null,
+          "commandShaped": false,
+          "mapRows": null
+        },
+        "planEstimate": null,
+        "profileComposition": null,
+        "statistics": null,
+        "catalogCapture": null
+      },
+      "grounding": "groundingOverride"
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",

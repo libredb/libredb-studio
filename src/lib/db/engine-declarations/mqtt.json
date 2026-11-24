@@ -100,7 +100,11 @@
     "agentReadings": []
   },
   "agent": {
-    "statementLanguage": "mqttread"
+    "statementLanguage": "mqttread",
+    "overlay": {
+      "dialect": null,
+      "grounding": null
+    }
   },
   "editor": {
     "commitKeyword": "COMMIT",
