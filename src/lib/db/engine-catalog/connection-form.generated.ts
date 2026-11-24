@@ -502,7 +502,8 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
         required: null,
         format: Object.freeze({
           pattern: Object.freeze({
-            source: "^[\\s,]*[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?([\\s,]+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*[\\s,]*$",
+            source:
+              "^[\\s,]*(?:[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?([\\s,]+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*[\\s,]*)?$",
             flags: "",
           }),
           sentence:
@@ -1419,7 +1420,10 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
         field: "database",
         required: null,
         format: Object.freeze({
-          pattern: Object.freeze({ source: "^[^.\\p{Cc}]{1,255}$", flags: "u" }),
+          pattern: Object.freeze({
+            source: "^\\s*(?:[^.\\p{Cc}\\s](?:[^.\\p{Cc}]{0,253}[^.\\p{Cc}\\s])?\\s*)?$",
+            flags: "u",
+          }),
           sentence:
             "Catalog takes one catalog name without dots, as spark.sql.catalog.<name> names it. Nothing was sent.",
         }),
@@ -1431,7 +1435,8 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
         required: null,
         format: Object.freeze({
           pattern: Object.freeze({
-            source: "^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
+            source:
+              "^\\s*$|^(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)(?:\\.(?:[A-Za-z_][A-Za-z0-9_]*|`(?:[^`]|``)+`)){0,7}$",
             flags: "",
           }),
           sentence:

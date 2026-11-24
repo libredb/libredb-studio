@@ -12,6 +12,7 @@ import * as uiConfig from "@/lib/db-ui-config";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import * as form from "@/lib/db/connection-form";
+import * as fieldRules from "@/lib/db/connection-field-rules";
 import { DEFAULT_CONNECTION_TYPE } from "@/lib/db/default-connection-type";
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
 import { admittedDeclarations } from "../../../../scripts/generate-engine-catalog";
@@ -49,9 +50,9 @@ const MOVED_READERS = [
   "connectionFieldPlaceholder",
   "connectionFieldHint",
   "connectionFieldPlacement",
-  "connectionFieldShown",
-  "connectionFieldRefusal",
 ] as const;
+/** The dialog's two field rule evaluators, which db-ui-config re-exports from the shared rule module. */
+const RULE_READERS = ["connectionFieldShown", "connectionFieldRefusal"] as const;
 
 // The picker order must cover the whole DatabaseType union, because this form is also the EDIT
 // form: a type missing here renders the edit dialog with no tile selected. Keyed by
@@ -274,6 +275,16 @@ describe("src/lib/db/connection-form.ts", () => {
         name,
         same: true,
       });
+    }
+    // The two field rule evaluators are the shared rule module's own, which the test-connection path reads too, and
+    // the form table no longer holds them.
+    const ruleExports: Record<string, unknown> = { ...fieldRules };
+    for (const name of RULE_READERS) {
+      expect({
+        name,
+        same: typeof ruleExports[name] === "function" && uiExports[name] === ruleExports[name],
+        inForm: name in formExports,
+      }).toEqual({ name, same: true, inForm: false });
     }
     // The read-only control's two sentences are re-exported the same way: one string, never a copy.
     expect([uiConfig.READ_ONLY_TOGGLE_HINT, uiConfig.READ_ONLY_FIXED_HINT]).toEqual([

@@ -155,10 +155,9 @@ import {
   CONNECTION_PICKER_ORDER,
   type ConnectionFieldRule,
   type ConnectionFormSpec,
-  connectionFieldRefusal,
-  connectionFieldShown,
   offersSslPanel,
 } from "@/lib/db/connection-form";
+import { connectionFieldRefusal, connectionFieldShown } from "@/lib/db/connection-field-rules";
 import {
   CONNECTION_STRING,
   CONNECTION_STRING_PASTE_ORDER,

@@ -10,7 +10,8 @@
  *
  * UI-free, like the two tables it reads, so it is tested without a render.
  */
-import { connectionFieldPlacement, connectionFieldShown, type ConnectionFormSpec } from "@/lib/db/connection-form";
+import { connectionFieldPlacement, type ConnectionFormSpec } from "@/lib/db/connection-form";
+import { connectionFieldShown } from "@/lib/db/connection-field-rules";
 import {
   type BodyConnectionField,
   bodyFieldDescriptor,

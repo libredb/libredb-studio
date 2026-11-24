@@ -10,10 +10,11 @@
  * TLS to a host that is neither loopback nor tunnelled, with no opt-out: Spark Connect has no TLS of its own, so
  * a remote server is reached through a TLS proxy or the SSH tunnel.
  *
- * Host, Catalog and Namespace read as blank when they are absent, null, empty or only white space. Host and Namespace
- * are otherwise checked and used as written, as the dialog checks them, and the dialog refuses a padded Namespace.
- * Catalog is trimmed before it is checked: Spark looks the catalog name up literally in SET CATALOG, and the dialog
- * accepts both spellings. User takes no value at all: core refuses a connection that sets one before the provider is
+ * Host, Catalog and Namespace read as blank when they are absent, null, empty or only white space, and the dialog's
+ * rules take such a Catalog or Namespace as none too. Host and Namespace are otherwise checked and used as written, as
+ * the dialog checks them, and the dialog refuses a padded Namespace. Catalog is trimmed before it is checked, a tab or
+ * a line feed at its ends included: Spark looks the catalog name up literally in SET CATALOG, and the dialog's rule
+ * reads the trimmed text too. User takes no value at all: core refuses a connection that sets one before the provider is
  * built (`REFUSED_CONNECTION_FIELDS` in src/lib/db/connection-fields.ts), so this module never receives it.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which addressing fields a

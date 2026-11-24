@@ -6,7 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { KeyObject } from "node:crypto";
-import { requiredSecretRefusal } from "@/lib/db/connection-form";
+import { requiredSecretRefusal } from "@/lib/db/connection-field-rules";
 import { enumerateContainers, scopeGroundingContainers } from "@/lib/db/container-walk";
 import {
   AuthenticationError,

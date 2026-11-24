@@ -1,10 +1,11 @@
 /**
  * Spark's spelling of names and of multi-part namespaces.
  *
- * Pure and browser-safe: the connection dialog cannot import a provider module, so src/lib/db/connection-form.ts copies
- * the three field patterns below literally, and tests/unit/lib/db-ui-config.test.ts holds each copy equal to these.
- * `parseNamespaceSpelling` accepts exactly the texts SPARK_NAMESPACE_PATTERN accepts, so the dialog and the provider
- * refuse the same Namespace values.
+ * Pure and browser-safe: the connection dialog cannot import a provider module, so Spark's declaration states the
+ * dialog's rules: Token is a copy of SPARK_TOKEN_PATTERN, Namespace takes only white space (which the provider reads as
+ * none) or SPARK_NAMESPACE_PATTERN, and Catalog takes SPARK_CATALOG_PATTERN on the trimmed text.
+ * tests/unit/lib/db-ui-config.test.ts holds each rule to these. `parseNamespaceSpelling` accepts exactly the texts
+ * SPARK_NAMESPACE_PATTERN accepts, so the dialog and the provider refuse the same Namespace values.
  */
 import { SPARK_NAMESPACE_MAX_PARTS } from "./constants";
 
