@@ -17,6 +17,7 @@ import {
   SEED_ONLY_FIELDS,
   type SeedAgentCredential,
   type SeedOnlyFields,
+  seedOnlyRefusal,
 } from "@/lib/db/connection-fields";
 import { isCredentialReference } from "./credential-resolver";
 import { connectionStringFor } from "@/lib/db/connection-string";
@@ -66,14 +67,14 @@ function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.Refi
     if (row.kind !== "each") continue;
     for (const field of row.fields) {
       if (fields[field] === undefined) continue;
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: row.refusal(field), path: [field] });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: seedOnlyRefusal(row, field), path: [field] });
     }
   }
   for (const [, row] of rows) {
     if (row.kind !== "set") continue;
     const present = row.fields.find((field) => fields[field] !== undefined);
     if (present === undefined) continue;
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: row.refusal(present), path: [present] });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: seedOnlyRefusal(row, present), path: [present] });
   }
 }
 

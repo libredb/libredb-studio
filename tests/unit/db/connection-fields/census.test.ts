@@ -1,7 +1,10 @@
 /**
- * Each engine's connection fields and seed-only fields, declared once in src/lib/db/connection-fields.ts, a module
- * the seed loader can load: one row per type-id in both records, the dialog's table holding each row by reference,
- * and an import graph that reaches neither React's icon set nor src/lib/db-ui-config.ts.
+ * Each engine's connection fields and seed-only fields, projected from each engine's declaration into
+ * src/lib/db/connection-fields.ts, a module the seed loader can load: one row per type-id in both records, the dialog's
+ * table holding each row by reference, and an import graph that reaches neither React's icon set nor
+ * src/lib/db-ui-config.ts. This census holds each projection to its own source, the engine's declaration, while the
+ * behaviour those rows drive rests on tests/security/provider-trust-material.test.ts,
+ * tests/security/provider-declared-fields.test.ts and the seed tests under tests/unit/seed/.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -14,6 +17,9 @@ import {
   CONNECTION_FIELDS,
   REFUSED_CONNECTION_FIELDS,
   SEED_ONLY_FIELDS,
+  type SeedOnlyFields,
+  seedOnlyProjectionRefusal,
+  seedOnlyRefusal,
 } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 
@@ -127,6 +133,30 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
     for (const row of Object.values(REFUSED_CONNECTION_FIELDS)) {
       for (const key of Object.keys(row)) expect(Object.hasOwn(CONNECTION_FIELD_DESCRIPTORS, key)).toBe(true);
     }
+  });
+
+  test("a seed-only refusal writes each value in its place once, a value holding a placeholder or a replacement pattern included", () => {
+    const row: SeedOnlyFields = {
+      fields: ["registerMap"],
+      kind: "each",
+      refusal: "{field} and {field} again, but never {id} or {type}.",
+      projectionRefusal: 'Seed "{id}" of "{type}", "{id}" again, never {field}.',
+    };
+    const elasticsearch = SEED_ONLY_FIELDS.elasticsearch as SeedOnlyFields;
+
+    expect(seedOnlyRefusal(row, "registerMap")).toBe("registerMap and registerMap again, but never {id} or {type}.");
+    expect(seedOnlyRefusal(row, "{field}$&$1$$")).toBe(
+      "{field}$&$1$$ and {field}$&$1$$ again, but never {id} or {type}.",
+    );
+    expect(seedOnlyProjectionRefusal(row, "{type}$&", "{id}$'")).toBe(
+      `Seed "{type}$&" of "{id}$'", "{type}$&" again, never {field}.`,
+    );
+    expect(seedOnlyProjectionRefusal(elasticsearch, "{type}$&", "opensearch")).toStartWith(
+      'Seed connection "{type}$&" of type "opensearch" carries an Elasticsearch API key pair.',
+    );
+    expect(() => seedOnlyProjectionRefusal(SEED_ONLY_FIELDS.opcua as SeedOnlyFields, "seed-one", "postgres")).toThrow(
+      "The seed-only fields securityMode, serverCertificateThumbprint, securityPolicyUri, clientCertificatePath, clientPrivateKeyPath, agentReadRoots declare no projection refusal",
+    );
   });
 
   test("a refused field is in no row of its own engine's connection fields or seed-only fields", () => {

@@ -9,13 +9,24 @@
  * src/lib/db/provider-connection.ts). `REFUSED_CONNECTION_FIELDS` maps, per type, each field its engine refuses by name
  * to the sentence core refuses it with before any provider is built; no provider receives one.
  *
+ * Those three are authored in each engine's declaration (`connection.fields`, `connection.seedOnly` and
+ * `connection.refused` in src/lib/db/engine-declarations/<type-id>.json) and projected into
+ * `./engine-catalog/connection.generated.ts` by scripts/generate-engine-catalog.ts (docs/providers/CONTRACT.md, clause
+ * M-71), which this module reads; the reason a row holds what it does is in the engine's provider doc. None of them is
+ * a claim, so the agent credential records below, which are, stay written here by hand.
+ *
  * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
- * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that module
- * imports React icon components, which the seed loader must not load, the reason src/lib/db/credential-warnings.ts
- * is a module of its own.
+ * Pure, browser-safe and UI-free: it imports types and the generated records only. It is not in
+ * src/lib/db-ui-config.ts because that module imports React icon components, which the seed loader must not load, the
+ * reason src/lib/db/credential-warnings.ts is a module of its own.
  */
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import {
+  BUNDLED_CONNECTION_FIELDS,
+  BUNDLED_REFUSED_FIELDS,
+  BUNDLED_SEED_ONLY,
+} from "./engine-catalog/connection.generated";
 import type { AgentCredentialForm } from "./types";
 
 /** One addressing field, named by the same list that decides whether a save writes it. */
@@ -465,70 +476,15 @@ export function savedFieldValue(field: BodyConnectionField, value: string): stri
   }
 }
 
-/** Each type's connection fields as literals, so the compiler can ask what a given type takes. */
-const CONNECTION_FIELD_ROWS = {
-  postgres: ["host", "port", "user", "password", "database"],
-  mysql: ["host", "port", "user", "password", "database"],
-  sqlite: ["database"],
-  duckdb: ["database"],
-  libsql: ["host", "port", "user", "password", "connectionString"],
-  mongodb: ["host", "port", "user", "password", "database", "connectionString", "authSource"],
-  redis: ["host", "port", "user", "password", "database"],
-  oracle: ["host", "port", "user", "password", "database", "serviceName"],
-  db2: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
-  mssql: ["host", "port", "user", "password", "database", "instanceName"],
-  couchbase: ["host", "port", "user", "password", "database", "connectionString"],
-  clickhouse: ["host", "port", "user", "password", "database", "connectionString"],
-  druid: ["host", "port", "user", "password"],
-  elasticsearch: ["host", "port", "user", "password", "apiKeyId", "apiKeySecret"],
-  opensearch: ["host", "port", "user", "password"],
-  trino: ["host", "port", "user", "password", "database", "schema"],
-  cassandra: ["host", "port", "user", "password", "database", "localDataCenter"],
-  prometheus: ["host", "port", "user", "password"],
-  kafka: ["host", "port", "saslMechanism", "user", "password"],
-  etcd: ["host", "port", "user", "password"],
-  neo4j: ["host", "port", "user", "password", "database"],
-  milvus: ["host", "port", "user", "password", "database"],
-  qdrant: ["host", "port", "password"],
-  weaviate: ["host", "port", "password"],
-  influxdb: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
-  influxdb3: ["host", "port", "password", "database", "allowInsecureAuth"],
-  oxia: ["host", "port", "password", "database", "dataServers", "allowInsecureAuth"],
-  databend: ["host", "port", "user", "password", "database", "warehouse", "allowInsecureAuth"],
-  bigquery: ["database", "schema", "password", "location"],
-  snowflake: [
-    "host",
-    "user",
-    "authMethod",
-    "privateKey",
-    "privateKeyPassphrase",
-    "password",
-    "warehouse",
-    "database",
-    "schema",
-    "role",
-  ],
-  spark: ["host", "port", "password", "database", "schema"],
-  s3: ["host", "port", "user", "password", "database", "region", "allowInsecureAuth"],
-  kubernetes: ["host", "port", "password", "database", "namespaces", "apiPath", "tlsServerName"],
-  mqtt: ["host", "port", "user", "password", "database", "allowInsecureAuth"],
-  firestore: ["database", "schema", "password"],
-  rabbitmq: ["host", "port", "user", "password", "amqpPort", "apiPath", "allowInsecureAuth"],
-  opcua: ["host", "user", "password", "securityMode", "serverCertificateThumbprint"],
-  mtconnect: ["host", "port", "apiPath"],
-  modbus: ["host", "port", "registerMap"],
-  netconf: ["host", "port", "user", "password", "privateKey", "privateKeyPassphrase", "hostKeyFingerprint"],
-  snmp: ["host", "port", "password", "allowInsecureAuth"],
-  sparkplug: ["host", "port", "database"],
-  libredb: ["database"],
-} as const satisfies Record<DatabaseType, readonly ConnectionField[]>;
-
 /** The connection fields one type takes, as a union of literals. */
-export type ConnectionFieldOf<T extends DatabaseType> = (typeof CONNECTION_FIELD_ROWS)[T][number];
+export type ConnectionFieldOf<T extends DatabaseType> = (typeof BUNDLED_CONNECTION_FIELDS)[T][number];
 
-/** Each type's connection fields, in the order the connection dialog draws them unless the entry says otherwise. */
-export const CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> =
-  Object.freeze(CONNECTION_FIELD_ROWS);
+/**
+ * Each type's connection fields, in the order the connection dialog draws them unless the entry says otherwise: each
+ * engine's `connection.fields`, projected from its declaration. The generated record keeps each row's literals, so the
+ * compiler can ask what a given type takes, and a declared field outside `ConnectionField` fails the typecheck here.
+ */
+export const CONNECTION_FIELDS: Readonly<Record<DatabaseType, readonly ConnectionField[]>> = BUNDLED_CONNECTION_FIELDS;
 
 /** The fields only one engine's provider reads, and how a seed of another type that carries one is refused. */
 export interface SeedOnlyFields {
@@ -536,131 +492,50 @@ export interface SeedOnlyFields {
   readonly fields: readonly (ConnectionField | SeedOnlyField)[];
   /** "each": one issue per present field at its path; "set": one issue for the whole set at the first present field. */
   readonly kind: "each" | "set";
-  readonly refusal: (field: string) => string;
-  /** The projection gate's sentence in filterByRoles, or null where the mapper has none. */
-  readonly projectionRefusal: ((id: string, type: string) => string) | null;
+  /** The refusal's template, in which `{field}` stands for the field refused; `seedOnlyRefusal` renders it. */
+  readonly refusal: string;
+  /**
+   * The projection gate's template in filterByRoles, in which `{id}` and `{type}` stand for the connection's id and
+   * type, or null where the mapper has none; `seedOnlyProjectionRefusal` renders it.
+   */
+  readonly projectionRefusal: string | null;
 }
 
 /**
- * Elasticsearch (#708): the API key pair. The seed schema refuses it on any other type-id at load, and `filterByRoles`
- * refuses it again as the mapper's own gate, so a SeedConnection constructed in memory (bypassing zod) cannot be
- * projected as a managed OpenSearch connection whose transport would then drop the pair with no error.
+ * Each type's seed-only fields, or null where a seed of another type may carry every field this type reads: each
+ * engine's `connection.seedOnly`, projected from its declaration, its `scope` read as `kind`.
  */
-const ELASTICSEARCH_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
-  fields: Object.freeze(["apiKeyId", "apiKeySecret"] as const),
-  kind: "set",
-  refusal: () =>
-    "apiKeyId and apiKeySecret are Elasticsearch-only. OpenSearch (and every other engine) refuses the pair: nothing here has measured whether OpenSearch's security plugin accepts Authorization: ApiKey, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.",
-  projectionRefusal: (id: string, type: string) =>
-    `Seed connection "${id}" of type "${type}" carries an Elasticsearch API key pair. The pair is Elasticsearch-only; OpenSearch's security plugin has not been measured to accept Authorization: ApiKey, so the seed is refused rather than projected as a connection that silently falls back to user/password.`,
-});
+export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | null>> = BUNDLED_SEED_ONLY;
+
+/** The refusal template's one placeholder. */
+const FIELD_PLACEHOLDER = /\{field\}/g;
+
+/** The projection refusal template's two placeholders. */
+const ID_TYPE_PLACEHOLDER = /\{(id|type)\}/g;
 
 /**
- * OPC UA (#1677). Every OPC UA field here is OPC UA's own: on any other engine the provider never reads them, so
- * a seed that carries one would be listed as pinned or as encrypted and be neither. Refused at load by name, as the
- * Elasticsearch API-key pair is.
+ * The sentence a seed of another type carrying `field` is refused with: `row`'s template with each `{field}` replaced,
+ * in one pass, by `field` as it is, so a field holding a placeholder or a replacement pattern is written as given.
+ */
+export function seedOnlyRefusal(row: SeedOnlyFields, field: string): string {
+  return row.refusal.replaceAll(FIELD_PLACEHOLDER, () => field);
+}
+
+/**
+ * The sentence the projection gate refuses the seed connection `id` of type `type` with: `row`'s template with each
+ * `{id}` and `{type}` replaced, in one pass, by its value as it is.
  *
- * The last three are the OPC UA fields the dialog has no box for, because they are deployment facts: the policy to
- * insist on, and the client certificate and key to present. A server with a trust list of its own has to be given a
- * STABLE client certificate before it will accept a secured channel, and a file path is how a deployment names one -
- * which is the seed file's job and not a text box's. Supplied together or not at all; the provider refuses one
- * without the other.
+ * @throws {Error} When `row` declares no projection refusal, naming its fields.
  */
-const OPCUA_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
-  fields: Object.freeze([
-    "securityMode",
-    "serverCertificateThumbprint",
-    "securityPolicyUri",
-    "clientCertificatePath",
-    "clientPrivateKeyPath",
-    "agentReadRoots",
-  ] as const),
-  kind: "each",
-  refusal: (field: string) =>
-    `${field} is OPC UA only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
-  projectionRefusal: null,
-});
-
-/**
- * NETCONF: the device's SSH host key pin. Only the NETCONF provider reads a top-level `hostKeyFingerprint` (an SSH
- * tunnel's pin is `sshTunnel.hostKeyFingerprint`), so a seed of another type that carries one would be listed as pinned
- * and be nothing of the kind. Refused at load by name, as the OPC UA fields are.
- */
-const NETCONF_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
-  fields: Object.freeze(["hostKeyFingerprint"] as const),
-  kind: "each",
-  refusal: (field: string) =>
-    `${field} is NETCONF only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
-  projectionRefusal: null,
-});
-
-/**
- * Modbus: the register map. Only the Modbus provider reads `registerMap`, so a seed of another type that carries one
- * would be listed as mapped and be nothing of the kind. Refused at load by name, as the NETCONF pin is.
- */
-const MODBUS_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
-  fields: Object.freeze(["registerMap"] as const),
-  kind: "each",
-  refusal: (field: string) =>
-    `${field} is Modbus only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
-  projectionRefusal: null,
-});
-
-/** Each type's seed-only fields, or null where a seed of another type may carry every field this type reads. */
-export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | null>> = Object.freeze({
-  postgres: null,
-  mysql: null,
-  sqlite: null,
-  duckdb: null,
-  libsql: null,
-  mongodb: null,
-  redis: null,
-  oracle: null,
-  db2: null,
-  mssql: null,
-  couchbase: null,
-  clickhouse: null,
-  druid: null,
-  elasticsearch: ELASTICSEARCH_SEED_ONLY_FIELDS,
-  opensearch: null,
-  trino: null,
-  cassandra: null,
-  prometheus: null,
-  kafka: null,
-  etcd: null,
-  neo4j: null,
-  milvus: null,
-  qdrant: null,
-  weaviate: null,
-  influxdb: null,
-  influxdb3: null,
-  oxia: null,
-  databend: null,
-  bigquery: null,
-  snowflake: null,
-  spark: null,
-  s3: null,
-  kubernetes: null,
-  mqtt: null,
-  firestore: null,
-  rabbitmq: null,
-  opcua: OPCUA_SEED_ONLY_FIELDS,
-  mtconnect: null,
-  modbus: MODBUS_SEED_ONLY_FIELDS,
-  netconf: NETCONF_SEED_ONLY_FIELDS,
-  snmp: null,
-  sparkplug: null,
-  libredb: null,
-});
+export function seedOnlyProjectionRefusal(row: SeedOnlyFields, id: string, type: string): string {
+  if (row.projectionRefusal === null) {
+    throw new Error(`The seed-only fields ${row.fields.join(", ")} declare no projection refusal`);
+  }
+  return row.projectionRefusal.replaceAll(ID_TYPE_PLACEHOLDER, (_, name: string) => (name === "id" ? id : type));
+}
 
 /** The sentence one refused field is refused with, keyed by the field. */
 export type RefusedFieldRow = Readonly<Partial<Record<ConnectionField, string>>>;
-
-const NONE: RefusedFieldRow = Object.freeze({});
-
-/** OpenSearch's one sentence for either half of the API key pair, which only Elasticsearch takes. */
-const OPENSEARCH_API_KEY_REFUSAL =
-  "OpenSearch does not accept API key authentication. Elasticsearch publishes Authorization: ApiKey; nothing here has measured whether OpenSearch's security plugin accepts that scheme, so the pair is refused rather than sent as Basic or as a guessed header.";
 
 /**
  * The fields each type's engine does not take and refuses by name, each mapped to the sentence it is refused with:
@@ -668,77 +543,10 @@ const OPENSEARCH_API_KEY_REFUSAL =
  * `createDatabaseProvider` refuses a connection that sets one (any value but `undefined`, `null` and `""`) with that
  * sentence, before any provider is built (`refusedFieldRefusal` in src/lib/db/provider-connection.ts), while
  * `readProviderDeclarations`, which never connects, drops it; no provider receives one (`providerFields`). Each sentence
- * is quoted in its engine's provider doc. A field is listed in the order it is checked.
+ * is quoted in its engine's provider doc. A field is listed in the order it is checked: each engine's
+ * `connection.refused`, projected from its declaration in its list order.
  */
-export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> = Object.freeze({
-  postgres: NONE,
-  mysql: NONE,
-  sqlite: NONE,
-  duckdb: NONE,
-  libsql: NONE,
-  mongodb: NONE,
-  redis: NONE,
-  oracle: NONE,
-  db2: NONE,
-  mssql: NONE,
-  couchbase: NONE,
-  clickhouse: NONE,
-  druid: NONE,
-  elasticsearch: NONE,
-  // The API key pair is Elasticsearch's alone: the transport both types share sends it only there, and OpenSearch is
-  // refused it rather than fall back to user and password with no error.
-  opensearch: Object.freeze({ apiKeyId: OPENSEARCH_API_KEY_REFUSAL, apiKeySecret: OPENSEARCH_API_KEY_REFUSAL }),
-  trino: NONE,
-  cassandra: NONE,
-  prometheus: NONE,
-  kafka: NONE,
-  etcd: NONE,
-  neo4j: NONE,
-  milvus: NONE,
-  // No user name: an API key is the password.
-  qdrant: Object.freeze({
-    user: "Qdrant has no user name: clear the connection's user, and put the API key or JWT in the password. Nothing was sent.",
-  }),
-  // No user name: an API key or an OIDC access token is the password.
-  weaviate: Object.freeze({
-    user: "Weaviate takes no user name: clear the connection's user, and put the API key or OIDC access token in the password. Nothing was sent.",
-  }),
-  influxdb: NONE,
-  // No user name: the token is the password.
-  influxdb3: Object.freeze({ user: "InfluxDB 3 has no user name: clear User and put the token in Token." }),
-  // No user name: a bearer token is the password.
-  oxia: Object.freeze({ user: "Oxia has no user name: clear User. A bearer token goes under Token." }),
-  databend: NONE,
-  bigquery: NONE,
-  snowflake: NONE,
-  // No user name: every request uses one fixed Spark Connect user id.
-  spark: Object.freeze({
-    user: "Apache Spark connections take no user: every Studio request uses one fixed Spark Connect user id, and Token is the credential. Clear User. Nothing was sent.",
-  }),
-  s3: NONE,
-  // No user name: basic authentication is refused, a bearer token is the password.
-  kubernetes: Object.freeze({
-    user: "Kubernetes connections take no user name: basic authentication is refused. Clear User, and put a bearer token under Token or a client certificate under SSL / TLS. Nothing was sent.",
-  }),
-  mqtt: NONE,
-  firestore: NONE,
-  // No database (virtual hosts are discovered), and the namespaces and TLS server name are Kubernetes's boxes.
-  rabbitmq: Object.freeze({
-    database:
-      "RabbitMQ connections take no Database: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
-    namespaces:
-      "RabbitMQ connections take no Namespaces: Studio discovers the virtual hosts from the management API. Clear the field; nothing was sent.",
-    tlsServerName:
-      "RabbitMQ connections take no TLS server name: the certificate is always checked against Host. Clear the field; nothing was sent.",
-  }),
-  opcua: NONE,
-  mtconnect: NONE,
-  modbus: NONE,
-  netconf: NONE,
-  snmp: NONE,
-  sparkplug: NONE,
-  libredb: NONE,
-});
+export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> = BUNDLED_REFUSED_FIELDS;
 
 /**
  * What an agent credential on a seed of one engine is: `agentUser` and `agentPassword`, the principal every agent

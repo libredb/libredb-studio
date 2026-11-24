@@ -221,6 +221,8 @@ A read-only seed with no token is refused when the file loads, because a server 
 
 > Credential warning: An InfluxDB 3 server started with --without-auth accepts any token or none, so a read-only seed without a token promises a boundary the server does not keep.
 
+The token is opaque, so the dialog warns about nothing and no token is probed.
+
 ### 4.3 Version and the wrong server
 
 On InfluxDB 3 `GET /ping` needs the token and answers the product and version, "InfluxDB 3 Core" and "3.12.0" on the tested server.

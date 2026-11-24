@@ -4,13 +4,16 @@
  * members, today's per-engine tables and what each engine's provider declares before it connects
  * (docs/providers/CONTRACT.md, clause M-15).
  *
- * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `location` and `connection.connectBudgetMs`), are
- * written in the declaration itself: this script reads them from the committed file of the engine in
- * src/lib/db/engine-declarations, whatever directory `--out` names, refuses by name a file that lacks one or whose `id`
- * is not its file name, and writes them back unchanged. Every other member is built from the tables. The engine catalog
- * (scripts/generate-engine-catalog.ts, clause M-70) projects the authored members, and `bun run engines:generate`
- * runs it first: this script builds every provider through the factory, which builds only an engine the catalog
- * holds. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
+ * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `location`, and of `connection` its `fields`,
+ * `seedOnly`, `refused`, `connectionString.accepted` and `connectionString.dialogOffersUri`, `readsTrustMaterial`,
+ * `credentialWarnings` and `connectBudgetMs`), are written in the declaration itself: this script reads them from the
+ * committed file of the engine in src/lib/db/engine-declarations, whatever directory `--out` names, refuses by name a
+ * file that lacks one or whose `id` is not its file name, and writes them back unchanged. Every other member is built
+ * from the tables. The engine catalog and the connection tables (scripts/generate-engine-catalog.ts, clauses M-70 and
+ * M-71) project the authored members, and `bun run engines:generate` runs that command first: this script builds every
+ * provider through the factory, which builds only an engine the catalog holds, and reads `CONNECTION_FIELDS`, the
+ * projection of each `connection.fields`, to refuse a dialog entry or a field rule for a field the engine does not
+ * list. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
  * written for the new engine; the catalog generator admits it and this script writes every other member.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
@@ -27,19 +30,13 @@
  * fails on any byte of difference, holds each to the schema, and reads each back to every table with read-back
  * functions of its own.
  *
- * A refusal sentence the tables hold as a function becomes a template: the function is called with the placeholder
- * itself (`{field}`, or `{id}` and `{type}`), so the template is the sentence with each value's place marked, and the
- * census renders it back for every field.
- *
- * Any other function a table holds is named, never carried, and named by the slot it fills, one convention for every
+ * A function a table holds is named, never carried, and named by the slot it fills, one convention for every
  * engine: `<field>Check` for a field rule's check (`hostCheck`), `hostHint` and `hostIdentity` for the Host text
  * readers, `importer` for the connection import's parser, `urlTls` for the connection string's URL TLS reader,
  * `pasteReader` for its paste reader (one name for the reader's claims, names and parse) and `seedCheck` for its seed
  * load check. The name is read from where the function sits, never from the function itself, so this script imports no
  * provider module directly and reads no function's `name`; the census resolves each name with a table of its own and
  * holds it, by identity, to the function the connection form or the connection string row holds.
- *
- * The connect budget, `connection.connectBudgetMs`, is authored, null where the engine takes the host's default.
  *
  * The SQL text facts come from the engine's row in `SQL_GRAMMAR`. A grammar fact the SDK's `SqlGrammar` type may leave
  * out is written at the reading its readers give that absence, false, an empty list, true for `dollarTags`,
@@ -81,8 +78,7 @@
  * `MCP_AGENT_CREDENTIAL_REQUIRED`. Each table is Studio's review record of its claim, which every gate reads, and a
  * member is a request, never a fact Studio believes as declared (docs/providers/CONTRACT.md, clause M-52), so the
  * declaration states each shipped engine's request as its record's row. `READ_ONLY_ENFORCED` has no member, since Studio
- * derives it from the write reach, and `connection.readsTrustMaterial`, which is no claim, is `READS_TRUST_MATERIAL`'s
- * row.
+ * derives it from the write reach, and `connection.readsTrustMaterial`, which is no claim, is authored.
  * The claims of the connection, facets, agent and SQL text segments are written the same way: each is the row of the
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  * Two more policy claims come from records of their own: `agentCredentialForm` from `AGENT_CREDENTIAL_FORM`, whose null
@@ -152,7 +148,6 @@ import type {
   ClausePattern,
   ConnectionDialog,
   ConnectionStringOffer,
-  CredentialWarning as ManifestCredentialWarning,
   Editor,
   EditorLanguageFacts,
   EngineDeclaration,
@@ -188,8 +183,6 @@ import type { AgentCatalogCapture } from "../src/lib/agent/catalog-rows";
 import type { AgentStatisticsReading } from "../src/lib/agent/schema-stats";
 import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import {
-  CONNECTION_FORM_URI_MODE,
-  CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
   MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
@@ -200,7 +193,6 @@ import {
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
-  READS_TRUST_MATERIAL,
   REFUSES_DENIED_FILE_ACCESS,
   SHIPPED_DATABASE_TYPES,
   SINGLE_WRITER_FILE,
@@ -214,14 +206,11 @@ import {
   type ConnectionField,
   PLACEABLE_FIELDS,
   type PlaceableField,
-  REFUSED_CONNECTION_FIELDS,
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
-  SEED_ONLY_FIELDS,
 } from "../src/lib/db/connection-fields";
 import { CONNECTION_FORM, type ConnectionFormSpec, offersSslPanel } from "../src/lib/db/connection-form";
 import { CONNECTION_STRING } from "../src/lib/db/connection-string";
-import { CREDENTIAL_WARNINGS } from "../src/lib/db/credential-warnings";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
 import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
@@ -247,13 +236,37 @@ import { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 export { ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
 /** The members a declaration authors, as dotted paths: read from its committed file, never built from a table. */
-export const AUTHORED_MEMBERS = ["id", "location", "connection.connectBudgetMs"] as const;
+export const AUTHORED_MEMBERS = [
+  "id",
+  "location",
+  "connection.fields",
+  "connection.seedOnly",
+  "connection.refused",
+  "connection.connectionString.accepted",
+  "connection.connectionString.dialogOffersUri",
+  "connection.readsTrustMaterial",
+  "connection.credentialWarnings",
+  "connection.connectBudgetMs",
+] as const;
 
-/** One declaration's authored members, as `authoredMembersOf` reads them. */
+type Connection = EngineDeclaration["connection"];
+
+/** One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them. */
 export interface AuthoredMembers {
   readonly id: string;
   readonly location: EngineDeclaration["location"];
-  readonly connectBudgetMs: EngineDeclaration["connection"]["connectBudgetMs"];
+  readonly connection: {
+    readonly fields: Connection["fields"];
+    readonly seedOnly: Connection["seedOnly"];
+    readonly refused: Connection["refused"];
+    readonly connectionString: {
+      readonly accepted: Connection["connectionString"]["accepted"];
+      readonly dialogOffersUri: Connection["connectionString"]["dialogOffersUri"];
+    };
+    readonly readsTrustMaterial: Connection["readsTrustMaterial"];
+    readonly credentialWarnings: Connection["credentialWarnings"];
+    readonly connectBudgetMs: Connection["connectBudgetMs"];
+  };
 }
 
 /** Whether `value` is an object, not an array, holding `member` as an own property. */
@@ -262,26 +275,43 @@ function holds(value: unknown, member: string): value is Record<string, unknown>
 }
 
 /**
- * The authored members of `value`, the parsed text of the declaration file `file`.
+ * The authored members of `value`, the parsed text of the declaration file `file`, each read at its dotted path and
+ * given as the file states it; the SDK's validator, which admits the file before this runs, holds each to its type.
  *
- * @throws {Error} Naming the file and the member, for a value that lacks an authored member; naming the file and the
- * id, for a value whose `id` is not the file's name.
+ * @throws {Error} Naming the file and the member, for a value that lacks an authored member, the first in
+ * `AUTHORED_MEMBERS` order; naming the file and the id, for a value whose `id` is not the file's name.
  */
 export function authoredMembersOf(value: unknown, file: string): AuthoredMembers {
-  const lacks = (member: (typeof AUTHORED_MEMBERS)[number]) => new Error(`${file} lacks its authored member ${member}`);
-  if (!holds(value, "id") || value.id === undefined) throw lacks("id");
-  if (!holds(value, "location")) throw lacks("location");
-  if (!holds(value, "connection") || !holds(value.connection, "connectBudgetMs")) {
-    throw lacks("connection.connectBudgetMs");
-  }
-  if (`${String(value.id)}.json` !== file) {
-    throw new Error(`${file} names the engine id ${JSON.stringify(value.id)}, not its file name`);
-  }
-  return {
-    id: value.id as string,
-    location: value.location as AuthoredMembers["location"],
-    connectBudgetMs: value.connection.connectBudgetMs as AuthoredMembers["connectBudgetMs"],
+  const read = (member: (typeof AUTHORED_MEMBERS)[number]): unknown => {
+    let current: unknown = value;
+    for (const step of member.split(".")) {
+      if (!holds(current, step) || current[step] === undefined) {
+        throw new Error(`${file} lacks its authored member ${member}`);
+      }
+      current = current[step];
+    }
+    return current;
   };
+  const authored: AuthoredMembers = {
+    id: read("id") as string,
+    location: read("location") as EngineDeclaration["location"],
+    connection: {
+      fields: read("connection.fields") as Connection["fields"],
+      seedOnly: read("connection.seedOnly") as Connection["seedOnly"],
+      refused: read("connection.refused") as Connection["refused"],
+      connectionString: {
+        accepted: read("connection.connectionString.accepted") as boolean,
+        dialogOffersUri: read("connection.connectionString.dialogOffersUri") as boolean,
+      },
+      readsTrustMaterial: read("connection.readsTrustMaterial") as boolean,
+      credentialWarnings: read("connection.credentialWarnings") as Connection["credentialWarnings"],
+      connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
+    },
+  };
+  if (`${authored.id}.json` !== file) {
+    throw new Error(`${file} names the engine id ${JSON.stringify(authored.id)}, not its file name`);
+  }
+  return authored;
 }
 
 /** The authored members of the committed declaration of `type`, read from the repository's declarations directory. */
@@ -457,14 +487,18 @@ export function buildFieldRules(
 }
 
 /**
- * One engine's connection string: what the provider accepts and the dialog offers, then its row in `CONNECTION_STRING`,
- * the scheme as written, the paste's catch-all flag and formats in order, and each function named by its slot.
+ * One engine's connection string: what the provider accepts and the dialog offers, as `authored` states them, then its
+ * row in `CONNECTION_STRING`, the scheme as written, the paste's catch-all flag and formats in order, and each function
+ * named by its slot.
  */
-function buildConnectionString(type: DatabaseType): ConnectionStringOffer {
+function buildConnectionString(
+  type: DatabaseType,
+  authored: AuthoredMembers["connection"]["connectionString"],
+): ConnectionStringOffer {
   const row = CONNECTION_STRING[type];
   return {
-    accepted: CONNECTION_STRING_ACCEPTED[type],
-    dialogOffersUri: CONNECTION_FORM_URI_MODE[type],
+    accepted: authored.accepted,
+    dialogOffersUri: authored.dialogOffersUri,
     scheme: row.scheme,
     urlTls: row.readTls === null ? null : "urlTls",
     paste:
@@ -473,23 +507,6 @@ function buildConnectionString(type: DatabaseType): ConnectionStringOffer {
         : { reader: "pasteReader", catchAll: row.paste.catchAll, formats: [...row.paste.formats] },
     seedCheck: row.validateSeed === null ? null : "seedCheck",
   };
-}
-
-/**
- * The engine's credential warnings, read from `CREDENTIAL_WARNINGS` rather than the form's getter over it, so the
- * declaration names the record it comes from; each written member by member, so every declaration orders them alike.
- */
-function buildCredentialWarnings(type: DatabaseType): ManifestCredentialWarning[] {
-  return (CREDENTIAL_WARNINGS[type] ?? []).map((warning) => {
-    switch (warning.kind) {
-      case "pair":
-        return { kind: warning.kind, user: warning.user, password: warning.password, message: warning.message };
-      case "jwt":
-        return { kind: warning.kind, noExp: warning.noExp, access: [...warning.access], message: warning.message };
-      case "no-secret":
-        return { kind: warning.kind, message: warning.message };
-    }
-  });
 }
 
 /** The tables an engine's editor facts are read from, a parameter so a test can hand the generator others. */
@@ -1440,7 +1457,6 @@ export function buildEngineDeclaration(
     throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
   }
   const form = CONNECTION_FORM[type];
-  const seedOnly = SEED_ONLY_FIELDS[type];
   const credential = SEED_AGENT_CREDENTIAL[type];
   const sshRefusal = SSH_TUNNEL_REFUSAL[type];
   const facets = ENGINE_FACETS[type];
@@ -1452,25 +1468,13 @@ export function buildEngineDeclaration(
     displayName: form.label,
     location: authored.location,
     connection: {
-      fields: [...CONNECTION_FIELDS[type]],
+      fields: authored.connection.fields,
       defaults,
-      seedOnly:
-        seedOnly === null
-          ? null
-          : {
-              fields: seedOnly.fields.map((field) => fieldName(field, type)),
-              scope: seedOnly.kind,
-              refusal: seedOnly.refusal("{field}"),
-              projectionRefusal:
-                seedOnly.projectionRefusal === null ? null : seedOnly.projectionRefusal("{id}", "{type}"),
-            },
-      refused: Object.entries(REFUSED_CONNECTION_FIELDS[type]).map(([field, refusal]) => ({
-        field: fieldName(field, type),
-        refusal,
-      })),
-      connectionString: buildConnectionString(type),
+      seedOnly: authored.connection.seedOnly,
+      refused: authored.connection.refused,
+      connectionString: buildConnectionString(type, authored.connection.connectionString),
       tls: offersSslPanel(type) ? "offered" : "not-offered",
-      readsTrustMaterial: READS_TRUST_MATERIAL[type],
+      readsTrustMaterial: authored.connection.readsTrustMaterial,
       sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },
       hostPathFields: [...HOST_PATH_FIELDS[type]],
       opensLocalFile: OPENS_LOCAL_FILE[type],
@@ -1481,12 +1485,12 @@ export function buildEngineDeclaration(
           : { form: credential.form, supersededBy: credential.supersededBy.map((field) => fieldName(field, type)) },
       dialog: buildDialog(form, CONNECTION_FIELDS[type], type),
       hostUriSchemes: [...(form.hostAcceptsUri ?? [])],
-      credentialWarnings: buildCredentialWarnings(type),
+      credentialWarnings: authored.connection.credentialWarnings,
       fieldRules: buildFieldRules(form, CONNECTION_FIELDS[type], type),
       hostHint: form.hostHint === undefined ? null : "hostHint",
       hostIdentity: form.hostIdentity === undefined ? null : "hostIdentity",
       import: form.connectionImport === undefined ? null : { label: form.connectionImport.label, importer: "importer" },
-      connectBudgetMs: authored.connectBudgetMs,
+      connectBudgetMs: authored.connection.connectBudgetMs,
     },
     facets: {
       // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the

@@ -40,15 +40,33 @@ interface DeclarationReader {
   readonly reason: string;
 }
 
-/** The catalog's members, M-70: the members every declaration authors, M-15. */
+/** The catalog's members, M-70: members every declaration authors, M-15. */
 const CATALOG_MEMBERS = ["id", "location", "connection.connectBudgetMs"] as const;
+
+/** The data-only connection tables' members, M-71: members every declaration authors, M-15. */
+const CONNECTION_TABLE_MEMBERS = [
+  "connection.fields",
+  "connection.seedOnly",
+  "connection.refused",
+  "connection.credentialWarnings",
+  "connection.readsTrustMaterial",
+  "connection.connectionString.accepted",
+  "connection.connectionString.dialogOffersUri",
+] as const;
 
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
     path: "src/lib/db/compatibility.ts",
-    members: ["id", "location"],
-    reason: "the shipped engines and each engine's location, read from the engine catalog",
+    members: [
+      "id",
+      "location",
+      "connection.readsTrustMaterial",
+      "connection.connectionString.accepted",
+      "connection.connectionString.dialogOffersUri",
+    ],
+    reason:
+      "the shipped engines and each engine's location, read from the engine catalog, and three connection records, read from the connection tables",
   },
   {
     path: "src/lib/db/connect-budget.ts",
@@ -56,14 +74,29 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "each engine's connect budget, read from the engine catalog",
   },
   {
+    path: "src/lib/db/connection-fields.ts",
+    members: ["connection.fields", "connection.seedOnly", "connection.refused"],
+    reason: "each engine's connection fields, seed-only fields and refused fields, read from the connection tables",
+  },
+  {
+    path: "src/lib/db/credential-warnings.ts",
+    members: ["connection.credentialWarnings"],
+    reason: "each engine's credential warnings, read from the connection tables",
+  },
+  {
     path: "src/lib/db/engine-catalog/catalog.generated.ts",
     members: CATALOG_MEMBERS,
     reason: "the engine catalog, generated from the admitted declarations",
   },
   {
+    path: "src/lib/db/engine-catalog/connection.generated.ts",
+    members: CONNECTION_TABLE_MEMBERS,
+    reason: "the data-only connection tables, generated from the admitted declarations",
+  },
+  {
     path: "src/lib/db/engine-catalog/projection.ts",
-    members: CATALOG_MEMBERS,
-    reason: "projects the admitted declarations into the engine catalog",
+    members: [...CATALOG_MEMBERS, ...CONNECTION_TABLE_MEMBERS],
+    reason: "projects the admitted declarations into the engine catalog and the connection tables",
   },
 ];
 

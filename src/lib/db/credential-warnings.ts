@@ -9,14 +9,15 @@
  * `publishedDefaultPairWarning`. `CONNECTION_FORM` (src/lib/db/connection-form.ts) takes each type's array from here
  * by reference, so the data exists once.
  *
- * Pure, browser-safe and UI-free: it imports types only. It is not in src/lib/db-ui-config.ts because that
- * module imports React icon components, which the seed loader must not load, the reason the seed schema reads
- * `WRITE_REACH` from src/lib/db/compatibility.ts.
+ * Pure, browser-safe and UI-free: it imports types and the generated record only. It is not in
+ * src/lib/db-ui-config.ts because that module imports React icon components, which the seed loader must not load, the
+ * reason the seed schema reads `WRITE_REACH` from src/lib/db/compatibility.ts.
  *
  * A JWT is decoded here, locally, with `atob`: its signature is never checked and nothing is sent anywhere. The
  * sentence says what the token declares, never what a server granted, and names no claim value.
  */
 import type { DatabaseType } from "@/lib/types";
+import { BUNDLED_CREDENTIAL_WARNINGS } from "./engine-catalog/connection.generated";
 
 export type CredentialWarning =
   | { readonly kind: "pair"; readonly user: string; readonly password: string; readonly message: string }
@@ -29,142 +30,17 @@ export type CredentialWarning =
   | { readonly kind: "no-secret"; readonly message: string };
 
 /**
- * Each connection type's declared warnings. A provider adds its own row; Milvus, Qdrant, the two InfluxDB types, Oxia,
- * Databend and S3 declare one each.
+ * Each connection type's declared warnings: each engine's `connection.credentialWarnings`, authored in its declaration
+ * (src/lib/db/engine-declarations/<type-id>.json) and projected into `./engine-catalog/connection.generated.ts` by
+ * scripts/generate-engine-catalog.ts (docs/providers/CONTRACT.md, clause M-71), a row only for an engine that declares
+ * at least one warning. Why each engine warns about what it does is in its provider doc.
  *
- * Milvus (vector-family spec 3.12, E22): every server starts with the documented `root` pair, the default
- * survives a restart with a new configured default, and a server with authorization off, its default, accepts any
- * credential or none, so only the dialog's sentence can tell an operator, and a read-only seed with either
- * promises a boundary the server does not keep. Studio never probes or changes the credential.
- *
- * Qdrant (vector-family spec 3.12 and 4.4): a JWT is a credential the dialog can read without asking the
- * server, so a token that declares no expiry, manage access, or no access claim at all warns before Test
- * Connection; an opaque key is never probed. A server without `service.api_key`, its default, accepts any key or
- * none, so a read-only seed without a key promises a boundary the server does not keep and is refused.
- *
- * Weaviate (#1566 spec 3.6, W2): a server with `AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED`, its default, answers a
- * request with no key, so a read-only seed without a key is refused, as Qdrant's is. An API key is opaque, and an
- * OIDC access token is short-lived by design, so the dialog warns about neither.
- *
- * InfluxDB (InfluxQL) (InfluxDB spec E12, I7): a 1.x server ships with authentication off and then accepts any
- * credential or none, and an `influxdb` connection can also reach an InfluxDB 3 server started with
- * `--without-auth`, so a read-only seed without a password or token promises a boundary the server does not keep
- * and is refused. A password or token is opaque, so the dialog warns about nothing and no credential is probed.
- *
- * InfluxDB 3 (SQL) (InfluxDB spec E12, I7): a server started with `--without-auth` accepts any token or none, so
- * a read-only seed without a token is refused for the same reason. The token is opaque too: nothing warns in the
- * dialog.
- *
- * Oxia (DECISIONS O7): a JWT is a credential the dialog can read without asking the server; Oxia has no
- * authorization, so a token's claims never narrow what it reaches, and only a token without `exp` warns. No
- * `no-secret` row: a standalone server has no authentication, so a read-only seed with no token protects nothing
- * more than one with a token, and refusing it would refuse every seed of a standalone server.
- *
- * Databend (design 6.4 and 7.2, probe UC1): a `root` user whose `auth_type` is `no_password` is answered 200
- * whatever password arrives, so `root` with an empty password box signs in only as that user, and the dialog says
- * the server accepts any password for it. The `pair` kind with an empty password
- * is the row: it warns for `root` and no password, and for nothing else. A read-only seed is refused for Databend
- * already, since its `WRITE_REACH` is `open`, so the shared refusal adds no new refusal there.
- *
- * S3: MinIO and RustFS start with a documented default credential when none is configured, so the pair warns in
- * the dialog. A read-only seed with it is refused, as Milvus's is: the seed promises a boundary that rests only on
- * Studio's own refusal while the server would grant the key every write. No no-secret row: an unsigned connection is
- * anonymous to the server, which grants it only what the bucket policy grants anyone, so it promises no boundary the
- * server does not keep.
+ * A copy of the generated record, unfrozen as this record has always been, because the synthetic warnings of
+ * tests/helpers/synthetic-credential-warnings.ts declare a row on it for a test's duration and remove it after; each
+ * row and warning stays frozen.
  */
 export const CREDENTIAL_WARNINGS: Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>> = {
-  milvus: [
-    {
-      kind: "pair",
-      user: "root",
-      password: "Milvus",
-      message:
-        "This is the documented default root credential every Milvus server starts with, and it stays valid until an administrator changes it, so anyone who knows Milvus can sign in with it. Change the root password on the server, or connect as a user of your own.",
-    },
-    {
-      kind: "no-secret",
-      message:
-        "A Milvus server with authorization off, its default, accepts any credential or none, so a read-only seed without a password promises a boundary the server does not keep.",
-    },
-  ],
-  qdrant: [
-    {
-      kind: "jwt",
-      noExp: true,
-      access: ["m", "absent"],
-      message:
-        "This token declares no expiry, or manage access to the whole server, so it stays valid, and as powerful, until the server's key changes. Prefer a read-only or collection-scoped key with an expiry.",
-    },
-    {
-      kind: "no-secret",
-      message:
-        "A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep.",
-    },
-  ],
-  weaviate: [
-    {
-      kind: "no-secret",
-      message:
-        "A Weaviate server with anonymous access on, its default, answers a request that carries no key and grants it every write, so a read-only seed without a key promises a boundary the server does not keep.",
-    },
-  ],
-  influxdb: [
-    {
-      kind: "no-secret",
-      message:
-        "An InfluxDB 1.x server with authentication off, its default, and an InfluxDB 3 server started with --without-auth accept any credential or none, so a read-only seed without a password or token promises a boundary the server does not keep.",
-    },
-  ],
-  influxdb3: [
-    {
-      kind: "no-secret",
-      message:
-        "An InfluxDB 3 server started with --without-auth accepts any token or none, so a read-only seed without a token promises a boundary the server does not keep.",
-    },
-  ],
-  oxia: [
-    {
-      kind: "jwt",
-      noExp: true,
-      access: [],
-      message:
-        "This token declares no expiry, so it stays valid until the identity provider's signing key changes, and Oxia has no authorization, so it reads and writes every namespace. Prefer a token with an expiry.",
-    },
-  ],
-  databend: [
-    {
-      kind: "pair",
-      user: "root",
-      password: "",
-      message:
-        "Signing in as root with no password works only when the server's root user has no password, and such a user accepts any password or none, so anyone who can reach the server signs in as its administrator. Set a password for root on the server, or connect as a user of your own.",
-    },
-  ],
-  s3: [
-    {
-      kind: "pair",
-      user: "minioadmin",
-      password: "minioadmin",
-      message:
-        "This is the documented default root credential a MinIO server starts with when MINIO_ROOT_USER and MINIO_ROOT_PASSWORD are not set, so anyone who knows MinIO can sign in with it as the administrator. Set both on the server, or connect with an access key of your own.",
-    },
-    {
-      kind: "pair",
-      user: "rustfsadmin",
-      password: "rustfsadmin",
-      message:
-        "This is the documented default credential a RustFS server starts with when RUSTFS_ACCESS_KEY and RUSTFS_SECRET_KEY are not set, so anyone who knows RustFS can sign in with it. Set both on the server, or connect with an access key of your own.",
-    },
-  ],
-  rabbitmq: [
-    {
-      kind: "pair",
-      user: "guest",
-      password: "guest",
-      message:
-        "guest/guest is RabbitMQ's default administrator, which the official Docker image accepts from any host; create a user for Studio (studio-reader) instead.",
-    },
-  ],
+  ...BUNDLED_CREDENTIAL_WARNINGS,
 };
 
 interface Credential {

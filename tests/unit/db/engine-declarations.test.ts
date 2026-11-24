@@ -4,9 +4,10 @@
  * (docs/providers/CONTRACT.md, clauses M-9 and M-15).
  *
  * `scripts/generate-engine-declarations.ts` writes `src/lib/db/engine-declarations/<type-id>.json`, one
- * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `id`, `location` and
- * `connection.connectBudgetMs`, are read from the committed file and written back unchanged; the engine catalog
- * projects them (tests/unit/db/engine-catalog.test.ts). The census below does not call the generator: its
+ * `#/$defs/engineDeclaration` of the provider manifest schema each. The authored members, `AUTHORED_MEMBERS`, are read
+ * from the committed file and written back unchanged; the engine catalog and the connection tables project them
+ * (tests/unit/db/engine-catalog.test.ts), so the census of those members reads each table back to the declaration it
+ * was projected from. The census below does not call the generator: its
  * read-back functions are written here, from the tables, so a slip in the generator cannot certify itself. Each test
  * loops over every shipped id and fails with the list of ids whose declaration and table differ.
  */
@@ -147,6 +148,8 @@ import {
   SEED_ONLY_FIELDS,
   type SeedAgentCredential,
   type SeedOnlyField,
+  seedOnlyProjectionRefusal,
+  seedOnlyRefusal,
 } from "@/lib/db/connection-fields";
 import {
   CONNECTION_FORM,
@@ -992,28 +995,57 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are id, location and connection.connectBudgetMs", () => {
-    expect([...AUTHORED_MEMBERS]).toEqual(["id", "location", "connection.connectBudgetMs"]);
-    expect(authored("bigquery")).toEqual({ id: "bigquery", location: "external", connectBudgetMs: 140_000 });
-    expect(authored("libredb")).toEqual({ id: "libredb", location: "embedded", connectBudgetMs: null });
+  test("the authored members are the catalog's and the data-only connection members", () => {
+    expect([...AUTHORED_MEMBERS]).toEqual([
+      "id",
+      "location",
+      "connection.fields",
+      "connection.seedOnly",
+      "connection.refused",
+      "connection.connectionString.accepted",
+      "connection.connectionString.dialogOffersUri",
+      "connection.readsTrustMaterial",
+      "connection.credentialWarnings",
+      "connection.connectBudgetMs",
+    ]);
+    const bigquery = declared("bigquery");
+    expect(authored("bigquery")).toEqual({
+      id: "bigquery",
+      location: "external",
+      connection: {
+        fields: bigquery.connection.fields,
+        seedOnly: null,
+        refused: [],
+        connectionString: { accepted: false, dialogOffersUri: false },
+        readsTrustMaterial: false,
+        credentialWarnings: [],
+        connectBudgetMs: 140_000,
+      },
+    });
+    expect(authored("libredb").location).toBe("embedded");
+    expect(authored("libredb").connection.connectBudgetMs).toBeNull();
+    expect(authored("opcua").connection.seedOnly).toEqual(declared("opcua").connection.seedOnly);
+    expect(authored("rabbitmq").connection.refused).toEqual(declared("rabbitmq").connection.refused);
+    expect(authored("s3").connection.credentialWarnings).toEqual(declared("s3").connection.credentialWarnings);
+    expect(authored("db2").connection.readsTrustMaterial).toBe(true);
+    expect(authored("mongodb").connection.connectionString).toEqual({ accepted: true, dialogOffersUri: true });
   });
 
   test("a declaration's authored members are its committed file's, and every other member is the tables'", () => {
     // A hand edit of an authored member is kept and a hand edit of a generated one is rewritten from the tables.
     const committed = declared("postgres");
-    const edited = {
-      ...committed,
-      displayName: "Edited by hand",
-      location: "embedded",
-      connection: { ...committed.connection, connectBudgetMs: 90_000 },
+    const refused = [...committed.connection.refused, { field: "schema" as const, refusal: "Edited by hand." }];
+    const connection = {
+      ...committed.connection,
+      refused,
+      readsTrustMaterial: true,
+      connectionString: { ...committed.connection.connectionString, dialogOffersUri: true },
+      connectBudgetMs: 90_000,
     };
+    const edited = { ...committed, displayName: "Edited by hand", location: "embedded", connection };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    expect(built).toEqual({
-      ...committed,
-      location: "embedded",
-      connection: { ...committed.connection, connectBudgetMs: 90_000 },
-    });
+    expect(built).toEqual({ ...committed, location: "embedded", connection });
     expect(built.displayName).toBe(CONNECTION_FORM.postgres.label);
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
@@ -1025,7 +1057,6 @@ describe("the committed declarations", () => {
     const without = (value: object, member: string) =>
       Object.fromEntries(Object.entries(value).filter(([key]) => key !== member));
     const withoutLocation = without(committed, "location");
-    const connectionWithoutBudget = without(committed.connection, "connectBudgetMs");
 
     expect(() => authoredMembersOf({ ...committed, id: undefined }, "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member id",
@@ -1033,9 +1064,30 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(withoutLocation, "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member location",
     );
-    expect(() => authoredMembersOf({ ...committed, connection: connectionWithoutBudget }, "bigquery.json")).toThrow(
-      "bigquery.json lacks its authored member connection.connectBudgetMs",
-    );
+    for (const member of [
+      "fields",
+      "seedOnly",
+      "refused",
+      "readsTrustMaterial",
+      "credentialWarnings",
+      "connectBudgetMs",
+    ] as const) {
+      expect(() =>
+        authoredMembersOf({ ...committed, connection: without(committed.connection, member) }, "bigquery.json"),
+      ).toThrow(`bigquery.json lacks its authored member connection.${member}`);
+    }
+    for (const member of ["accepted", "dialogOffersUri"] as const) {
+      const connectionString = without(committed.connection.connectionString, member);
+      expect(() =>
+        authoredMembersOf({ ...committed, connection: { ...committed.connection, connectionString } }, "bigquery.json"),
+      ).toThrow(`bigquery.json lacks its authored member connection.connectionString.${member}`);
+    }
+    expect(() =>
+      authoredMembersOf(
+        { ...committed, connection: { ...committed.connection, connectionString: null } },
+        "bigquery.json",
+      ),
+    ).toThrow("bigquery.json lacks its authored member connection.connectionString.accepted");
     for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
       expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
     }
@@ -1749,28 +1801,42 @@ describe("the census", () => {
     expect(differing((type, d) => d.connection.defaults.host === CONNECTION_FORM[type].defaultHost)).toEqual([]);
   });
 
-  test("connection.seedOnly renders every refusal the table's functions give", () => {
+  test("connection.seedOnly is the engine's SEED_ONLY_FIELDS row, and every refusal Studio renders from it is the sentence the table gave", () => {
     const samples: readonly [string, string][] = [
       ["seed-one", "opensearch"],
       ["warehouse_2", "postgres"],
     ];
+    // The sentences the table's functions gave before the rows were projected from the declarations, each written out
+    // whole so the renderers are held to text no projection produced.
+    const elasticsearchProjection = (id: string, type: string) =>
+      `Seed connection "${id}" of type "${type}" carries an Elasticsearch API key pair. The pair is Elasticsearch-only; OpenSearch's security plugin has not been measured to accept Authorization: ApiKey, so the seed is refused rather than projected as a connection that silently falls back to user/password.`;
+    const onlyOf = (engine: string) => (field: string) =>
+      `${field} is ${engine} only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`;
+    const refusals: Partial<Record<DatabaseType, (field: string) => string>> = {
+      elasticsearch: () =>
+        "apiKeyId and apiKeySecret are Elasticsearch-only. OpenSearch (and every other engine) refuses the pair: nothing here has measured whether OpenSearch's security plugin accepts Authorization: ApiKey, so a seed that carries it is rejected rather than listed as a connection that silently falls back to user/password.",
+      modbus: onlyOf("Modbus"),
+      netconf: onlyOf("NETCONF"),
+      opcua: onlyOf("OPC UA"),
+    };
     const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
       const row = SEED_ONLY_FIELDS[type];
       const seedOnly = d.connection.seedOnly;
       if (row === null || seedOnly === null) return row === seedOnly;
-      const projection = seedOnly.projectionRefusal;
+      const refusal = refusals[type];
       const projectionMatches =
-        row.projectionRefusal === null
-          ? projection === null
-          : projection !== null &&
-            samples.every(
-              ([id, other]) =>
-                projection.replaceAll("{id}", id).replaceAll("{type}", other) === row.projectionRefusal?.(id, other),
+        seedOnly.projectionRefusal === null
+          ? row.projectionRefusal === null && type !== "elasticsearch"
+          : samples.every(
+              ([id, other]) => seedOnlyProjectionRefusal(row, id, other) === elasticsearchProjection(id, other),
             );
       return (
         sameList(seedOnly.fields, row.fields) &&
         seedOnly.scope === row.kind &&
-        row.fields.every((field) => seedOnly.refusal.replaceAll("{field}", field) === row.refusal(field)) &&
+        seedOnly.refusal === row.refusal &&
+        seedOnly.projectionRefusal === row.projectionRefusal &&
+        refusal !== undefined &&
+        row.fields.every((field) => seedOnlyRefusal(row, field) === refusal(field)) &&
         projectionMatches
       );
     };

@@ -151,6 +151,7 @@ The dialog warns before Test Connection when the credential is the documented de
 
 > Credential warning: This is the documented default root credential every Milvus server starts with, and it stays valid until an administrator changes it, so anyone who knows Milvus can sign in with it. Change the root password on the server, or connect as a user of your own.
 
+The default pair survives a restart with a new configured default, and a server with authorization off, its default, accepts any credential or none, so only the dialog's sentence can tell an operator.
 Studio never probes or changes the credential, and a read-only seed that uses it, or no password at all, is refused when the seed file loads and again after its references resolve ([SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)).
 
 ### 4.3 TLS

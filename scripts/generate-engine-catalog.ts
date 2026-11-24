@@ -1,34 +1,43 @@
 #!/usr/bin/env bun
 /**
- * Writes src/lib/db/engine-catalog/catalog.generated.ts, Studio's engine catalog, from the committed engine
- * declarations (docs/providers/CONTRACT.md, clause M-70).
+ * Writes Studio's projections of the committed engine declarations: src/lib/db/engine-catalog/catalog.generated.ts,
+ * the engine catalog (docs/providers/CONTRACT.md, clause M-70), and src/lib/db/engine-catalog/connection.generated.ts,
+ * the data-only connection tables (clause M-71).
  *
- * Admission happens here: every `.json` file of src/lib/db/engine-declarations is parsed and admitted through the
- * SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes before it compiles them, and the
- * admitted set is projected with `projectCatalog` (src/lib/db/engine-catalog/projection.ts). The command refuses, by
- * name, an entry that is not a `.json` file, a file that is not JSON, a declaration the schema refuses, with the
- * validator's refusal sentences, and a declaration whose `id` is not its file name; the projection refuses two
- * declarations of one id. Studio's runtime reads no declaration file: the browser cannot compile the schema under
- * Studio's content security policy, which allows no `eval`, and the published library and the standalone server carry
- * no schema file, so every reader reads the generated module, which tests/unit/db/engine-catalog.test.ts holds byte for
- * byte to what this command renders.
+ * Admission happens here, once for every module: every `.json` file of src/lib/db/engine-declarations is parsed and
+ * admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes before it
+ * compiles them, and the admitted set is projected with `projectCatalog` and `projectConnectionTables`
+ * (src/lib/db/engine-catalog/projection.ts). The command refuses, by name, an entry that is not a `.json` file, a file
+ * that is not JSON, a declaration the schema refuses, with the validator's refusal sentences, and a declaration whose
+ * `id` is not its file name; the projections refuse two declarations of one id. Studio's runtime reads no declaration
+ * file: the browser cannot compile the schema under Studio's content security policy, which allows no `eval`, and the
+ * published library and the standalone server carry no schema file, so every reader reads a generated module, which
+ * tests/unit/db/engine-catalog.test.ts holds byte for byte to what this command renders.
  *
- * The module is one frozen `Record<DatabaseType, CatalogEntry>`, keyed in ascending id order, so a member of the
- * `DatabaseType` union with no declaration, or a declaration of an id outside it, fails the typecheck at the record.
+ * Each module holds frozen records keyed in ascending id order and typed as records over `DatabaseType`, so a member
+ * of the union with no declaration fails the typecheck at the record. The connection module is laid out as the
+ * repository's formatter lays it out: a value that fits within the line width stays on one line, one that does not
+ * breaks one element or member per line, and a member whose string does not fit puts the string on the next line.
  *
  * `bun run engines:generate` runs this command before scripts/generate-engine-declarations.ts: the declaration
- * generator builds every provider through the factory, which builds only an engine the catalog holds, and the catalog
- * reads only the members a declaration authors, which the declaration generator writes back unchanged, so one run of
- * this command first is exact.
+ * generator builds every provider through the factory, which builds only an engine the catalog holds, and both
+ * projections read only the members a declaration authors, which the declaration generator writes back unchanged, so
+ * one run of this command first is exact.
  *
- * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <file>]
- * --write writes the module, --check exits 1 naming the module when it is not what the declarations project, and
- * --out names another file for either, resolved against the working directory.
+ * Run: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]
+ * --write writes every module, --check exits 1 naming each module that is missing or is not what the declarations
+ * project, and --out names another directory for either, resolved against the working directory, in which each module
+ * is its file name.
  */
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { compileManifestValidator, type EngineDeclaration, refusalSentence } from "@libredb/provider-sdk/manifest";
-import { type EngineCatalog, projectCatalog } from "../src/lib/db/engine-catalog/projection";
+import {
+  type ConnectionTables,
+  type EngineCatalog,
+  projectCatalog,
+  projectConnectionTables,
+} from "../src/lib/db/engine-catalog/projection";
 
 /** The declarations' directory in the repository. */
 export const ENGINE_DECLARATIONS_DIRECTORY = "src/lib/db/engine-declarations";
@@ -36,10 +45,24 @@ export const ENGINE_DECLARATIONS_DIRECTORY = "src/lib/db/engine-declarations";
 /** The generated catalog module in the repository. */
 export const ENGINE_CATALOG_MODULE = "src/lib/db/engine-catalog/catalog.generated.ts";
 
+/** The generated connection tables module in the repository. */
+export const ENGINE_CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
+
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const SCHEMA_FILE = path.join(REPO_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
 const WRITE_COMMAND = "bun run engines:generate";
-const USAGE = "Usage: bun scripts/generate-engine-catalog.ts --write | --check [--out <file>]";
+const USAGE = "Usage: bun scripts/generate-engine-catalog.ts --write | --check [--out <directory>]";
+const HEADER = [
+  `// Generated by scripts/generate-engine-catalog.ts from ${ENGINE_DECLARATIONS_DIRECTORY}; never edit it by hand.`,
+  `// Change a declaration's authored member and run: ${WRITE_COMMAND}`,
+];
+/** The formatter's line width (biome.json), which the connection module's layout keeps to. */
+const LINE_WIDTH = 120;
+/**
+ * The width under which the formatter keeps a member's string on its key's line however long it is: its indent width,
+ * 2, plus the 3 characters a break must save (`user:` keeps its sentence, `message:` breaks before it).
+ */
+const SHORT_KEY_WIDTH = 5;
 
 /**
  * Every declaration of `directory`, admitted through the SDK's validator, in file name order.
@@ -84,8 +107,7 @@ export function renderCatalog(catalog: EngineCatalog): string {
       `  ${id}: Object.freeze({ location: ${JSON.stringify(entry.location)}, connectBudgetMs: ${JSON.stringify(entry.connectBudgetMs)} }),`,
   );
   return [
-    `// Generated by scripts/generate-engine-catalog.ts from ${ENGINE_DECLARATIONS_DIRECTORY}; never edit it by hand.`,
-    `// Change a declaration's authored member and run: ${WRITE_COMMAND}`,
+    ...HEADER,
     'import type { DatabaseType } from "@/lib/types";',
     'import type { CatalogEntry } from "./projection";',
     "",
@@ -93,6 +115,165 @@ export function renderCatalog(catalog: EngineCatalog): string {
     "export const BUNDLED_CATALOG: Readonly<Record<DatabaseType, CatalogEntry>> = Object.freeze({",
     ...entries,
     "});",
+    "",
+  ].join("\n");
+}
+
+/** A record member or key the module writes bare, as every engine id and field name is. */
+const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+
+/**
+ * `text` as a string literal in the formatter's quotes: double quotes, unless the text holds more double quotes than
+ * single ones, as the one projection refusal that quotes `{id}` and `{type}` does.
+ *
+ * @throws {Error} For a text holding a backslash, a control character or a character outside ASCII, which none of the
+ * declarations' sentences holds and whose spelling the formatter may change.
+ */
+function quoted(text: string): string {
+  if (/[^\x20-\x7e]|\\/.test(text)) {
+    throw new Error(
+      `The connection module cannot write ${JSON.stringify(text)}: it holds a character it does not quote`,
+    );
+  }
+  const doubles = text.split('"').length - 1;
+  const singles = text.split("'").length - 1;
+  return doubles > singles ? `'${text.replaceAll("'", "\\'")}'` : `"${text.replaceAll('"', '\\"')}"`;
+}
+
+/** `key` as a record member, written bare. */
+function memberKey(key: string): string {
+  if (!IDENTIFIER.test(key)) throw new Error(`The connection module cannot write the member ${JSON.stringify(key)}`);
+  return key;
+}
+
+/** Whether `value` is a record the module writes: an object that is not a list, made by an object literal. */
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype;
+}
+
+/**
+ * `value` on one line: a list or a record frozen, a list `as const` so each element keeps its literal type.
+ *
+ * @throws {Error} For a value that is not a string, a boolean, null, a list or a record of them, which no member the
+ * connection tables read holds.
+ */
+function flat(value: unknown): string {
+  if (typeof value === "string") return quoted(value);
+  if (typeof value === "boolean" || value === null) return String(value);
+  if (Array.isArray(value)) return `Object.freeze([${value.map(flat).join(", ")}] as const)`;
+  if (!isRecord(value)) throw new Error(`The connection module cannot write ${String(value)}`);
+  const members = Object.entries(value).map(([key, member]) => `${memberKey(key)}: ${flat(member)}`);
+  return members.length === 0 ? "Object.freeze({})" : `Object.freeze({ ${members.join(", ")} })`;
+}
+
+/**
+ * The lines of `value` written after `head` and before `tail` at `indent` spaces: one line where it fits within the
+ * line width; otherwise a list or a record one element or member per line, two spaces further in, and a member's string
+ * on the line after its key where the key is `SHORT_KEY_WIDTH` or wider. A string in a list, or after a shorter key,
+ * stays on its line whatever its width, as the formatter leaves it.
+ */
+function laidOut(value: unknown, indent: number, head: string, tail: string, key?: string): string[] {
+  const line = `${head}${flat(value)}${tail}`;
+  if (line.length <= LINE_WIDTH || typeof value === "boolean" || value === null) return [line];
+  const inner = " ".repeat(indent + 2);
+  if (typeof value === "string") {
+    return key === undefined || key.length < SHORT_KEY_WIDTH
+      ? [line]
+      : [head.trimEnd(), `${inner}${quoted(value)}${tail}`];
+  }
+  const close = " ".repeat(indent);
+  if (Array.isArray(value)) {
+    return [
+      `${head}Object.freeze([`,
+      ...value.flatMap((element) => laidOut(element, indent + 2, inner, ",")),
+      `${close}] as const)${tail}`,
+    ];
+  }
+  return [
+    `${head}Object.freeze({`,
+    ...Object.entries(value as Readonly<Record<string, unknown>>).flatMap(([key, member]) =>
+      laidOut(member, indent + 2, `${inner}${memberKey(key)}: `, ",", key),
+    ),
+    `${close}})${tail}`,
+  ];
+}
+
+/**
+ * One exported record of the connection module: its docblock, its declaration up to the record, and what follows it.
+ *
+ * @throws {Error} When the docblock's or the declaration's line is wider than the line width, which the formatter
+ * would break.
+ */
+function renderedRecord(
+  doc: string,
+  declaration: string,
+  record: Readonly<Record<string, unknown>>,
+  after = "",
+): string[] {
+  const lines = [`/** ${doc} */`, `${declaration} Object.freeze({`];
+  const wide = lines.find((line) => line.length > LINE_WIDTH);
+  if (wide !== undefined) throw new Error(`The connection module's line is too wide: ${wide}`);
+  return [
+    ...lines,
+    ...Object.entries(record).flatMap(([id, row]) => laidOut(row, 2, `  ${memberKey(id)}: `, ",", id)),
+    `})${after};`,
+  ];
+}
+
+/**
+ * The text of the generated connection module for `tables`: a header, type imports only, and seven frozen records,
+ * each read by exactly one owner module.
+ */
+export function renderConnectionTables(tables: ConnectionTables): string {
+  return [
+    ...HEADER,
+    'import type { CredentialWarning, FieldName } from "@libredb/provider-sdk/manifest";',
+    'import type { RefusedFieldRow, SeedOnlyFields } from "@/lib/db/connection-fields";',
+    'import type { DatabaseType } from "@/lib/types";',
+    "",
+    ...renderedRecord(
+      "Each engine's connection fields, `connection.fields`, read by `CONNECTION_FIELDS` (CONTRACT.md, M-71).",
+      "export const BUNDLED_CONNECTION_FIELDS =",
+      tables.fields,
+      " satisfies Readonly<Record<DatabaseType, readonly FieldName[]>>",
+    ),
+    "",
+    ...renderedRecord(
+      "Each engine's seed-only fields, `connection.seedOnly`, read by `SEED_ONLY_FIELDS` (CONTRACT.md, M-71).",
+      "export const BUNDLED_SEED_ONLY: Readonly<Record<DatabaseType, SeedOnlyFields | null>> =",
+      tables.seedOnly,
+    ),
+    "",
+    ...renderedRecord(
+      "Each engine's refused fields, `connection.refused`, read by `REFUSED_CONNECTION_FIELDS` (CONTRACT.md, M-71).",
+      "export const BUNDLED_REFUSED_FIELDS: Readonly<Record<DatabaseType, RefusedFieldRow>> =",
+      tables.refused,
+    ),
+    "",
+    ...renderedRecord(
+      "Each engine's credential warnings, `connection.credentialWarnings`, read by `CREDENTIAL_WARNINGS` (M-71).",
+      "export const BUNDLED_CREDENTIAL_WARNINGS =",
+      tables.credentialWarnings,
+      " satisfies Readonly<Partial<Record<DatabaseType, readonly CredentialWarning[]>>>",
+    ),
+    "",
+    ...renderedRecord(
+      "Whether each engine's provider is handed trust material, `connection.readsTrustMaterial` (M-71).",
+      "export const BUNDLED_READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> =",
+      tables.readsTrustMaterial,
+    ),
+    "",
+    ...renderedRecord(
+      "Whether each engine's provider opens a connection string, `connection.connectionString.accepted` (M-71).",
+      "export const BUNDLED_CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>> =",
+      tables.connectionStringAccepted,
+    ),
+    "",
+    ...renderedRecord(
+      "Whether each engine's dialog offers a URI mode, `connection.connectionString.dialogOffersUri` (M-71).",
+      "export const BUNDLED_DIALOG_OFFERS_URI: Readonly<Record<DatabaseType, boolean>> =",
+      tables.dialogOffersUri,
+    ),
     "",
   ].join("\n");
 }
@@ -108,15 +289,15 @@ function textOf(file: string): string | null {
 }
 
 /**
- * The command line, exactly `--write` or `--check`, optionally followed by `--out <file>`; null for anything else,
- * which the command refuses with its usage line, so a mistyped flag never rewrites the committed module.
+ * The command line, exactly `--write` or `--check`, optionally followed by `--out <directory>`; null for anything
+ * else, which the command refuses with its usage line, so a mistyped flag never rewrites a committed module.
  */
 function parseArguments(argv: readonly string[]): { mode: "--write" | "--check"; out: string | undefined } | null {
-  const [mode, flag, file, ...rest] = argv;
+  const [mode, flag, directory, ...rest] = argv;
   if (mode !== "--write" && mode !== "--check") return null;
   if (flag === undefined) return { mode, out: undefined };
-  if (flag !== "--out" || file === undefined || file.startsWith("--") || rest.length > 0) return null;
-  return { mode, out: file };
+  if (flag !== "--out" || directory === undefined || directory.startsWith("--") || rest.length > 0) return null;
+  return { mode, out: directory };
 }
 
 function main(argv: readonly string[]): number {
@@ -126,21 +307,29 @@ function main(argv: readonly string[]): number {
     return 2;
   }
   const { mode, out } = parsed;
-  const file = out === undefined ? path.join(REPO_ROOT, ENGINE_CATALOG_MODULE) : path.resolve(out);
-  const text = renderCatalog(projectCatalog(admittedDeclarations()));
+  const fileOf = (module: string) =>
+    out === undefined ? path.join(REPO_ROOT, module) : path.join(path.resolve(out), path.basename(module));
+  const declarations = admittedDeclarations();
+  const modules = [
+    { file: fileOf(ENGINE_CATALOG_MODULE), text: renderCatalog(projectCatalog(declarations)) },
+    { file: fileOf(ENGINE_CONNECTION_MODULE), text: renderConnectionTables(projectConnectionTables(declarations)) },
+  ];
 
   if (mode === "--check") {
-    if (textOf(file) !== text) {
-      console.error(`${file} is not what the engine declarations project`);
+    const stale = modules.filter(({ file, text }) => textOf(file) !== text);
+    for (const { file } of stale) console.error(`${file} is not what the engine declarations project`);
+    if (stale.length > 0) {
       console.error(`run: ${WRITE_COMMAND}`);
       return 1;
     }
-    console.log(`${file} is up to date`);
+    for (const { file } of modules) console.log(`${file} is up to date`);
     return 0;
   }
 
-  writeFileSync(file, text);
-  console.log(`Wrote the engine catalog to ${file}`);
+  for (const { file, text } of modules) {
+    writeFileSync(file, text);
+    console.log(`Wrote ${file}`);
+  }
   return 0;
 }
 
