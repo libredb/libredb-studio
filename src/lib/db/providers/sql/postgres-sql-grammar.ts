@@ -151,6 +151,7 @@ export const POSTGRES_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "sql", nameQuote: '"' },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: false,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: NO_EXTRA_WORDS,
   },

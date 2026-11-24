@@ -403,6 +403,49 @@ export function selectsPlainColumn(sql: string, column: string, type?: DatabaseT
     }
   }
 
+  // SQL Server (`mssql`) allows `TOP <n>` or `TOP (<expr>)` [PERCENT] [WITH TIES]
+  // immediately after `SELECT [ALL | DISTINCT]`. Like DISTINCT, TOP limits how many rows come
+  // back rather than modifying or projecting columns.
+  const { updateTarget } = sqlGrammarFor(type);
+  if (updateTarget.supportsTopClause && isWord(top[start], "TOP")) {
+    const next = top[start + 1];
+    let isTopClause = false;
+    let scan = start + 1;
+
+    if (next?.kind === "other" && /^[0-9]$/.test(next.text)) {
+      // Literal number, e.g. `TOP 50` or `TOP 10.5`
+      isTopClause = true;
+      while (scan < from && top[scan]?.kind === "other" && /^[0-9.]$/.test(top[scan].text)) {
+        scan++;
+      }
+    } else if (next?.kind === "other" && next.text === "(") {
+      // Parenthesized count, e.g. `TOP (50)`.
+      // The parenthesised count is one `(` and one `)` at this level; its contents are deeper.
+      if (top[start + 2]?.kind === "other" && top[start + 2].text === ")") {
+        const afterClose = top[start + 3];
+        if (
+          afterClose !== undefined &&
+          afterClose !== top[from] &&
+          !(afterClose.kind === "other" && afterClose.text === ",") &&
+          !isWord(afterClose, "AS")
+        ) {
+          isTopClause = true;
+          scan = start + 3;
+        }
+      }
+    }
+
+    if (isTopClause) {
+      if (isWord(top[scan], "PERCENT")) {
+        scan++;
+      }
+      if (isWord(top[scan], "WITH") && isWord(top[scan + 1], "TIES")) {
+        scan += 2;
+      }
+      start = scan;
+    }
+  }
+
   // The select list, split on its own commas. A comma inside parens belongs to a function's
   // arguments, and those pieces are not at this depth to begin with.
   const items: Piece[][] = [[]];

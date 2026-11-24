@@ -47,6 +47,7 @@ export const REDIS_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "command", read: redactRedisCommand },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: false,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: NO_EXTRA_WORDS,
   },

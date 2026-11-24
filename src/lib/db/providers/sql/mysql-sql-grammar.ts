@@ -105,6 +105,7 @@ export const MYSQL_SQL_GRAMMAR: SqlGrammarSpec = {
   // and the MariaDB 11.8.9 measurement behind it, sit beside its regex in `src/lib/sql/update-target.ts`.
   updateTarget: {
     dashCommentNeedsSeparator: true,
+    supportsTopClause: false,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: NO_EXTRA_WORDS,
   },

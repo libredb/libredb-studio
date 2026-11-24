@@ -57,6 +57,7 @@ export const CLICKHOUSE_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "sql", nameQuote: null },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: false,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: NO_EXTRA_WORDS,
   },

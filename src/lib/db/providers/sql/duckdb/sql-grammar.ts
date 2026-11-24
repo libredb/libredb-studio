@@ -64,6 +64,7 @@ export const DUCKDB_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "sql", nameQuote: null },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: false,
     extraQueryOpeners: DUCKDB_QUERY_OPENERS,
     extraSetOperators: NO_EXTRA_WORDS,
   },
