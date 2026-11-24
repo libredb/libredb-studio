@@ -9263,7 +9263,7 @@ describe("queryReadOnly() - the agent read-only execution profile (#1612)", () =
     test("bytes are measured on the keyed rows it serves, so it stops at the row core's re-check would refuse", async () => {
       // The rows arrive as arrays (`rowsAsArray`) and are served keyed by column name, which adds the names to every
       // row's JSON. Each array row here is 6 bytes and each served row 30, so an 80-byte budget passes all three
-      // arrays and is crossed by the third served row, at the sum `runReadOnlyStatement` refuses at.
+      // arrays and is crossed by the third served row, at the sum core's hold (`holdReadOnlyRows`) refuses at.
       const profiled = await profiledProvider();
       const served = [
         { customer_display_name: "c1" },

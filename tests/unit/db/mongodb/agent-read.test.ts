@@ -25,9 +25,8 @@ import {
 } from "@/lib/db/providers/document/mongodb/agent-read";
 import type { RevivedMongoReadEnvelope } from "@/lib/db/providers/document/mongodb/extended-json";
 import { serializeMongoDocument } from "@/lib/db/providers/document/mongodb/values";
-import { runReadOnlyStatement } from "@/lib/db/operations/read-only-statement";
+import { runReadOnlyReading } from "@/lib/db/operations/read-only-statement";
 import { byteBudgetSentence, MAX_STATEMENT_TIMEOUT_MS, measureRowBytes } from "@/lib/db/read-only-budget";
-import type { DatabaseProvider, ReadOnlyStatementBudget, ReadOnlyStatementMode } from "@/lib/db/types";
 import { AGENT_HANDOVER_BUDGET } from "@/lib/agent/execution-policy";
 import { rowBudgetIn } from "@/lib/agent/context-snapshot";
 import { classifyReadQueryFailure } from "@/lib/mcp/tools/read-query-limits";
@@ -535,17 +534,16 @@ describe("the streamed read", () => {
     expect(own.rows).toHaveLength(5);
     expect(served).toBeGreaterThan(budget.maxResultBytes);
 
-    const provider = {
-      queryReadOnly: (sql: string, handed: ReadOnlyStatementBudget, mode?: ReadOnlyStatementMode) =>
-        readMongoForAgent(fakeClient({ documents }).client, "app", FIND, handed, mode ?? "execute", sql, FAST),
-    } as unknown as DatabaseProvider;
+    const sql = statement(FIND as Doc);
     const error = await rejection(
-      runReadOnlyStatement(provider, {
+      runReadOnlyReading({
         type: "mongodb",
         scrub: { type: "mongodb", forms: [] },
-        statement: statement(FIND as Doc),
+        statement: sql,
         budget,
-        wait: "statement-timeout",
+        read: () => readMongoForAgent(fakeClient({ documents }).client, "app", FIND, budget, "execute", sql, FAST),
+        servedRows: (result) => result.rows,
+        maxRows: budget.maxResultRows,
       }),
     );
     // The sentence names the sum at the row that crossed the budget.

@@ -326,8 +326,9 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 }
 
 /*
-  The callback can be answered before the provider call it made has settled: core's read-only statement timer
-  refuses the statement at its timeout while the provider's call runs on (`runReadOnlyStatement`). The execution
+  The callback can be answered before the provider call it made has settled: core's read-only timer refuses the read
+  at its timeout while the provider's call runs on (`runReadOnlyReading`, or the host core's read-only execute for a
+  statement). The execution
   stays live, counted against maxConcurrentExecutions, until that call settles, and it is released exactly once on
   every path.
 */

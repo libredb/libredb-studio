@@ -145,7 +145,6 @@ export async function mongoInspectSchemaTool(
         scrub: providerTextScrub(context.connection, "profiled"),
         statement: JSON.stringify(target),
         budget: handed,
-        wait: "statement-timeout",
         holdUntilSettled,
         read: () => readCatalogReadOnly.call(provider, target, handed),
         servedRows: (answer) => catalogRows(answer, kind).rows,
