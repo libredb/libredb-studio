@@ -9,10 +9,13 @@ import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/re
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
+import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
 
 /**
  * POST /api/db/monitoring
- * Get comprehensive monitoring data for a database connection
+ * Get comprehensive monitoring data for a database connection: every panel read through the host core's panel calls
+ * by `providerMonitoring` (docs/providers/CONTRACT.md, clause C-74), each under its own deadline and the request's
+ * signal, so a request that leaves answers 499 `QUERY_CANCELLED` and a read past its deadline 504.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of body parsing, matching every other provider-reaching route: an unauthenticated
@@ -57,6 +60,12 @@ export async function POST(req: NextRequest) {
     if (options !== undefined && !isJsonObject(options)) {
       return NextResponse.json({ error: "options must be an object" }, { status: 400 });
     }
+    // A limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, is
+    // refused by name before any connection resolves: it reached the provider as it came (BigQuery's `LIMIT NaN`).
+    const optionsRefusal = options === undefined ? undefined : monitoringOptionsRefusal(options);
+    if (optionsRefusal !== undefined) {
+      return NextResponse.json({ error: optionsRefusal }, { status: 400 });
+    }
     const connection = await resolveConnection(body, guard.session);
     scrub = providerTextScrub(connection, "any");
 
@@ -65,7 +74,9 @@ export async function POST(req: NextRequest) {
     }
 
     const provider = await editorProvider(guard.session, connection, requestCatalog(body));
-    const monitoringData = await provider.getMonitoringData(options);
+    const monitoringData = await providerMonitoring(provider, req.signal, "api/db/monitoring").readDashboard(
+      options ?? {},
+    );
     // The maintenance this connected server accepts (#1387). Read here, off the provider the
     // panels came from, because `POST /api/db/provider-meta` never connects and can only answer
     // the type id's declaration, which offers PostgreSQL's and MySQL's whole sets to every
@@ -81,16 +92,8 @@ export async function POST(req: NextRequest) {
       },
     });
   } catch (error) {
-    // Ignore aborted requests (client cancelled)
-    if (
-      error instanceof Error &&
-      (error.message === "aborted" ||
-        error.name === "AbortError" ||
-        (error as NodeJS.ErrnoException).code === "ECONNRESET")
-    ) {
-      return new Response(null, { status: 499 }); // Client Closed Request
-    }
-
+    // A request that left answers 499 by the request's own signal, through the facade's `QueryCancelledError`; a
+    // provider error answers by its class, whatever its words.
     return createErrorResponse(error, { route: "api/db/monitoring", scrub });
   }
 }

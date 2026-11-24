@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { describe, test, expect, mock, beforeEach, afterEach, beforeAll, afterAll, spyOn } from "bun:test";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -18,10 +18,12 @@ import {
   isAuthenticationError,
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
-import { engineFacetsFor } from "@/lib/db/engine-facets";
-import { readDeclaredPanels, readPanel } from "@/lib/db/engine-facets/monitoring";
 import type { DatabaseProvider, DatabaseType, MonitoringOptions } from "@/lib/db/types";
 import { PROVIDER_TEXT_WITHHELD, withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import { logger } from "@/lib/logger";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import type { PanelRecord } from "@/lib/provider-host/core/monitoring";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
@@ -98,6 +100,40 @@ mock.module("@/lib/db", () => ({
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/monitoring/route");
 
+// The route reads every panel through the process's host core (src/lib/provider-host/instance.ts), so this file
+// composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
+
+type Mocked = ReturnType<typeof mock>;
+
+/** The seven panel members of a provider. */
+const PANEL_MEMBERS = [
+  "getOverview",
+  "getPerformanceMetrics",
+  "getSlowQueries",
+  "getActiveSessions",
+  "getTableStats",
+  "getIndexStats",
+  "getStorageStats",
+] as const;
+
+/** The panels in the dashboard's order, each read by the member at the same place in `PANEL_MEMBERS`. */
+const MONITORING_ORDER = [
+  "overview",
+  "performance",
+  "slowQueries",
+  "activeSessions",
+  "tables",
+  "indexes",
+  "storage",
+] as const;
+
+/** Every panel member of `provider` rejects once with `error`, as a provider whose every read fails. */
+function failEveryOnce(provider: DatabaseProvider, error: unknown): void {
+  for (const member of PANEL_MEMBERS) (provider[member] as Mocked).mockRejectedValueOnce(error);
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
   id: "test-1",
@@ -121,28 +157,25 @@ describe("POST /api/db/monitoring", () => {
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
-    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockImplementation(async () => ({
-      timestamp: new Date(),
-      overview: {
-        version: "PostgreSQL 16.1",
-        uptime: "10 days",
-        activeConnections: 5,
-        maxConnections: 100,
-        databaseSize: "256 MB",
-        databaseSizeBytes: 268435456,
-        tableCount: 15,
-        indexCount: 30,
-      },
-      performance: {
-        cacheHitRatio: 99.2,
-        transactionsPerSecond: 120,
-        queriesPerSecond: 350,
-        bufferPoolUsage: 45.5,
-        deadlocks: 0,
-      },
-      slowQueries: [],
-      activeSessions: [],
+    for (const member of PANEL_MEMBERS) (mockProvider[member] as Mocked).mockReset();
+    (mockProvider.getOverview as Mocked).mockImplementation(async () => ({
+      version: "PostgreSQL 16.1",
+      uptime: "10 days",
+      activeConnections: 5,
+      maxConnections: 100,
+      databaseSize: "256 MB",
+      databaseSizeBytes: 268435456,
+      tableCount: 15,
+      indexCount: 30,
     }));
+    (mockProvider.getPerformanceMetrics as Mocked).mockImplementation(async () => ({
+      cacheHitRatio: 99.2,
+      transactionsPerSecond: 120,
+      queriesPerSecond: 350,
+      bufferPoolUsage: 45.5,
+      deadlocks: 0,
+    }));
+    for (const member of PANEL_MEMBERS.slice(2)) (mockProvider[member] as Mocked).mockImplementation(async () => []);
   });
 
   test("valid connection returns 200 with monitoring data", async () => {
@@ -239,18 +272,14 @@ describe("POST /api/db/monitoring", () => {
     const password = crypto.randomUUID();
     const connection = { ...validConnection, password };
     const send = () => POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
-    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new QueryError(`permission denied for ${password}`, "postgres"),
-    );
+    failEveryOnce(mockProvider, new QueryError(`permission denied for ${password}`, "postgres"));
     const withheld = await send();
     const body = await parseResponseJSON<Record<string, unknown>>(withheld);
     expect(withheld.status).toBe(400);
     expect(body).toMatchObject({ code: "QUERY_ERROR", error: withheldErrorMessage("QueryError") });
     expect(JSON.stringify(body)).not.toContain(password);
 
-    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(
-      new QueryError("permission denied", "postgres"),
-    );
+    failEveryOnce(mockProvider, new QueryError("permission denied", "postgres"));
     const clean = await send();
     expect(clean.status).toBe(400);
     expect(await parseResponseJSON(clean)).toMatchObject({ code: "QUERY_ERROR", error: "permission denied" });
@@ -269,14 +298,11 @@ describe("POST /api/db/monitoring", () => {
       tableCount: 15,
       indexCount: 30,
     };
-    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockResolvedValueOnce({
-      timestamp: new Date(0),
-      overview,
-      errors: {
-        slowQueries: `permission denied for ${password}`,
-        tables: "relation pg_stat_user_tables is not readable",
-      },
-    });
+    (mockProvider.getOverview as Mocked).mockResolvedValueOnce(overview);
+    (mockProvider.getSlowQueries as Mocked).mockRejectedValueOnce(new Error(`permission denied for ${password}`));
+    (mockProvider.getTableStats as Mocked).mockRejectedValueOnce(
+      new Error("relation pg_stat_user_tables is not readable"),
+    );
     const res = await POST(createMockRequest("/api/db/monitoring", { method: "POST", body: { connection } }) as never);
     const body = await parseResponseJSON<Record<string, unknown>>(res);
     expect(res.status).toBe(200);
@@ -338,20 +364,18 @@ describe("POST /api/db/monitoring", () => {
     expect(data.error).toContain("Authentication required");
   });
 
-  test("aborted request returns 499 with empty body", async () => {
-    const abortError = new Error("socket hang up") as NodeJS.ErrnoException;
-    abortError.code = "ECONNRESET";
-    (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockRejectedValueOnce(abortError);
-
-    const req = createMockRequest("/api/db/monitoring", {
-      method: "POST",
-      body: { connection: validConnection },
+  test("a provider error with the code ECONNRESET answers by its class, not as a request the caller left", async () => {
+    const words = crypto.randomUUID();
+    mockGetOrCreateProvider.mockImplementation(async () => {
+      throw Object.assign(new Error(words), { code: "ECONNRESET" });
     });
 
-    const res = await POST(req as never);
+    const res = await POST(
+      createMockRequest("/api/db/monitoring", { method: "POST", body: { connection: validConnection } }) as never,
+    );
 
-    expect(res.status).toBe(499);
-    expect(await res.text()).toBe("");
+    expect(res.status).toBe(500);
+    expect(await parseResponseJSON(res)).toMatchObject({ error: words, code: "INTERNAL_ERROR" });
   });
 
   test("missing connection type returns 400", async () => {
@@ -540,14 +564,13 @@ describe("POST /api/db/monitoring: options that are not an object", () => {
 });
 
 /**
- * What the monitoring route answers today, at the provider's members, which the host core keeps when the route reads the
- * panels through monitoring.panel. The provider answers getMonitoringData as every provider does today,
- * `BaseDatabaseProvider.getMonitoringData`: the declared panels read through `readDeclaredPanels`, a failure of every
- * panel mapped through `mapDatabaseError` for the provider's type. So each pin holds the panel members' calls and
- * answers, and stays true when the host reads them itself.
+ * What the monitoring route answered at the provider's members before it read the panels through monitoring.panel, which
+ * the host core keeps. The route reads the declared panels through `readDeclaredPanels` over the host core's panel
+ * calls, a failure of every panel mapped through `mapDatabaseError` for the provider's type, as
+ * `BaseDatabaseProvider.getMonitoringData` does, and never calls the provider's `getMonitoringData`. So each pin holds
+ * the panel members' calls and answers.
  */
 describe("what the monitoring route answers today, which the host core keeps", () => {
-  type Mocked = ReturnType<typeof mock>;
   const members = [
     "getOverview",
     "getPerformanceMetrics",
@@ -558,17 +581,13 @@ describe("what the monitoring route answers today, which the host core keeps", (
     "getStorageStats",
   ] as const;
 
-  /** A provider of `type` whose getMonitoringData reads its own panel members as every provider does today. */
+  /** Every provider each pin built, so the describe can hold that the route never called its getMonitoringData. */
+  const built: DatabaseProvider[] = [];
+
+  /** A provider of `type` whose panel members answer, the host reading them through the bridge. */
   function panelProvider(type: DatabaseType): DatabaseProvider {
     const provider = createMockProvider({ type });
-    (provider.getMonitoringData as Mocked).mockImplementation(async (options?: MonitoringOptions) =>
-      readDeclaredPanels(
-        (request) => readPanel(provider, request),
-        engineFacetsFor(provider.type).monitoring,
-        options ?? {},
-        (error) => mapDatabaseError(error, provider.type),
-      ),
-    );
+    built.push(provider);
     return provider;
   }
 
@@ -593,6 +612,7 @@ describe("what the monitoring route answers today, which the host core keeps", (
 
   afterEach(() => {
     mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    for (const provider of built.splice(0)) expect(provider.getMonitoringData).not.toHaveBeenCalled();
   });
 
   test("each panel the engine offers and the request asks is read once from its own member with the request's limits and schema, and a panel it does not offer is never read", async () => {
@@ -796,7 +816,7 @@ describe("what the monitoring route answers today, which the host core keeps", (
     }
   });
 
-  test("a request the caller left answers 499 with no body, by the error's message, name or code", async () => {
+  test("a provider error that reads like an abort answers by its class, and only the request's own signal answers 499", async () => {
     const byMessage = new Error("aborted");
     const byName = new Error(crypto.randomUUID());
     byName.name = "AbortError";
@@ -807,9 +827,210 @@ describe("what the monitoring route answers today, which the host core keeps", (
       failEvery(provider, error);
       // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own error's.
       const res = await send(provider, "postgres");
-      expect(res.status).toBe(499);
+      expect([error.message, res.status]).toEqual([error.message, 500]);
       // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
-      expect(await res.text()).toBe("");
+      const body = await parseResponseJSON<Record<string, unknown>>(res);
+      expect(body).toMatchObject({ error: error.message, code: "INTERNAL_ERROR" });
+      expect(body.kind).toBeUndefined();
     }
+
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+    const left = await POST(
+      new Request("http://localhost:3000/api/db/monitoring", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ connection: validConnection }),
+        signal: caller.signal,
+      }) as never,
+    );
+    expect(left.status).toBe(499);
+    expect(await parseResponseJSON(left)).toMatchObject({ code: "QUERY_CANCELLED" });
+  });
+});
+
+describe("the monitoring route on the host core", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockResolveConnection.mockClear();
+    mockGetOrCreateProvider.mockClear();
+  });
+
+  afterEach(() => {
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+  });
+
+  /** A monitoring request for `provider`, whose signal is `signal`, as a browser that may leave sends it. */
+  function monitoringWith(provider: DatabaseProvider, signal?: AbortSignal, options?: unknown): Promise<Response> {
+    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    return POST(
+      new Request("http://localhost:3000/api/db/monitoring", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(
+          options === undefined ? { connection: validConnection } : { connection: validConnection, options },
+        ),
+        ...(signal === undefined ? {} : { signal }),
+      }) as never,
+    );
+  }
+
+  /** Runs `body` with `make(real)` installed in place of the real core, then puts the real one back. */
+  async function withCore<T>(make: (real: HostCore) => HostCore, body: () => Promise<T>): Promise<T> {
+    const real = hostCore();
+    forgetHostCore();
+    installHostCore(make(real), "test");
+    try {
+      return await body();
+    } finally {
+      forgetHostCore();
+      installHostCore(real, "test");
+    }
+  }
+
+  const DEADLINE_SENTENCE =
+    "A monitoring panel read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.";
+  const stoppedRecord = (): PanelRecord => ({
+    kind: "stopped",
+    reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+    settled: Promise.resolve(),
+  });
+
+  test("the route reads every panel through the host core and never the provider's getMonitoringData", async () => {
+    const provider = createMockProvider();
+    const panels: string[] = [];
+    const res = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: (session, request, ctx, ports) => {
+          panels.push(request.panel);
+          return real.panelCall(session, request, ctx, ports);
+        },
+      }),
+      () => monitoringWith(provider),
+    );
+
+    expect(res.status).toBe(200);
+    expect(panels).toEqual([...PANEL_MEMBERS.keys()].map((at) => MONITORING_ORDER[at]));
+    expect(provider.getMonitoringData).not.toHaveBeenCalled();
+    for (const member of PANEL_MEMBERS) expect((provider[member] as Mocked).mock.calls).toHaveLength(1);
+  });
+
+  test("a dashboard whose request leaves while its panels are read answers 499 at once, outcome unknown", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    const provider = createMockProvider();
+    const pending = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<void>();
+    let calls = 0;
+    for (const member of PANEL_MEMBERS) {
+      (provider[member] as Mocked).mockImplementation(() => {
+        calls += 1;
+        if (calls === PANEL_MEMBERS.length) reached.resolve();
+        return pending.promise;
+      });
+    }
+    const caller = new AbortController();
+    try {
+      const answering = monitoringWith(provider, caller.signal);
+      await reached.promise;
+      caller.abort(new DOMException("The request went away.", "AbortError"));
+      const response = await answering;
+
+      expect(response.status).toBe(499);
+      expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "unknown" });
+      pending.reject(new Error(crypto.randomUUID()));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a dashboard whose request is already gone answers 499 not-sent and reads no panel", async () => {
+    const provider = createMockProvider();
+    const caller = new AbortController();
+    caller.abort(new DOMException("The request went away.", "AbortError"));
+
+    const response = await monitoringWith(provider, caller.signal);
+
+    expect(response.status).toBe(499);
+    expect(await parseResponseJSON(response)).toMatchObject({ code: "QUERY_CANCELLED", outcome: "not-sent" });
+    for (const member of PANEL_MEMBERS) expect(provider[member]).not.toHaveBeenCalled();
+  });
+
+  test("a dashboard past its deadline answers 504 studio-timeout-refusal, and a panel stopped beside answered ones carries the sentence in errors", async () => {
+    const provider = createMockProvider();
+    const every = await withCore(
+      (real) => ({ ...real, panelCall: async () => stoppedRecord() }),
+      () => monitoringWith(provider),
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(every);
+
+    expect(every.status).toBe(504);
+    expect(body).toMatchObject({ code: "TIMEOUT_ERROR", kind: "studio-timeout-refusal", outcome: "unknown" });
+    expect(body.error).toBe(DEADLINE_SENTENCE);
+
+    const one = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: (session, request, ctx, ports) =>
+          request.panel === "storage" ? Promise.resolve(stoppedRecord()) : real.panelCall(session, request, ctx, ports),
+      }),
+      () => monitoringWith(provider),
+    );
+    const partial = await parseResponseJSON<Record<string, unknown>>(one);
+
+    expect(one.status).toBe(200);
+    expect(partial.errors).toEqual({ storage: DEADLINE_SENTENCE });
+    expect(partial.overview).toBeDefined();
+  });
+
+  test("options with a limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, are refused by name before any connection resolves", async () => {
+    const provider = createMockProvider();
+    const cases: [Record<string, unknown>, string][] = [
+      [{ slowQueryLimit: 0 }, "options.slowQueryLimit must be a whole number of at least 1"],
+      [{ slowQueryLimit: "10" }, "options.slowQueryLimit must be a whole number of at least 1"],
+      [{ sessionLimit: 1.5 }, "options.sessionLimit must be a whole number of at least 1"],
+      [{ sessionLimit: null }, "options.sessionLimit must be a whole number of at least 1"],
+      [{ schemaFilter: "" }, "options.schemaFilter must name a schema, as text that is not empty"],
+      [{ schemaFilter: 7 }, "options.schemaFilter must name a schema, as text that is not empty"],
+    ];
+
+    for (const [options, sentence] of cases) {
+      // oxlint-disable-next-line no-await-in-loop -- one request at a time, so each answer is its own option's.
+      const res = await monitoringWith(provider, undefined, options);
+      expect([options, res.status]).toEqual([options, 400]);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the request above.
+      expect(await parseResponseJSON(res)).toEqual({ error: sentence });
+    }
+    expect(mockResolveConnection).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    for (const member of PANEL_MEMBERS) expect(provider[member]).not.toHaveBeenCalled();
+  });
+
+  test("a panel answer whose form is not the requested panel's fails that panel by name", async () => {
+    const provider = createMockProvider();
+    const res = await withCore(
+      (real) => ({
+        ...real,
+        panelCall: async (session, request, ctx, ports) =>
+          request.panel === "tables"
+            ? { kind: "answered", answer: { indexes: [] } }
+            : real.panelCall(session, request, ctx, ports),
+      }),
+      () => monitoringWith(provider),
+    );
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(200);
+    expect(body.errors).toEqual({
+      tables:
+        "The tables panel read answered a form other than the tables panel's, which is a defect of the session that answered it.",
+    });
+    expect(body.indexes).toEqual([]);
+    expect(body.tables).toBeUndefined();
   });
 });

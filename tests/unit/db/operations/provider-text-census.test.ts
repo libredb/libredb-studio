@@ -141,7 +141,8 @@ const PROVIDER_SENTENCE_MEMBERS = new Set(["unavailable", "sampledFrom"]);
 
 /**
  * Each provider method whose answer carries sentences in the provider's words, and the core scrubs a declaration that
- * reads it calls to answer them: the object reads', a monitoring answer's panel errors, a maintenance answer's message,
+ * reads it calls to answer them: the object reads', a monitoring answer's panel errors, whether read from the provider
+ * or through the monitoring facade's dashboard read, a maintenance answer's message,
  * a maintenance preview's sentences, a key page's skipped reason and read outcome, and an object edit's refusal, plan,
  * pre-image and outcome sentences.
  */
@@ -151,6 +152,7 @@ const SENTENCE_ANSWERS: Readonly<Record<string, readonly string[]>> = {
   describeObjects: ["scrubObjectDetail"],
   readObjectSource: ["scrubSourceDocument"],
   getMonitoringData: ["scrubMonitoringData"],
+  readDashboard: ["scrubMonitoringData"],
   runMaintenance: ["scrubMaintenanceResult"],
   previewMaintenance: ["scrubMaintenancePreview"],
   scanKeysPage: ["scrubKeyScanPage"],
@@ -430,6 +432,7 @@ const PROVIDER_TEXT_PATHS = [
   join("src", "lib", "api", "editor-transaction.ts"),
   join("src", "lib", "api", "object-tree.ts"),
   join("src", "lib", "api", "provider-maintenance.ts"),
+  join("src", "lib", "api", "provider-monitoring.ts"),
   join("src", "lib", "provider-host"),
   join("src", "lib", "api", "test-connection.ts"),
   join("src", "lib", "query-events"),

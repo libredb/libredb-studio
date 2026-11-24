@@ -2429,7 +2429,7 @@ It offers `monitoring.panel` on every session, since every legacy provider holds
 The session's panels are its engine's row of monitoring panels.
 Its panel call runs the panel's own member with today's argument and answers its answer under the panel's key by reference, and its pool statistics call answers the provider's own statistics by reference, a synchronous throw as the call's rejection.
 Neither calls `forCatalog`, and each passes a provider's error by reference.
-It serves no `health` call, and the monitoring, pool-stats, health and fleet health routes and Test Connection still call the provider's members themselves until they move onto the host core.
+It serves no `health` call, and the health and fleet health routes and Test Connection still call the provider's members themselves until they move onto the host core.
 Its run calls `runMaintenance` with exactly three arguments, the operation, the target and the container, `undefined` for an absent one, and its preview calls `previewMaintenance` with the operation and a fresh copy of the path.
 Each answers the provider's answer by reference, never calls `forCatalog`, and passes a provider's error by reference.
 The session's maintenance is the provider's declaration before it connects, narrowed through `sessionMaintenance` by the refinement the bridge answers from the connected provider's capabilities, C-68.
@@ -3092,6 +3092,47 @@ The core does not read a panel answer's form: the caller reads the member its re
 - test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a panel read that never settles is stopped at the call's deadline"
 - test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a pool statistics read that never settles is stopped at the call's deadline"
 
+### C-74 (normative): Monitoring on the host
+
+The monitoring and pool-stats routes read every panel and the pool statistics through one caller facade and the host core's monitoring calls, C-73, on the session the legacy bridge serves, C-50, of the provider the route resolved.
+A dashboard read is the host's one orchestration of the declared panels, which asks only the panels the engine offers and the caller requests, each through one panel request with the limits resolved and a schema only where the caller named one.
+It answers each panel answered, failed with its sentence, not requested or not offered, and holds each answer to the requested panel's form, failing that panel by name otherwise.
+A dashboard whose every panel failed answers the first panel's error as raised when they failed with one sentence, and Studio's mapping of the joined sentences for the session's engine when they failed with several, the mapping every provider's own applies.
+Each read waits until its own deadline, the statement timeout plus 10 s from its start, and the request's signal, and every read of one dashboard starts at once, so the dashboard has no deadline of its own.
+A read the caller left is answered as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
+A later failure is logged by kind and code, never its text.
+The monitoring route refuses, by name and before any connection resolves, a slow query or session limit that is not a whole number of at least 1 and a schema filter that is not text naming a schema.
+Each route's doors, checks, scrubs and answers run where they ran, and a session that offers no pool statistics is answered with today's zeros and sentence.
+
+- test `tests/unit/db/engine-facets/monitoring.test.ts` "each panel is read through one request of its own, the limits resolved and the schema present only when the caller named one"
+- test `tests/unit/db/engine-facets/monitoring.test.ts` "an answer whose form is not the requested panel's fails that panel by name, and the others answer"
+- test `tests/unit/db/engine-facets/monitoring.test.ts` "a dashboard whose one panel answered a form other than its own rejects with that panel's sentence as a plain Error"
+- test `tests/unit/db/engine-facets/monitoring.test.ts` "readPanel calls the panel's member with today's argument and answers its answer by reference under the panel's key"
+- test `tests/isolated/monitoring-panels-census.test.ts` "no provider overrides mapError, so the host's mapping of a dashboard's several sentences is each provider's own"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "each panel read and each pool statistics read is one host core call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a dashboard read answers each panel's own answer by reference in the orchestration's four states, and a pool statistics read the provider's own"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "an error the provider raises reaches the caller as the same object, and several sentences answer the engine's mapping of them"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a caller that leaves while the reads are pending is answered a stop at once, QueryCancelledError outcome unknown, and each later failure is logged by kind and code, never its text"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a pool statistics read whose caller leaves is answered a stop at once, and its later failure is logged by kind and code, never its text"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a caller already gone sends nothing and is answered not-sent"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read past its deadline answers StudioTimeoutRefusal naming the panel read or the pool statistics read, the statement timeout and the slack"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/provider-monitoring.test.ts` "the monitoring options are refused by name when a limit is not a whole number of at least 1 or the schema is not text that names one"
+- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a dashboard read whose panels never answer is stopped at their deadline, StudioTimeoutRefusal naming the panel read"
+- test `tests/api/db/monitoring.test.ts` "the route reads every panel through the host core and never the provider's getMonitoringData"
+- test `tests/api/db/monitoring.test.ts` "a dashboard whose request leaves while its panels are read answers 499 at once, outcome unknown"
+- test `tests/api/db/monitoring.test.ts` "a dashboard whose request is already gone answers 499 not-sent and reads no panel"
+- test `tests/api/db/monitoring.test.ts` "a dashboard past its deadline answers 504 studio-timeout-refusal, and a panel stopped beside answered ones carries the sentence in errors"
+- test `tests/api/db/monitoring.test.ts` "options with a limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, are refused by name before any connection resolves"
+- test `tests/api/db/monitoring.test.ts` "a panel answer whose form is not the requested panel's fails that panel by name"
+- test `tests/api/db/monitoring.test.ts` "a provider error that reads like an abort answers by its class, and only the request's own signal answers 499"
+- test `tests/api/db/monitoring.test.ts` "a provider error with the code ECONNRESET answers by its class, not as a request the caller left"
+- test `tests/api/db/pool-stats.test.ts` "a pool statistics read whose request leaves answers 499 at once, outcome unknown"
+- test `tests/api/db/pool-stats.test.ts` "a pool statistics read whose request is already gone answers 499 not-sent and reads nothing"
+- test `tests/api/db/pool-stats.test.ts` "a pool statistics read past its deadline answers 504 studio-timeout-refusal naming the read"
+- test `tests/api/db/pool-stats.test.ts` "whether pool statistics are offered is read from the bridged session"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3174,6 +3215,7 @@ Against this contract's earlier text:
 - A maintenance run or preview is held to the session's maintenance before the call, C-17 and C-69, where only its facet was.
 - The connection form and each engine's display name are projections of the declarations, M-15 and M-72, each named function bound by Studio's function table, where Studio kept each form in a hand-written entry.
 - An engine's monitoring panel is refused only where its package does not offer `monitoring.panel`, C-4, where every offered panel was refused as having no call.
+- The monitoring and pool-stats routes read through the host core's monitoring calls, C-73 and C-74, where they called the provider's members, and the bridge offers both monitoring facets, C-50.
 - Health is a mandatory call, C-3 and C-72, where the calls chapter left it out.
 - A kill runs on the connection's metadata session where the host's session capacity class is several, C-66 and C-70, where it ran on the editor's.
 - One core module evaluates the field rules for the connection dialog and for the test-connection path Test Connection and Save post to, and a field holding null holds no value, M-33, where only the dialog evaluated them and null was a value.
