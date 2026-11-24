@@ -6,7 +6,7 @@
  * and asserts the exact refusal list: a pointer into the request, the field's name, and never a value of the request.
  * A statement sent inside a transaction goes only to a session that offers `console.transaction`, and never with a
  * scope. A console facet call goes only to a session that offers the facet, and an object facet call only to one that
- * offers the object facet (clause C-17).
+ * offers the object facet, and a maintenance facet call only to one that offers the maintenance facet (clause C-17).
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -17,6 +17,7 @@ import {
   callRefusalSentence,
   checkConsoleFacet,
   checkExecuteRequest,
+  checkMaintenanceFacet,
   checkObjectsFacet,
   type ExecuteRequest,
   sessionCalls,
@@ -27,6 +28,7 @@ import type { Calls } from "@libredb/provider-sdk/manifest";
 const NOTHING: Calls = {
   console: { execute: { honours: [] }, cancel: "not-offered", endScope: "not-offered", transaction: "not-offered" },
   objects: { tree: "not-offered" },
+  maintenance: { run: "not-offered", preview: "not-offered" },
 };
 
 /** The calls of a package that honours every field and offers every facet. */
@@ -38,6 +40,7 @@ const EVERYTHING: Calls = {
     transaction: "offered",
   },
   objects: { tree: "offered" },
+  maintenance: { run: "offered", preview: "offered" },
 };
 
 const statement = `select ${randomUUID()}`;
@@ -177,6 +180,36 @@ describe("checkObjectsFacet", () => {
     expect(checkObjectsFacet(EVERYTHING, "tree")).toEqual([]);
     expect(checkObjectsFacet(sessionCalls(EVERYTHING, undefined), "tree")).toEqual([]);
     expect(checkObjectsFacet(consoleNarrowed, "tree")).toEqual([]);
+  });
+});
+
+describe("checkMaintenanceFacet", () => {
+  test("the maintenance facets are refused by name to a session that does not offer them", () => {
+    for (const facet of ["run", "preview"] as const) {
+      const withdrawn = sessionCalls(EVERYTHING, { calls: { maintenance: { [facet]: "not-offered" } } });
+      const refused: CallRefusal = {
+        rule: "facet-not-offered",
+        pointer: `/maintenance/${facet}`,
+        name: `maintenance.${facet}`,
+      };
+
+      expect(checkMaintenanceFacet(NOTHING, facet)).toEqual([refused]);
+      expect(checkMaintenanceFacet(sessionCalls(NOTHING, undefined), facet)).toEqual([refused]);
+      expect(checkMaintenanceFacet(withdrawn, facet)).toEqual([refused]);
+      expect(callRefusalSentence(refused)).toBe(
+        `The session does not offer the facet "maintenance.${facet}" at "/maintenance/${facet}", so the call was not made.`,
+      );
+    }
+  });
+
+  test("a session that offers maintenance.run and maintenance.preview is called", () => {
+    const previewWithdrawn = sessionCalls(EVERYTHING, { calls: { maintenance: { preview: "not-offered" } } });
+
+    for (const facet of ["run", "preview"] as const) {
+      expect(checkMaintenanceFacet(EVERYTHING, facet)).toEqual([]);
+      expect(checkMaintenanceFacet(sessionCalls(EVERYTHING, undefined), facet)).toEqual([]);
+    }
+    expect(checkMaintenanceFacet(previewWithdrawn, "run")).toEqual([]);
   });
 });
 

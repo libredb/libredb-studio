@@ -22,7 +22,8 @@
  * The host's side refuses, before any frame and before anything else it checks, a call whose deadline has passed or
  * whose signal has aborted (`checkCallStart`), the signal's reason as the error's cause, so the provider is never
  * called and the tables are unchanged. It holds every call to the session's calls before any frame
- * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`), reads `open`'s refinement with `sessionCalls`,
+ * (`checkExecuteRequest`, `checkConsoleFacet`, `checkObjectsFacet`, `checkMaintenanceFacet`), reads `open`'s refinement
+ * with `sessionCalls`,
  * and closes what an answer it refuses handed over: the session through the provider's `close`, under a cleanup
  * context of its own (`cleanupContext`), never the open's, which may have aborted, and each source through its own,
  * every close run and no failure lost.
@@ -40,7 +41,13 @@ import { checkProviderModule, ProviderDefinitionError } from "../calls/define-pr
 import { freezeContext, freezeData } from "../calls/freeze";
 import { isPlainRecord, pointerTo, readOwn } from "../calls/records";
 import { type CallRefusal, CallRefusalError } from "../calls/refusals";
-import { checkConsoleFacet, checkExecuteRequest, checkObjectsFacet, sessionCalls } from "../calls/session";
+import {
+  checkConsoleFacet,
+  checkExecuteRequest,
+  checkMaintenanceFacet,
+  checkObjectsFacet,
+  sessionCalls,
+} from "../calls/session";
 import type {
   BatchLimit,
   CallContext,
@@ -52,6 +59,12 @@ import type {
   EndScopeRequest,
   ExecuteAnswer,
   ExecuteRequest,
+  MaintenanceFacet,
+  MaintenanceImpl,
+  MaintenancePreview,
+  MaintenancePreviewRequest,
+  MaintenanceRunAnswer,
+  MaintenanceRunRequest,
   ObjectsImpl,
   OpenAnswer,
   OpenContext,
@@ -146,6 +159,7 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   const impl = module.impl;
   const consoleImpl = impl.console;
   const objectsImpl = impl.objects;
+  const maintenanceImpl = impl.maintenance;
   const provider = Object.freeze({
     open: impl.open,
     close: impl.close,
@@ -154,6 +168,8 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
     endScope: consoleImpl.endScope,
     transaction: consoleImpl.transaction,
     tree: objectsImpl?.tree,
+    run: maintenanceImpl?.run,
+    preview: maintenanceImpl?.preview,
   });
   const observe = options.observe;
 
@@ -225,12 +241,24 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
    * read and compared, decoded for the host.
    */
   async function facetCall<Answer>(
-    call: "console.cancel" | "console.endScope" | "console.transaction" | "objects.tree",
+    call:
+      | "console.cancel"
+      | "console.endScope"
+      | "console.transaction"
+      | "objects.tree"
+      | "maintenance.run"
+      | "maintenance.preview",
     check: (calls: Calls) => readonly CallRefusal[],
     fn: (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>,
     owner: unknown,
     handle: unknown,
-    request: CancelRequest | EndScopeRequest | TransactionRequest | TreeRequest,
+    request:
+      | CancelRequest
+      | EndScopeRequest
+      | TransactionRequest
+      | TreeRequest
+      | MaintenanceRunRequest
+      | MaintenancePreviewRequest,
     ctx: CallContext,
   ): Promise<Answer> {
     refuseCallStart(ctx);
@@ -260,6 +288,19 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
   ): Promise<Answer> {
     const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
     return facetCall<Answer>(call, (calls) => checkConsoleFacet(calls, facet), fn, consoleImpl, handle, request, ctx);
+  }
+
+  /** One maintenance facet call: a facet call held to the session's maintenance calls, on the provider's maintenance. */
+  function maintenanceCall<Answer>(
+    call: "maintenance.run" | "maintenance.preview",
+    facet: MaintenanceFacet,
+    handle: unknown,
+    request: MaintenanceRunRequest | MaintenancePreviewRequest,
+    ctx: CallContext,
+  ): Promise<Answer> {
+    const fn = provider[facet] as (handle: unknown, request: unknown, ctx: CallContext) => Promise<unknown>;
+    const check = (calls: Calls) => checkMaintenanceFacet(calls, facet);
+    return facetCall<Answer>(call, check, fn, maintenanceImpl, handle, request, ctx);
   }
 
   /** A served source over the provider's source `id`, with the columns and the row count its descriptor carried. */
@@ -483,5 +524,25 @@ export function serve(module: ProviderModule, options: ServeOptions = {}): Provi
               ctx,
             ),
         };
-  return Object.freeze({ open, close, console: Object.freeze(served), objects: Object.freeze(servedObjects) });
+  const servedMaintenance: MaintenanceImpl<ServedHandle> = {
+    ...(provider.run === undefined
+      ? {}
+      : {
+          run: (handle: ServedHandle, request: MaintenanceRunRequest, ctx: CallContext) =>
+            maintenanceCall<MaintenanceRunAnswer>("maintenance.run", "run", handle, request, ctx),
+        }),
+    ...(provider.preview === undefined
+      ? {}
+      : {
+          preview: (handle: ServedHandle, request: MaintenancePreviewRequest, ctx: CallContext) =>
+            maintenanceCall<MaintenancePreview>("maintenance.preview", "preview", handle, request, ctx),
+        }),
+  };
+  return Object.freeze({
+    open,
+    close,
+    console: Object.freeze(served),
+    objects: Object.freeze(servedObjects),
+    maintenance: Object.freeze(servedMaintenance),
+  });
 }

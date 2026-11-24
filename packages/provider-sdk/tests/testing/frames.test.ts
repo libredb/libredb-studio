@@ -230,6 +230,24 @@ function wellFormed(): readonly (readonly [ServedCall, FramePart, unknown])[] {
     ],
     ["objects.tree", "answer", { details: [objectDetail()], truncated: { limit: 1, reason: marker() } }],
     ["objects.tree", "answer", { details: [] }],
+    ["maintenance.run", "context", { deadline: 1 }],
+    ["maintenance.run", "request", { operation: "vacuum", target: marker(), container: marker() }],
+    ["maintenance.run", "request", { operation: "kill", target: "4711" }],
+    ["maintenance.run", "request", { operation: "analyze" }],
+    [
+      "maintenance.run",
+      "answer",
+      { success: true, executionTime: 12, message: marker(), rows: [{ key: marker(), value: 1 }], fields: ["key"] },
+    ],
+    ["maintenance.run", "answer", { success: false, executionTime: 0, message: marker() }],
+    ["maintenance.preview", "context", { deadline: 1 }],
+    ["maintenance.preview", "request", { operation: "release", path: [marker(), marker()] }],
+    [
+      "maintenance.preview",
+      "answer",
+      { summary: marker(), facts: [{ label: marker(), value: marker() }], refusal: marker(), note: marker() },
+    ],
+    ["maintenance.preview", "answer", { summary: marker(), facts: [] }],
     ["result.next", "request", { maxRows: 100, maxBytes: 1_048_576 }],
     [
       "result.next",
@@ -289,6 +307,12 @@ describe("readFrame", () => {
       "objects.tree context",
       "objects.tree request",
       "objects.tree answer",
+      "maintenance.run context",
+      "maintenance.run request",
+      "maintenance.run answer",
+      "maintenance.preview context",
+      "maintenance.preview request",
+      "maintenance.preview answer",
       "result.next request",
       "result.next answer",
     ]);
@@ -360,6 +384,12 @@ describe("readFrame", () => {
       refusal("frame-key-unknown", "objects.tree", "answer", "/detail/columns/0/comment", "comment"),
       refusal("frame-key-unknown", "objects.tree", "answer", "/detail/indexes/0/extra", "extra"),
     ]);
+    expect(readFrame("maintenance.run", "request", { operation: "vacuum", path: [marker()] })).toEqual([
+      refusal("frame-key-unknown", "maintenance.run", "request", "/path", "path"),
+    ]);
+    expect(
+      readFrame("maintenance.preview", "answer", { summary: marker(), facts: [{ label: "a", value: "b", unit: "c" }] }),
+    ).toEqual([refusal("frame-key-unknown", "maintenance.preview", "answer", "/facts/0/unit", "unit")]);
   });
 
   test("a required key a frame lacks is refused as frame-key-missing", () => {
@@ -509,7 +539,83 @@ describe("readFrame", () => {
       unreadable("objects.tree", "answer", "/detail/columns/1/nullable"),
       unreadable("objects.tree", "answer", "/detail/foreignKeys/0/referencedColumn"),
     ]);
+    expect(readFrame("maintenance.run", "request", { operation: "shrink", target: 4711 })).toEqual([
+      unreadable("maintenance.run", "request", "/operation"),
+      unreadable("maintenance.run", "request", "/target"),
+    ]);
+    expect(
+      readFrame("maintenance.preview", "answer", { summary: marker(), facts: [{ label: "a", value: 1 }] }),
+    ).toEqual([unreadable("maintenance.preview", "answer", "/facts/0/value")]);
     expect(reads).toBe(0);
+  });
+
+  test("a maintenance run request and answer are each read as their closed shape", () => {
+    const answer = { success: true, executionTime: 3, message: marker() };
+    const unreadable = (part: FramePart, pointer: string) =>
+      refusal("frame-value-unreadable", "maintenance.run", part, pointer);
+
+    for (const operation of SCHEMA.$defs.maintenanceOperation?.enum ?? []) {
+      expect(readFrame("maintenance.run", "request", { operation })).toEqual([]);
+    }
+    expect(readFrame("maintenance.run", "request", {})).toEqual([
+      refusal("frame-key-missing", "maintenance.run", "request", "/operation", "operation"),
+    ]);
+    expect(readFrame("maintenance.run", "request", { operation: "vacuum", target: null, container: 1 })).toEqual([
+      unreadable("request", "/target"),
+      unreadable("request", "/container"),
+    ]);
+    expect(
+      readFrame("maintenance.run", "answer", { ...answer, rows: [{ a: [1, { b: null }] }], fields: ["a"] }),
+    ).toEqual([]);
+    expect(readFrame("maintenance.run", "answer", { ...answer, rows: [1, [2]], fields: [3] })).toEqual([
+      unreadable("answer", "/rows/0"),
+      unreadable("answer", "/rows/1"),
+      unreadable("answer", "/fields/0"),
+    ]);
+    expect(readFrame("maintenance.run", "answer", { success: "yes", executionTime: "3", message: 1 })).toEqual([
+      unreadable("answer", "/success"),
+      unreadable("answer", "/executionTime"),
+      unreadable("answer", "/message"),
+    ]);
+    expect(readFrame("maintenance.run", "answer", { message: marker() })).toEqual([
+      refusal("frame-key-missing", "maintenance.run", "answer", "/success", "success"),
+      refusal("frame-key-missing", "maintenance.run", "answer", "/executionTime", "executionTime"),
+    ]);
+    expect(readFrame("maintenance.run", "answer", { ...answer, columns: [] })).toEqual([
+      refusal("frame-key-unknown", "maintenance.run", "answer", "/columns", "columns"),
+    ]);
+    expect(readFrame("maintenance.run", "answer", { ...answer, fields: ["a"] })).toEqual([]);
+    expect(readFrame("maintenance.run", "answer", { ...answer, rows: [{ a: 1 }] })).toEqual([
+      refusal("frame-key-missing", "maintenance.run", "answer", "/fields", "fields"),
+    ]);
+  });
+
+  test("a maintenance preview request and answer are each read as their closed shape", () => {
+    const unreadable = (part: FramePart, pointer: string) =>
+      refusal("frame-value-unreadable", "maintenance.preview", part, pointer);
+
+    expect(readFrame("maintenance.preview", "request", { operation: "release", path: ["a"] })).toEqual([]);
+    expect(readFrame("maintenance.preview", "request", { operation: "release", path: [] })).toEqual([
+      unreadable("request", "/path"),
+    ]);
+    expect(readFrame("maintenance.preview", "request", { operation: "release" })).toEqual([
+      refusal("frame-key-missing", "maintenance.preview", "request", "/path", "path"),
+    ]);
+    expect(readFrame("maintenance.preview", "request", { operation: "evict", path: ["a", 1], target: "a" })).toEqual([
+      unreadable("request", "/operation"),
+      unreadable("request", "/path/1"),
+      refusal("frame-key-unknown", "maintenance.preview", "request", "/target", "target"),
+    ]);
+    expect(readFrame("maintenance.preview", "answer", { facts: [{ label: marker() }] })).toEqual([
+      refusal("frame-key-missing", "maintenance.preview", "answer", "/facts/0/value", "value"),
+      refusal("frame-key-missing", "maintenance.preview", "answer", "/summary", "summary"),
+    ]);
+    expect(readFrame("maintenance.preview", "answer", { summary: 1, facts: {}, refusal: false, note: null })).toEqual([
+      unreadable("answer", "/summary"),
+      unreadable("answer", "/facts"),
+      unreadable("answer", "/refusal"),
+      unreadable("answer", "/note"),
+    ]);
   });
 
   test("a page bound is exactly one of its two forms", () => {

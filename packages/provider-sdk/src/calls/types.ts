@@ -8,8 +8,9 @@
  *
  * The SDK declares each shape the contexts and the object tree share with Studio's own source (`TlsSettings`,
  * `EgressDecision`, `TrustMaterial`, `PoolSettings`, `TunnelFarEnd`, `AdmittedHostPaths`, and the tree's `Container`,
- * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold) itself, because a package imports nothing
- * from Studio; a census in Studio's tests holds each one mutually assignable with Studio's type.
+ * `DatabaseObject`, `KindCount`, `ObjectDetail` and the shapes they hold, and the maintenance run's answer and the
+ * maintenance preview) itself, because a package imports nothing from Studio; a census in Studio's tests holds each one
+ * mutually assignable with Studio's type.
  */
 import type {
   ConsoleCalls,
@@ -17,6 +18,8 @@ import type {
   ExecuteRequestField,
   FacetOffer,
   FieldName,
+  MaintenanceCalls,
+  MaintenanceOperation,
   ObjectsCalls,
   ProviderManifest,
 } from "../manifest/manifest-types.generated";
@@ -62,6 +65,32 @@ export type ObjectsFacet = (typeof OBJECTS_FACETS)[number];
 export const TREE_ACTIONS = Object.freeze(["containers", "count", "list", "describe", "describeMany"] as const);
 
 export type TreeAction = (typeof TREE_ACTIONS)[number];
+
+/**
+ * The maintenance facets, the keys of `$defs/maintenanceCalls`, in schema order. Each is the path to its function under
+ * the implementation's `maintenance`, and the manifest's `calls.maintenance` declares each as offered or not.
+ */
+export const MAINTENANCE_FACETS = Object.freeze([
+  "run",
+  "preview",
+] as const) satisfies readonly (keyof MaintenanceCalls)[];
+
+export type MaintenanceFacet = (typeof MAINTENANCE_FACETS)[number];
+
+/** The maintenance operations, `$defs/maintenanceOperation`, in schema order: the vocabulary an engine's list names. */
+export const MAINTENANCE_OPERATIONS = Object.freeze([
+  "vacuum",
+  "analyze",
+  "reindex",
+  "kill",
+  "optimize",
+  "check",
+  "compact",
+  "defragment",
+  "disarm",
+  "load",
+  "release",
+] as const) satisfies readonly MaintenanceOperation[];
 
 /** The optional request fields of console execute, `$defs/executeRequestField`, in schema order. */
 export const EXECUTE_REQUEST_FIELDS = Object.freeze([
@@ -202,6 +231,10 @@ export interface Refinement {
     };
     readonly objects?: {
       readonly tree?: FacetOffer;
+    };
+    readonly maintenance?: {
+      readonly run?: FacetOffer;
+      readonly preview?: FacetOffer;
     };
   };
 }
@@ -532,6 +565,68 @@ export interface ObjectsImpl<Handle> {
   tree?(handle: Handle, request: TreeRequest, ctx: CallContext): Promise<TreeAnswer>;
 }
 
+/**
+ * What `maintenance.run` is asked to run: one operation the session's engine lists, on the object or session `target`
+ * names in the namespace `container` names. An absent `target` runs the operation over the whole database, and an
+ * absent `container` names none.
+ */
+export interface MaintenanceRunRequest {
+  readonly operation: MaintenanceOperation;
+  /** The object a per-row control names, or the session id a `kill` ends. */
+  readonly target?: string;
+  /** The namespace the target lives in, by the engine's own meaning: a schema, a database, an owner, a bucket. */
+  readonly container?: string;
+}
+
+/**
+ * What `maintenance.run` answers: whether the engine took the operation, how long it ran in milliseconds and the
+ * engine's sentence, and, for an operation whose answer is a table, its rows and their fields; `fields` is present
+ * whenever `rows` is, and every row value is in the value codec's domain.
+ */
+export interface MaintenanceRunAnswer {
+  readonly success: boolean;
+  readonly executionTime: number;
+  readonly message: string;
+  readonly rows?: readonly Readonly<Record<string, unknown>>[];
+  /** The order of the columns of `rows`. */
+  readonly fields?: readonly string[];
+}
+
+/**
+ * What `maintenance.preview` is asked to read: what one per-row operation would do to the object `path` addresses,
+ * container levels first and the object last, so `path` is never empty.
+ */
+export interface MaintenancePreviewRequest {
+  readonly operation: MaintenanceOperation;
+  readonly path: readonly string[];
+}
+
+/** One figure a maintenance preview rests on, printed as a label and its value. */
+export interface MaintenanceFact {
+  readonly label: string;
+  readonly value: string;
+}
+
+/**
+ * What `maintenance.preview` answers: one sentence of what the operation will do, the facts it rests on, the
+ * preflight's sentence where one refuses the operation, and how fresh or exact the facts are.
+ */
+export interface MaintenancePreview {
+  readonly summary: string;
+  readonly facts: readonly MaintenanceFact[];
+  readonly refusal?: string;
+  readonly note?: string;
+}
+
+/**
+ * The maintenance facets. Each is implemented exactly when the manifest's `calls.maintenance` offers it. Written as
+ * methods so an implementation over its own handle type is a `ProviderImpl<unknown>` too.
+ */
+export interface MaintenanceImpl<Handle> {
+  run?(handle: Handle, request: MaintenanceRunRequest, ctx: CallContext): Promise<MaintenanceRunAnswer>;
+  preview?(handle: Handle, request: MaintenancePreviewRequest, ctx: CallContext): Promise<MaintenancePreview>;
+}
+
 /** A package's implementation: the functions the host calls, keyed by the path of each call's name. */
 export interface ProviderImpl<Handle> {
   open(ctx: OpenContext): Promise<OpenAnswer<Handle>>;
@@ -539,6 +634,8 @@ export interface ProviderImpl<Handle> {
   readonly console: ConsoleImpl<Handle>;
   /** The object facets; may be absent, or an empty record, when the implementation offers none. */
   readonly objects?: ObjectsImpl<Handle>;
+  /** The maintenance facets; may be absent, or an empty record, when the implementation offers none. */
+  readonly maintenance?: MaintenanceImpl<Handle>;
 }
 
 /**

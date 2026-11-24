@@ -58,6 +58,7 @@ function callsOf(options: { readonly honours?: ("params" | "offset")[]; readonly
       transaction: "not-offered",
     },
     objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
   };
 }
 

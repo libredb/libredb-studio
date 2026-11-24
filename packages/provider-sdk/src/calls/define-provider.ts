@@ -1,13 +1,16 @@
 /**
- * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3 and C-4).
+ * The provider module record and its check (docs/providers/CONTRACT.md, clauses C-1, C-3, C-4 and C-67).
  *
  * A package's entry default-exports what `defineProvider` returns: `{ contract, manifest, impl }`. `checkProviderModule`
  * reads any value as such a record and answers every way it is not one, each a refusal naming its rule and a JSON
  * Pointer into the record. The loader runs it on the entry's default export, so a record another copy of the SDK built
  * is checked by the host's copy.
  *
- * The check reads only what the calls need: the two contracts, the manifest's `calls` segment, its console facets and
- * its object facets, each engine's facets and the implementation's functions. Validating the manifest against the
+ * The check reads only what the calls need: the two contracts, the manifest's `calls` segment, its console facets, its
+ * object facets and its maintenance facets, each engine's facets, of each maintenance spec only whether it previews,
+ * and the implementation's functions. An engine's maintenance operation is admitted only where the manifest offers
+ * `maintenance.run`, and a spec that previews only where it offers `maintenance.preview`; a monitoring panel and an
+ * agent reading, for which the contract has no call yet, are refused when offered. Validating the manifest against the
  * schema is the loader's, which holds the schema bytes; a manifest is typed `unknown` here and read defensively,
  * because a JSON import's type is wider than the manifest's and a cast would hide a mismatch. Every key the check reads
  * is read as an own data property, by its descriptor: a method a class instance inherits is not read, and a getter is
@@ -18,6 +21,7 @@ import { type Fields, fieldsOf, isPlainRecord, type OwnRead, readOwn, token, val
 import {
   CONSOLE_FACETS,
   EXECUTE_REQUEST_FIELDS,
+  MAINTENANCE_FACETS,
   OBJECTS_FACETS,
   PROVIDER_CONTRACT,
   type ProviderImpl,
@@ -36,6 +40,7 @@ export const DEFINITION_REFUSAL_RULES = Object.freeze([
   "facet-undeclared",
   "facet-unimplemented",
   "engine-facet-without-call",
+  "engine-facet-call-not-offered",
 ] as const);
 
 export type DefinitionRefusalRule = (typeof DEFINITION_REFUSAL_RULES)[number];
@@ -68,7 +73,7 @@ export class ProviderDefinitionError extends Error {
 }
 
 const RECORD_KEYS: readonly string[] = Object.freeze(["contract", "manifest", "impl"]);
-const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console", "objects"]);
+const IMPL_KEYS: readonly string[] = Object.freeze(["open", "close", "console", "objects", "maintenance"]);
 const CONSOLE_KEYS: readonly string[] = Object.freeze(["execute", ...CONSOLE_FACETS]);
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"]);
 const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
@@ -78,11 +83,13 @@ const REQUEST_FIELDS: readonly unknown[] = EXECUTE_REQUEST_FIELDS;
  */
 const ENGINES_MAX = 64;
 /**
- * The longest maintenance and agent readings lists the schema admits, each list's `maxItems` under
- * `/$defs/facets/properties`: the size of its vocabulary, since each item is listed once.
+ * The longest maintenance, maintenance specs and agent readings lists the schema admits, each list's `maxItems` under
+ * `/$defs/facets/properties`: the size of the maintenance or readings vocabulary, since each item is listed once and a
+ * spec is stated once for each operation listed.
  */
-const FACET_LISTS_MAX: Readonly<Record<"maintenance" | "agentReadings", number>> = Object.freeze({
+const FACET_LISTS_MAX: Readonly<Record<"maintenance" | "maintenanceSpecs" | "agentReadings", number>> = Object.freeze({
   maintenance: 11,
+  maintenanceSpecs: 11,
   agentReadings: 6,
 });
 const CONTRACT_FORM = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/;
@@ -109,7 +116,7 @@ function contractRefusal(value: unknown, pointer: string): DefinitionRefusal {
  * `manifest-unreadable` for a value that is missing or no record.
  */
 function manifestRecord(
-  fields: Fields,
+  fields: unknown,
   key: string,
   pointer: string,
   refusals: DefinitionRefusal[],
@@ -172,7 +179,7 @@ function readOffers(
 }
 
 /**
- * The manifest's console and object facet offers, by contract name, each `true` when offered, `false` when not, and
+ * The manifest's console, object and maintenance facet offers, by contract name, each `true` when offered, `false` when not, and
  * absent when it cannot be read, with a refusal for every key the check reads that is missing, of the wrong type or an
  * accessor.
  */
@@ -188,48 +195,111 @@ function readCalls(manifest: Fields, refusals: DefinitionRefusal[]): Offers {
   }
   const objectsCalls = manifestRecord(calls, "objects", "/manifest/calls/objects", refusals);
   if (objectsCalls !== undefined) readOffers(objectsCalls, "objects", OBJECTS_FACETS, offers, refusals);
+  const maintenanceCalls = manifestRecord(calls, "maintenance", "/manifest/calls/maintenance", refusals);
+  if (maintenanceCalls !== undefined) {
+    readOffers(maintenanceCalls, "maintenance", MAINTENANCE_FACETS, offers, refusals);
+  }
   return offers;
 }
 
 /**
- * The refusals of one engine's facets: one for a facet this contract has no call for, or for one it cannot read. A
- * maintenance or agent readings list longer than the schema admits is refused as `manifest-unreadable` by its length,
- * before any item is read: a sparse array's length bounds no loop over it.
+ * The facet list `list` of an engine's `facets`, or undefined with a refusal at its pointer: `property-not-data` for an
+ * accessor, `manifest-unreadable` for a value that is no list or is longer than the schema admits, refused by its length
+ * before any item is read, since a sparse array's length bounds no loop over it.
  */
-function readFacets(engine: Fields, at: string, refusals: DefinitionRefusal[]): void {
+function facetList(
+  facets: Fields,
+  list: keyof typeof FACET_LISTS_MAX,
+  pointer: string,
+  refusals: DefinitionRefusal[],
+): readonly unknown[] | undefined {
+  const read = own(facets, list, pointer, refusals);
+  if (read.kind === "accessor") return undefined;
+  const items = valueOf(read);
+  if (Array.isArray(items) && items.length <= FACET_LISTS_MAX[list]) return items;
+  refusals.push({ rule: "manifest-unreadable", pointer });
+  return undefined;
+}
+
+/** The refusals of an engine's offered monitoring panels, for which this contract has no call yet. */
+function readMonitoring(facets: Fields, at: string, refusals: DefinitionRefusal[]): void {
+  const monitoring = manifestRecord(facets, "monitoring", `${at}/facets/monitoring`, refusals);
+  if (monitoring === undefined) return;
+  for (const panel of Object.keys(monitoring)) {
+    const pointer = `${at}/facets/monitoring/${token(panel)}`;
+    const read = own(monitoring, panel, pointer, refusals);
+    if (read.kind === "accessor") continue;
+    const offer = valueOf(read);
+    if (!OFFERS.includes(offer)) refusals.push({ rule: "manifest-unreadable", pointer });
+    else if (offer === "offered") refusals.push({ rule: "engine-facet-without-call", pointer });
+  }
+}
+
+/**
+ * The refusals of an engine's maintenance list: each operation listed is refused by name as
+ * `engine-facet-call-not-offered` where the manifest declares `maintenance.run` not-offered. An offer that could not be
+ * read refuses nothing more here, since its own refusal names it; no item is read, since its vocabulary is the
+ * validator's.
+ */
+function readMaintenance(facets: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
+  const pointer = `${at}/facets/maintenance`;
+  const items = facetList(facets, "maintenance", pointer, refusals);
+  if (items === undefined || offers["maintenance.run"] !== false) return;
+  for (let item = 0; item < items.length; item += 1) {
+    refusals.push({ rule: "engine-facet-call-not-offered", pointer: `${pointer}/${item}`, name: "maintenance.run" });
+  }
+}
+
+/**
+ * The refusals of an engine's maintenance specs, of which only `preview` is read: each spec must be a record whose
+ * `preview` is a boolean, and one that previews is refused by name as `engine-facet-call-not-offered` where the
+ * manifest declares `maintenance.preview` not-offered. Every other rule of a spec is the validator's.
+ */
+function readMaintenanceSpecs(facets: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
+  const pointer = `${at}/facets/maintenanceSpecs`;
+  const specs = facetList(facets, "maintenanceSpecs", pointer, refusals);
+  if (specs === undefined) return;
+  for (let index = 0; index < specs.length; index += 1) {
+    const spec = manifestRecord(specs, String(index), `${pointer}/${index}`, refusals);
+    if (spec === undefined) continue;
+    const previewPointer = `${pointer}/${index}/preview`;
+    const read = own(spec, "preview", previewPointer, refusals);
+    if (read.kind === "accessor") continue;
+    const preview = valueOf(read);
+    if (typeof preview !== "boolean") refusals.push({ rule: "manifest-unreadable", pointer: previewPointer });
+    else if (preview && offers["maintenance.preview"] === false) {
+      refusals.push({ rule: "engine-facet-call-not-offered", pointer: previewPointer, name: "maintenance.preview" });
+    }
+  }
+}
+
+/** The refusals of an engine's agent readings, each refused when listed, since this contract has no call for them yet. */
+function readAgentReadings(facets: Fields, at: string, refusals: DefinitionRefusal[]): void {
+  const pointer = `${at}/facets/agentReadings`;
+  const items = facetList(facets, "agentReadings", pointer, refusals);
+  for (let item = 0; item < (items?.length ?? 0); item += 1) {
+    refusals.push({ rule: "engine-facet-without-call", pointer: `${pointer}/${item}` });
+  }
+}
+
+/**
+ * The refusals of one engine's facets, in the order the schema states them: its monitoring panels, its maintenance
+ * list, its maintenance specs and its agent readings.
+ */
+function readFacets(engine: Fields, at: string, offers: Offers, refusals: DefinitionRefusal[]): void {
   const facets = manifestRecord(engine, "facets", `${at}/facets`, refusals);
   if (facets === undefined) return;
-  const monitoring = manifestRecord(facets, "monitoring", `${at}/facets/monitoring`, refusals);
-  if (monitoring !== undefined) {
-    for (const panel of Object.keys(monitoring)) {
-      const pointer = `${at}/facets/monitoring/${token(panel)}`;
-      const read = own(monitoring, panel, pointer, refusals);
-      if (read.kind === "accessor") continue;
-      const offer = valueOf(read);
-      if (!OFFERS.includes(offer)) refusals.push({ rule: "manifest-unreadable", pointer });
-      else if (offer === "offered") refusals.push({ rule: "engine-facet-without-call", pointer });
-    }
-  }
-  for (const list of ["maintenance", "agentReadings"] as const) {
-    const pointer = `${at}/facets/${list}`;
-    const read = own(facets, list, pointer, refusals);
-    if (read.kind === "accessor") continue;
-    const items = valueOf(read);
-    if (!Array.isArray(items) || items.length > FACET_LISTS_MAX[list]) {
-      refusals.push({ rule: "manifest-unreadable", pointer });
-      continue;
-    }
-    for (let item = 0; item < items.length; item += 1) {
-      refusals.push({ rule: "engine-facet-without-call", pointer: `${pointer}/${item}` });
-    }
-  }
+  readMonitoring(facets, at, refusals);
+  readMaintenance(facets, at, offers, refusals);
+  readMaintenanceSpecs(facets, at, offers, refusals);
+  readAgentReadings(facets, at, refusals);
 }
 
 /**
  * The refusals of each engine's facets. An engine list longer than the schema admits is refused as
  * `manifest-unreadable` by its length, before any engine is read: a sparse array's length bounds no loop over it.
  */
-function readEngines(manifest: Fields, refusals: DefinitionRefusal[]): void {
+function readEngines(manifest: Fields, offers: Offers, refusals: DefinitionRefusal[]): void {
   const read = own(manifest, "engines", "/manifest/engines", refusals);
   if (read.kind === "accessor") return;
   const engines = valueOf(read);
@@ -243,7 +313,7 @@ function readEngines(manifest: Fields, refusals: DefinitionRefusal[]): void {
     if (item.kind === "accessor") continue;
     const engine = fieldsOf(valueOf(item));
     if (engine === undefined) refusals.push({ rule: "manifest-unreadable", pointer: at });
-    else readFacets(engine, at, refusals);
+    else readFacets(engine, at, offers, refusals);
   }
 }
 
@@ -325,6 +395,10 @@ function readImpl(value: unknown, offers: Offers, refusals: DefinitionRefusal[])
   }
   const objectsSegment = segmentOf(impl, "objects", OBJECTS_FACETS, refusals);
   if (!objectsSegment.unread) readFacetImpls(objectsSegment.fields, "objects", OBJECTS_FACETS, offers, refusals);
+  const maintenanceSegment = segmentOf(impl, "maintenance", MAINTENANCE_FACETS, refusals);
+  if (!maintenanceSegment.unread) {
+    readFacetImpls(maintenanceSegment.fields, "maintenance", MAINTENANCE_FACETS, offers, refusals);
+  }
 }
 
 /**
@@ -362,7 +436,7 @@ export function checkProviderModule(value: unknown): readonly DefinitionRefusal[
   if (refusals.length > 0) return refusals;
 
   const offers = readCalls(manifest, refusals);
-  readEngines(manifest, refusals);
+  readEngines(manifest, offers, refusals);
   const impl = own(value, "impl", "/impl", refusals);
   if (impl.kind === "data") readImpl(impl.value, offers, refusals);
   return refusals;
@@ -382,8 +456,8 @@ function deepFreeze<T>(value: T): T {
  *
  * The record is frozen. Its manifest is a deep-frozen `structuredClone` of the one passed, so freezing never touches
  * the package's own object, which an import may share; a manifest holding a value JSON cannot hold, such as a function,
- * makes the clone throw its `DataCloneError`. The implementation, its `console` and its `objects`, where it has one,
- * are frozen in place, so the functions the check read are the ones the host calls.
+ * makes the clone throw its `DataCloneError`. The implementation, its `console`, and its `objects` and `maintenance`,
+ * where it has them, are frozen in place, so the functions the check read are the ones the host calls.
  *
  * @throws {ProviderDefinitionError} With every refusal `checkProviderModule` answers, before anything is cloned or
  * frozen.
@@ -394,6 +468,7 @@ export function defineProvider<Handle>(manifest: unknown, impl: ProviderImpl<Han
   const copy = deepFreeze(structuredClone(manifest));
   Object.freeze(impl.console);
   if (impl.objects !== undefined) Object.freeze(impl.objects);
+  if (impl.maintenance !== undefined) Object.freeze(impl.maintenance);
   return Object.freeze({ contract: PROVIDER_CONTRACT, manifest: copy, impl: Object.freeze(impl) });
 }
 
@@ -430,5 +505,7 @@ export function definitionRefusalSentence(refusal: DefinitionRefusal): string {
       return `The manifest offers the facet${name}, for which the implementation has no function of its own at ${at}.`;
     case "engine-facet-without-call":
       return `The engine facet at ${at} is offered, and this provider contract has no call that serves it yet.`;
+    case "engine-facet-call-not-offered":
+      return `The engine facet at ${at} is offered, and the manifest does not offer the call${name} that serves it.`;
   }
 }

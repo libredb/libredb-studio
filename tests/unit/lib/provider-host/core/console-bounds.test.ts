@@ -38,6 +38,7 @@ const child = boundedChild({
           transaction: "offered",
         },
         objects: { tree: "not-offered" },
+        maintenance: { run: "not-offered", preview: "not-offered" },
       },
       execute: () => new Promise<never>(() => {}),
       transaction: () => new Promise<never>(() => {}),

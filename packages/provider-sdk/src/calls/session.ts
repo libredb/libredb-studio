@@ -1,12 +1,13 @@
 /**
- * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17 and C-57).
+ * A session's calls and the requests the host sends it (docs/providers/CONTRACT.md, clauses C-9, C-10, C-17, C-57 and
+ * C-67).
  *
  * The manifest's `calls` declares what a package answers; `open` may answer a refinement that narrows it for one
  * session, which `checkRefinement` reads and `sessionCalls` applies. The host keeps the session's calls with the
  * session, with no cache and no invalidation event, and holds every request to them with `checkExecuteRequest` before
  * the call, so a package is never sent a field it does not honour, and every console facet call to it with
- * `checkConsoleFacet` and every object facet call with `checkObjectsFacet`, so a package is never called on a facet the
- * session does not offer.
+ * `checkConsoleFacet`, every object facet call with `checkObjectsFacet` and every maintenance facet call with
+ * `checkMaintenanceFacet`, so a package is never called on a facet the session does not offer.
  */
 import type { Calls, ExecuteRequestField, FacetOffer } from "../manifest/manifest-types.generated";
 import { isPlainRecord, pointerTo, readOwn } from "./records";
@@ -16,6 +17,8 @@ import {
   type ConsoleFacet,
   EXECUTE_REQUEST_FIELDS,
   type ExecuteRequest,
+  MAINTENANCE_FACETS,
+  type MaintenanceFacet,
   OBJECTS_FACETS,
   type ObjectsFacet,
   type Refinement,
@@ -68,6 +71,16 @@ export function checkConsoleFacet(calls: Calls, facet: ConsoleFacet): readonly C
 export function checkObjectsFacet(calls: Calls, facet: ObjectsFacet): readonly CallRefusal[] {
   if (calls.objects[facet] === "offered") return [];
   return [{ rule: "facet-not-offered", pointer: pointerTo("/objects", facet), name: `objects.${facet}` }];
+}
+
+/**
+ * The refusal of a call to the maintenance facet `facet` when `calls`, the session's calls, do not offer it, a
+ * refinement's narrowing included: one `facet-not-offered` at the facet's pointer into the calls, named by its call
+ * name; none when the session offers it. The request is the host's own typed object and is not read here.
+ */
+export function checkMaintenanceFacet(calls: Calls, facet: MaintenanceFacet): readonly CallRefusal[] {
+  if (calls.maintenance[facet] === "offered") return [];
+  return [{ rule: "facet-not-offered", pointer: pointerTo("/maintenance", facet), name: `maintenance.${facet}` }];
 }
 
 const OFFERS: readonly unknown[] = Object.freeze(["offered", "not-offered"] satisfies FacetOffer[]);
@@ -186,12 +199,23 @@ function readObjects(value: unknown, declared: Calls, pointer: string, refusals:
   );
 }
 
+/** The refusals of a refinement's `calls.maintenance`. */
+function readMaintenance(value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]): void {
+  readClosed(value, MAINTENANCE_FACETS, pointer, refusals, (facet, offer, at) =>
+    readOffer(offer, declared.maintenance[facet], at, refusals),
+  );
+}
+
 /**
  * The reader of each segment a refinement's `calls` may have, one per segment of the manifest's calls, in schema order.
  * It satisfies a type over every segment, so a segment the calls gain fails typecheck here until it has a reader of
  * its own, and is never read by another segment's, and a reader for a segment the calls do not have fails it too.
  */
-const SEGMENT_READERS = Object.freeze({ console: readConsole, objects: readObjects } satisfies {
+const SEGMENT_READERS = Object.freeze({
+  console: readConsole,
+  objects: readObjects,
+  maintenance: readMaintenance,
+} satisfies {
   readonly [S in keyof Calls]: (value: unknown, declared: Calls, pointer: string, refusals: CallRefusal[]) => void;
 });
 
@@ -270,6 +294,7 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
   if (refusals.length > 0) throw new CallRefusalError(refusals);
   const narrowed = refine?.calls?.console;
   const narrowedObjects = refine?.calls?.objects;
+  const narrowedMaintenance = refine?.calls?.maintenance;
   const honours = narrowed?.execute?.honours ?? declared.console.execute.honours;
   return Object.freeze({
     console: Object.freeze({
@@ -280,6 +305,10 @@ export function sessionCalls(declared: Calls, refine: Refinement | undefined): C
     }),
     objects: Object.freeze({
       tree: narrowedObjects?.tree ?? declared.objects.tree,
+    }),
+    maintenance: Object.freeze({
+      run: narrowedMaintenance?.run ?? declared.maintenance.run,
+      preview: narrowedMaintenance?.preview ?? declared.maintenance.preview,
     }),
   });
 }

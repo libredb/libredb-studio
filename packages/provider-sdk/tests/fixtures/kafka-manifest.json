@@ -21,6 +21,10 @@
     },
     "objects": {
       "tree": "not-offered"
+    },
+    "maintenance": {
+      "run": "not-offered",
+      "preview": "not-offered"
     }
   },
   "engines": [

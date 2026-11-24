@@ -2,8 +2,8 @@
  * A refinement `open` answers only narrows the manifest's calls, and any other refinement is refused by name
  * (docs/providers/CONTRACT.md, clause C-10).
  *
- * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree; each case
- * asserts the exact refusal list, every pointer rooted at the refinement.
+ * The declared calls offer cancel and not endScope, honour both request fields and offer the objects tree and both
+ * maintenance facets; each case asserts the exact refusal list, every pointer rooted at the refinement.
  */
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
@@ -25,6 +25,7 @@ const DECLARED: Calls = Object.freeze({
     transaction: "not-offered",
   }),
   objects: Object.freeze({ tree: "offered" }),
+  maintenance: Object.freeze({ run: "offered", preview: "offered" }),
 });
 
 /** Declared calls that honour only `params`. */
@@ -62,17 +63,21 @@ describe("checkRefinement and sessionCalls", () => {
         transaction: "not-offered",
       },
       objects: { tree: "offered" },
+      maintenance: { run: "offered", preview: "offered" },
     });
     expect(deepFrozen(calls)).toBe(true);
+    expect(Object.isFrozen(calls.maintenance)).toBe(true);
     expect(DECLARED.console.cancel).toBe("offered");
     expect(DECLARED.console.execute.honours).toEqual(["params", "offset"]);
     const unfrozen: Calls = {
       console: { execute: { honours: ["params"] }, cancel: "offered", endScope: "offered", transaction: "offered" },
       objects: { tree: "offered" },
+      maintenance: { run: "offered", preview: "not-offered" },
     };
     expect(deepFrozen(sessionCalls(unfrozen, { calls: { console: { endScope: "not-offered" } } }))).toBe(true);
     expect(Object.isFrozen(unfrozen.console.execute.honours)).toBe(false);
     expect(Object.isFrozen(unfrozen.objects)).toBe(false);
+    expect(Object.isFrozen(unfrozen.maintenance)).toBe(false);
   });
 
   test("a refinement that widens a declared value is refused as refinement-widens", () => {
@@ -151,6 +156,7 @@ describe("checkRefinement and sessionCalls", () => {
     expect(sessionCalls(DECLARED, both as Refinement)).toEqual({
       console: { ...DECLARED.console, cancel: "not-offered" },
       objects: { tree: "not-offered" },
+      maintenance: DECLARED.maintenance,
     });
     expect(
       checkRefinement(notOffering, { calls: { objects: { tree: "offered" }, console: { endScope: "offered" } } }),
@@ -183,6 +189,53 @@ describe("checkRefinement and sessionCalls", () => {
         }),
       }),
     ).toEqual([refused("refinement-unreadable", "/calls/objects")]);
+    expect(reads).toBe(0);
+  });
+
+  test("a refinement may withdraw maintenance.run and maintenance.preview, and never offer one the manifest does not", () => {
+    const notOffering: Calls = { ...DECLARED, maintenance: { run: "not-offered", preview: "not-offered" } };
+    let reads = 0;
+    const accessor = (key: string): object =>
+      Object.defineProperty({}, key, {
+        enumerable: true,
+        get() {
+          reads += 1;
+          return "not-offered";
+        },
+      });
+
+    for (const facet of ["run", "preview"] as const) {
+      const other = facet === "run" ? "preview" : "run";
+      const withdraw = { calls: { maintenance: { [facet]: "not-offered" } } };
+      const offer = { calls: { maintenance: { [facet]: "offered" } } };
+      const pointer = `/calls/maintenance/${facet}`;
+
+      expect(checkRefinement(DECLARED, withdraw)).toEqual([]);
+      const withdrawn = sessionCalls(DECLARED, withdraw as Refinement);
+      expect(withdrawn.maintenance[facet]).toBe("not-offered");
+      expect(withdrawn.maintenance[other]).toBe("offered");
+      expect(deepFrozen(withdrawn)).toBe(true);
+      expect(DECLARED.maintenance[facet]).toBe("offered");
+      expect(checkRefinement(DECLARED, offer)).toEqual([]);
+      expect(checkRefinement(notOffering, withdraw)).toEqual([]);
+      expect(checkRefinement(notOffering, offer)).toEqual([refused("refinement-widens", pointer)]);
+      for (const value of ["maybe", true, null]) {
+        expect(checkRefinement(DECLARED, { calls: { maintenance: { [facet]: value } } })).toEqual([
+          refused("refinement-unreadable", pointer),
+        ]);
+      }
+      expect(checkRefinement(DECLARED, { calls: { maintenance: accessor(facet) } })).toEqual([
+        refused("refinement-unreadable", pointer),
+      ]);
+    }
+    expect(sessionCalls(DECLARED, undefined).maintenance).toEqual({ run: "offered", preview: "offered" });
+    expect(sessionCalls(DECLARED, { calls: { maintenance: {} } }).maintenance).toEqual(DECLARED.maintenance);
+    expect(checkRefinement(DECLARED, { calls: { maintenance: "run" } })).toEqual([
+      refused("refinement-unreadable", "/calls/maintenance"),
+    ]);
+    expect(checkRefinement(DECLARED, { calls: { maintenance: { explain: "offered" } } })).toEqual([
+      refused("refinement-key-unknown", "/calls/maintenance/explain", "explain"),
+    ]);
     expect(reads).toBe(0);
   });
 

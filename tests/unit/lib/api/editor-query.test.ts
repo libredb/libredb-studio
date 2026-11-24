@@ -883,6 +883,7 @@ describe("runEditorQuery on the host core", () => {
             transaction: "not-offered",
           },
           objects: { tree: "not-offered" },
+          maintenance: { run: "not-offered", preview: "not-offered" },
         },
         execute: async () => ({ results: [holderSource], warnings: [], executionTimeMs: 1, pageApplied: true }),
       },

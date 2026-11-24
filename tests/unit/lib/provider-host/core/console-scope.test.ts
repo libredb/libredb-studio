@@ -28,6 +28,7 @@ function callsOf(endScope = true): Calls {
       transaction: "not-offered",
     },
     objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
   };
 }
 
