@@ -71,6 +71,7 @@ async function drive(
   const capabilities = declared.getCapabilities();
   const sent: string[] = [];
   const provider = {
+    type: connection.type,
     queryReadOnly: async (sql: string): Promise<QueryResult> => {
       sent.push(sql);
       return sql === "SYS COLUMNS"

@@ -77,8 +77,10 @@ async function declarationsOf(engine: DatabaseType) {
  * A provider that answers every read empty and lists one object of the engine's first declared kind, as the SQL
  * oracle's drive builds one.
  */
-function providerDouble(listedKind: string): DatabaseProvider {
+function providerDouble(engine: DatabaseType, listedKind: string): DatabaseProvider {
   return {
+    // The engine it stands for, whose engine row the bridged session of the grounding walk reads.
+    type: engine,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     listContainers: async () => [],
     countObjects: async () => ({ [listedKind]: { count: 1 } }),
@@ -150,7 +152,7 @@ async function surfaceOf(
         artifacts,
         deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, clock),
         repairs: new AgentRepairLedger(),
-        acquireProvider: async () => providerDouble(listedKind),
+        acquireProvider: async () => providerDouble(engine, listedKind),
         clock,
       },
     });
@@ -206,7 +208,7 @@ async function curatedDenial(engine: DatabaseType) {
       artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.operations.runDeadlineMs, clock),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => providerDouble(listedKind),
+      acquireProvider: async () => providerDouble(engine, listedKind),
       clock,
     },
     { kind: "table-stats", schema: "secrets" },

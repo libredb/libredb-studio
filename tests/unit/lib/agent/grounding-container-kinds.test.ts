@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -10,6 +10,12 @@ import { createTargetScope } from "@/lib/db/operations/policy";
 import { QueryError } from "@/lib/db/errors";
 import type { Container, DatabaseConnection, DatabaseProvider, KindCount, QueryResult } from "@/lib/db/types";
 import { createMockProvider } from "../../../helpers/mock-provider";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * Plan mode's grounding walk over a provider whose containers name the kinds they hold.

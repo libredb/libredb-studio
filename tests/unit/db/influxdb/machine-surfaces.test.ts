@@ -10,7 +10,7 @@
  * captures hold no listing of, served by the statement the provider sends, through the real client and a recording
  * transport.
  */
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -30,6 +30,12 @@ import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { type InfluxCapture, type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 import { pinMcpTestEnvironment, resetMcpTestState } from "../../../helpers/mcp-fixtures";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 pinMcpTestEnvironment();
 

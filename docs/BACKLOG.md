@@ -5033,6 +5033,7 @@ Found 2026-11-24 while moving the agent's curated readings onto the host core.
 ### D850. A native provider of an engine that bills every read cannot be handed the run's billed-read allowance
 
 The contract's read-only execute carries a statement's rows, bytes and mode (docs/providers/CONTRACT.md C-78), and the run's billed-read allowance reaches only a legacy provider, through the legacy bridge's read-only statement session, by reference.
+The grounding walk's count, listing and bulk describe reach it the same way, through the bridge's session input (C-50), since a tree request carries no allowance either.
 Firestore's `queryReadOnly` and Modbus's agent read charge that allowance before each request they send, and `RunReadAllowance.charge` (`src/lib/db/read-allowance.ts`) is a synchronous mutation that no frame carries.
 So a native provider of an engine that bills every read is handed none and refuses every statement, as its own rule already refuses a budget that carries none.
 Neither pilot provider bills its reads.

@@ -30,7 +30,7 @@
  * - the nested namespace listing: the session catalog's `SHOW NAMESPACES` answer rewritten to multi-part spellings,
  *   because no catalog of the open-source fixture nests.
  */
-import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { captureContextSnapshot, fingerprintInventory, packContextForTask } from "@/lib/agent/context-snapshot";
@@ -63,6 +63,12 @@ import {
   type SparkCaptureEntry,
   type SparkCaptureName,
 } from "../../live/spark-evidence-plan";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("spark");

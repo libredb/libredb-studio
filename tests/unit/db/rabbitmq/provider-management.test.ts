@@ -8,7 +8,7 @@
  * (`enumerateContainers`, `resolveKinds`, `applicableKinds`), in the routes' own order, because the route handlers
  * read a session cookie that only a request context carries; the routes themselves are unchanged by this provider.
  */
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { captureContextSnapshot, packContextForTask } from "@/lib/agent/context-snapshot";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
@@ -50,6 +50,12 @@ import {
   segment,
 } from "../../../helpers/rabbitmq-management-stub";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("rabbitmq");

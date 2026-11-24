@@ -2601,7 +2601,7 @@ Its tree call runs the provider's own member for the action with a fresh copy of
 It answers the member's answer by reference in its action's form, never calls `forCatalog`, and a provider's error passes by reference.
 A top-level `containers` read of a provider that answers the inventory's configuration question, `inventoryNeedsConfiguration`, a function on the provider or its prototype, asks it first: a reason answers no container and the reason as `needsConfiguration` without listing, C-61, and no reason lists as before; below the top level, and for a provider without the member, the read lists as before.
 The bridge's session takes a host-side input a tree request does not carry, the billed-read allowance: a session built with one hands a fresh options object holding it by reference as the trailing argument of `countObjects`, `listObjects` and `describeObjects`, beside `defaultSql` where the request sends it, and a session built without one passes today's arguments.
-The agent's and MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core.
+MCP's tree reads, and the source, edit and key scan routes, still call the provider themselves until they move onto the host core; the agent's grounding walk reads through it, C-80.
 Its transaction call runs the provider's own method for the action, a begin with `requireReportedState` as the transaction route has always passed it, answering `stateReported` exactly when the provider answered a result, and `state` runs nothing.
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
@@ -3015,6 +3015,7 @@ The answer shapes are Studio's own object tree shapes, declared by the SDK and h
 
 In process the host reads a tree answer by reference and decides nothing on its values; what a caller reads of one stays the caller's.
 The caller facade of the object tree reads the member its action answers, and answers an answer without it as a defect of Studio's bridge, naming the action and the member, C-65, except a `describeMany` batch, which the bridge passes through by reference, so a batch without `details` is answered as the provider's answer without it.
+It answers a containers answer that carries `needsConfiguration` beside a container, or on a listing below the top level, as the provider's defect, naming where it was said, C-61.
 The host's reader of a native provider's tree answer, which checks that the form answers the action, arrives with the first native provider.
 
 ### C-63 (informative): A provider honours every member of a tree request
@@ -3050,6 +3051,7 @@ An inventory's and a search's walks take one deadline per read, not one per requ
 A read the caller left is answered at once as `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline as `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
 A read's later failure is logged by kind and code, never its text.
 The facade takes the provider its caller resolved and no catalog, so no catalog choice is honoured on this path, M-57.
+Its container listing answers the containers alone, so a top-level listing that says the inventory needs configuration answers no container, as the provider's own listing does, C-61.
 Each route's and handler's own checks and scrubs run where they ran.
 
 - test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
@@ -3061,6 +3063,8 @@ Each route's and handler's own checks and scrubs run where they ran.
 - test `tests/unit/lib/api/object-tree.test.ts` "a tree read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
 - test `tests/unit/lib/api/object-tree.test.ts` "an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member"
 - test `tests/unit/lib/api/object-tree.test.ts` "a tree read before the host core is installed fails by name and reaches no provider"
+- test `tests/unit/lib/api/object-tree.test.ts` "a containers answer that says the inventory needs configuration reaches the granted tree whole and the editor's listing as its containers alone"
+- test `tests/unit/lib/api/object-tree.test.ts` "a needsConfiguration beside a container, or below the top level, is answered as the provider's defect, named"
 - test `tests/unit/lib/api/object-tree-bounds.test.ts` "a tree read that never answers is stopped at its deadline, StudioTimeoutRefusal naming the read"
 - test `tests/unit/db/container-walk.test.ts` "the walk reads any container source, not only a provider"
 - test `tests/api/db-objects.test.ts` "a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown"
@@ -3483,6 +3487,34 @@ MCP's statements keep their own read path until they move onto the host core.
 - test `tests/api/agent/handover.test.ts` "a hand-over row larger than one page is refused by the host's page budget"
 - test `tests/api/agent/handover.test.ts` "a provider with no read-only statement path is a server fault, not a fallback"
 
+### C-80 (normative): The agent's grounding walk and statistics read on the host
+
+The agent's grounding inventory walk reads every container listing, count, object listing and bulk description through the granted tree facade and the host core's tree call, C-64, on one session the legacy bridge serves for the whole walk, C-50, of the provider the run acquired for its grounding.
+The walk holds one deadline, the time its call was granted, the run's statement timeout already clamped to what is left of the run, taken right after the acquisition, and one signal that aborts at it alone, so it keeps one timer however many reads it makes.
+Each read's context is fresh and carries that deadline, that signal and the empty environment, never a credential, and its request is a fresh copy with copies of the walk's arrays.
+Its caller signal is one that never aborts, made for the walk, as for the curated readings, C-76, so the accessor, C-51, reads every end as the deadline's: a read its deadline stopped, or a read refused at its start because the deadline passed between reads, answers the walk's own time refusal, which the run reports as an inventory that timed out.
+A stopped read's settlement is handed to the run before the refusal is thrown, so the run counts the read in flight as an execution until it settles, and the walk sends no further read.
+A read's failure after the stop is logged under the walk's route, the tree action, kind and code, never its text, and a later answer is dropped.
+A provider's error passes as the same object into the walk's own handling.
+The run's billed-read allowance reaches each count, listing and bulk description by reference through the bridge's session input, C-50, never through the tree request, which carries no allowance.
+The walk's first read, where the engine declares a container level, is the top-level listing: a listing that says the inventory needs configuration, C-61, marks every kind unavailable with the provider's sentence, scrubbed, and no further read is sent; otherwise its containers are the walk's first level.
+The facade reads the host core and builds the session when the walk starts, so a walk made before the host core is installed throws by name before any read and is never taken for a provider's failure.
+
+- test `tests/unit/lib/api/object-tree.test.ts` "each granted read is one host core tree call on the walk's one bridged session, a fresh request, and a fresh context on the grant's one deadline and one signal, of deadline, signal and env alone"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read its deadline stopped answers the grant's own time refusal, hands the stopped read's settlement to the grant's hold, and logs a later failure by kind and code only"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read after the grant's deadline is refused before the call with the grant's own time refusal and reads nothing"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted read passes the provider's error as the same object"
+- test `tests/unit/lib/api/object-tree.test.ts` "a granted tree before the host core is installed throws by name and reads nothing"
+- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a granted tree read that never answers ends at the grant's deadline in the grant's own time refusal"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "every read of the walk is a host core tree call on one deadline, the time its call was granted"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "the drive's allowance reaches each count, listing and bulk describe by reference through the host's tree call"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "a walk whose grant ends sends no further read and answers timed-out, and the run counts only the read in flight until it settles"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "the walk reads its top-level listing once, and it is the walk's first level"
+- test `tests/unit/lib/agent/grounding-walk.test.ts` "is read from the provider's declaration, lists nothing and carries the reason on every kind"
+- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns the time it was granted loses the whole snapshot, under its own code"
+- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns its grant counts against the run's concurrency until its provider call settles"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3588,3 +3620,4 @@ Against this contract's earlier text:
 - A top-level containers answer that lists no container may say the inventory needs configuration the session lacks, C-61, where a containers answer carried its containers alone.
 - The legacy bridge's top-level containers read asks a provider that answers the inventory's configuration question first, and its tree reads take the billed-read allowance from the session's input, C-50, where it asked nothing and passed no allowance.
 - The legacy bridge serves a composed statement session that sends the statement exactly as composed, C-50.
+- The agent's grounding walk reads through the host core's tree call under one deadline, the time its call was granted, C-80: a walk whose time ends sends no further read and the run counts only the read in flight, where the run stopped waiting and the walk went on reading to its end; a read that fails after the stop is logged by kind and code, where it was released silently.

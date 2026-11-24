@@ -40,6 +40,8 @@ import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEac
 import { randomBytes, randomUUID } from "node:crypto";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
@@ -7496,6 +7498,10 @@ describe("a tunnelled connection its provider refuses to build", () => {
  * anyone browses the connection in the sidebar - so in practice it was every run.
  */
 describe("grounding a plan run while the writable provider holds the file (B49)", () => {
+  // The agent's grounding walk reads through the host core's tree calls, so this group composes its own core.
+  beforeAll(() => installHostCore(createHostCore(), "test"));
+  afterAll(forgetHostCore);
+
   const frozenClock = () => 1_700_000_000_000;
 
   let dir: string;

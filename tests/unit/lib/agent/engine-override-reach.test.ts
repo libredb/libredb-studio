@@ -70,9 +70,13 @@ afterAll(() => {
   for (const dir of dataDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-/** A provider that answers every read empty and lists one object of `listedKind`, so a planning run is grounded. */
-function providerDouble(listedKind: string): DatabaseProvider {
+/**
+ * A provider of `engine` that answers every read empty and lists one object of `listedKind`, so a planning run is
+ * grounded.
+ */
+function providerDouble(engine: DatabaseType, listedKind: string): DatabaseProvider {
   return {
+    type: engine,
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     listContainers: async () => [],
     countObjects: async () => ({ [listedKind]: { count: 1 } }),
@@ -124,7 +128,7 @@ async function systemPromptOf(
       artifacts,
       deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS[workflowType].runDeadlineMs, () => 10_000),
       repairs: new AgentRepairLedger(),
-      acquireProvider: async () => providerDouble(listed.id),
+      acquireProvider: async () => providerDouble(engine, listed.id),
     },
   });
   const [first] = script.turns;

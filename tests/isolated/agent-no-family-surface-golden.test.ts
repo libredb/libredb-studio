@@ -6,10 +6,16 @@
  * the module this test runs; its docblock says how to regenerate it. Isolated because it builds real providers
  * through `createDatabaseProvider`, which the api layer's tests mock.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { goldenNoFamilyAgentSurface } from "../fixtures/agent/no-family-surface/golden-no-family-agent-surface";
+
+// The agent's grounding walk reads through the host core's tree call, so this file installs one for its runs.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const GOLDEN = join(
   import.meta.dir,

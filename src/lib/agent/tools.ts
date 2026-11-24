@@ -64,8 +64,14 @@
  * imported, so the profile literal still cannot drift from the factory's vocabulary.
  */
 
-import { AGENT_READING_PANELS, type HealthInfo, type MonitoringPanelRequest } from "@libredb/provider-sdk/calls";
+import {
+  AGENT_READING_PANELS,
+  type HealthInfo,
+  type MonitoringPanelRequest,
+  type TreeContainersAnswer,
+} from "@libredb/provider-sdk/calls";
 import { z } from "zod";
+import { type GrantedObjectTree, grantedObjectTree } from "@/lib/api/object-tree";
 import { driveCaller, type GrantedRead, readGrantedHealth, readGrantedPanel } from "@/lib/api/provider-monitoring";
 import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
 import { type AuditReason, emitAuditEvent } from "@/lib/audit";
@@ -119,11 +125,9 @@ import {
 import type {
   Container,
   DatabaseObject,
-  KindCount,
   DatabaseProvider,
   ObjectDetail,
   ObjectKindSpec,
-  ObjectReadOptions,
   ProviderCapabilities,
   ProviderLabels,
   ReadOnlyStatementBudget,
@@ -2810,26 +2814,26 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
           : AGENT_OPERATIONS_PROFILE;
         const provider = await context.acquireProvider(context.connection, groundingProfile);
         const startedAtMs = context.clock?.() ?? Date.now();
+        // THE HONEST LIMIT, stated because the alternative reading of this deadline is wrong: no
+        // provider member here takes a budget, so what the walk's one deadline, the time its call
+        // was granted, bounds is THE RUN and not the database. Every read is a host core tree call
+        // under it (`grantedObjectTree`); the read in flight at the deadline is not cancelled and
+        // counts against the run's concurrency until it settles, and the walk sends no further read.
+        const tree = grantedObjectTree(provider, {
+          deadline: Date.now() + budget.statementTimeoutMs,
+          timeRefusal: () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
+          route: OBJECT_INVENTORY_ROUTE,
+          holdUntilSettled,
+          ...(context.readAllowance === undefined ? {} : { readAllowance: context.readAllowance }),
+        });
         phase.statementSent = true;
 
-        // THE HONEST LIMIT, stated because the alternative reading of this race is wrong: no
-        // provider method here takes a budget, so what this bounds is THE RUN and not the
-        // database. The walk is not cancelled - it goes on reading until the engine or the
-        // driver ends it - and this run simply stops waiting for it, while the walk still
-        // counts against the run's concurrency until it settles. Without the race there is
-        // no bound at all, which is the only worse answer.
         try {
-          const walked = await withinGrantedTime(
-            walkObjectInventory(
-              provider,
-              context.capabilities,
-              declared,
-              objectReadArguments(context),
-              providerTextScrub(context.connection, "profiled"),
-            ),
-            budget.statementTimeoutMs,
-            () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
-            holdUntilSettled,
+          const walked = await walkObjectInventory(
+            tree,
+            context.capabilities,
+            declared,
+            providerTextScrub(context.connection, "profiled"),
           );
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
@@ -2895,19 +2899,17 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
  * exactly as before.
  */
 async function walkObjectInventory(
-  provider: DatabaseProvider,
+  tree: GrantedObjectTree,
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
-  readArguments: readonly [ObjectReadOptions] | readonly [],
   scrub: ProviderTextScrub,
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
-  const listObjects = provider.listObjects.bind(provider);
-  const describeObjects = provider.describeObjects.bind(provider);
-
-  // Asked before any container (U189): a provider whose inventory is configuration the connection lacks lists no
-  // container, and that empty answer is no answer about what the engine holds. Every kind then carries the provider's
-  // sentence as `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
-  const needs = await provider.inventoryNeedsConfiguration?.();
+  // The walk's first read, where the engine declares a container level (U189): a provider whose inventory is
+  // configuration the connection lacks lists no container and says why on that top-level listing, and that empty
+  // answer is no answer about what the engine holds. Every kind then carries the provider's sentence as
+  // `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
+  const top = await topLevelListing(tree, capabilities);
+  const needs = top.needsConfiguration;
   if (needs !== undefined) {
     return {
       inventory: {
@@ -2922,7 +2924,7 @@ async function walkObjectInventory(
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
-  const grounding = await enumerateGroundingContainers(provider, capabilities, scrub);
+  const grounding = await enumerateGroundingContainers(tree, capabilities, scrub, top.containers);
   const { unlistedParents, unlistedParentsNotNamed } = grounding;
   const scoped = scopeGroundingContainers(grounding.enumeration, capabilities.agentWalkScope, grounding.parentDefault);
   const enumeration = scoped.enumeration;
@@ -2942,7 +2944,8 @@ async function walkObjectInventory(
 
   let pairs = 0;
   for (const container of containers) {
-    const counts = await countForGrounding(provider, container, readArguments);
+    // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+    const counts = await tree.countObjects(container);
     for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
@@ -2971,7 +2974,8 @@ async function walkObjectInventory(
       }
       pairs += 1;
       const listed: DatabaseObject[] = [];
-      for (const object of await listObjects(container, spec.id, ...readArguments)) {
+      // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+      for (const object of await tree.listObjects(container, spec.id)) {
         if (objects.length + listed.length >= INVENTORY_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
@@ -2986,7 +2990,8 @@ async function walkObjectInventory(
       // round trip for an empty answer.
       let details: readonly ObjectDetail[] = [];
       if (listed.length > 0) {
-        const batch = await describeObjects(container, spec.id, listed.length, ...readArguments);
+        // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+        const batch = await tree.describeObjects(container, spec.id, listed.length);
         details = batch.details;
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
@@ -3109,9 +3114,10 @@ function inventoryKind(
  * named, and every one of them is still asked.
  */
 async function enumerateGroundingContainers(
-  provider: DatabaseProvider,
+  tree: GrantedObjectTree,
   capabilities: ProviderCapabilities,
   scrub: ProviderTextScrub,
+  topLevel: readonly Container[],
 ): Promise<{
   readonly enumeration: ContainerEnumeration;
   readonly parentDefault?: readonly string[];
@@ -3120,10 +3126,9 @@ async function enumerateGroundingContainers(
 }> {
   const depth = containerDepth(capabilities);
   if (depth === 0) return { enumeration: { containers: [[]], defaultContainer: [] }, unlistedParents: [] };
-  const listContainers = provider.listContainers.bind(provider);
   const levels = capabilities.containerLevels ?? [];
 
-  let level = await listContainers();
+  let level = topLevel;
   let parentDefault: readonly string[] | undefined;
   const unlistedParents: AgentUnlistedParent[] = [];
   let unlistedParentsNotNamed: AgentUnlistedParentsNotNamed | undefined;
@@ -3133,7 +3138,8 @@ async function enumerateGroundingContainers(
     const next: Container[] = [];
     for (const parent of level) {
       try {
-        next.push(...(await listContainers(parent.path)));
+        // oxlint-disable-next-line no-await-in-loop -- the walk reads in order and stops reading when its grant ends, so the loop's order is the behaviour.
+        next.push(...(await tree.containers(parent.path)).containers);
       } catch (error) {
         if (!(error instanceof DatabaseError) || scopeReadsUnder(capabilities.agentWalkScope, parent)) throw error;
         if (unlistedParents.length < UNLISTED_PARENTS_NAMED_MAX) {
@@ -3196,23 +3202,21 @@ function unlistedReason(message: string): string {
   return line;
 }
 
-/** One container's counts, or none where the provider declares no counting. */
-async function countForGrounding(
-  provider: DatabaseProvider,
-  container: readonly string[],
-  readArguments: readonly [ObjectReadOptions] | readonly [],
-): Promise<Record<string, KindCount>> {
-  const countObjects = provider.countObjects?.bind(provider);
-  return countObjects === undefined ? {} : await countObjects(container, ...readArguments);
-}
+/** The route the grounding walk's reads that fail after the walk stopped waiting are logged under. */
+const OBJECT_INVENTORY_ROUTE = "agent/object-inventory";
 
 /**
- * The trailing argument the walk hands each object read: the drive's billed-read allowance, so an engine that bills
- * every read charges the grounding's listings to the run as it charges the run's statements. No argument at all when
- * the context carries none, so a read outside a drive is called exactly as the editor's routes call it.
+ * An engine with no container level reads no top-level listing: its one container is the empty path, which
+ * `enumerateGroundingContainers` answers without a read, so the walk has no listing to read the question on.
  */
-function objectReadArguments(context: AgentToolContext): readonly [ObjectReadOptions] | readonly [] {
-  return context.readAllowance === undefined ? [] : [{ readAllowance: context.readAllowance }];
+const NO_TOP_LEVEL: TreeContainersAnswer = Object.freeze({ containers: Object.freeze([]) });
+
+/**
+ * The walk's first read: the top-level container listing, which carries the provider's reason where its inventory
+ * needs configuration the session lacks, and whose containers are the walk's first level. None at depth 0.
+ */
+function topLevelListing(tree: GrantedObjectTree, capabilities: ProviderCapabilities): Promise<TreeContainersAnswer> {
+  return containerDepth(capabilities) === 0 ? Promise.resolve(NO_TOP_LEVEL) : tree.containers();
 }
 
 /**

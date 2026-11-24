@@ -5,7 +5,8 @@
  *
  * The provider is a stub answering the four object methods, so each rule is pinned apart from any engine.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
+import type { CallContext, TreeRequest } from "@libredb/provider-sdk/calls";
 import {
   AGENT_CONTEXT_PACK_MAX_CHARS,
   captureContextSnapshot,
@@ -35,7 +36,13 @@ import type {
   ProviderCapabilities,
 } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import { TABLE_LABELS } from "../../../fixtures/provider-labels";
+
+// The walk reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** The provider that relays every inventory this file packs. */
 const RELAYED_BY = providerAuthor("kubernetes");
@@ -111,6 +118,7 @@ function stub(options: Stub = {}) {
   );
   const inventoryNeedsConfiguration = mock(async () => options.needs?.reason);
   const provider = {
+    type: "mongodb",
     listObjects,
     countObjects,
     listContainers,
@@ -686,7 +694,7 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
     );
 
     expect(harness.listContainers.mock.calls).toStrictEqual([
-      [],
+      [undefined],
       [["spark_catalog"]],
       [["studio_unloaded"]],
       [["warehouse"]],
@@ -712,7 +720,7 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
     );
 
     expect(harness.listContainers.mock.calls).toStrictEqual([
-      [],
+      [undefined],
       [["spark_catalog"]],
       [["studio_unloaded"]],
       [["warehouse"]],
@@ -865,7 +873,7 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
 
       // The bound is on what the inventory names: every catalog is still asked for its namespaces.
       expect(harness.listContainers.mock.calls).toStrictEqual([
-        [],
+        [undefined],
         ...["spark_catalog", ...names].map((name): [readonly string[]] => [[name]]),
       ]);
       expect(snapshot.unreadContainers).toStrictEqual({
@@ -1012,7 +1020,7 @@ describe("a scoped walk over two levels where a catalog's namespaces cannot be l
     const { capture, harness } = await refusedCapture(walk({ spark_catalog: notLoaded(), warehouse: ["raw"] }, scoped));
 
     expect(capture.kind === "unavailable" && capture.detail.includes(NOT_LOADED)).toBe(true);
-    expect(harness.listContainers.mock.calls).toStrictEqual([[], [["spark_catalog"]]]);
+    expect(harness.listContainers.mock.calls).toStrictEqual([[undefined], [["spark_catalog"]]]);
     expect(harness.countObjects).not.toHaveBeenCalled();
   });
 
@@ -1090,5 +1098,155 @@ describe("the run's read allowance on the walk's reads", () => {
     expect(harness.countObjects.mock.calls.every((call) => call.length === 1)).toBe(true);
     expect(harness.listObjects.mock.calls.every((call) => call.length === 2)).toBe(true);
     expect(harness.describeObjects.mock.calls.every((call) => call.length === 3)).toBe(true);
+  });
+});
+
+/** Runs `body` with a core that records every tree call around the real one installed, then puts the real one back. */
+async function withTreeCalls<T>(
+  body: (seen: { readonly request: TreeRequest; readonly ctx: CallContext }[]) => Promise<T>,
+): Promise<T> {
+  const real = hostCore();
+  const seen: { request: TreeRequest; ctx: CallContext }[] = [];
+  const spying: HostCore = {
+    ...real,
+    treeCall: (session, request, ctx, ports) => {
+      seen.push({ request, ctx });
+      return real.treeCall(session, request, ctx, ports);
+    },
+  };
+  forgetHostCore();
+  installHostCore(spying, "test");
+  try {
+    return await body(seen);
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+describe("the walk on the host core", () => {
+  test("every read of the walk is a host core tree call on one deadline, the time its call was granted", async () => {
+    const harness = stub({ kinds: [POD], describe: () => ({ details: [] }) });
+    let acquiredAt = 0;
+    const acquire = harness.context.acquireProvider;
+    const context: AgentToolContext = {
+      ...harness.context,
+      acquireProvider: async (...args) => {
+        const provider = await acquire(...args);
+        acquiredAt = Date.now();
+        return provider;
+      },
+    };
+
+    const { capture, seen, after } = await withTreeCalls(async (seen) => {
+      const capture = await captureContextSnapshot(context);
+      return { capture, seen, after: Date.now() };
+    });
+
+    expect(capture.kind).toBe("captured");
+    const memberCalls =
+      harness.listContainers.mock.calls.length +
+      harness.countObjects.mock.calls.length +
+      harness.listObjects.mock.calls.length +
+      harness.describeObjects.mock.calls.length;
+    expect(memberCalls).toBeGreaterThan(4);
+    expect(seen.map(({ request }) => request.action)).toEqual([
+      "containers",
+      "count",
+      "list",
+      "describeMany",
+      "count",
+      "list",
+      "describeMany",
+    ]);
+    expect(seen).toHaveLength(memberCalls);
+    const granted = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.statementTimeoutMs;
+    const deadlines = new Set(seen.map(({ ctx }) => ctx.deadline));
+    expect(deadlines.size).toBe(1);
+    const [deadline] = [...deadlines] as [number];
+    expect(deadline).toBeGreaterThanOrEqual(acquiredAt + granted);
+    expect(deadline).toBeLessThanOrEqual(after + granted);
+    expect(harness.listContainers.mock.calls).toEqual([[undefined]]);
+  });
+
+  test("the drive's allowance reaches each count, listing and bulk describe by reference through the host's tree call", async () => {
+    const harness = stub({
+      kinds: [POD],
+      describe: (container) => ({
+        details: [{ path: [...container, "pod/web"], columns: [], indexes: [], foreignKeys: [] }],
+      }),
+    });
+    const allowance = new RunReadAllowance(10);
+
+    const { capture, seen } = await withTreeCalls(async (seen) => ({
+      capture: await captureContextSnapshot({ ...harness.context, readAllowance: allowance }),
+      seen,
+    }));
+
+    expect(capture.kind).toBe("captured");
+    const handed = [
+      ...harness.countObjects.mock.calls.map((call) => call[1]),
+      ...harness.listObjects.mock.calls.map((call) => call[2]),
+      ...harness.describeObjects.mock.calls.map((call) => call[3]),
+    ] as { readonly readAllowance: RunReadAllowance }[];
+    expect(handed).toHaveLength(6);
+    for (const options of handed) expect(options.readAllowance).toBe(allowance);
+    expect(new Set(handed).size).toBe(handed.length);
+    expect(seen.filter(({ request }) => request.action !== "containers")).toHaveLength(handed.length);
+  });
+
+  test("a walk whose grant ends sends no further read and answers timed-out, and the run counts only the read in flight until it settles", async () => {
+    const pending = Promise.withResolvers<Record<string, KindCount>>();
+    const harness = stub({ kinds: [POD] });
+    harness.countObjects.mockImplementation(() => pending.promise);
+    // 250ms is `AGENT_MINIMUM_CALL_MS`, the smallest call this deadline will admit, so the granted timeout is the
+    // whole of what the run has left.
+    const context: AgentToolContext = { ...harness.context, deadline: new AgentRunDeadline(250, frozenClock) };
+
+    // A plain await of the capture, which the grant's real deadline ends.
+    const capture = await captureContextSnapshot(context);
+
+    expect(capture).toMatchObject({ kind: "unavailable", reasonCode: "PROVIDER_INVENTORY_TIMED_OUT" });
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 1, executedStatements: 1 });
+    pending.resolve({ pods: { count: 1 } });
+    await pending.promise;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(harness.countObjects).toHaveBeenCalledTimes(1);
+    expect(harness.listObjects).not.toHaveBeenCalled();
+    expect(harness.describeObjects).not.toHaveBeenCalled();
+    expect(context.tracker.usage(context.runId)).toMatchObject({ activeExecutions: 0, executedStatements: 1 });
+  });
+
+  test("the walk reads its top-level listing once, and it is the walk's first level", async () => {
+    const harness = stub({
+      kinds: [POD],
+      needs: { reason: undefined },
+      extra: {
+        containerLevels: [
+          { id: "catalog", label: "Database", labelPlural: "Databases" },
+          { id: "schema", label: "Schema", labelPlural: "Schemas" },
+        ],
+      },
+      containersUnder: (parent) =>
+        parent === undefined
+          ? [{ path: ["app"], name: "app", level: 0, isSessionDefault: true }]
+          : [{ path: [...parent, "public"], name: "public", level: 1, isSessionDefault: true }],
+    });
+
+    const { capture, seen } = await withTreeCalls(async (seen) => ({
+      capture: await captureContextSnapshot(harness.context),
+      seen,
+    }));
+
+    expect(capture.kind).toBe("captured");
+    expect(seen.slice(0, 2).map(({ request }) => request)).toEqual([
+      { action: "containers" },
+      { action: "containers", parent: ["app"] },
+    ]);
+    expect(harness.inventoryNeedsConfiguration).toHaveBeenCalledTimes(1);
+    expect(harness.listContainers.mock.calls).toEqual([[undefined], [["app"]]]);
+    expect(harness.countObjects.mock.calls.map((call) => call[0])).toEqual([["app", "public"]]);
   });
 });

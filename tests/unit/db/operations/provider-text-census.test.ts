@@ -137,7 +137,7 @@ function caughtNames(node: ts.Node): Set<string> {
 }
 
 const PROVIDER_TEXT_MEMBERS = new Set(["message", "stack", "name", "detail", "fixStatement"]);
-const PROVIDER_SENTENCE_MEMBERS = new Set(["unavailable", "sampledFrom"]);
+const PROVIDER_SENTENCE_MEMBERS = new Set(["unavailable", "sampledFrom", "needsConfiguration"]);
 
 /**
  * Each provider method whose answer carries sentences in the provider's words, and the core scrubs a declaration that
@@ -168,7 +168,7 @@ type Census = {
   identifiers: Set<string>;
   /**
    * Every read of a provider's text, as "file: declaration: read": a text member of a caught error, of an `error` or
-   * `refusal` property or of a `refusal`; any `warnings`; any `unavailable` or `sampledFrom` sentence and a
+   * `refusal` property or of a `refusal`; any `warnings`; any `unavailable`, `sampledFrom` or `needsConfiguration` sentence and a
    * `truncated.reason`; a read of a provider method whose answer carries the provider's sentences (`SENTENCE_ANSWERS`);
    * the error a `logger.error` line is given; the error `createErrorResponse` renders, marked `, scrub` when its context
    * names the connection's scrub.
@@ -622,7 +622,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a legacy result's warnings carried into the execute answer, which runEditorQuery never renders: it answers the legacy result through withScrubbedWarnings",
   [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.countObjects`]: LEGACY_TREE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObject`]: LEGACY_TREE_ANSWER,
-  [`${providerHost("legacy-bridge.ts")}: legacyTree: provider.describeObjects`]: LEGACY_TREE_ANSWER,
+  [`${providerHost("legacy-bridge.ts")}: legacyDescribeMany: provider.describeObjects`]: LEGACY_TREE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: legacyRun: provider.runMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
   [`${providerHost("legacy-bridge.ts")}: bridgedConsole: provider.previewMaintenance`]: LEGACY_MAINTENANCE_ANSWER,
   [`${join("src", "lib", "api", "editor-transaction.ts")}: readTransactionState: read.error.message`]:
@@ -664,10 +664,12 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${objectRoute}: boundText: part.truncated.reason`]:
     "a source part's sentence the source route scrubbed before bounding it",
   [`${childHandlers}: runTarget: error.message`]: "the run target rule's RangeError, Studio's",
-  [`${agent("tools.ts")}: countForGrounding: provider.countObjects`]:
-    "the grounding's counts, whose sentences walkObjectInventory scrubs with scrubProviderText",
-  [`${agent("tools.ts")}: walkObjectInventory: provider.describeObjects`]:
-    "a batch whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
+  [`${agent("tools.ts")}: walkObjectInventory: tree.countObjects`]:
+    "the grounding's counts, read through the host core's tree call, whose sentences walkObjectInventory scrubs with scrubProviderText",
+  [`${agent("tools.ts")}: walkObjectInventory: tree.describeObjects`]:
+    "a batch read through the host core's tree call, whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
+  [`${join("src", "lib", "api", "object-tree.ts")}: checkedContainers: answer.needsConfiguration`]:
+    "a containers answer's configuration sentence, which the facade reads only for its presence and never renders; the grounding walk scrubs it with scrubProviderText",
   [`${mcp("tools", "inspect-schema.ts")}: inspectTable: provider.describeObject`]:
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:

@@ -131,6 +131,7 @@ async function drive(
   if (listed === undefined) throw new Error("duckdb declares no object kind to list");
   const sent: string[] = [];
   const provider = {
+    type: connection.type,
     queryReadOnly: async (sql: string): Promise<QueryResult> => {
       sent.push(sql);
       return engineAnswer(sql);

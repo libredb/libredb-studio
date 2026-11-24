@@ -3,7 +3,7 @@
  * names reach grounding through the enumerable `bucket` kind; object keys never do, because the agent's walk skips
  * key-browser kinds. The capture reads the bucket list once, and nothing on a pinned connection.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -26,6 +26,12 @@ import {
   xmlAnswer,
 } from "../../../helpers/s3-fake-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The agent's grounding walk reads through the host core's tree calls, so this file composes its own core.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /** A root-level key, so the pinned probe's level page (prefix "", delimiter "/") is one a server may send. */
 const SECRET_KEY = "tenant-secret-marker-report.csv";

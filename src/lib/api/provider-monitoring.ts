@@ -14,7 +14,14 @@ import { waitedSeconds } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseProvider, MonitoringData, MonitoringOptions } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
-import { type CallerView, refusalError, stopError } from "@/lib/provider-host/access";
+import {
+  type BudgetView,
+  budgetRefusalError,
+  budgetStopError,
+  type CallerView,
+  refusalError,
+  stopError,
+} from "@/lib/provider-host/access";
 import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
 import type { MonitoringSession } from "@/lib/provider-host/core/monitoring";
@@ -245,6 +252,32 @@ function grantedContext(grant: GrantedRead) {
  */
 export function driveCaller(): AbortSignal {
   return new AbortController().signal;
+}
+
+/**
+ * What a call the agent's drive was granted time for is given, where its time refusal is its own (clause C-80): the
+ * deadline its call was granted, the error a call that deadline ended answers, built fresh where the caller builds it
+ * fresh, the route its late failures are logged under, and the hold that keeps the run counting a stopped call until
+ * it settles. The grounding walk's tree reads (`grantedObjectTree`) and the statistics read (`runComposedStatement`)
+ * read it.
+ */
+export interface BudgetGrant {
+  readonly deadline: number;
+  readonly timeRefusal: () => Error;
+  readonly route: string;
+  readonly holdUntilSettled: (settled: Promise<unknown>) => void;
+}
+
+/**
+ * The error a granted call that did not answer throws: a stopped call's settlement handed to the grant's hold first,
+ * then the accessor's budget error under the drive's caller signal, which never aborts, so every end at the deadline,
+ * a stop at any wait or a start refused after it, is the grant's own time refusal.
+ */
+export function budgetGrantEnd(record: RefusedRecord | StoppedRecord, grant: BudgetGrant): Error {
+  const view: BudgetView = { caller: driveCaller(), timeRefusal: grant.timeRefusal };
+  if (record.kind === "refused") return budgetRefusalError(record, view);
+  grant.holdUntilSettled(record.settled);
+  return budgetStopError(record.reason, view);
 }
 
 /**

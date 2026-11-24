@@ -619,8 +619,9 @@ What it costs is ONE statement of the run's budget, and that one statement is no
 inside it the walk issues `listContainers` per container level, then one `countObjects` per container,
 then one `listObjects` per container-and-kind pair the count did not answer zero for, up to the pair
 bound of 1,000. So the budget charge is a charge for the READING and not a measure of the traffic, and
-an engine with many containers pays for the reading in latency rather than in budget. The audit stream
-carries the one call, and the deadline this call was granted is what bounds the whole walk.
+an engine with many containers pays for the reading in latency rather than in budget.
+The audit stream carries the one call.
+Every read of the walk is a host core tree call under one deadline, the time this call was granted, which bounds the whole walk ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-80).
 
 **IT CARRIES COLUMNS TOO, and the join is gone.** This used to be an identity read with no columns,
 joined afterwards to a second, FLAT reading that had them: the key was every suffix of the object's
@@ -670,15 +671,15 @@ Apache Spark declares it with `whenNoDefault`, so a connection is walked in its 
 Kubernetes declares both: its Secrets kind is withheld from grounding and, listed in `machineRedaction.maskedNameKinds`, masked in its agent reads, while namespace names pass, in the inventory and in agent reads alike, because a namespace is what a statement has to name; and its walk reads the session's Default namespace and `Cluster`, so the inventory says how many other namespaces it did not read, and a kind past its 1,000-object listing cap is counted as a floor ([`docs/providers/kubernetes.md`](./providers/kubernetes.md) section 9).
 RabbitMQ declares a scope with no named containers: its walk reads the virtual host `/` alone when the account lists it, at most 7 management GETs whatever the broker holds, and the inventory says how many other virtual hosts it did not read; when `/` is not listed, the walk reads no virtual host and the model sees only that count ([`docs/providers/rabbitmq.md`](./providers/rabbitmq.md#8-ai-agent-and-mcp)).
 A provider whose inventory is configuration the connection keeps, because its engine has no request that lists what it holds, declares `inventoryNeedsConfiguration`, which answers its own reason where the connection lacks that configuration.
-The walk asks it first and, given a reason, lists nothing and marks every kind `unavailable` with it, so the packing says, on Modbus, "None of the Coils, Discrete inputs, Input registers and Holding registers could be listed:" followed by the reason, and closes with "Nothing was listed, so this inventory says nothing about which tables the database holds." rather than "This database reported no tables.", and the rail's Schema captured line reads "no tables listed" with the reason rather than "0 tables".
+The walk's first read, the top-level container listing, carries that reason as the tree answer's `needsConfiguration`, and given one the walk reads nothing more and marks every kind `unavailable` with it, so the packing says, on Modbus, "None of the Coils, Discrete inputs, Input registers and Holding registers could be listed:" followed by the reason, and closes with "Nothing was listed, so this inventory says nothing about which tables the database holds." rather than "This database reported no tables.", and the rail's Schema captured line reads "no tables listed" with the reason rather than "0 tables".
 Modbus declares it when the connection keeps no register map ([`docs/providers/modbus.md`](./providers/modbus.md#84-values-and-what-each-path-reads) section 8.4).
 An absence the model was not told about is read as an absence in the database, which is #414 in one sentence.
 
 **What the provider path costs, and what it cannot promise.** One statement of the run's budget, where
-PostgreSQL costs three and SQLite two. No object method takes a budget on any provider, so the call is
-raced against the timeout this call was granted — which bounds THE RUN and not the database: the driver
-call is not cancelled, this run simply stops waiting, and the capture is then `unavailable` whole
-rather than partial. And the reading may be BOUNDED by the provider itself — Redis scans 1000 keys
+PostgreSQL costs three and SQLite two.
+No object method takes a budget on any provider, so each read of the walk is a host core tree call under the one deadline this call was granted, which bounds THE RUN and not the database.
+At that deadline the read in flight is not cancelled: this run stops waiting for it, counts it against its concurrency until it settles, and sends no further read, and the capture is then `unavailable` whole rather than partial.
+And the reading may be BOUNDED by the provider itself: Redis scans 1000 keys
 and LibreDB 10000, and each says so through `sampledFrom`, which makes that kind's count and listing
 a floor — so the preface says the inventory is what the inspection found and not proof that nothing
 else exists. MongoDB is NOT one of them, measured: `listCollections` is tallied whole, with no cap,
