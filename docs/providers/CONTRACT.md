@@ -704,6 +704,8 @@ Each claim has a restrictive value, the answer under which the gates that read i
 `agent.statementLanguage`: null, so no statement workflow opens in agent mode and MCP serves no statement on the engine; its record is `AGENT_STATEMENT_LANGUAGE`.
 `facets.agentReadings`: empty, so the operations workflow does not open in agent mode and every reading is refused before a provider is acquired; its record is the `agentReadings` of the engine's `ENGINE_FACETS` row.
 `sqlText.redaction`: `none`, so the query event log keeps nothing of the statement's text; its record is the `redaction` of the engine's `SQL_GRAMMAR` row.
+`policy.agentCredentialForm`: `none`, so every agent credential is refused at every agent acquisition; its record is `AGENT_CREDENTIAL_FORM`, whose null row a declaration writes `pair`.
+`policy.maskingExemptColumns`: null, so every column the masking rules match stays masked; its record is `MASKING_EXEMPT_COLUMNS`.
 Every restrictive value is a request the schema admits.
 
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
@@ -730,6 +732,8 @@ Every restrictive value is a request the schema admits.
 - test `tests/unit/lib/agent/agent-manifest.test.ts` "%s opens operations and planning, and refuses a statement workflow in agent mode"
 - test `tests/unit/lib/agent/agent-manifest.test.ts` "the operations arm refuses an engine the tables leave out of the agent-readings requirement"
 - test `tests/unit/lib/query-events/redact.test.ts` "every redaction vector produces its redacted text and fingerprint"
+- test `tests/isolated/factory.test.ts` "libredb takes no agent credential and refuses %s before it connects"
+- test `tests/unit/components/results-grid-masking-exemption.test.ts` "the rules themselves are untouched: with no declaration the same column is still masked"
 
 ### M-54 (informative): How a host grants a claim
 
@@ -807,6 +811,78 @@ For every engine Studio ships, each provider's own declaration is its record's r
 - test `tests/api/db/query.test.ts` "a provider that declares catalog sessions on a connection naming its database runs nothing in another: the catalog is refused by name"
 - test `vscode-extension/test/unit/backend-handlers.test.ts` "a provider that declares catalog sessions on a connection naming its database runs nothing in another catalog, and the refusal says why"
 - test `tests/unit/db/compatibility.test.ts` "%s: Studio honours catalog sessions exactly where its provider declares them, with and without a database"
+
+### M-58 (normative): The agent credential form an engine requests
+
+`policy.agentCredentialForm` is one of the forms Studio's agent credential takes, with `pair` for the user and password together, the form Studio's record writes null.
+The secret-only forms and the dedicated user's are the record's own forms, named as the record names them.
+Every agent acquisition reads the record, M-57, and a host reads the request against it, M-54.
+
+- schema `/$defs/agentCredentialFormClaim`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential form outside the claim's values is refused as value-not-allowed, and null as wrong-type beside it"
+- test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
+- test `tests/unit/db/engine-declarations.test.ts` "the generated unions are Studio's own types"
+- test `tests/unit/db/agent-credential-capability.test.ts` "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none"
+
+### M-59 (normative): A masking exemption matches whole column names only
+
+The column pattern of `policy.maskingExemptColumns` opens with `^`, closes with a `$` no backslash escapes and no character class holds, keeps every alternative inside a group, and compiles with no flag, the way Studio's masking compiles it.
+An unanchored pattern reaches columns other masking rules cover, so an exemption written for one column crosses into a rule it was never about.
+The pattern is read as text and never run, so a pattern anchored in each alternative, such as `^a$|^b$`, is refused for the group form `^(?:a|b)$`, which says the same once.
+
+- schema `/$defs/maskingExemption`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal whose pattern or reason is empty or past its bound is refused as out-of-range"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption whose column pattern does not match whole names only is refused as masking-exemption-unanchored"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal pattern that does not compile is refused as pattern-invalid"
+- test `tests/unit/db/masking-exemption-guard.test.ts` "an unanchored pattern reaches into a rule it was never about"
+
+### M-60 (normative): An engine's safeguards are its provider's own statements
+
+The `safeguards` segment states what the provider's code does: the reach of each write path, the metadata-only answer of its read path, and the result columns its inline editor refuses.
+No gate of Studio reads a safeguard, so none is a claim, M-52, and a review reads them as the evidence of the policy claims.
+For every engine Studio ships, the census reads each safeguard back to the provider's own capabilities.
+A provider that declares no write reach is stated open on every path, the reading Studio gives that absence.
+A fact a provider answers only for a connection, or one that waits for a chapter not yet in this contract, is not a member.
+
+- schema `/$defs/safeguards`
+- test `tests/unit/db/engine-declarations.test.ts` "every fact of the safeguards segment is its provider's own declaration"
+- test `tests/unit/db/engine-declarations.test.ts` "each declaration's safeguards segment holds exactly the facts the census reads back to the providers"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the machine redaction, billed compute and the write paths are no claims, each refused as unknown-key where it is not a member"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's safeguards and its new claims are held to their rules, at pointers into it"
+
+### M-61 (normative): The write paths and the write reach they sum to
+
+Each of the four write paths is absent, gated with the gate that refuses every write there while read-only mode holds, or open.
+An absent editor path names the structural proof that keeps it so.
+A gate or a proof names a module by its path relative to the root of the package declaring the engine, under `src/`, with no dot segment and ending in `.ts`, and an export by its name.
+`policy.writeReach` is the summary of the paths: `open` where any path is open, else `guarded` where any is gated, else `none`.
+A request at M-55's restrictive values meets this rule only where the write paths still sum to its write reach.
+
+- schema `/$defs/writePaths`
+- schema `/$defs/writePathProof`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a write path that is not one of the three reaches, or whose gate or proof is not a .ts module under src with an export name, is refused as no-variant at the path"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a write reach claim that is not the summary of the engine's write paths is refused as write-reach-summary-differs"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent editor write path that names no proof is refused as editor-write-path-unproven"
+- test `tests/unit/db/engine-declarations.test.ts` "the validator admits a write reach claim exactly where it is Studio's summary of the write paths"
+- test `tests/unit/db/write-reach-proofs.test.ts` "every write-reach gate and proof names a real export"
+
+### M-62 (normative): The metadata-only answer and the inline edit refusal
+
+`metadataOnly` lists each operation the metadata-only read permits, once, in the provider's order, with its columns, each once within its operation, and the kind of fact each holds; it is null where the provider answers as it reads.
+`inlineEditRefusedColumns` is a type pattern that compiles with no flag, the way the inline editor compiles it, and the reason a refused cell shows, or null.
+
+- schema `/$defs/metadataOnlyOperation`
+- schema `/$defs/inlineEditRefusal`
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata-only answer with no operation or an operation with no column is refused as too-few, and a kind outside name, count and flag as value-not-allowed"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata operation or column name outside its pattern is refused as pattern-mismatch"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata operation named twice is refused as metadata-operation-duplicate, at the later one"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a column named twice in one metadata operation is refused as metadata-column-duplicate, and the same column in two operations is admitted"
+- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal pattern that does not compile is refused as pattern-invalid"
+
+### M-63 (informative): Facts a provider answers per connection
+
+Whether a request resumes compute the engine bills for, `resumesBilledCompute`, is the provider's answer for each connection, read from the built provider for that connection.
+Its loose value spends the operator's compute, which none of the boundaries a claim protects is, and the answer depends on the connection, so it is no claim and no member states it, as M-49 leaves a measured explain format to the connected provider.
 
 ## Values
 
@@ -2323,7 +2399,7 @@ Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 These chapters are added by the changes that bring their enforcers:
 
-- The policy facts a provider declares once built, as a segment of its declaration; the maintenance specs; the agent overlay; and presentation (an icon and a colour).
+- The machine redaction a provider declares once built, with the object model; the maintenance specs; the agent overlay; and presentation (an icon and a colour).
 - The API report of each SDK entry.
 
 ## Change notes
@@ -2370,6 +2446,10 @@ Against the manifest sketch the design started from:
 - The write reach, file-access posture, single-writer file, agent credential form and masking exemption a built provider restates in its capabilities are read from Studio's records of them, never from the provider, and its catalog sessions are bounded by `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` rather than read from a record, M-57.
 - A connection, facets, agent or SQL text fact a gate reads is a claim only where a value loosens the gate on the strength of the provider's behaviour and a restrictive value exists, M-52 to M-54; a query dialect's answers are Studio's, M-50.
 - The sketch's frame cap is replaced by the byte budgets, since calls are unframed in process; the memory test transport keeps frames for tests only.
+- The agent credential form a manifest requests names the pair `pair` where Studio's record writes null, M-58.
+- A masking exemption matches whole column names only, M-59.
+- The write paths, the metadata-only answer and the inline edit refusal a provider declares are facts of a `safeguards` segment read back to the provider, and the write reach request is the paths' summary, M-60 to M-62.
+- Billed compute is answered per connection and stated by no member, M-63.
 - Transactions are one console facet, `transaction`, whose request names its action, and a statement inside a transaction is console execute sent with `transaction`; the sketch named four wire methods and a separate `session/state` read, C-57.
 
 Against this contract's earlier text:
