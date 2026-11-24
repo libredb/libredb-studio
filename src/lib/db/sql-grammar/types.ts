@@ -21,6 +21,8 @@ export type SqlRedaction =
 export interface UpdateTargetGrammar {
   /** `--` opens a comment only when a space or control character follows it. */
   readonly dashCommentNeedsSeparator: boolean;
+  /** Whether the engine supports a `TOP <n>` or `TOP (<expr>)` row-count clause directly after `SELECT`. */
+  readonly supportsTopClause: boolean;
   /** Words besides the shared set that open a query. */
   readonly extraQueryOpeners: ReadonlySet<string>;
   /** Words besides the shared set that join two queries. */

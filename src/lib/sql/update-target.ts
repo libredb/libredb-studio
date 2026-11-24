@@ -403,10 +403,11 @@ export function selectsPlainColumn(sql: string, column: string, type?: DatabaseT
     }
   }
 
-  // SQL Server (`mssql`) and DuckDB allow `TOP <n>` or `TOP (<expr>)` [PERCENT] [WITH TIES]
+  // SQL Server (`mssql`) allows `TOP <n>` or `TOP (<expr>)` [PERCENT] [WITH TIES]
   // immediately after `SELECT [ALL | DISTINCT]`. Like DISTINCT, TOP limits how many rows come
   // back rather than modifying or projecting columns.
-  if (isWord(top[start], "TOP")) {
+  const { updateTarget } = sqlGrammarFor(type);
+  if (updateTarget.supportsTopClause && isWord(top[start], "TOP")) {
     const next = top[start + 1];
     let isTopClause = false;
     let scan = start + 1;
@@ -419,14 +420,9 @@ export function selectsPlainColumn(sql: string, column: string, type?: DatabaseT
       }
     } else if (next?.kind === "other" && next.text === "(") {
       // Parenthesized count, e.g. `TOP (50)`.
-      // Ensure it is not a scalar function call like `SELECT top(x) FROM users` or
-      // `SELECT top(x) AS id FROM users` where the closing paren is followed by `,`, `FROM`, or `AS`.
-      let close = scan + 1;
-      while (close < from && !(top[close].kind === "other" && top[close].text === ")")) {
-        close++;
-      }
-      if (close < from && top[close].kind === "other" && top[close].text === ")") {
-        const afterClose = top[close + 1];
+      // The parenthesised count is one `(` and one `)` at this level; its contents are deeper.
+      if (top[start + 2]?.kind === "other" && top[start + 2].text === ")") {
+        const afterClose = top[start + 3];
         if (
           afterClose !== undefined &&
           afterClose !== top[from] &&
@@ -434,7 +430,7 @@ export function selectsPlainColumn(sql: string, column: string, type?: DatabaseT
           !isWord(afterClose, "AS")
         ) {
           isTopClause = true;
-          scan = close + 1;
+          scan = start + 3;
         }
       }
     }

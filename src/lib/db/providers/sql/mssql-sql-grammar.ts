@@ -42,6 +42,7 @@ export const MSSQL_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "sql", nameQuote: "[" },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: true,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: NO_EXTRA_WORDS,
   },

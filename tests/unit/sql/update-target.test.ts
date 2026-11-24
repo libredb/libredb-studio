@@ -644,8 +644,20 @@ describe("selectsPlainColumn", () => {
     expect(selectsPlainColumn("SELECT top FROM boxes;", "top", "mssql")).toBe(true);
     expect(selectsPlainColumn("SELECT top(x) AS id FROM users;", "id", "mssql")).toBe(false);
     expect(selectsPlainColumn("SELECT top(x) FROM users;", "id", "mssql")).toBe(false);
+    expect(selectsPlainColumn("SELECT top(x), id FROM users;", "id", "mssql")).toBe(true);
+    expect(selectsPlainColumn("SELECT top(x) id FROM users;", "id", "postgres")).toBe(false);
     expect(selectsPlainColumn("SELECT TOP 50 sku AS id, name FROM products;", "id", "mssql")).toBe(false);
     expect(selectsPlainColumn("SELECT TOP 50 sku AS id, name FROM products;", "name", "mssql")).toBe(true);
+    expect(
+      selectsPlainColumn("SELECT TOP 50 ROW_NUMBER() OVER (ORDER BY name) AS id, name FROM products;", "id", "mssql"),
+    ).toBe(false);
+    expect(
+      selectsPlainColumn(
+        "SELECT TOP 50 ROW_NUMBER() OVER (ORDER BY name) AS id, name FROM products;",
+        "id",
+        "mssql",
+      ),
+    ).toBe(false);
   });
 
   test("a reference can carry its schema as well as its table", () => {

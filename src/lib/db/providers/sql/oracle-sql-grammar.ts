@@ -53,6 +53,7 @@ export const ORACLE_SQL_GRAMMAR: SqlGrammarSpec = {
   redaction: { kind: "sql", nameQuote: '"' },
   updateTarget: {
     dashCommentNeedsSeparator: false,
+    supportsTopClause: false,
     extraQueryOpeners: NO_EXTRA_WORDS,
     extraSetOperators: ORACLE_SET_OPERATORS,
   },
