@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D890, U17 · 383
+- [Drivers and connections](#drivers-and-connections) — D1-D910, U17 · 384
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5062,6 +5062,17 @@ It is not new with the host core: every error that is not a database error has t
 Found 2026-11-24 while moving MCP's statements onto the host core.
 
 **Done when:** an error MCP's statement and schema tools cannot attribute to the provider or the database is answered in Studio's words as a server fault, with its cause in the server log, and a test pins a host defect answered that way.
+
+### D910. run_statement's catalog session open on a connection that reaches every database waits past the call's deadline and after the client leaves
+
+`executeOpened` in `src/lib/mcp/tools/run-statement.ts` awaits the database choice (`providerInDatabase`) with no race, so the catalog session open `scopeToCatalog` makes through the provider's `forCatalog` is waited for without `timeout_ms` or the request's signal.
+On PostgreSQL that open reads the catalog's admission and connects a new pool (`forCatalog` and `openCatalogSession` in `src/lib/db/providers/sql/postgres.ts`), so a server that stops answering holds the call with no bound.
+inspect_schema races its whole database choice, so its open is bounded.
+It is not new with the host core: the choice has been unraced since the `database` argument was added, and moving the listing onto the host core's tree call bounded only the listing.
+
+Found 2026-11-25 while moving MCP's schema reads onto the host core.
+
+**Done when:** a statement tool's catalog session open ends at the call's deadline and when the client leaves, answered as the timeout or the cancel, with a test holding a `forCatalog` that never settles.
 
 ## Value interpolation
 
