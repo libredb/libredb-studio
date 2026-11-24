@@ -3300,6 +3300,21 @@ A reading made before the host core is installed throws by name before any promi
 - test `tests/unit/lib/agent/tools.test.ts` "a provider that does not serve a kind is REFUSED, not crashed"
 - test `tests/unit/lib/agent/operations-readings.test.ts` "a context without an engine on kafka asking for a kind whose panel kafka's row does not offer is refused as KIND_UNSUPPORTED_BY_PROVIDER, its member never called"
 
+### C-77 (normative): The agent routes' opens
+
+The hand-over route and the agent runs route wait for their opens within the engine's connect budget and the request's signal, as the query route does, C-44 and C-55: the hand-over for its execution-profile provider, the runs route for the database session a run names.
+An execution-profile acquisition takes the caller's own wait as the editor's acquisition does: a caller whose wait ends rejects with its reason by reference while the open goes on for every other caller and admits its provider into the profiled cache once, and without a wait it waits for the open as before.
+A request that leaves while its open is pending answers `QueryCancelledError`, 499, and an open past the budget `StudioTimeoutRefusal`, 504, naming the budget, both outcome not-sent, and nothing is read and no run is opened.
+The agent's drive passes no wait of its own: it has no signal of its own, C-76, so its acquisitions end where their open's own deadline, the engine's connect budget, ends them.
+
+- test `tests/isolated/factory.test.ts` "a caller whose wait ends stops waiting while the open goes on and admits itself once"
+- test `tests/isolated/factory.test.ts` "a profile acquisition without a wait waits for the open as before"
+- test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its provider opens answers 499 not-sent and never reads"
+- test `tests/api/agent/handover.test.ts` "a hand-over whose open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
+- test `tests/api/agent/runs.test.ts` "a run whose client leaves while its catalog opens answers 499 and opens no run"
+- test `tests/api/agent/runs.test.ts` "a run whose catalog open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
+- test `tests/isolated/agent-runtime.test.ts` "the drive's acquisitions pass no wait of their own: the open's own deadline bounds them"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3390,6 +3405,7 @@ Against this contract's earlier text:
 - An engine's TLS offer lists the TLS modes the engine takes, M-73, where it was a word offering every mode of Studio's or none.
 - Each engine's connection string is a projection of the declarations, M-15 and M-74, each named function bound by Studio's connection string function table, where each engine kept a row beside its provider.
 - Each engine's commit keyword, consent deadline and fence aliases are a projection of the declarations, M-15 and M-75, where each engine kept an execution UI row beside its provider and Studio kept one table of fence tags.
+- The hand-over route and the agent runs route wait for their opens within the engine's connect budget and the request's signal, C-77, where they waited for the open alone.
 - The agent's curated readings read through the host core's panel and health calls, C-76, each within the time its call was granted, where they called the provider's members with no bound.
 - A run whose header predates the engine field, on an engine that does not offer a kind's panel, such as Apache Kafka or SQLite, has that reading refused as a kind its provider does not serve, C-76, where it called the provider's member.
 - An engine's agent reading is refused only where its package does not offer the call that serves it, C-4, where every reading was refused as having no call, so `engine-facet-without-call` left the definition rules; a reading whose monitoring panel its engine does not offer is refused, M-76.

@@ -236,6 +236,20 @@ describe("driveAgentRun", () => {
     );
   });
 
+  test("the drive's acquisitions pass no wait of their own: the open's own deadline bounds them", async () => {
+    await openRun("arun_no_wait");
+    await driveAgentRun("arun_no_wait");
+    const { resources } = investigationCalls[investigationCalls.length - 1];
+    mockAcquireExecutionProfileProvider.mockClear();
+
+    await resources.acquireProvider(CONNECTION, "agent-operations");
+    await resources.acquireProvider(CONNECTION, "agent-read-only");
+
+    // Four arguments each, and no fifth: the drive has no signal of its own, so a wait would end only where the open's
+    // own deadline, its engine's connect budget, already ends it.
+    expect(mockAcquireExecutionProfileProvider.mock.calls.map((call) => call.length)).toEqual([4, 4]);
+  });
+
   test("an admin's run on a seed offered to admin and user acquires under the posture a user's run gets", async () => {
     // The drive resolves the run actor's own copy of the seed, which names only the roles that actor holds, so an
     // admin's copy of a seed offered to ["admin", "user"] reads ["admin"]. The acquirer's posture is still the one the

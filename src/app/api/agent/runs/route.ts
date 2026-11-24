@@ -32,6 +32,7 @@ import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { catalogChoice, catalogChoiceBound, catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { READ_ROOTS_REQUIRED, READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { openWithinCall } from "@/lib/api/editor-query";
 import { resolveConfig } from "@/lib/llm/utils/config";
 import { guardRoute } from "@/lib/api/require-session";
 import { getDBConfig } from "@/lib/db-ui-config";
@@ -459,7 +460,11 @@ export async function POST(req: Request) {
       );
     }
     if (catalog !== undefined) {
-      await editorProvider(guard.session, connection, catalog);
+      // The request waits for the open within its engine's connect budget and its own signal: a client that leaves is
+      // answered 499 at once and an open past the budget 504, both not-sent, and no run is opened.
+      await openWithinCall(req.signal, connection.type, (wait) =>
+        editorProvider(guard.session, connection, catalog, wait),
+      );
     }
 
     /*

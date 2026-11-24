@@ -50,6 +50,7 @@ import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
 import * as realAuth from "@/lib/auth";
+import type { DatabaseType } from "@/lib/types";
 
 const ANSWER_SQL = "SELECT region, SUM(net_total) AS net_total FROM orders GROUP BY region";
 
@@ -100,6 +101,16 @@ function fakeRun(events: unknown[] = [answerEvent()]) {
 
 let runs: Map<string, ReturnType<typeof fakeRun>>;
 
+/**
+ * The real connect budgets, with `connectBudgetFor` answering `budgetOverride` while a case sets one, so the case that
+ * needs an open's deadline to pass sets it to a few tens of milliseconds for itself.
+ */
+const realConnectBudget = await import("@/lib/db/connect-budget");
+// Taken before the module is replaced, since a replaced module's namespace answers the replacement.
+const realConnectBudgetFor = realConnectBudget.connectBudgetFor;
+const realOpenDeadlineSentence = realConnectBudget.openDeadlineSentence;
+let budgetOverride: number | undefined;
+
 const mockStatus = mock(async (runId: string) => {
   const record = runs.get(runId);
   return record === undefined ? null : { record, cancellationRequested: false };
@@ -114,17 +125,18 @@ const mockResolveConnection = mock(
 );
 const mockQueryReadOnly = mock(async (_sql: string, _budget: ReadOnlyStatementBudget) => RESULT);
 const mockQuery = mock(async (_sql: string) => RESULT);
-const mockAcquire = mock(
-  async (
-    _connection: unknown,
-    _profile: string,
-    _options?: unknown,
-    _requester?: unknown,
-  ): Promise<ProfiledProvider> => ({
-    queryReadOnly: mockQueryReadOnly,
-    query: mockQuery,
-  }),
-);
+const mockAcquire = mock<
+  (
+    connection: unknown,
+    profile: string,
+    options?: unknown,
+    requester?: unknown,
+    wait?: { readonly signal: AbortSignal },
+  ) => Promise<ProfiledProvider>
+>(async () => ({
+  queryReadOnly: mockQueryReadOnly,
+  query: mockQuery,
+}));
 
 function installMocks(): void {
   mock.module("@/lib/auth", () => ({
@@ -153,6 +165,10 @@ function installMocks(): void {
     },
   }));
   mock.module("@/lib/db/factory", () => ({ acquireExecutionProfileProvider: mockAcquire }));
+  mock.module("@/lib/db/connect-budget", () => ({
+    openDeadlineSentence: realOpenDeadlineSentence,
+    connectBudgetFor: (type: DatabaseType) => budgetOverride ?? realConnectBudgetFor(type),
+  }));
 }
 
 installMocks();
@@ -169,6 +185,7 @@ function request(runId = "arun_1", body?: unknown): Request {
 
 beforeEach(() => {
   installMocks();
+  budgetOverride = undefined;
   clearRateLimitState();
   runs = new Map([["arun_1", fakeRun()]]);
   mockGetSession.mockResolvedValue({ role: "user", username: "ada" });
@@ -183,6 +200,60 @@ beforeEach(() => {
 
 afterEach(() => {
   restoreAgentModel();
+});
+
+/** An acquisition that never opens: only its caller's own wait ends it, as `openOnce` ends a caller's wait. */
+function openNeverSettles(reached: () => void) {
+  mockAcquire.mockImplementationOnce(async (...args) => {
+    const wait = args[4];
+    reached();
+    return new Promise((_resolve, reject) => {
+      wait?.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+    });
+  });
+}
+
+describe("the hand-over's open", () => {
+  test("a hand-over whose client leaves while its provider opens answers 499 not-sent and never reads", async () => {
+    const opening = Promise.withResolvers<void>();
+    openNeverSettles(opening.resolve);
+    const controller = new AbortController();
+    const answer = POST(
+      new Request("http://localhost:3000/api/agent/runs/arun_1/handover", {
+        method: "POST",
+        signal: controller.signal,
+      }),
+      params(),
+    );
+    await opening.promise;
+    controller.abort();
+
+    const res = await answer;
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(499);
+    expect(body).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "not-sent" });
+    expect(mockAcquire.mock.calls[0]).toHaveLength(5);
+    expect(mockAcquire.mock.calls[0]?.[4]?.signal).toBeInstanceOf(AbortSignal);
+    expect(mockQueryReadOnly).not.toHaveBeenCalled();
+    expect(mockQuery).not.toHaveBeenCalled();
+  });
+
+  test("a hand-over whose open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent", async () => {
+    budgetOverride = 40;
+    openNeverSettles(() => {});
+
+    const res = await POST(request(), params());
+    const body = await parseResponseJSON<Record<string, unknown>>(res);
+
+    expect(res.status).toBe(504);
+    expect(body).toMatchObject({
+      error: "The connection did not open within 0.1 seconds, so Studio stopped waiting for it and sent nothing.",
+      kind: "studio-timeout-refusal",
+      outcome: "not-sent",
+    });
+    expect(mockQueryReadOnly).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/agent/runs/[runId]/handover", () => {

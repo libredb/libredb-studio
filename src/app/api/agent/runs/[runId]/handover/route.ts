@@ -6,6 +6,7 @@ import {
 } from "@/lib/agent/execution-policy";
 import type { AgentRunEvent } from "@/lib/agent/types";
 import { accessAgentRun } from "@/lib/api/agent-run-access";
+import { openWithinCall } from "@/lib/api/editor-query";
 import { createErrorResponse } from "@/lib/api/errors";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
@@ -53,8 +54,10 @@ import type { DatabaseConnection } from "@/lib/types";
  *  - **A run answers once** (`ANSWER_ALREADY_RECORDED` in `tools.ts`), so "the
  *    answer" is unambiguous and needs no id in the path.
  *
- * The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows and
- * bytes are held to the hand-over budget again before the response is written, whatever the provider does.
+ * The open waits within the engine's connect budget and the request's signal (`openWithinCall`): a client that leaves
+ * while the provider opens is answered 499 and one whose open outlasts the budget 504, both not-sent, and nothing is
+ * read. The replay goes through `runReadOnlyStatement`, the one core call of a provider's read-only path, so its rows
+ * and bytes are held to the hand-over budget again before the response is written, whatever the provider does.
  *
  * What it does NOT do is record a ledger event. The run may already have finished,
  * and a finished ledger does not accept appends; the replay is the editor's action on
@@ -118,12 +121,16 @@ export async function POST(req: Request, context?: HandoverParams) {
   const scrub = providerTextScrub(connection, "profiled");
   try {
     // The run's own actor decides the file-access posture, as it decided the connection above: SQLite
-    // opens only for a trusted requester, on this profile as in the editor.
-    const provider = await acquireExecutionProfileProvider(
-      connection,
-      AGENT_HANDOVER_PROFILE,
-      {},
-      editorExecutionContext({ role: record.actor.role }, connection),
+    // opens only for a trusted requester, on this profile as in the editor. The request waits for the open within its
+    // engine's connect budget and its own signal, so a client that leaves is answered at once while the open goes on.
+    const provider = await openWithinCall(req.signal, connection.type, (wait) =>
+      acquireExecutionProfileProvider(
+        connection,
+        AGENT_HANDOVER_PROFILE,
+        {},
+        editorExecutionContext({ role: record.actor.role }, connection),
+        wait,
+      ),
     );
     if (typeof provider.queryReadOnly !== "function") {
       // Never a fallback to `query()`. `acquireExecutionProfileProvider` already

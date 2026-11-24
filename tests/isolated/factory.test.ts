@@ -500,12 +500,13 @@ function getOrCreateProvider(...args: Parameters<typeof rawGetOrCreateProvider>)
 // The same for the profiled path: existing SQLite agent tests exercise trusted requesters, and the
 // denied ones are tested against the unwrapped acquisition below.
 function acquireExecutionProfileProvider(...args: Parameters<typeof rawAcquireExecutionProfileProvider>) {
-  const [connection, profile, options, requester] = args;
+  const [connection, profile, options, requester, wait] = args;
   return rawAcquireExecutionProfileProvider(
     connection,
     profile,
     options,
     requester ?? (connection.type === "sqlite" ? { allowExternalFileAccess: true } : {}),
+    wait,
   );
 }
 if (nodeEnvBefore === undefined) {
@@ -2611,6 +2612,57 @@ describe("a caller's own wait for an open", () => {
       expect(getProviderCacheStats().size).toBe(0);
     } finally {
       gate.restore();
+    }
+  });
+});
+
+describe("an execution-profile acquisition's own wait", () => {
+  test("a caller whose wait ends stops waiting while the open goes on and admits itself once", async () => {
+    const conn = makeConnection("postgres", { id: "profiled-wait-leaves" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const leaving = new AbortController();
+      const staying = acquireExecutionProfileProvider(conn, "agent-read-only");
+      const left = acquireExecutionProfileProvider(conn, "agent-read-only", {}, {}, { signal: leaving.signal }).catch(
+        (error: unknown) => error,
+      );
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      const reason = new Error(`left ${randomUUID()}`);
+      leaving.abort(reason);
+      expect(await left).toBe(reason);
+      gate.open();
+      const provider = await staying;
+      const next = await acquireExecutionProfileProvider(conn, "agent-read-only");
+
+      expect(gate.connected).toHaveLength(1);
+      expect(provider).toBe(gate.connected[0]);
+      expect(next).toBe(provider);
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+    } finally {
+      gate.restore();
+      digests.restore();
+    }
+  });
+
+  test("a profile acquisition without a wait waits for the open as before", async () => {
+    const conn = makeConnection("postgres", { id: "profiled-wait-none" });
+    const gate = await gateConnects(conn);
+    const digests = trackDigests();
+    try {
+      const acquiring = acquireExecutionProfileProvider(conn, "agent-read-only");
+      await gate.reached(1);
+      await digests.settled();
+      await turns(20);
+      gate.open();
+
+      expect(await acquiring).toBe(gate.connected[0]);
+      expect(getExecutionProfileCacheStats().size).toBe(1);
+    } finally {
+      gate.restore();
+      digests.restore();
     }
   });
 });

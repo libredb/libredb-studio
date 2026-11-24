@@ -2253,12 +2253,18 @@ function sameUser(agentUser: string | undefined, user: string | undefined): bool
  * own editor handle as before, and a requester is never lent a handle wider than its own.
  * Absent means deny, like everywhere else on this channel. Its owner (docs/GOVERNANCE.md#per-user-providers) makes the
  * profiled provider that user's own, as in the writable cache, with the pool of `ownerPoolMax`.
+ *
+ * `wait` is the caller's own wait for the open, as `getOrCreateProvider` takes it (docs/providers/CONTRACT.md, clauses
+ * C-44 and C-77): when its signal aborts, this call rejects with its reason, by reference, while the open goes on for
+ * every other caller and admits its provider into the profiled cache once. The single-writer borrow opens nothing and
+ * takes no wait. Without it the call waits until the open settles, which its engine's connect budget bounds.
  */
 export async function acquireExecutionProfileProvider(
   connection: DatabaseConnection,
   profile: ExecutionProfile,
   options: ProviderOptions = {},
   requester: EditorExecutionContext = {},
+  wait?: OpenWait,
 ): Promise<DatabaseProvider> {
   // First, ahead of the profiled cache lookup and of any tunnel (#1089): see assertReadOnlyHonoured.
   // The id refusal shares the place for the same reason: the profiled key frames connection.id (#1539). The type check
@@ -2422,6 +2428,7 @@ export async function acquireExecutionProfileProvider(
     connection,
     { connectionId: connection.id, owner, type: connection.type },
     openProfiledProvider,
+    wait,
   );
 }
 
