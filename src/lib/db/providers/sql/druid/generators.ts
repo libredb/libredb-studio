@@ -1,6 +1,6 @@
 /**
- * Druid's identifier quoting, collected as its row of `SQL_ENGINE_GENERATORS` in
- * `src/lib/db/query-generators/index.ts`, read under its type id.
+ * Druid's identifier quoting, bound by Studio's SQL generator function table (`SQL_GENERATOR_FUNCTIONS` in
+ * `src/lib/db/query-generators/index.ts`) at the slot its name gives.
  */
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 
@@ -11,6 +11,4 @@ import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
  * standard rollup ingestion produces a datasource that has one. Calcite's reserved list is large and
  * version-dependent, so no safe unquoted subset is worth detecting.
  */
-export const DRUID_SQL_GENERATORS = Object.freeze({
-  quote: (name) => `"${name.replaceAll('"', '""')}"`,
-} satisfies SqlEngineGenerators);
+export const DRUID_GENERATOR_QUOTE: SqlEngineGenerators["quote"] = (name) => `"${name.replaceAll('"', '""')}"`;

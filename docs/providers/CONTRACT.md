@@ -209,7 +209,7 @@ A declaration is not a full manifest: the runtime and compatibility segments des
 
 - test `tests/unit/db/engine-declarations.test.ts` "the directory holds exactly one declaration per shipped type-id"
 - test `tests/unit/db/engine-declarations.test.ts` "each declaration is what the generator builds from its authored members and Studio's tables"
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing and migration DDL segments"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing, migration DDL and SQL generator segments"
 - test `tests/unit/db/engine-declarations.test.ts` "a declaration's authored members are its committed file's, and every other member is the tables'"
 - test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
 - test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed"
@@ -416,7 +416,7 @@ Every such table looks a name up through one helper, `src/lib/db/function-table.
 - test `tests/unit/lib/db/function-table.test.ts` "a slot's table holds each engine's function under the slot's name, and nothing else"
 - test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every name an agent overlay declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own overlay module exports there"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an engine's server overlay holds is named at its slot by its engine's declaration, and no slot the overlay leaves empty is named"
@@ -1315,7 +1315,7 @@ A function stated null is left out of the row, or is the row's null where the ro
 The segment holds no claim, M-52, so every member is read as declared.
 Removing a declaration gives exactly the SQL writing a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing and migration DDL segments"
+- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing, migration DDL and SQL generator segments"
 - test `tests/unit/db/engine-catalog.test.ts` "projectSqlWriting answers each declaration's SQL writing, frozen, in ascending id order"
 - test `tests/unit/db/engine-catalog.test.ts` "the SQL writing reads only the members a declaration authors"
 - test `tests/unit/db/engine-catalog.test.ts` "the committed SQL writing module is what the generator renders from the admitted declarations"
@@ -1762,11 +1762,12 @@ Studio's census holds every member of every declaration to the engine's row, and
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL generator form named in another form is refused at the form"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL generators are refused at their own pointer under validateEngine"
 - test `tests/unit/db/engine-declarations.test.ts` "sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there"
+- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs"
 - test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
 - test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL generator row has its member in the declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, an SQL generator member it has no place for"
-- test `tests/unit/db/engine-declarations/sql-generators-replay.test.ts` "every SQL engine's generator row, rebuilt from its declaration with each form resolved by its slot, answers the committed generator corpus"
+- test `tests/unit/lib/query-generators-compose.test.ts` "each SQL engine's generator row is its declaration's forms composed with Studio's SQL generator function table"
+- test `tests/unit/lib/query-generators-compose.test.ts` "an engine whose declaration states no generator forms has no row"
+- test `tests/isolated/query-generator-parity.test.ts` "every declaration answers exactly what the committed digests record"
 
 ### S-21 (normative): A count expression is one call
 
@@ -1775,7 +1776,7 @@ So the count a declaration states fills one expression of the statement Studio w
 
 - schema `/$defs/countExpression`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a count expression that is not one aggregate call over every row is refused as pattern-mismatch, and one longer than 64 characters as out-of-range"
-- test `tests/unit/db/engine-declarations/sql-generators-replay.test.ts` "every SQL engine's generator row, rebuilt from its declaration with each form resolved by its slot, answers the committed generator corpus"
+- test `tests/isolated/query-generator-parity.test.ts` "every declaration answers exactly what the committed digests record"
 
 ### S-22 (informative): Studio still reads its SQL generator rows, and where their functions run
 

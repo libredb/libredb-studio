@@ -719,7 +719,7 @@ The rolled-back notice names `COMMIT` as the keyword that keeps an open transact
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mysql.json`](../../src/lib/db/engine-declarations/mysql.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mysql`, and its declaration's `editor.fenceAliases`, `mariadb`.
 `mariadb` names `mysql`, the type-id MariaDB connects through: an alias names the type-id a block's text runs on, which is not always the product the tag spells.
-What a tree click and Generate Query write is `MYSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), declared in [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), which Studio composes from the `sqlGenerators` segment of [`engine-declarations/mysql.json`](../../src/lib/db/engine-declarations/mysql.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts), `MYSQL_GENERATOR_QUOTE`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its account-limit and access-refusal error numbers and its interrupted-query words, is the `mysql2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mysql-driver-errors.ts`](../../src/lib/db/providers/sql/mysql-driver-errors.ts).
 
 ---

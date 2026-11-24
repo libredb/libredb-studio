@@ -9,13 +9,9 @@
  * name a declaration states to the path this table gives it, and every function a row holds to the name this table
  * gives its path.
  *
- * An SQL generator slot is resolved on the row the engine's own module exports, imported by its absolute path, never
- * through the registry index the generator reads, so the census holds the module's row and the registry's row to be the
- * same object as a separate fact; the SQL generator modules are found from the import statements of the query
- * generators' registry file, read as source (`sqlGeneratorModules` in
- * tests/unit/db/engine-declarations/sql-generator-modules.ts). An SQL writing slot is read on `SQL_WRITING` and a
- * migration DDL slot on `MIGRATION_DDL`, each row of which Studio composes from the engine's declaration, and the census
- * holds the function there to the one Studio's SQL writing or migration DDL function table binds at that slot. An engine's agent server
+ * An SQL writing slot is read on `SQL_WRITING`, a migration DDL slot on `MIGRATION_DDL` and an SQL generator slot on
+ * `SQL_ENGINE_GENERATORS`, each row of which Studio composes from the engine's declaration, and the census holds the
+ * function there to the one Studio's SQL writing, migration DDL or SQL generator function table binds at that slot. An engine's agent server
  * overlay module is found by the agent leg's triad path, `src/lib/agent/languages/<family>/engines/<type-id>.ts`, the
  * family being the engine's `AGENT_STATEMENT_LANGUAGE` row, and its slots sit at the same dotted path in the module's
  * overlay and in the declaration's `agent.overlay`.

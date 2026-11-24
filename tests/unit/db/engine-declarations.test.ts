@@ -86,7 +86,6 @@ import {
   buildAgentOverlay,
   buildEditor,
   buildEngineDeclaration,
-  buildSqlGenerators,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
   ENGINE_DECLARATIONS_DIRECTORY,
@@ -183,7 +182,7 @@ import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
-import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
+import { SQL_ENGINE_GENERATORS, SQL_GENERATOR_FUNCTIONS, type SqlGeneratorFunctions } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING, SQL_WRITING_FUNCTIONS, type SqlWritingFunctions } from "@/lib/db/sql-writing";
 import type { MetadataKind } from "@/lib/db/redaction/metadata-only";
@@ -247,7 +246,6 @@ import type { DatabaseConnection, DatabaseType, HostPathField, QueryTab } from "
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
-import { sqlGeneratorModules } from "./engine-declarations/sql-generator-modules";
 import {
   DECLARED_SLOTS,
   type DeclaredSlotName,
@@ -454,33 +452,6 @@ function sqlTextNames(d: EngineDeclaration): string[] {
   ];
 }
 
-/** The SQL generator modules the query generators' registry imports, read from the registry file's import statements. */
-const SQL_GENERATOR_MODULES = sqlGeneratorModules();
-
-/**
- * Each SQL engine's generator row as its own module exports it, the module imported by its absolute path, never through
- * the registry index the generator reads: every SQL generator slot the census's slot table names is resolved on this
- * row. Only the engines with a row of `SQL_ENGINE_GENERATORS` have one.
- */
-const MODULE_SQL_GENERATORS: ReadonlyMap<string, unknown> = new Map(
-  await Promise.all(
-    SQL_GENERATOR_MODULES.map(
-      async (engine) =>
-        [
-          engine.id,
-          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
-        ] as const,
-    ),
-  ),
-);
-
-/** The engine module's SQL generator row of `type`, which the census holds to be the registry's row. */
-function moduleSqlGenerators(type: DatabaseType): object {
-  const row = MODULE_SQL_GENERATORS.get(type);
-  if (typeof row !== "object" || row === null) throw new Error(`${type}: no SQL generator module exports a row`);
-  return row;
-}
-
 /** The registry's SQL generator row of `type`, read as an own key; undefined where the engine writes the shared forms. */
 function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
   return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
@@ -533,7 +504,7 @@ function moduleRow(table: SlotTable, type: DatabaseType): object | undefined {
   const rows: Readonly<Record<SlotTable, () => object | undefined>> = {
     SQL_WRITING: () => SQL_WRITING[type],
     MIGRATION_DDL: () => MIGRATION_DDL[type],
-    SQL_ENGINE_GENERATORS: () => (sqlGeneratorRow(type) === undefined ? undefined : moduleSqlGenerators(type)),
+    SQL_ENGINE_GENERATORS: () => sqlGeneratorRow(type),
     AGENT_SERVER_OVERLAY: () => (MODULE_AGENT_OVERLAYS.has(type) ? moduleAgentOverlay(type) : undefined),
   };
   return rows[table]();
@@ -619,6 +590,14 @@ function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name:
 
 /** The function members of a declaration's `sqlGenerators`, by their dotted paths, read off the schema. */
 const SQL_GENERATORS_FUNCTION_PATHS = schemaFunctionPaths("sqlGenerators");
+
+/** The slot kind of Studio's SQL generator function table that binds the name a declaration states at each path. */
+const SQL_GENERATOR_SLOT_KINDS: Readonly<Record<string, keyof SqlGeneratorFunctions>> = {
+  quote: "quotes",
+  table: "tables",
+  select: "selects",
+  selectList: "selectLists",
+};
 
 /** Every function name a declaration's `sqlGenerators` states, with the dotted path it is stated at; none where null. */
 function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
@@ -979,7 +958,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing and migration DDL segments", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing, migration DDL and SQL generator segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1015,6 +994,7 @@ describe("the committed declarations", () => {
       "sqlText.completion",
       "sqlWriting",
       "migrationDdl",
+      "sqlGenerators",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1060,6 +1040,7 @@ describe("the committed declarations", () => {
       },
       sqlWriting: bigquery.sqlWriting,
       migrationDdl: bigquery.migrationDdl,
+      sqlGenerators: null,
     });
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
@@ -1250,6 +1231,11 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(declared("postgres"), "migrationDdl"), "postgres.json")).toThrow(
       "postgres.json lacks its authored member migrationDdl",
     );
+    expect(() => authoredMembersOf(without(committed, "sqlGenerators"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member sqlGenerators",
+    );
+    // A segment stated as null is stated: an engine that writes the shared forms authors null.
+    expect(authoredMembersOf(declared("postgres"), "postgres.json").sqlGenerators).toBeNull();
     // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
     expect(() =>
       authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, "redaction") }, "bigquery.json"),
@@ -1306,19 +1292,6 @@ describe("the committed declarations", () => {
     const json = { ...postgres, language: { ...postgres.language, queryLanguage: "json" as const } };
     expect(() => buildEditor("postgres", CAPABILITIES.postgres, json)).toThrow(
       "postgres: the declaration states the query language json, and its provider declares sql",
-    );
-  });
-
-  test("the generator refuses, by name, an SQL generator member it has no place for", () => {
-    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
-    const row = SQL_ENGINE_GENERATORS.mssql;
-    if (row === undefined) throw new Error("mssql has no SQL generator row");
-    const planted = { ...row, [key]: null } as SqlEngineGenerators;
-
-    expect(() => buildSqlGenerators("mssql")).not.toThrow();
-    expect(buildSqlGenerators("postgres")).toBeNull();
-    expect(() => buildSqlGenerators("mssql", planted)).toThrow(
-      `mssql: the SQL generator member "${key}" has no place in the engine declaration`,
     );
   });
 
@@ -3538,13 +3511,6 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("the SQL generator modules the registry imports are the engines with a row, each exporting its registry row", () => {
-    const ids = Object.keys(SQL_ENGINE_GENERATORS) as DatabaseType[];
-
-    expect(sorted(SQL_GENERATOR_MODULES.map(({ id }) => id))).toEqual(sorted(ids));
-    expect(ids.filter((type) => MODULE_SQL_GENERATORS.get(type) !== SQL_ENGINE_GENERATORS[type])).toEqual([]);
-  });
-
   test("sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none", () => {
     expect(
       differing((type, d) => {
@@ -3561,18 +3527,20 @@ describe("the census", () => {
     expect(counts.some((count) => count !== "COUNT(*)")).toBe(true);
   });
 
-  test("every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+  test("every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs", () => {
     const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) =>
         sqlGeneratorNames(declared(type)).flatMap(([path, name]) => {
           const held = valueAt(sqlGeneratorRow(type), path);
+          const kind = SQL_GENERATOR_SLOT_KINDS[path];
+          const bound = kind === undefined ? undefined : SQL_GENERATOR_FUNCTIONS[kind][type]?.[name];
           const isSlot = slots[name]?.table === "SQL_ENGINE_GENERATORS" && slots[name]?.path === path;
-          const resolved = isSlot ? slotFunction(moduleSqlGenerators(type), name as DeclaredSlotName) : undefined;
-          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+          return isSlot && typeof bound === "function" && bound === held ? [] : [`${type}:${path}=${name}`];
         }),
       ),
     ).toEqual([]);
+    expect(sorted(Object.keys(SQL_GENERATOR_SLOT_KINDS))).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));
     // Vacuity: the schema states every SQL generator slot of the table as a function member, and each form other than
     // the quoting is named on one row and null on another.
     expect(sorted(SQL_GENERATORS_FUNCTION_PATHS)).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));

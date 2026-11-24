@@ -9,20 +9,20 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
  * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
- * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting` and `migrationDdl`), are written in the
- * declaration itself: this script reads them from the committed file of the engine in src/lib/db/engine-declarations,
- * whatever directory `--out` names, with `authoredMembersOf` (scripts/generate-engine-catalog.ts), which refuses by
- * name a file that lacks one or whose `id` is not its file name, and writes them back unchanged. Every other member is
- * built from the tables. The engine catalog, the connection tables, the connection forms, the connection strings, the
- * execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL
- * writing and the migration DDL (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78,
- * M-79 and M-80) project the authored members, and `bun run engines:generate` runs that command's `--write` first and
- * its `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
- * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
- * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with no
- * placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored members
- * written for the new engine; the catalog generator projects it, this script writes every other member, and the catalog
- * generator then admits it.
+ * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`, `migrationDdl` and `sqlGenerators`), are
+ * written in the declaration itself: this script reads them from the committed file of the engine in
+ * src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
+ * (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id` is not its file name,
+ * and writes them back unchanged. Every other member is built from the tables. The engine catalog, the connection
+ * tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab
+ * type editors and editor languages, the SQL text, the SQL writing, the migration DDL and the SQL generator forms
+ * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80 and M-81) project
+ * the authored members, and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this
+ * script builds every provider through the factory, which builds only an engine the catalog holds, and `--check` admits
+ * every declaration this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog
+ * entry or a field rule for a field the engine does not take and a placeable field with no placement. A new engine's
+ * declaration therefore starts as a copy of another engine's file with its authored members written for the new engine;
+ * the catalog generator projects it, this script writes every other member, and the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
@@ -78,11 +78,13 @@
  * `boundSegments` binds every name through that table before the declaration is written, so a name Studio holds no
  * function for stops this script by name.
  *
- * The SQL generator forms come from the engine's row in `SQL_ENGINE_GENERATORS`, read as an own key: null where the
- * engine has no row and writes Studio's shared forms; otherwise each member in the schema's order, each form named by
- * its slot (`generatorQuote`, `generatorTable`, `generatorSelect` and `generatorSelectList`) or null where the row
- * leaves it out, and the count expression as the row's, `COUNT(*)` where the row leaves it out, the reading Generate
- * Count Query gives that absence. The generator refuses by name a member of the row it has no place for.
+ * The SQL generator forms, `sqlGenerators`, are authored as a whole and written back as the committed file states them;
+ * the catalog generator projects them into src/lib/db/engine-catalog/sql-generators.generated.ts, from which Studio
+ * composes each SQL engine's generator row (clause M-81): null where the engine writes Studio's shared forms, and
+ * otherwise each form named by its slot, `generatorQuote`, `generatorTable`, `generatorSelect` and
+ * `generatorSelectList`, or null where the shared form stands, each bound by Studio's SQL generator function table in
+ * src/lib/db/query-generators/index.ts, and the count expression, `COUNT(*)` where the engine's is the shared one.
+ * `boundSegments` binds every name through that table too.
  *
  * The policy and MCP claims come from the claim tables of `src/lib/db/compatibility.ts`, one member each: `policy` from
  * `WRITE_REACH`, `READS_FILE_ACCESS_POSTURE`, `REFUSES_DENIED_FILE_ACCESS`, `SINGLE_WRITER_FILE` and
@@ -162,7 +164,6 @@ import type {
   ProfileTypePattern,
   Safeguards,
   SqlDialect,
-  SqlGenerators,
   StatisticsReading,
   WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
@@ -198,8 +199,7 @@ import {
 } from "../src/lib/db/connection-fields";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
-import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
-import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
+import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
 import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
 import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
 import type { DatabaseType } from "../src/lib/types";
@@ -324,52 +324,24 @@ export function buildEditor(
 const TYPE_PATTERN_FLAGS: readonly string[] = ["", "i", "u", "iu"];
 
 /**
- * The engine's authored segments a Studio function table binds, `migrationDdl`, answered unchanged once every function
- * name it gives is bound through Studio's migration DDL function table, so a name Studio holds no function for stops
- * this script by name rather than reaching a committed declaration (docs/providers/CONTRACT.md, clauses M-15 and M-80).
- * The module that holds the table also composes every engine when it loads, from the generated module `--write` has
- * just written, which refuses the same name first; this call states the dependency rather than keeping an import for
- * its side effect.
+ * The engine's authored segments a Studio function table binds, `migrationDdl` and `sqlGenerators`, answered unchanged
+ * once every function name they give is bound through Studio's migration DDL and SQL generator function tables, the
+ * generator forms only where the declaration states them, so a name Studio holds no function for stops this script by
+ * name rather than reaching a committed declaration (docs/providers/CONTRACT.md, clauses M-15, M-80 and M-81). The
+ * modules that hold the tables also compose every engine when they load, from the generated modules `--write` has just
+ * written, which refuse the same name first; this call states the dependency rather than keeping an import for its
+ * side effect.
  *
- * @throws {Error} Naming the engine and the name, for a function name Studio's table holds none for at its slot.
+ * @throws {Error} Naming the engine and the name, for a function name Studio's tables hold none for at its slot.
  */
-export function boundSegments(type: DatabaseType, authored: AuthoredMembers): Pick<AuthoredMembers, "migrationDdl"> {
-  composeMigrationDdl(type, authored.migrationDdl, MIGRATION_DDL_FUNCTIONS);
-  return { migrationDdl: authored.migrationDdl };
-}
-
-/** The members of an SQL generator row the declaration places: a key this list lacks would be dropped. */
-const SQL_GENERATOR_MEMBERS: readonly string[] = ["quote", "table", "select", "selectList", "countExpression"];
-
-/** The engine's row of `SQL_ENGINE_GENERATORS`, read as an own key; undefined where it writes the shared forms. */
-function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
-  return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
-}
-
-/**
- * One engine's SQL generator forms, read from its row in `SQL_ENGINE_GENERATORS` (a parameter, so a test can hand the
- * generator another row): null where it has none, otherwise each member in the order of the schema's `sqlGenerators`,
- * each form named by the slot it fills or null where the row leaves it out, and the count expression as the row's,
- * `COUNT(*)` where the row leaves it out. A member of the row the declaration has no place for is a thrown error naming
- * the engine.
- */
-export function buildSqlGenerators(
+export function boundSegments(
   type: DatabaseType,
-  row: SqlEngineGenerators | undefined = sqlGeneratorRow(type),
-): SqlGenerators {
-  if (row === undefined) return null;
-  for (const key of Object.keys(row)) {
-    if (!SQL_GENERATOR_MEMBERS.includes(key)) {
-      throw new Error(`${type}: the SQL generator member "${key}" has no place in the engine declaration`);
-    }
-  }
-  return {
-    quote: "generatorQuote",
-    table: row.table === undefined ? null : "generatorTable",
-    select: row.select === undefined ? null : "generatorSelect",
-    selectList: row.selectList === undefined ? null : "generatorSelectList",
-    countExpression: row.countExpression ?? "COUNT(*)",
-  };
+  authored: AuthoredMembers,
+): Pick<AuthoredMembers, "migrationDdl" | "sqlGenerators"> {
+  const { migrationDdl, sqlGenerators } = authored;
+  composeMigrationDdl(type, migrationDdl, MIGRATION_DDL_FUNCTIONS);
+  if (sqlGenerators !== null) composeSqlEngineGenerators(type, sqlGenerators, SQL_GENERATOR_FUNCTIONS);
+  return { migrationDdl, sqlGenerators };
 }
 
 /** The members of each part of an agent overlay the declaration places: a key a part's list lacks would be dropped. */
@@ -698,7 +670,7 @@ export function buildEngineDeclaration(
     },
     sqlWriting: authored.sqlWriting,
     migrationDdl: bound.migrationDdl,
-    sqlGenerators: buildSqlGenerators(type),
+    sqlGenerators: bound.sqlGenerators,
     policy: {
       writeReach: WRITE_REACH[type],
       readsFileAccessPosture: READS_FILE_ACCESS_POSTURE[type],

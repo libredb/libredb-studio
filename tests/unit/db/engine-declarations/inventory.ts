@@ -214,6 +214,11 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: projected("migrationDdl"),
   },
   {
+    module: "src/lib/db/engine-catalog/sql-generators.generated.ts",
+    name: "BUNDLED_SQL_GENERATORS",
+    destination: projected("sqlGenerators"),
+  },
+  {
     module: "src/lib/db/engine-catalog/sql-text.generated.ts",
     name: "BUNDLED_SQL_TEXT",
     destination: projected("sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion"),
@@ -245,7 +250,8 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/db/query-generators/index.ts",
     name: "SQL_ENGINE_GENERATORS",
-    destination: "engine declaration: sqlGenerators, its count expression, each form named by the slot it fills",
+    destination:
+      "engine declaration: sqlGenerators, authored in each declaration and composed with Studio's SQL generator function table",
   },
   {
     module: "src/lib/db/sql-grammar/index.ts",

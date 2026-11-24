@@ -172,6 +172,13 @@ export const REGISTRIES: readonly Listed[] = [
       "each engine's migration DDL row, composed from the generated migration DDL and typed over the type-id union",
   },
   {
+    path: "src/lib/db/engine-catalog/sql-generators.generated.ts",
+    declaration: "BUNDLED_SQL_GENERATORS",
+    count: 1,
+    reason:
+      "each engine's SQL generator forms, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
     declaration: "BUNDLED_SQL_TEXT",
     count: 1,
@@ -297,7 +304,7 @@ export const REGISTRIES: readonly Listed[] = [
     declaration: "SQL_ENGINE_GENERATORS",
     count: 1,
     reason:
-      "the SQL forms of each SQL engine that writes its own, a partial registry whose rows are declared beside their providers",
+      "the SQL forms of each SQL engine that writes its own, a partial registry composed from the generated SQL generator forms",
   },
   {
     path: "src/lib/db/graph-policy-profiles.ts",

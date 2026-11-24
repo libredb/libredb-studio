@@ -125,6 +125,12 @@ const SQL_WRITING_MEMBERS = ["sqlWriting"] as const;
  */
 const MIGRATION_DDL_MEMBERS = ["migrationDdl"] as const;
 
+/**
+ * The SQL generator segment the SQL engine generator forms are projected from, M-81: an authored member, M-15, holding
+ * no claim, each form a name bound only to Studio's own function for that engine.
+ */
+const SQL_GENERATOR_MEMBERS = ["sqlGenerators"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -221,15 +227,21 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...SQL_TEXT_MEMBERS,
       ...SQL_WRITING_MEMBERS,
       ...MIGRATION_DDL_MEMBERS,
+      ...SQL_GENERATOR_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing and the migration DDL",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab type editors and editor languages, the SQL text, the SQL writing, the migration DDL and the SQL generator forms",
   },
   {
     path: "src/lib/db/engine-catalog/query-editor.generated.ts",
     members: QUERY_EDITOR_MEMBERS,
     reason:
       "the query dialects, the tab type editors and the editor languages, generated from the admitted declarations",
+  },
+  {
+    path: "src/lib/db/engine-catalog/sql-generators.generated.ts",
+    members: SQL_GENERATOR_MEMBERS,
+    reason: "each SQL engine's generator forms, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
@@ -256,6 +268,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/query-dialects.ts",
     members: ["editor.dialect"],
     reason: "each query dialect's row, read from the generated query dialect record",
+  },
+  {
+    path: "src/lib/db/query-generators/index.ts",
+    members: SQL_GENERATOR_MEMBERS,
+    reason:
+      "each SQL engine's generator row, composed from the generated SQL generator forms and Studio's SQL generator function table, which binds each named function",
   },
   {
     path: "src/lib/db/sql-grammar/index.ts",

@@ -372,7 +372,8 @@ It runs no seed load check.
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mssql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mssql.json`](../../src/lib/db/engine-declarations/mssql.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mssql`, and its declaration's `editor.fenceAliases`, `tsql` and `sqlserver`.
-What a tree click and Generate Query write is `MSSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id, which Studio composes from the `sqlGenerators` segment of [`engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts), `MSSQL_GENERATOR_QUOTE` and `MSSQL_GENERATOR_SELECT_LIST`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+Its declared count expression is `COUNT_BIG(*)`, so Generate Count Query counts with `COUNT_BIG`: `COUNT` returns an int, and `COUNT_BIG` preserves billion-row counts.
 How `mapDatabaseError` classifies its driver's errors, its statement and access-refusal error numbers, its cannot-open-database words and its `ECANCEL` cancel code, is the `mssql` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts).
 
 ---

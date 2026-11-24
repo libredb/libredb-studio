@@ -1,8 +1,8 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, and each engine's
- * SQL text, SQL writing and migration DDL as projections of a set of admitted engine declarations
- * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79 and M-80).
+ * SQL text, SQL writing, migration DDL and SQL generator forms as projections of a set of admitted engine declarations
+ * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80 and M-81).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -57,6 +57,12 @@
  * composes each engine's migration DDL row. The segment holds no claim, and no migration DDL fact is shared between
  * engines, so nothing is refused across the set but a second declaration of one id.
  *
+ * The SQL generator forms answer, per engine, its whole `sqlGenerators` segment as the declaration states it: null
+ * where the engine writes Studio's shared SQL forms, and otherwise the name of each form, null where the shared form
+ * stands, and its count expression, which src/lib/db/query-generators/index.ts binds to Studio's own functions when it
+ * composes each SQL engine's generator row. The segment holds no claim, and no generator fact is shared between
+ * engines, so nothing is refused across the set but a second declaration of one id.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
  * confirmation gate's two, `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where
@@ -72,8 +78,8 @@
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
  * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`,
- * `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts` and `migration-ddl.generated.ts`,
- * the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
+ * `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts` and
+ * `sql-generators.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
  * validator. A loader that admits a provider package at run time projects its set through these same functions.
  */
 import type {
@@ -89,6 +95,7 @@ import type {
   MonacoLanguageId,
   QueryDialect,
   QueryLanguage,
+  SqlGenerators,
   SqlText,
   SqlWriting,
 } from "@libredb/provider-sdk/manifest";
@@ -135,6 +142,7 @@ export interface AuthoredDeclaration {
   readonly sqlText: SqlTextEntry;
   readonly sqlWriting: SqlWriting;
   readonly migrationDdl: MigrationDdl;
+  readonly sqlGenerators: SqlGenerators;
 }
 
 /**
@@ -169,6 +177,15 @@ export type MigrationDdlEntry = MigrationDdl;
 
 /** The migration DDL: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
 export type MigrationDdls = Readonly<Record<string, MigrationDdlEntry>>;
+
+/**
+ * One engine's SQL generator forms as its declaration authors them, the SDK's `SqlGenerators`: null where the engine
+ * writes the shared forms, and otherwise each form as its name or null and the count expression.
+ */
+export type SqlGeneratorsEntry = SqlGenerators;
+
+/** The SQL generator forms: one frozen entry per engine id, null included, keyed in ascending code-unit order. */
+export type SqlGeneratorForms = Readonly<Record<string, SqlGeneratorsEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -620,4 +637,14 @@ export function projectSqlWriting(declarations: readonly AuthoredDeclaration[]):
  */
 export function projectMigrationDdl(declarations: readonly AuthoredDeclaration[]): MigrationDdls {
   return recordOf(inIdOrder(declarations), ({ migrationDdl }) => frozenCopy<MigrationDdlEntry>(migrationDdl));
+}
+
+/**
+ * The SQL generator forms of `declarations`, each entry the declaration's `sqlGenerators` as it states it, a segment
+ * every declaration authors, null where it states none, so the record holds every admitted id.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectSqlGenerators(declarations: readonly AuthoredDeclaration[]): SqlGeneratorForms {
+  return recordOf(inIdOrder(declarations), ({ sqlGenerators }) => frozenCopy<SqlGeneratorsEntry>(sqlGenerators));
 }
