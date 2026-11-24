@@ -225,10 +225,13 @@ A search that names no metric and no search parameter runs without the IndexDeta
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `milvus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`milvus.json`](../../src/lib/db/engine-declarations/milvus.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `milvus`, and its declaration's `editor.fenceAliases`, `milvusrpc`.
+Its query dialect row, the `milvus` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: a collection's columns include vectors, so no profile, model or count statement of its grammar applies, and a count is the documented `count(*)` request.
+It offers neither SQL export format, since neither applies to its rows.
 A block tagged `milvus` holds one Milvus console request the editor runs as it is (vector-family spec 5.7), and `milvusrpc` names the agent's Milvus request language, which only `milvus` runs.
 `json` is a MongoDB document as often, and `http` and `rest` name no engine, so none of them names it: an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 What a tree click and Generate Query write is `MILVUS_GENERATORS`, the `milvus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/vector/milvus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `milvus`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/vector/milvus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `milvus`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/vector/milvus/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

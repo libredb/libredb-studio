@@ -1,4 +1,4 @@
-import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
+import type { EditorLanguageCode } from "@/lib/db/editor-language/types";
 import { graphPolicyProfileOf } from "@/lib/db/graph-policy-profiles";
 import { cypherCompletionSchemaOf, registerCypherCompletionProvider } from "./editor-completions";
 import { registerCypherLanguage } from "./editor-syntax";
@@ -11,10 +11,11 @@ import { registerCypherLanguage } from "./editor-syntax";
  * table names, and its CALL and SHOW allowlists from the connected engine's policy profile, looked up by type as the
  * SQL source gets its dialect.
  *
- * Purple (SR20): a hue no other language uses and none of the rail's three status hues. No guard reads Cypher, so its
- * draft stands beside the amber "not checked" chip.
+ * Its accent, which the declaration states in `editor.language.accent`, is purple (SR20): a hue no other language uses
+ * and none of the rail's three status hues. No guard reads Cypher, so its draft stands beside the amber "not checked"
+ * chip.
  */
-export const CYPHER_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>({
+export const CYPHER_EDITOR_LANGUAGE = Object.freeze<EditorLanguageCode>({
   monacoId: "graph-cypher",
   register: registerCypherLanguage,
   completions: (monaco, context) =>
@@ -23,5 +24,4 @@ export const CYPHER_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>(
       cypherCompletionSchemaOf(context.schemaObjects),
       graphPolicyProfileOf(context.databaseType),
     ),
-  accent: "border-hue-purple/40",
 });

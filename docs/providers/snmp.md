@@ -95,6 +95,9 @@ The dialog offers no SSL / TLS panel: the transport is bare UDP, no file of the 
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `snmp` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`snmp.json`](../../src/lib/db/engine-declarations/snmp.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `snmp`, and its declaration's `editor.fenceAliases`, `snmpget`.
+Its query dialect row, the `snmp` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, is registered rather than left absent because, with no dialect, a tree click on an SNMP object would open a MongoDB editor and the generator would write a `find`.
+It offers no Profile, since summarising a column means walking the subtree a second time with no statement the agent understands, no Generate Count Query, since an SNMP table is assembled by walking and there is nothing to count without doing it, and no Generate Code, since the grammar is four words and a numbered name.
+Its tab renders in Monaco's built-in `json`.
 `snmpget` names the agent's SNMP read command language, which only `snmp` runs.
 What a tree click and Generate Query write is `SNMP_GENERATORS`, the `snmp` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/snmp/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 

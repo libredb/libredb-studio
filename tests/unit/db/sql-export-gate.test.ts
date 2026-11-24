@@ -16,6 +16,8 @@ const RECORD: DialectSpec = {
   offersColumnProfiling: false,
   offersCodeGeneration: false,
   offersCountQuery: false,
+  offersSqlExport: true,
+  historyMask: null,
 };
 
 const realDialects = { ...(await import("@/lib/db/query-dialects")) };
@@ -58,7 +60,7 @@ describe("offersSqlExport", () => {
     expect(offersSqlExport(makeCaps({ queryLanguage: "influxql" }))).toBe(true);
   });
 
-  test("offers them to every shipped dialect whose record leaves the field absent", () => {
+  test("offers them to every shipped dialect whose record offers them", () => {
     for (const dialect of ["libredb", "redis", "kafka", "etcd"] as const) {
       expect(offersSqlExport(makeCaps({ queryDialect: dialect })), dialect).toBe(true);
     }

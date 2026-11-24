@@ -61,3 +61,9 @@ export interface EditorLanguageContribution {
    */
   readonly accent: string;
 }
+
+/**
+ * Studio's code of one Monaco language: its contribution without the accent, which the engine declarations state
+ * (`editor.language.accent`, docs/providers/CONTRACT.md, clause M-77) and the registry in `./index.ts` composes with it.
+ */
+export type EditorLanguageCode = Omit<EditorLanguageContribution, "accent">;

@@ -1,4 +1,5 @@
 import type { EditorLanguage } from "@/lib/db/editor-language";
+import { BUNDLED_DIALECT_EDITORS } from "@/lib/db/engine-catalog/query-editor.generated";
 import type { QueryTab } from "@/lib/types";
 
 /**
@@ -15,41 +16,10 @@ export interface DialectEditor {
 }
 
 /**
- * Every tab type's language, as `editorLanguageForTabType` and `QueryEditor` read it. Kafka's read request, and every
- * other JSON read request, renders in Monaco's built-in `json` mode and registers no language of its own (#1088).
- * Tab types that render in one language share its formatter, since the formatter is the language's.
+ * Every tab type's language, as `editorLanguageForTabType` and `QueryEditor` read it: the Monaco language each engine
+ * declaration states in its `editor.language` for the tab type its tabs open under, projected from the admitted
+ * declarations into the generated query editor module (docs/providers/CONTRACT.md, clause M-77), which holds every
+ * declaration of one tab type to one language. Tab types that render in one language share its formatter, since the
+ * formatter is the language's. Each engine's reasons for its tab type's language are in its provider document.
  */
-export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> = Object.freeze({
-  sql: Object.freeze({ monacoId: "sql" }),
-  mongodb: Object.freeze({ monacoId: "json" }),
-  libredb: Object.freeze({ monacoId: "libredb" }),
-  redis: Object.freeze({ monacoId: "redis" }),
-  promql: Object.freeze({ monacoId: "promql" }),
-  kafka: Object.freeze({ monacoId: "json" }),
-  etcd: Object.freeze({ monacoId: "etcd" }),
-  // Cypher declares a language and no dialect, as PromQL does (Neo4j spec 6.5). `graph-cypher` and not `cypher`,
-  // which Monaco's own bundle registers.
-  cypher: Object.freeze({ monacoId: "graph-cypher" }),
-  milvus: Object.freeze({ monacoId: "milvus" }),
-  qdrant: Object.freeze({ monacoId: "qdrant" }),
-  weaviate: Object.freeze({ monacoId: "weaviate" }),
-  // InfluxQL declares a language and no dialect, as PromQL and Cypher do (InfluxDB spec I12).
-  influxql: Object.freeze({ monacoId: "influxql" }),
-  oxia: Object.freeze({ monacoId: "oxia" }),
-  s3: Object.freeze({ monacoId: "s3" }),
-  // MQTT has no console at all: `query()` throws, so nothing is ever typed in this tab. The entry exists because
-  // the record is exhaustive over tab types, and it renders in `json` so Format answers as in every other JSON tab.
-  mqtt: Object.freeze({ monacoId: "json" }),
-  firestore: Object.freeze({ monacoId: "firestore" }),
-  rabbitmq: Object.freeze({ monacoId: "json" }),
-  kubectl: Object.freeze({ monacoId: "kubectl" }),
-  opcua: Object.freeze({ monacoId: "json" }),
-  mtconnect: Object.freeze({ monacoId: "mtconnect" }),
-  modbus: Object.freeze({ monacoId: "json" }),
-  // NETCONF's own language is XML, and a reader never types any, so no XML editor is registered here.
-  netconf: Object.freeze({ monacoId: "json" }),
-  snmp: Object.freeze({ monacoId: "json" }),
-  // A Sparkplug read request names a group, an edge node and a window rather than a route, so there is no grammar or
-  // route table to register (#1720).
-  sparkplug: Object.freeze({ monacoId: "json" }),
-});
+export const DIALECT_EDITORS: Readonly<Record<QueryTab["type"], DialectEditor>> = BUNDLED_DIALECT_EDITORS;

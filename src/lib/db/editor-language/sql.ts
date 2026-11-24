@@ -1,7 +1,7 @@
 import { format } from "sql-formatter";
 import { registerSQLCompletionProvider } from "@/lib/editor/sql-completions";
 import type { SqlGrammar } from "@libredb/provider-sdk/sql";
-import type { EditorLanguageContribution } from "./types";
+import type { EditorLanguageCode } from "./types";
 
 /**
  * The SQL formatter's options, unchanged since `QueryEditor` called it directly, except the language: the
@@ -20,12 +20,12 @@ const formatSql = (text: string, grammar?: SqlGrammar): string =>
   });
 
 /**
- * SQL, the language every SQL-dialect engine's tab renders in: Monaco ships it, the shared SQL layer completes it
- * from the schema context on the connected engine's grammar, and its accent is blue.
+ * SQL, the language every SQL-dialect engine's tab renders in: Monaco ships it, the shared SQL layer completes it from
+ * the schema context on the connected engine's grammar, and its accent, which the declarations state in
+ * `editor.language.accent`, is blue.
  */
-export const SQL_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>({
+export const SQL_EDITOR_LANGUAGE = Object.freeze<EditorLanguageCode>({
   monacoId: "sql",
   format: formatSql,
   completions: (monaco, context) => registerSQLCompletionProvider(monaco, context.schemaCache, context.databaseType),
-  accent: "border-hue-blue/40",
 });

@@ -285,6 +285,9 @@ Its one seed-only field is `hostKeyFingerprint` (its declaration's `connection.s
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `netconf` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`netconf.json`](../../src/lib/db/engine-declarations/netconf.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `netconf`, and its declaration's `editor.fenceAliases`, `netconfrpc`.
+Its query dialect row, the `netconf` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, since a YANG leaf is a value in a tree and a read's rows are built per entry, so there is no column to profile over.
+It offers no Generate Code or Generate Count Query: the provider sends four read operations and a close and nothing else, and NETCONF has no request that counts what is below a path, so a generated statement would be one no device could run and a count a number nobody measured.
+Its tab renders in Monaco's built-in `json`: NETCONF's own language is XML, and a reader never types any, so no XML editor is registered.
 A block tagged `netconf` holds one JSON read request naming a datastore, a path and a limit, which the console runs as it is; the device's own language is XML and nothing here writes any.
 `netconfrpc` names the agent's NETCONF read request language, which only `netconf` runs.
 What a tree click and Generate Query write is `NETCONF_GENERATORS`, the `netconf` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/network/netconf/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.

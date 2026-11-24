@@ -231,10 +231,13 @@ The shared transport has no HTTPS proxy support, so a Studio whose egress goes t
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `firestore` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`firestore.json`](../../src/lib/db/engine-declarations/firestore.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `firestore`, and its declaration's `editor.fenceAliases`, `fsquery`.
+Its query dialect row, the `firestore` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile or Generate Code, since a collection's columns are sampled field paths, and neither SQL export format, since its rows are documents rather than rows of a SQL table.
+It offers Generate Count Query, which writes `db.collection("<id>").count()` into a tab for the user to run: one aggregation, which Firestore bills one read per 1,000 index entries it scans.
 A block tagged `firestore` holds one statement of the console's read-only Admin SDK subset, and `fsquery` names the agent's Firestore metadata read statement language, which only `firestore` runs.
 `firebase` names a platform of many products, and `js` and `javascript` name a language, not an engine, so none of them names it.
 What a tree click and Generate Query write is `FIRESTORE_GENERATORS`, the `firestore` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/document/firestore/console/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `firestore`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/document/firestore/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `firestore`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/document/firestore/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

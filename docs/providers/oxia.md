@@ -92,7 +92,7 @@ The command language's modules (its numbers, the lexer, the command table, the g
 | `src/lib/languages/oxiacli/destructive.ts` | The engine's row of the confirmation gate's vocabulary, which `src/lib/db/destructive-commands.ts` collects | browser |
 | `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
-| `editor-language.ts` | The engine's editor language row: the `oxia` language, no completion, no formatter, its accent | browser |
+| `editor-language.ts` | The engine's editor language code: the `oxia` language, no completion, no formatter | browser |
 | `src/lib/languages/oxiacli/agent-statement.ts` | Agent mode's reader of one command: the closed table of metadata reads over the editor's parser, and every refusal in agent mode's words | server |
 | `agent-metadata-read.ts` | Agent mode's metadata-only projection of each read, the budgets and the wording of a failure by its category | server |
 | `index.ts` | The composition root: the session, the declarations, the snapshot cache, the order verdict's lifetime, the run registry and the one failure path | server |
@@ -336,9 +336,11 @@ The URL is not pasted whole: type `host` in Host, `6648` in Port and `ns` in Nam
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oxia` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`oxia.json`](../../src/lib/db/engine-declarations/oxia.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `oxia`, and its declaration's `editor.fenceAliases`, `oxiacli`.
+Its query dialect row, the `oxia` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code, Generate Count Query or SQL export format: its rows are records of a fixed shape, so no profile, model or count statement of its grammar applies, and neither export format does.
 A block tagged `oxia` holds one `oxia client` read command the editor runs as it is (O14), and `oxiacli` names the agent's Oxia command language, which only `oxia` runs.
 What a tree click and Generate Query write is `OXIA_GENERATORS`, the `oxia` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/keyvalue/oxia/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `oxia`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/keyvalue/oxia/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `oxia`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/keyvalue/oxia/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

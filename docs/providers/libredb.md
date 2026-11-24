@@ -387,9 +387,11 @@ LibreDB is embedded in the process, so there is no address to write a scheme for
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `libredb` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`libredb.json`](../../src/lib/db/engine-declarations/libredb.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `libredb`, and its declaration's `editor.fenceAliases`, `libredbkv`.
+Its query dialect row, the `libredb` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, keeps Generate Code, because the code generator names a row rather than addressing it (#427), and offers no Profile or Generate Count Query.
 `libredbkv` names the agent's LibreDB command language, which only `libredb` runs.
 What a tree click and Generate Query write is `LIBREDB_GENERATORS`, the `libredb` row of `DIALECT_GENERATORS`, declared in [`libredb-generators.ts`](../../src/lib/db/providers/embedded/libredb-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `libredb`, is the row in `EDITOR_LANGUAGES` declared in [`libredb-editor-language.ts`](../../src/lib/db/providers/embedded/libredb-editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `libredb`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`libredb-editor-language.ts`](../../src/lib/db/providers/embedded/libredb-editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ---
 

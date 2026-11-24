@@ -186,6 +186,8 @@ Its one seed-only field is `registerMap` (its declaration's `connection.seedOnly
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `modbus` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`modbus.json`](../../src/lib/db/engine-declarations/modbus.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `modbus`, and its declaration's `editor.fenceAliases`, `modbusread`.
+Its query dialect row, the `modbus` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, since a point is a value rather than a column and there is no statement to profile over, no Generate Count Query, since Modbus has no request that counts anything and the number of points is the map's own, already on the tree, and no Generate Code.
+Its read request renders in Monaco's built-in `json`.
 A block tagged `modbus` holds one JSON read request, which the console runs as it is, and `modbusread` names the agent's Modbus read request language, which only `modbus` runs.
 What a tree click and Generate Query write is `MODBUS_GENERATORS`, the `modbus` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/industrial/modbus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 

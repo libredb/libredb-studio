@@ -1,4 +1,4 @@
-import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
+import type { EditorLanguageCode } from "@/lib/db/editor-language/types";
 import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "./routes";
 
 /**
@@ -9,12 +9,12 @@ import { MTC_CONSOLE_DIALECT, MTC_CONSOLE_ROUTES } from "./routes";
  * NO FORMATTER: the console formatter is the HTTP grammar's, which writes a method, a route and a JSON body, and this
  * dialect has no body at all. The SQL and JSON formatters both rewrite a URL line.
  *
- * The `-alt` step of the steel grey the `industrial/` family carries, its identity hue everywhere else in the product.
- * Its nearest neighbour is kubectl's teal-alt at 0.086 in OKLab in light and Oxia's purple-alt at 0.111 in dark, and it
- * is none of the rail's three status hues.
+ * Its accent, which the declaration states in `editor.language.accent`, is the `-alt` step of the steel grey the
+ * `industrial/` family carries, its identity hue everywhere else in the product. Its nearest neighbour is kubectl's
+ * teal-alt at 0.086 in OKLab in light and Oxia's purple-alt at 0.111 in dark, and it is none of the rail's three status
+ * hues.
  */
-export const MTCONNECT_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>({
+export const MTCONNECT_EDITOR_LANGUAGE = Object.freeze<EditorLanguageCode>({
   monacoId: "mtconnect",
   console: Object.freeze({ spec: MTC_CONSOLE_DIALECT, routes: MTC_CONSOLE_ROUTES }),
-  accent: "border-hue-slate-alt/40",
 });

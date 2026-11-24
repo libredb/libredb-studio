@@ -398,7 +398,8 @@ The fence tags that name it are its id, `prometheus`, and its declaration's `edi
 A block tagged `prometheus` holds a PromQL expression the editor sends unchanged to `/api/v1/query` (#1085), and it is the tag the planning contract asks a model for.
 `promql` spells the language and still names this engine, since every PromQL server this product reaches, VictoriaMetrics included, connects through `prometheus`: without it a `promql` block contradicted no connection and was recorded as a PostgreSQL run's statement, and a second type-id that runs PromQL is the moment to revisit it.
 What a tree click and Generate Query write is `PROMQL_GENERATORS`, the `promql` row of `LANGUAGE_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/timeseries/prometheus/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `promql`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `promql`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/timeseries/prometheus/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ---
 

@@ -1,7 +1,7 @@
 /**
- * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, and each
- * engine's execution UI and fence aliases as projections of a set of admitted engine declarations
- * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74 and M-75).
+ * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
+ * engine's execution UI and fence aliases, and its query dialects, tab type editors and editor languages as projections
+ * of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75 and M-77).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -29,6 +29,15 @@
  * declarations that admitting each declaration on its own cannot see. An alias equal to its own declaration's id, and
  * an alias that is a generic fence tag, are refused by the SDK's validator when the declaration is admitted.
  *
+ * The query editor facts answer, per query dialect, the row its declarations state (`editor.dialect`), its tab type the
+ * dialect's name; per tab type, the Monaco language its tabs render in (`editor.language.monacoId`), the tab type a
+ * declaration's tabs open under being its dialect's name or, for a declaration with no dialect, its query language's
+ * tab type; and per Monaco language, its accent and whether it is a console dialect (`editor.language.accent` and
+ * `console`). Several declarations may state one dialect, one tab type or one language, and each must state it alike:
+ * a dialect stated with different rows, a tab type stated in different languages and a language stated with a
+ * different accent or console are refused by name, naming both engines, before any entry is built. The dialect, tab
+ * type and Monaco language vocabularies are closed, so the SDK's validator refuses a value outside them.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim. Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
@@ -41,8 +50,8 @@
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts`, `connection-string.generated.ts` and `editor.generated.ts`, the modules Studio's
- * readers read, and holds
+ * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts` and
+ * `query-editor.generated.ts`, the modules Studio's readers read, and holds
  * each module to the projection of the set it admits through the SDK's validator. A loader that admits a provider
  * package at run time projects its set through these same functions.
  */
@@ -50,9 +59,14 @@ import type {
   ConnectBudget,
   CredentialWarning,
   Editor,
+  EditorAccent,
   EngineDeclaration,
   EngineLocation,
   FieldName,
+  HistoryMask,
+  MonacoLanguageId,
+  QueryDialect,
+  QueryLanguage,
 } from "@libredb/provider-sdk/manifest";
 
 type Connection = EngineDeclaration["connection"];
@@ -91,6 +105,8 @@ export interface AuthoredDeclaration {
     readonly commitKeyword: Editor["commitKeyword"];
     readonly consentDeadline: Editor["consentDeadline"];
     readonly fenceAliases: Editor["fenceAliases"];
+    readonly dialect: Editor["dialect"];
+    readonly language: Editor["language"];
   };
 }
 
@@ -181,6 +197,52 @@ export interface EditorFacts {
   readonly executionUi: Readonly<Record<string, ExecutionUiEntry>>;
   readonly fenceAliases: Readonly<Record<string, string>>;
 }
+
+/**
+ * One query dialect's row: the tab type its tabs open as, the dialect's name, and what the editor offers for it, every
+ * member present, the history mask null where history keeps a statement as typed.
+ */
+export interface QueryDialectEntry {
+  readonly tabType: QueryDialect;
+  readonly offersColumnProfiling: boolean;
+  readonly offersCodeGeneration: boolean;
+  readonly offersCountQuery: boolean;
+  readonly offersSqlExport: boolean;
+  readonly historyMask: HistoryMask;
+}
+
+/** One tab type's editor: the Monaco language its tabs render in. */
+export interface DialectEditorEntry {
+  readonly monacoId: MonacoLanguageId;
+}
+
+/** One Monaco language's facts: the accent an agent answer's statement block takes, and whether it is a console. */
+export interface EditorLanguageEntry {
+  readonly accent: EditorAccent;
+  readonly console: boolean;
+}
+
+/**
+ * The query editor facts: one frozen row per stated query dialect, one frozen editor per tab type and one frozen entry
+ * per stated Monaco language, each record keyed in ascending code-unit order of its keys.
+ */
+export interface QueryEditorFacts {
+  readonly queryDialects: Readonly<Record<string, QueryDialectEntry>>;
+  readonly dialectEditors: Readonly<Record<string, DialectEditorEntry>>;
+  readonly editorLanguages: Readonly<Record<string, EditorLanguageEntry>>;
+}
+
+/**
+ * The tab type a declaration with no query dialect opens its tabs under, per query language
+ * (docs/providers/CONTRACT.md, clause S-23); a declaration with a dialect opens them under the dialect's name.
+ */
+const QUERY_LANGUAGE_TAB_TYPES: Readonly<Record<QueryLanguage, string>> = Object.freeze({
+  sql: "sql",
+  json: "mongodb",
+  promql: "promql",
+  cypher: "cypher",
+  influxql: "influxql",
+});
 
 /**
  * `declarations` in ascending code-unit order of their ids.
@@ -375,5 +437,88 @@ export function projectEditorFacts(declarations: readonly AuthoredDeclaration[])
       frozenCopy<ExecutionUiEntry>({ commitKeyword: editor.commitKeyword, consentDeadline: editor.consentDeadline }),
     ),
     fenceAliases,
+  });
+}
+
+/** A frozen record of `entries`, keyed in ascending code-unit order of their keys. */
+function inKeyOrder<Value>(entries: ReadonlyMap<string, Value>): Readonly<Record<string, Value>> {
+  return Object.freeze(Object.fromEntries([...entries].sort(([a], [b]) => (a < b ? -1 : 1))));
+}
+
+/** The statements of one kind of query editor fact, each value under its key with the first declaration stating it. */
+type Statements<Value> = Map<string, { readonly value: Value; readonly id: string }>;
+
+/**
+ * Records `value` under `key` in `stated`, the entry the declaration `id` states, or refuses it by name when an earlier
+ * declaration stated another value under that key. Values are compared member by member, lists in their order, through
+ * their JSON text: each value is built member by member in one order, so equal statements have equal text.
+ *
+ * @throws {Error} Naming the `subject` and its key, what differs (`difference`), the earlier declaration and `id`.
+ */
+function stateOnce<Value>(
+  stated: Statements<Value>,
+  { key, value, id }: { readonly key: string; readonly value: Value; readonly id: string },
+  subject: string,
+  difference: string,
+): void {
+  const earlier = stated.get(key);
+  if (earlier === undefined) {
+    stated.set(key, { value, id });
+    return;
+  }
+  if (JSON.stringify(earlier.value) !== JSON.stringify(value)) {
+    throw new Error(`The ${subject} ${JSON.stringify(key)} is stated ${difference} by ${earlier.id} and ${id}.`);
+  }
+}
+
+/** The values of `stated`, each under its key. */
+function valuesOf<Value>(stated: ReadonlyMap<string, { readonly value: Value }>): Map<string, Value> {
+  return new Map([...stated].map(([key, { value }]) => [key, value]));
+}
+
+/** The dialect row `dialect` states, frozen, member by member in one order, its flag list copied. */
+function dialectEntryOf(dialect: NonNullable<Editor["dialect"]>): QueryDialectEntry {
+  return frozenCopy<QueryDialectEntry>({
+    tabType: dialect.name,
+    offersColumnProfiling: dialect.offersColumnProfiling,
+    offersCodeGeneration: dialect.offersCodeGeneration,
+    offersCountQuery: dialect.offersCountQuery,
+    offersSqlExport: dialect.offersSqlExport,
+    historyMask: dialect.historyMask === null ? null : { credentialFlags: dialect.historyMask.credentialFlags },
+  });
+}
+
+/**
+ * The query editor facts of `declarations`, each read from `editor.dialect` and `editor.language`, members every
+ * declaration authors.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it; and, declarations taken in ascending id order,
+ * when a later one states a dialect with another row, a tab type in another language or a language with another accent
+ * or console than an earlier one, naming the dialect, tab type or language and both engines.
+ */
+export function projectQueryEditorFacts(declarations: readonly AuthoredDeclaration[]): QueryEditorFacts {
+  const dialects: Statements<QueryDialectEntry> = new Map();
+  const editors: Statements<DialectEditorEntry> = new Map();
+  const languages: Statements<EditorLanguageEntry> = new Map();
+  for (const { id, editor } of inIdOrder(declarations)) {
+    const { dialect, language } = editor;
+    if (dialect !== null) {
+      stateOnce(dialects, { key: dialect.name, value: dialectEntryOf(dialect), id }, "dialect", "with different rows");
+    }
+    const tabType = dialect === null ? QUERY_LANGUAGE_TAB_TYPES[language.queryLanguage] : dialect.name;
+    const tabEditor = Object.freeze({ monacoId: language.monacoId });
+    stateOnce(editors, { key: tabType, value: tabEditor, id }, "tab type", "in different editor languages");
+    const facts = Object.freeze({ accent: language.accent, console: language.console });
+    stateOnce(
+      languages,
+      { key: language.monacoId, value: facts, id },
+      "editor language",
+      "with a different accent or console",
+    );
+  }
+  return Object.freeze({
+    queryDialects: inKeyOrder(valuesOf(dialects)),
+    dialectEditors: inKeyOrder(valuesOf(editors)),
+    editorLanguages: inKeyOrder(valuesOf(languages)),
   });
 }

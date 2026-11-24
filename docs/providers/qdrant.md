@@ -205,10 +205,13 @@ Its strict mode answers "Limit exceeded", "Index required but not found", "Exact
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `qdrant` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`qdrant.json`](../../src/lib/db/engine-declarations/qdrant.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `qdrant`, and its declaration's `editor.fenceAliases`, `qdrantapi`.
+Its query dialect row, the `qdrant` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: a collection's columns include vectors and sampled payload keys, so no profile, model or count statement of its grammar applies, and a count is the documented count request.
+It offers neither SQL export format, since neither applies to its rows.
 A block tagged `qdrant` holds one Qdrant console request the editor runs as it is (vector-family spec 6.7), and `qdrantapi` names the agent's Qdrant request language, which only `qdrant` runs.
 `json` is a MongoDB document as often, and `http` and `rest` name no engine, so none of them names it: an alias that names the wrong engine is worse than a missing one, because `fenceTagEngine` decides whether a plan's deliverable was written for this connection.
 What a tree click and Generate Query write is `QDRANT_GENERATORS`, the `qdrant` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/vector/qdrant/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `qdrant`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/vector/qdrant/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `qdrant`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/vector/qdrant/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

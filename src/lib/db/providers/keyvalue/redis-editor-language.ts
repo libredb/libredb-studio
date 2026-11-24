@@ -1,9 +1,11 @@
-import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
+import type { EditorLanguageCode } from "@/lib/db/editor-language/types";
 import { registerRedisLanguage } from "./redis-editor-syntax";
 
-/** The Redis command language (#427): no formatter, because the SQL formatter rewrites a command, and fuchsia. */
-export const REDIS_EDITOR_LANGUAGE = Object.freeze<EditorLanguageContribution>({
+/**
+ * The Redis command language (#427): no formatter, because the SQL formatter rewrites a command, and fuchsia, the
+ * accent its declaration states in `editor.language.accent`.
+ */
+export const REDIS_EDITOR_LANGUAGE = Object.freeze<EditorLanguageCode>({
   monacoId: "redis",
   register: registerRedisLanguage,
-  accent: "border-hue-fuchsia/40",
 });

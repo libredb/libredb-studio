@@ -61,6 +61,7 @@ describe("the rabbitmq dialect's records", () => {
       offersCodeGeneration: false,
       offersCountQuery: false,
       offersSqlExport: false,
+      historyMask: null,
     });
   });
 

@@ -16,6 +16,8 @@ const STAND_IN_SPEC: DialectSpec = {
   offersColumnProfiling: false,
   offersCodeGeneration: false,
   offersCountQuery: false,
+  offersSqlExport: true,
+  historyMask: null,
 };
 
 mock.module("@/lib/db/query-dialects", () => ({

@@ -119,25 +119,23 @@
  * `metadataOnly`, one entry per operation in the capability's key order; and `inlineEditRefusedColumns` from
  * `inlineEditRefusedColumns`. The last two are null where the provider declares none.
  *
- * The editor facts other than the authored commit keyword, consent deadline and fence aliases come from
- * `QUERY_DIALECTS`, the editor language tables (`EDITOR_LANGUAGES` and `DIALECT_EDITORS`) and each engine's
- * capabilities. The capabilities are read as Studio reads a provider it never
- * connects, `readProviderDeclarations` with the engine's census connection (tests/helpers/census-connection.ts), so the
- * declaration states the explain format and the query dialect the provider declares before it connects. That read
+ * The editor's commit keyword, consent deadline, fence aliases, dialect and language are authored, written back as the
+ * committed file states them; the explain format comes from each engine's capabilities. The capabilities are read as
+ * Studio reads a provider it never connects, `readProviderDeclarations` with the engine's census connection
+ * (tests/helpers/census-connection.ts), so the declaration states the explain format the provider declares before it
+ * connects, and the authored dialect and query language are held to the ones it declares. That read
  * builds every provider once, in a child process (scripts/read-engine-capabilities.ts) whose environment is
  * `CAPABILITY_READ_ENVIRONMENT`, empty, with no `.env` file loaded: a provider reads variables when it is built, and
  * one set where the generator runs, exported or in a `.env` file, never changes a declaration. The child loads each
  * provider module and logs one line per engine. The generator refuses by name, rather than write a declaration that
- * drops or misstates it: an explain format the provider's explain support contradicts, a dialect `QUERY_DIALECTS` has no row
- * for, a dialect row whose tab type is not the dialect's name, and a dialect row no engine declares.
+ * drops or misstates it: an explain format the provider's explain support contradicts, an authored dialect that is not
+ * the query dialect the provider declares, and an authored query language that is not the one it declares.
  *
- * The editor language is the engine's query language, the Monaco language of the tab type Studio's `resolveTabType`
- * gives its capabilities, read from that tab type's `DIALECT_EDITORS` row, and that language's accent and whether it is
- * a console dialect, read from its `EDITOR_LANGUAGES` row. No tab type is written, since the dialect or the query
- * language gives it, and no console dialect id, since it is the Monaco id. A language's registration, completion
- * source and formatter, and a console's grammar and routes, stay browser code Studio's editor reads, so none of them is
- * written. The generator refuses by name a member of either row it has no place for, a language row whose `monacoId` is
- * not its key, and a console whose dialect id is not its Monaco id.
+ * The dialect row and the editor language are projected from the declarations into Studio's query dialects, tab type
+ * editors and editor languages (scripts/generate-engine-catalog.ts, clause M-77), which hold every declaration of one
+ * dialect, tab type or language to one statement. A language's registration, completion source and formatter, and a
+ * console's grammar and routes, stay browser code Studio's editor reads, composed with the accent and console the
+ * declarations state (src/lib/db/editor-language/index.ts).
  *
  * Run: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]
  * --write writes every declaration and removes a `.json` file for an id no longer shipped, --check exits 1 naming each
@@ -153,7 +151,6 @@ import type {
   CatalogRead,
   ClausePattern,
   Editor,
-  EditorLanguageFacts,
   EngineDeclaration,
   FieldName,
   GrammarFacts,
@@ -163,7 +160,6 @@ import type {
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
-  QueryDialectRow,
   Safeguards,
   SqlDialect,
   SqlGenerators,
@@ -206,12 +202,9 @@ import {
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
 } from "../src/lib/db/connection-fields";
-import { EDITOR_LANGUAGES, type EditorLanguage } from "../src/lib/db/editor-language";
-import type { EditorLanguageContribution } from "../src/lib/db/editor-language/types";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { MIGRATION_DDL } from "../src/lib/db/migration-ddl";
 import type { MigrationDdlSpec } from "../src/lib/db/migration-ddl/types";
-import { type DialectSpec, QUERY_DIALECTS, type QueryDialect } from "../src/lib/db/query-dialects";
 import { SQL_ENGINE_GENERATORS } from "../src/lib/db/query-generators";
 import type { SqlEngineGenerators } from "../src/lib/db/query-generators/types";
 import { SQL_GRAMMAR } from "../src/lib/db/sql-grammar";
@@ -220,9 +213,7 @@ import { SQL_WRITING } from "../src/lib/db/sql-writing";
 import type { InferredKind, SqlWritingSpec } from "../src/lib/db/sql-writing/types";
 import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
 import type { NonFiniteWord } from "../src/lib/non-finite";
-import { DIALECT_EDITORS, type DialectEditor } from "../src/lib/editor/dialect-editors";
-import { resolveTabType } from "../src/lib/editor/tab-language";
-import type { DatabaseType, QueryTab } from "../src/lib/types";
+import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
 export {
@@ -256,20 +247,6 @@ function fieldName(name: string, type: DatabaseType): FieldName {
   if (!FIELD_NAMES.has(name)) throw new Error(`${type}: "${name}" is not a field name of the provider contract`);
   return name as FieldName;
 }
-
-/** The tables an engine's editor facts are read from, a parameter so a test can hand the generator others. */
-export interface EditorTables {
-  readonly dialects: Readonly<Partial<Record<QueryDialect, DialectSpec>>>;
-  readonly languages: Readonly<Record<EditorLanguage, EditorLanguageContribution>>;
-  readonly tabEditors: Readonly<Record<QueryTab["type"], DialectEditor>>;
-}
-
-/** Today's tables of the editor facts. */
-export const EDITOR_TABLES: EditorTables = Object.freeze({
-  dialects: QUERY_DIALECTS,
-  languages: EDITOR_LANGUAGES,
-  tabEditors: DIALECT_EDITORS,
-});
 
 /**
  * The environment the capability read runs in: none of the variables of the environment the generator runs in, so a
@@ -316,105 +293,15 @@ export async function readEngineCapabilities(
 }
 
 /**
- * The engine's query dialect with the answers of its row, or null where the provider declares none: `offersSqlExport`
- * resolved, since an absent member means offered, and a history mask written as null where the row has none. A
- * dialect `dialects` has no row for, or whose row's tab type is not the dialect's name, is a thrown error naming it.
- */
-function buildDialect(
-  type: DatabaseType,
-  dialect: QueryDialect | undefined,
-  dialects: EditorTables["dialects"],
-): QueryDialectRow {
-  if (dialect === undefined) return null;
-  const row = Object.hasOwn(dialects, dialect) ? dialects[dialect] : undefined;
-  if (row === undefined) {
-    throw new Error(`${type}: the provider declares the ${dialect} dialect, which QUERY_DIALECTS has no row for`);
-  }
-  if (row.tabType !== dialect) {
-    throw new Error(`${type}: the ${dialect} dialect's tab type "${row.tabType}" is not the dialect's name`);
-  }
-  return {
-    name: dialect,
-    offersColumnProfiling: row.offersColumnProfiling,
-    offersCodeGeneration: row.offersCodeGeneration,
-    offersCountQuery: row.offersCountQuery,
-    offersSqlExport: row.offersSqlExport !== false,
-    historyMask: row.historyMask === undefined ? null : { credentialFlags: [...row.historyMask.credentialFlags] },
-  };
-}
-
-/**
- * The members of an editor language row: the data the declaration places (`monacoId`, `accent` and whether `console`
- * is present) and the browser code it leaves to Studio's editor (`register`, `completions` and `format`). A key this
- * list lacks would be dropped.
- */
-const EDITOR_LANGUAGE_MEMBERS: readonly string[] = [
-  "monacoId",
-  "accent",
-  "console",
-  "register",
-  "completions",
-  "format",
-];
-
-/** The members of a tab type's editor row the declaration places: a key this list lacks would be dropped. */
-const TAB_EDITOR_MEMBERS: readonly string[] = ["monacoId"];
-
-/**
- * The language the engine's tabs are written and rendered in: its query language, the Monaco language of the tab type
- * `resolveTabType` gives its capabilities, read from that tab type's `DIALECT_EDITORS` row, and that language's accent
- * and whether it is a console dialect, read from its `EDITOR_LANGUAGES` row. A member of either row the declaration has
- * no place for, a language row whose `monacoId` is not its key, and a console whose dialect id is not the Monaco id, are
- * thrown errors naming the engine.
- */
-function buildEditorLanguage(
-  type: DatabaseType,
-  capabilities: ProviderCapabilities,
-  tables: EditorTables,
-): EditorLanguageFacts {
-  const tabType = resolveTabType(capabilities);
-  const tabEditor = tables.tabEditors[tabType];
-  for (const key of Object.keys(tabEditor)) {
-    if (!TAB_EDITOR_MEMBERS.includes(key)) {
-      throw new Error(
-        `${type}: the ${tabType} tab type's editor member "${key}" has no place in the engine declaration`,
-      );
-    }
-  }
-  const { monacoId } = tabEditor;
-  const language = tables.languages[monacoId];
-  for (const key of Object.keys(language)) {
-    if (!EDITOR_LANGUAGE_MEMBERS.includes(key)) {
-      throw new Error(
-        `${type}: the ${monacoId} editor language member "${key}" has no place in the engine declaration`,
-      );
-    }
-  }
-  const ids: [member: string, id: string][] = [["monacoId", language.monacoId]];
-  if (language.console !== undefined) ids.push(["console dialect id", language.console.spec.id]);
-  for (const [member, id] of ids) {
-    if (id !== monacoId) {
-      throw new Error(`${type}: the ${monacoId} editor language's ${member} is "${id}", not its Monaco id`);
-    }
-  }
-  return {
-    queryLanguage: capabilities.queryLanguage,
-    monacoId,
-    accent: language.accent,
-    console: language.console !== undefined,
-  };
-}
-
-/**
- * One engine's editor facts: its `authored` commit keyword, consent deadline and fence aliases as given, and the
- * explain format and the query dialect its provider declares before it connects. An explain format the provider's
- * explain support contradicts is a thrown error naming the engine.
+ * One engine's editor facts: its `authored` commit keyword, consent deadline, fence aliases, dialect and language as
+ * given, and the explain format its provider declares before it connects. An explain format the provider's explain
+ * support contradicts, an authored dialect that is not the query dialect the provider declares, and an authored query
+ * language that is not the one it declares, are thrown errors naming the engine.
  */
 export function buildEditor(
   type: DatabaseType,
   capabilities: ProviderCapabilities,
   authored: AuthoredMembers["editor"],
-  tables: EditorTables = EDITOR_TABLES,
 ): Editor {
   const { supportsExplain, explainFormat } = capabilities;
   if (supportsExplain && explainFormat === undefined) {
@@ -423,30 +310,25 @@ export function buildEditor(
   if (!supportsExplain && explainFormat !== undefined) {
     throw new Error(`${type}: the provider declares an explain format but supports no explain`);
   }
+  const stated = authored.dialect?.name;
+  if (stated !== capabilities.queryDialect) {
+    throw new Error(
+      `${type}: the declaration states the query dialect ${stated ?? "none"}, and its provider declares ${capabilities.queryDialect ?? "none"}`,
+    );
+  }
+  if (authored.language.queryLanguage !== capabilities.queryLanguage) {
+    throw new Error(
+      `${type}: the declaration states the query language ${authored.language.queryLanguage}, and its provider declares ${capabilities.queryLanguage}`,
+    );
+  }
   return {
     commitKeyword: authored.commitKeyword,
     consentDeadline: authored.consentDeadline,
     fenceAliases: authored.fenceAliases,
     explainFormat: explainFormat ?? null,
-    dialect: buildDialect(type, capabilities.queryDialect, tables.dialects),
-    language: buildEditorLanguage(type, capabilities, tables),
+    dialect: authored.dialect,
+    language: authored.language,
   };
-}
-
-/**
- * Throws an error naming the first dialect of `dialects` that no engine's capabilities declare, since every declaration
- * states only its own engine's dialect, so such a row would reach no declaration.
- */
-export function refuseUndeclaredDialects(
-  capabilities: Readonly<Record<DatabaseType, ProviderCapabilities>>,
-  dialects: EditorTables["dialects"] = QUERY_DIALECTS,
-): void {
-  const declared = new Set(Object.values(capabilities).map((entry) => entry.queryDialect));
-  for (const dialect of Object.keys(dialects) as QueryDialect[]) {
-    if (!declared.has(dialect)) {
-      throw new Error(`the ${dialect} dialect's row in QUERY_DIALECTS is declared by no engine`);
-    }
-  }
 }
 
 /** The members of each part of a SQL grammar row the declaration places: a key a part's list lacks would be dropped. */
@@ -1329,7 +1211,6 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const capabilities = await readEngineCapabilities();
-  refuseUndeclaredDialects(capabilities);
   const declarations = new Map(
     SHIPPED_DATABASE_TYPES.map((type) => [
       `${type}.json`,

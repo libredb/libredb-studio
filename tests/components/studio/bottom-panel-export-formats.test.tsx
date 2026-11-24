@@ -24,6 +24,7 @@ const DECLINES_SQL_EXPORT: DialectSpec = {
   offersCodeGeneration: false,
   offersCountQuery: false,
   offersSqlExport: false,
+  historyMask: null,
 };
 
 const realDialects = { ...(await import("@/lib/db/query-dialects")) };

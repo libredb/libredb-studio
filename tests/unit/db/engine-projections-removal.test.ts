@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
- * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74 and
- * M-75).
+ * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
+ * M-75 and M-77).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -20,12 +20,14 @@ import {
   ENGINE_CONNECTION_MODULE,
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_EDITOR_MODULE,
+  ENGINE_QUERY_EDITOR_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
   renderConnectionTables,
   renderEditorFacts,
+  renderQueryEditorFacts,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -40,6 +42,7 @@ import {
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
+  projectQueryEditorFacts,
 } from "@/lib/db/engine-catalog/projection";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -228,6 +231,46 @@ describe("each projection of the admitted declarations, built with and without a
       expect(facts).toEqual(built);
       expect(Object.keys(facts.executionUi)).toEqual(Object.keys(built.executionUi));
       expect(Object.keys(facts.fenceAliases)).toEqual(Object.keys(built.fenceAliases));
+    }
+  });
+
+  test("the query dialects, the tab type editors and the editor languages built with the fixture engine are the committed module's, and with it or the only declaration of a dialect, tab type and language removed are exactly a fresh build from the remaining set", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_QUERY_EDITOR_MODULE), "utf8");
+    const shipped = projectQueryEditorFacts(ADMITTED);
+    // The fixture states postgres's dialect, none, and its language, sql in blue, so it adds no entry: within the
+    // closed vocabularies every dialect, tab type and language is already stated, and a differing statement is refused.
+    const withFixture = projectQueryEditorFacts([...ADMITTED, FIXTURE]);
+    expect(withFixture).toEqual(shipped);
+    expect(renderQueryEditorFacts(withFixture)).toBe(committed);
+
+    const removed = projectQueryEditorFacts([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(renderQueryEditorFacts(removed)).toBe(committed);
+
+    // Kubernetes is the only declaration of the kubectl dialect, tab type and language: removing it gives exactly a
+    // fresh build from the remaining 42, lacking the three kubectl entries and nothing else.
+    const remaining = ADMITTED.filter((d) => d.id !== "kubernetes");
+    const withoutKubernetes = projectQueryEditorFacts([...ADMITTED, FIXTURE].filter((d) => d.id !== "kubernetes"));
+    expect(withoutKubernetes).toEqual(projectQueryEditorFacts(remaining));
+    expect(remaining.length).toBe(ADMITTED.length - 1);
+    const without = <Value>(record: Readonly<Record<string, Value>>, key: string): Record<string, Value> =>
+      Object.fromEntries(Object.entries(record).filter(([entry]) => entry !== key));
+    expect(withoutKubernetes.queryDialects).toEqual(without(shipped.queryDialects, "kubectl"));
+    expect(withoutKubernetes.dialectEditors).toEqual(without(shipped.dialectEditors, "kubectl"));
+    expect(withoutKubernetes.editorLanguages).toEqual(without(shipped.editorLanguages, "kubectl"));
+    for (const record of Object.values(withoutKubernetes)) expect(Object.hasOwn(record, "kubectl")).toBe(false);
+  });
+
+  test("the query dialects, the tab type editors and the editor languages are the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectQueryEditorFacts(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const facts = projectQueryEditorFacts(order);
+      expect(facts).toEqual(built);
+      expect(Object.keys(facts.queryDialects)).toEqual(Object.keys(built.queryDialects));
+      expect(Object.keys(facts.dialectEditors)).toEqual(Object.keys(built.dialectEditors));
+      expect(Object.keys(facts.editorLanguages)).toEqual(Object.keys(built.editorLanguages));
     }
   });
 

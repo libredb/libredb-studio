@@ -1,7 +1,7 @@
 /**
  * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, none of
  * them reads a claim, no member a declaration authors is a claim, and every claim record Studio keeps in core is
- * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74 and M-75).
+ * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75 and M-77).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
  * Studio grants only through its review record of each claim, the table of Studio's source every gate reads. A module
@@ -95,6 +95,12 @@ const EXECUTION_UI_MEMBERS = ["editor.commitKeyword", "editor.consentDeadline"] 
 /** The editor member the fence aliases are projected from, M-75: an authored member, M-15. */
 const FENCE_ALIAS_MEMBERS = ["editor.fenceAliases"] as const;
 
+/**
+ * The editor members the query dialects, the tab type editors and the editor languages are projected from, M-77:
+ * authored members, M-15, each an offer, presentation or a mask that only adds to what history drops, none a claim.
+ */
+const QUERY_EDITOR_MEMBERS = ["editor.dialect", "editor.language"] as const;
+
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
@@ -137,6 +143,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     reason: "each engine's credential warnings, read from the connection tables",
   },
   {
+    path: "src/lib/db/editor-language/index.ts",
+    members: ["editor.language"],
+    reason:
+      "each editor language's accent and console, read from the generated editor language record and composed with Studio's code of each language",
+  },
+  {
     path: "src/lib/db/engine-catalog/catalog.generated.ts",
     members: CATALOG_MEMBERS,
     reason: "the engine catalog, generated from the admitted declarations",
@@ -176,14 +188,31 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       ...CONNECTION_STRING_MEMBERS,
       ...EXECUTION_UI_MEMBERS,
       ...FENCE_ALIAS_MEMBERS,
+      ...QUERY_EDITOR_MEMBERS,
     ],
     reason:
-      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, and the execution UI and fence aliases",
+      "projects the admitted declarations into the engine catalog, the connection tables, the connection forms, the connection strings, the execution UI and fence aliases, and the query dialects, tab type editors and editor languages",
+  },
+  {
+    path: "src/lib/db/engine-catalog/query-editor.generated.ts",
+    members: QUERY_EDITOR_MEMBERS,
+    reason:
+      "the query dialects, the tab type editors and the editor languages, generated from the admitted declarations",
   },
   {
     path: "src/lib/db/execution-ui/index.ts",
     members: EXECUTION_UI_MEMBERS,
     reason: "each engine's execution UI, read from the generated execution UI record",
+  },
+  {
+    path: "src/lib/db/query-dialects.ts",
+    members: ["editor.dialect"],
+    reason: "each query dialect's row, read from the generated query dialect record",
+  },
+  {
+    path: "src/lib/editor/dialect-editors.ts",
+    members: QUERY_EDITOR_MEMBERS,
+    reason: "each tab type's editor language, read from the generated tab type editor record",
   },
   {
     path: "src/lib/sql/fence-tags.ts",

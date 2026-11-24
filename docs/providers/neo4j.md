@@ -256,9 +256,11 @@ Enterprise connects too; the monitoring differences are in section 7.
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `neo4j` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`neo4j.json`](../../src/lib/db/engine-declarations/neo4j.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `neo4j`, and its declaration's `editor.fenceAliases`, `cypher`.
+Cypher states a query language and no dialect, as PromQL does, so its tabs open under the `cypher` tab type, which renders in `graph-cypher` and not `cypher`, the id Monaco's own bundle registers.
 A block tagged `neo4j` holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4), and `cypher` spells the language, which only `neo4j` runs: without it a `cypher` block contradicted no connection and was recorded as a PostgreSQL run's statement, and a second graph type-id that runs Cypher is the moment to revisit it.
 What a tree click and Generate Query write is `CYPHER_GENERATORS`, the `cypher` row of `LANGUAGE_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/graph/cypher/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
-Its editor language, `graph-cypher`, is the row in `EDITOR_LANGUAGES` declared in [`editor-language.ts`](../../src/lib/db/providers/graph/neo4j/editor-language.ts): how the editor registers and tints it, and its completion source and formatter where it has one.
+Its editor language, `graph-cypher`, is the row in `EDITOR_LANGUAGES` whose code is declared in [`editor-language.ts`](../../src/lib/db/providers/graph/neo4j/editor-language.ts): how the editor registers it, and its completion source and formatter where it has one.
+Its accent is the one this engine's declaration states in `editor.language.accent`, M-77.
 
 ## 5. Query interface
 

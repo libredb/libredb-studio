@@ -318,6 +318,9 @@ The broker at the far end is not checked here: a name is resolved by the SSH ser
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mqtt` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mqtt.json`](../../src/lib/db/engine-declarations/mqtt.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mqtt`, and its declaration's `editor.fenceAliases`, `mqttread`.
+Its query dialect row, the `mqtt` row its declaration states in `editor.dialect` and `QUERY_DIALECTS` projects, M-77, offers no Profile, Generate Code or Generate Count Query: the provider has no query console, its surface is the Keys panel, and a broker has no query language to write in.
+The row exists so a connection never falls through to MongoDB's tab, the fault `queryDialect` was added for (#427): a provider declaring `queryLanguage: "json"` while speaking neither MongoDB JSON nor SQL would otherwise receive MongoDB commands.
+Its tab type renders in `json`, so Format answers as in every other JSON tab, though nothing is ever typed in it.
 `mqttread` names the agent's MQTT read request language, which only `mqtt` runs.
 What a tree click and Generate Query write is `MQTT_GENERATORS`, the `mqtt` row of `DIALECT_GENERATORS`, declared in [`generators.ts`](../../src/lib/db/providers/keyvalue/mqtt/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 

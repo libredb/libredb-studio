@@ -427,7 +427,8 @@ The rolled-back notice names `COMMIT` as the keyword that keeps an open transact
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mongodb.json`](../../src/lib/db/engine-declarations/mongodb.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mongodb`, and its declaration's `editor.fenceAliases`, `mongo`.
 How `mapDatabaseError` classifies its driver's errors, its server codes of an access refusal, is the `mongodb` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`driver-errors.ts`](../../src/lib/db/providers/document/mongodb/driver-errors.ts).
-Its editor language, `json`, is the shared row in `EDITOR_LANGUAGES` declared in [`json.ts`](../../src/lib/db/editor-language/json.ts), because every JSON read request renders in it too: that row holds the JSON formatter and the accent.
+Its editor language, `json`, is the shared row in `EDITOR_LANGUAGES` whose code is declared in [`json.ts`](../../src/lib/db/editor-language/json.ts), because every JSON read request renders in it too: that row holds the JSON formatter.
+Its accent is the one every declaration of `json` states in `editor.language.accent`, held to one statement across them, M-77.
 This provider contributes only the row's completion source, `MONGODB_JSON_COMPLETIONS` in [`editor-language.ts`](../../src/lib/db/providers/document/mongodb/editor-language.ts), which registers only where the connection declares no dialect.
 
 ---

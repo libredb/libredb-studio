@@ -36,12 +36,14 @@ import {
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
   ENGINE_EDITOR_MODULE,
+  ENGINE_QUERY_EDITOR_MODULE,
   renderCatalog,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
   renderConnectionTables,
   renderEditorFacts,
+  renderQueryEditorFacts,
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
@@ -60,6 +62,11 @@ import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-for
 import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
 import { BUNDLED_EXECUTION_UI, BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
 import {
+  BUNDLED_DIALECT_EDITORS,
+  BUNDLED_EDITOR_LANGUAGES,
+  BUNDLED_QUERY_DIALECTS,
+} from "@/lib/db/engine-catalog/query-editor.generated";
+import {
   type ConnectionFormEntry,
   type ConnectionForms,
   type ConnectionStringEntry,
@@ -69,6 +76,7 @@ import {
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
+  projectQueryEditorFacts,
 } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
 
@@ -176,6 +184,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectConnectionForms(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectConnectionStrings(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectEditorFacts(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectQueryEditorFacts(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -555,6 +564,170 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectEditorFacts(ADMITTED)).not.toThrow();
   });
 
+  test("the query dialects, the tab type editors and the editor languages hold one entry per stated key, keyed in ascending order whatever order the declarations come in", () => {
+    const set = ["postgres", "neo4j", "milvus", "mongodb", "kubernetes", "kafka", "mysql"].map(admitted);
+    const facts = projectQueryEditorFacts(set);
+
+    expect(Object.keys(facts)).toEqual(["queryDialects", "dialectEditors", "editorLanguages"]);
+    // One dialect entry per stated dialect, its tab type the dialect's name and every member present, in one order.
+    expect(facts.queryDialects).toEqual({
+      kafka: {
+        tabType: "kafka",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
+      kubectl: {
+        tabType: "kubectl",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: false,
+        historyMask: admitted("kubernetes").editor.dialect?.historyMask ?? null,
+      },
+      milvus: {
+        tabType: "milvus",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: false,
+        historyMask: null,
+      },
+    });
+    expect(Object.keys(facts.queryDialects)).toEqual(["kafka", "kubectl", "milvus"]);
+    for (const entry of Object.values(facts.queryDialects)) {
+      expect(Object.keys(entry)).toEqual([
+        "tabType",
+        "offersColumnProfiling",
+        "offersCodeGeneration",
+        "offersCountQuery",
+        "offersSqlExport",
+        "historyMask",
+      ]);
+    }
+    expect(facts.queryDialects.kubectl?.historyMask?.credentialFlags).toContain("--token");
+    // One editor per tab type: a dialect engine's tabs open under the dialect's name, a dialect-less one's under its
+    // query language's tab type, so MongoDB's JSON opens as mongodb and Neo4j's Cypher as cypher.
+    expect(facts.dialectEditors).toEqual({
+      cypher: { monacoId: "graph-cypher" },
+      kafka: { monacoId: "json" },
+      kubectl: { monacoId: "kubectl" },
+      milvus: { monacoId: "milvus" },
+      mongodb: { monacoId: "json" },
+      sql: { monacoId: "sql" },
+    });
+    expect(Object.keys(facts.dialectEditors)).toEqual(["cypher", "kafka", "kubectl", "milvus", "mongodb", "sql"]);
+    // One language entry per Monaco id, holding the accent and console the declarations state.
+    expect(facts.editorLanguages).toEqual({
+      "graph-cypher": { accent: "border-hue-purple/40", console: false },
+      json: { accent: "border-hue-cyan/40", console: false },
+      kubectl: { accent: "border-hue-teal-alt/40", console: false },
+      milvus: { accent: "border-hue-teal/40", console: true },
+      sql: { accent: "border-hue-blue/40", console: false },
+    });
+    expect(Object.keys(facts.editorLanguages)).toEqual(["graph-cypher", "json", "kubectl", "milvus", "sql"]);
+    // The same answer for the set reversed and shuffled.
+    expect(projectQueryEditorFacts([...set].reverse())).toEqual(facts);
+    const shuffled = [set[3], set[0], set[6], set[1], set[5], set[2], set[4]];
+    expect(JSON.stringify(projectQueryEditorFacts(shuffled))).toBe(JSON.stringify(facts));
+    expect(JSON.stringify(projectQueryEditorFacts([...ADMITTED].reverse()))).toBe(
+      JSON.stringify(projectQueryEditorFacts(ADMITTED)),
+    );
+
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(facts)).toBe(true);
+    const kubernetes = structuredClone(admitted("kubernetes"));
+    const copied = projectQueryEditorFacts([kubernetes]);
+    const flags = kubernetes.editor.dialect?.historyMask?.credentialFlags as string[];
+    flags.push("--edited");
+    expect(copied.queryDialects.kubectl?.historyMask?.credentialFlags).not.toContain("--edited");
+    expect(copied.queryDialects.kubectl?.historyMask?.credentialFlags).not.toBe(flags);
+  });
+
+  test("the query editor facts read only the members a declaration authors", () => {
+    // Every member but the authored ones replaced with postgres's: the query editor facts the generator writes first,
+    // before the declaration generator rewrites those members, are therefore already the final ones.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        editor: { ...postgres.editor, dialect: d.editor.dialect, language: d.editor.language },
+      }),
+    );
+
+    expect(projectQueryEditorFacts(replaced)).toEqual(projectQueryEditorFacts(ADMITTED));
+    // Vacuity: the replacement changed members the query editor facts would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.editor.explainFormat)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor.commitKeyword)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor.fenceAliases)).toBeGreaterThan(0);
+    expect(differs((d) => d.displayName)).toBeGreaterThan(0);
+    expect(differs((d) => d.sqlText)).toBeGreaterThan(0);
+  });
+
+  test("two declarations stating one dialect with different rows, one tab type in different editor languages, or one editor language with a different accent or console are refused by name", () => {
+    const kafka = admitted("kafka");
+    const bigquery = admitted("bigquery");
+    const restated = (
+      base: EngineDeclaration,
+      editor: (committed: EngineDeclaration["editor"]) => Partial<EngineDeclaration["editor"]>,
+    ): EngineDeclaration => ({ ...base, id: "acmefoo", editor: { ...base.editor, ...editor(base.editor) } });
+    const dialect = kafka.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const json = admitted("mongodb").editor.language;
+
+    // One dialect stated with different rows: both engines named, in ascending id order, whatever order they come in.
+    const counting = restated(kafka, () => ({ dialect: { ...dialect, offersCountQuery: true } }));
+    for (const set of [
+      [counting, kafka],
+      [kafka, counting],
+    ]) {
+      expect(() => projectQueryEditorFacts(set)).toThrow(
+        'The dialect "kafka" is stated with different rows by acmefoo and kafka.',
+      );
+    }
+    // The flag list is compared in order.
+    const kubernetes = admitted("kubernetes");
+    const kubectl = kubernetes.editor.dialect as NonNullable<EngineDeclaration["editor"]["dialect"]>;
+    const flags = kubectl.historyMask?.credentialFlags ?? [];
+    const reordered = restated(kubernetes, () => ({
+      dialect: { ...kubectl, historyMask: { credentialFlags: [...flags].reverse() } },
+    }));
+    expect(() => projectQueryEditorFacts([kubernetes, reordered])).toThrow(
+      'The dialect "kubectl" is stated with different rows by acmefoo and kubernetes.',
+    );
+    // One tab type in different editor languages: a dialect-less SQL engine rendered in json, json's own facts kept.
+    const inJson = restated(bigquery, (editor) => ({
+      language: { ...json, queryLanguage: editor.language.queryLanguage },
+    }));
+    expect(() => projectQueryEditorFacts([bigquery, inJson])).toThrow(
+      'The tab type "sql" is stated in different editor languages by acmefoo and bigquery.',
+    );
+    // One editor language with a different accent or console: a package restating Studio's sql or json is refused
+    // while a Studio engine states it.
+    const orange = restated(bigquery, (editor) => ({
+      language: { ...editor.language, accent: "border-hue-orange/40" },
+    }));
+    expect(() => projectQueryEditorFacts([bigquery, orange])).toThrow(
+      'The editor language "sql" is stated with a different accent or console by acmefoo and bigquery.',
+    );
+    const mongodb = admitted("mongodb");
+    const jsonConsole = restated(mongodb, (editor) => ({ language: { ...editor.language, console: true } }));
+    expect(() => projectQueryEditorFacts([mongodb, jsonConsole])).toThrow(
+      'The editor language "json" is stated with a different accent or console by acmefoo and mongodb.',
+    );
+    // A second declaration stating kafka's exact row is admitted, with one entry.
+    const same = restated(kafka, () => ({}));
+    expect(Object.keys(projectQueryEditorFacts([kafka, same]).queryDialects)).toEqual(["kafka"]);
+    // None of the committed declarations is refused.
+    expect(() => projectQueryEditorFacts(ADMITTED)).not.toThrow();
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -743,6 +916,40 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_FENCE_ALIASES)).toBe(true);
   });
 
+  test("the committed query editor module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_QUERY_EDITOR_MODULE), "utf8");
+    const facts = projectQueryEditorFacts(ADMITTED);
+
+    expect(committed).toBe(renderQueryEditorFacts(facts));
+    expect<unknown>(BUNDLED_QUERY_DIALECTS).toEqual(facts.queryDialects);
+    expect(Object.keys(BUNDLED_QUERY_DIALECTS)).toEqual(Object.keys(facts.queryDialects));
+    expect(Object.keys(BUNDLED_QUERY_DIALECTS)).toHaveLength(19);
+    expect<unknown>(BUNDLED_DIALECT_EDITORS).toEqual(facts.dialectEditors);
+    expect(Object.keys(BUNDLED_DIALECT_EDITORS)).toEqual(Object.keys(facts.dialectEditors));
+    expect(Object.keys(BUNDLED_DIALECT_EDITORS)).toHaveLength(24);
+    expect<unknown>(BUNDLED_EDITOR_LANGUAGES).toEqual(facts.editorLanguages);
+    expect(Object.keys(BUNDLED_EDITOR_LANGUAGES)).toEqual(Object.keys(facts.editorLanguages));
+    expect(Object.keys(BUNDLED_EDITOR_LANGUAGES)).toHaveLength(16);
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_QUERY_DIALECTS",
+      "BUNDLED_DIALECT_EDITORS",
+      "BUNDLED_EDITOR_LANGUAGES",
+    ]);
+    // A key that is not an identifier is written in the formatter's quotes, as the formatter keeps it.
+    expect(committed).toContain('  "graph-cypher": Object.freeze({ accent: "border-hue-purple/40", console: false }),');
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_QUERY_DIALECTS)).toBe(true);
+    expect(frozen(BUNDLED_DIALECT_EDITORS)).toBe(true);
+    expect(frozen(BUNDLED_EDITOR_LANGUAGES)).toBe(true);
+  });
+
   test("the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name", () => {
     const tables = projectConnectionTables(ADMITTED);
     const refusal = (text: string) => ({ ...tables, refused: { ...tables.refused, qdrant: { user: text } } });
@@ -818,8 +1025,12 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const plantedFlag = (table: Partial<ConnectionTables>) => () => renderConnectionFlags({ ...tables, ...table });
 
     expect(planted(refusal("A tab\there."))).toThrow("it holds a character it does not quote");
-    expect(plantedFlag({ readsTrustMaterial: { ...tables.readsTrustMaterial, "acme-foo": true } })).toThrow(
-      'The connection module cannot write the member "acme-foo"',
+    // A member that is not an identifier is written in the formatter's quotes, and one the quotes cannot hold refused.
+    expect(renderConnectionFlags({ ...tables, readsTrustMaterial: { "acme-foo": true } })).toContain(
+      '  "acme-foo": true,',
+    );
+    expect(plantedFlag({ readsTrustMaterial: { ...tables.readsTrustMaterial, "acme\tfoo": true } })).toThrow(
+      "it holds a character it does not quote",
     );
     expect(plantedFlag({ dialogOffersUri: { ...tables.dialogOffersUri, qdrant: 1.5 as unknown as boolean } })).toThrow(
       "The connection module cannot write 1.5",
@@ -881,8 +1092,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const form = path.join(dir, "connection-form.generated.ts");
       const strings = path.join(dir, "connection-string.generated.ts");
       const editor = path.join(dir, "editor.generated.ts");
+      const queryEditor = path.join(dir, "query-editor.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -890,7 +1102,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -1005,6 +1217,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_CONNECTION_FLAGS_MODULE,
         ENGINE_CONNECTION_FORM_MODULE,
         ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
       ]) {
         expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1028,6 +1241,24 @@ describe("the engine catalog, projected from the admitted declarations", () => {
 
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(editor, "utf8")).toBe(text);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+
+      // Kafka's count query offer edited by hand in the generated query editor module is named, and only that module.
+      const queryEditor = path.join(dir, "query-editor.generated.ts");
+      const queryEditorText = readFileSync(queryEditor, "utf8");
+      const kafkaRow = /^ {2}kafka: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(queryEditorText)?.[0] ?? "";
+      expect(kafkaRow).toContain("offersCountQuery: false,");
+      writeFileSync(
+        queryEditor,
+        queryEditorText.replace(kafkaRow, kafkaRow.replace("offersCountQuery: false,", "offersCountQuery: true,")),
+      );
+      const staleQueryEditor = run("--check", "--out", dir);
+      expect(staleQueryEditor.exitCode).toBe(1);
+      expect(staleQueryEditor.stderr.toString()).toBe(
+        `${queryEditor} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(queryEditor, "utf8")).toBe(queryEditorText);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1169,6 +1400,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_CONNECTION_MODULE,
         ENGINE_CONNECTION_FLAGS_MODULE,
         ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1241,6 +1473,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_CONNECTION_FLAGS_MODULE,
         ENGINE_CONNECTION_FORM_MODULE,
         ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1272,6 +1505,89 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(refused.stderr).toContain('The fence alias "mariadb" is declared by both mysql and postgres.');
       // Refused before any module or declaration is written.
       expect(readFileSync(editorModule, "utf8")).toBe(before);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ ...committed, editor });
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator run take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored dialect row and editor language change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const edit = (id: string, editor: (committed: EngineDeclaration["editor"]) => EngineDeclaration["editor"]) => {
+        const file = path.join(directory, `${id}.json`);
+        const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+        const edited = { ...committed, editor: editor(committed.editor) };
+        writeFileSync(file, `${JSON.stringify(edited, null, 2)}\n`);
+        return edited;
+      };
+      const kafka = edit("kafka", (editor) => ({
+        ...editor,
+        dialect: { ...(editor.dialect as NonNullable<typeof editor.dialect>), offersCountQuery: true },
+      }));
+      const milvus = edit("milvus", (editor) => ({
+        ...editor,
+        language: { ...editor.language, accent: "border-hue-orange/40" },
+      }));
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      const of = (id: string) => regenerated.find((d) => d.id === id);
+      // The declaration generator writes both members back unchanged.
+      expect(of("kafka")).toEqual(kafka);
+      expect(of("milvus")).toEqual(milvus);
+      const queryEditorModule = readFileSync(path.join(copy.root, ENGINE_QUERY_EDITOR_MODULE), "utf8");
+      expect(queryEditorModule).toBe(renderQueryEditorFacts(projectQueryEditorFacts(regenerated)));
+      expect(queryEditorModule).toContain('milvus: Object.freeze({ accent: "border-hue-orange/40", console: true }),');
+      expect(projectQueryEditorFacts(regenerated).queryDialects.kafka?.offersCountQuery).toBe(true);
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => !["kafka", "milvus"].includes(d.id))) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the editor language when two declarations state it with different accents", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const editor = {
+        ...committed.editor,
+        language: { ...committed.editor.language, accent: "border-hue-orange/40" },
+      };
+      writeFileSync(file, `${JSON.stringify({ ...committed, editor }, null, 2)}\n`);
+      const queryEditorModule = path.join(copy.root, ENGINE_QUERY_EDITOR_MODULE);
+      const before = readFileSync(queryEditorModule, "utf8");
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain(
+        'The editor language "sql" is stated with a different accent or console by bigquery and mysql.',
+      );
+      // Refused before any module or declaration is written.
+      expect(readFileSync(queryEditorModule, "utf8")).toBe(before);
       expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ ...committed, editor });
     } finally {
       copy.remove();

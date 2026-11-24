@@ -61,16 +61,40 @@ describe("QUERY_DIALECTS", () => {
         offersColumnProfiling: false,
         offersCodeGeneration: true,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
-      redis: { tabType: "redis", offersColumnProfiling: false, offersCodeGeneration: true, offersCountQuery: false },
-      kafka: { tabType: "kafka", offersColumnProfiling: false, offersCodeGeneration: false, offersCountQuery: false },
-      etcd: { tabType: "etcd", offersColumnProfiling: false, offersCodeGeneration: false, offersCountQuery: false },
+      redis: {
+        tabType: "redis",
+        offersColumnProfiling: false,
+        offersCodeGeneration: true,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
+      kafka: {
+        tabType: "kafka",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
+      etcd: {
+        tabType: "etcd",
+        offersColumnProfiling: false,
+        offersCodeGeneration: false,
+        offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
+      },
       milvus: {
         tabType: "milvus",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       qdrant: {
         tabType: "qdrant",
@@ -78,6 +102,7 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       weaviate: {
         tabType: "weaviate",
@@ -85,6 +110,7 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       // Oxia (SB2-4.4): records of a fixed shape, no profile, model or count statement, and no SQL export.
       oxia: {
@@ -93,6 +119,7 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       // S3: listings and fields of a fixed shape, no profile, model or count statement, and no
       // SQL export.
@@ -102,6 +129,7 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       // Kubernetes: the API server's own columns, so no profile, model or count statement, and no SQL export; history
       // masks the four credential flags the console refuses.
@@ -128,6 +156,8 @@ describe("QUERY_DIALECTS", () => {
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
       // Firestore: sampled field paths and documents, so no profile, model or SQL export; Generate Count Query writes a
       // count() statement into a tab.
@@ -137,6 +167,7 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: true,
         offersSqlExport: false,
+        historyMask: null,
       },
       // A stream's columns are the fixed shape of a read result: no profile, model, count or SQL export.
       rabbitmq: {
@@ -145,36 +176,47 @@ describe("QUERY_DIALECTS", () => {
         offersCodeGeneration: false,
         offersCountQuery: false,
         offersSqlExport: false,
+        historyMask: null,
       },
       opcua: {
         tabType: "opcua",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
       mtconnect: {
         tabType: "mtconnect",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
       modbus: {
         tabType: "modbus",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
       netconf: {
         tabType: "netconf",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
       snmp: {
         tabType: "snmp",
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
 
       sparkplug: {
@@ -182,6 +224,8 @@ describe("QUERY_DIALECTS", () => {
         offersColumnProfiling: false,
         offersCodeGeneration: false,
         offersCountQuery: false,
+        offersSqlExport: true,
+        historyMask: null,
       },
     });
   });
@@ -206,6 +250,7 @@ describe("QUERY_DIALECTS", () => {
       offersCodeGeneration: false,
       offersCountQuery: false,
       offersSqlExport: false,
+      historyMask: null,
     };
     void declining;
     for (const [dialect, spec] of Object.entries(QUERY_DIALECTS)) {
@@ -220,7 +265,7 @@ describe("QUERY_DIALECTS", () => {
         dialect === "firestore"
       )
         continue;
-      expect(Object.hasOwn(spec, "offersSqlExport"), `the ${dialect} record declares offersSqlExport`).toBe(false);
+      expect(spec.offersSqlExport, `the ${dialect} record declines the SQL export formats`).toBe(true);
     }
     expect(QUERY_DIALECTS.milvus.offersSqlExport).toBe(false);
     expect(QUERY_DIALECTS.qdrant.offersSqlExport).toBe(false);

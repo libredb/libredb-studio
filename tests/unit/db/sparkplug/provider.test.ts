@@ -95,6 +95,8 @@ describe("what it declares without connecting", () => {
       offersColumnProfiling: false,
       offersCodeGeneration: false,
       offersCountQuery: false,
+      offersSqlExport: true,
+      historyMask: null,
     });
   });
 
