@@ -234,7 +234,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/agent/languages/sparkplugread/mcp.ts` | 1 agent fact and reader module | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/agent/languages/sparkplugread/server.ts` | 2 agent fact and reader modules | PR 8 sparkplugread | the sparkplugread family, `src/lib/languages/sparkplugread/` |
 | `src/lib/connection-string-parser.ts` | 2 paste readers, re-exported (databend, snowflake) | PR 11 connection | the manifest's connection section |
-| `src/lib/db/connection-form.ts` | 1 snowflake account host reader | PR 11 connection | the manifest's connection section |
+| `src/lib/db/connection-form.ts` | 1 snowflake account host reader, bound by Studio's form function table to the names the declaration gives | PR 11 connection | the manifest's connection section |
 | `src/lib/db/connection-string/index.ts` | 43 connection string rows | PR 11 connection | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/destructive-commands.ts` | 5 confirmation vocabulary rows | PR 8 etcdctl, PR 8 fsquery, PR 8 milvusrpc, PR 8 qdrantapi, PR 8 s3api | each row into its statement language's core family module |
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |

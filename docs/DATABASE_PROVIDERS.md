@@ -237,7 +237,7 @@ The `SQLiteProvider` loads its embedded driver at runtime through `sqlite-driver
 | `src/lib/db/base-provider.ts` | Abstract base class with default implementations |
 | `src/lib/db/providers/sql/sql-base.ts` | SQL-specific base (extend this for SQL databases) |
 | `src/lib/db/factory.ts` | Provider creation + caching |
-| `src/lib/db/connection-form.ts` | Labels, ports, form fields and hints per database type |
+| `src/lib/db/connection-form.ts` | Labels, ports, form fields and hints per database type, composed from each engine's declaration |
 | `src/lib/db-ui-config.ts` | Icons and colors per database type |
 
 **How it flows:**
@@ -249,6 +249,7 @@ ConnectionModal                   /api/db/provider-meta
   → selects DB type                 → getOrCreateProvider(conn)
   → form fields from                → provider.getCapabilities()
     connection-form.ts              → provider.getLabels()
+    (the declarations' projection)
                                     → returns { capabilities, labels }
 useProviderMetadata hook  ←─────
   → capabilities, labels

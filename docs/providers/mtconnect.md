@@ -196,7 +196,7 @@ so it rests on the client's shape: the client seam takes no method argument and 
 
 | Field | What it is |
 |---|---|
-| Host | The agent's host. A pasted `http(s)://` address is split into Host and Port by the Host box |
+| Host | The agent's host, labelled Host rather than the dialog's own "Host & Instance". A pasted `http(s)://` address is split into Host and Port by the Host box |
 | Port | The agent's port. Default 5000, the port the reference agent listens on out of the box and the one the pinned image exposes |
 | Path prefix | The path a reverse proxy puts in front of the agent, the field RabbitMQ already carries as `apiPath` |
 

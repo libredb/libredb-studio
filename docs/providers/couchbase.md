@@ -436,8 +436,8 @@ cardinality can appear on CE plans.
 | `ssl` | No | See [§4.3](#43-tls) |
 
 `database` being the bucket is the one field that surprises people, so the form says so:
-the `couchbase` entry of `CONNECTION_FORM` declares the label "Bucket Name" for it (`fieldLabels`,
-[`connection-form.ts`](../../src/lib/db/connection-form.ts)), which `ConnectionModal` draws, and
+the `couchbase` declaration states the label "Bucket Name" for it (`connection.dialog.labels`,
+[`couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json)), which `ConnectionModal` draws, and
 `validate()` rejects a connection without one ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 ```text
