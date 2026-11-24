@@ -2621,6 +2621,7 @@ The same deadline holds on the Test connection route and in the VS Code backend'
 - test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the tunnel opened builds nothing"
 - test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the provider was built starts no connect, and closes what was built"
 - test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
+- test `tests/unit/lib/api/test-connection.test.ts` "a health read whose deadline passed before its timer fired answers the test's ConnectionError and reads no health"
 - test `tests/unit/lib/api/test-connection.test.ts` "the deadline names the engine's own budget"
 - test `tests/unit/lib/api/test-connection-bounds.test.ts` "a connect that never settles is cut at the test's deadline"
 - test `tests/api/db/test-connection.test.ts` "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles"

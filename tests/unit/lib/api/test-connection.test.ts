@@ -417,6 +417,27 @@ describe("testConnection", () => {
       expect(steps).toEqual(["tunnel open", "create", "connect", "getHealth", "disconnect", "tunnel close"]);
     });
 
+    test("a health read whose deadline passed before its timer fired answers the test's ConnectionError and reads no health", async () => {
+      const now = deadlineIn(30);
+      const deadline = now + connectBudgetFor("postgres");
+      // The connect holds the thread until the clock is past the deadline, and every later step runs as a microtask,
+      // so the deadline's timer has not fired when the health read starts: only the read's own refusal answers.
+      built = recording({
+        connect: async () => {
+          while (Date.now() <= deadline + 5) {
+            // Spins on the clock by design: a timer here would let the deadline's own timer fire first.
+          }
+        },
+      });
+
+      const caught = await testConnection(connection, execution, route, now).catch((error: unknown) => error);
+
+      expect(caught).toBeInstanceOf(ConnectionError);
+      expect((caught as Error).message).toBe(SENTENCE(70));
+      expect(callsOf(built.getHealth)).toEqual([]);
+      expect(steps).toEqual(["tunnel open", "create", "connect", "disconnect", "tunnel close"]);
+    });
+
     test("the deadline names the engine's own budget", async () => {
       const pending = Promise.withResolvers<void>();
       built = recording({ connect: () => pending.promise });
