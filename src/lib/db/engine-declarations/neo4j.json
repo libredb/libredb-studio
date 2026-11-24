@@ -288,12 +288,39 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/graph/cypher/read-policy.ts",
+          "symbol": "checkCypherRead"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
   }
 }

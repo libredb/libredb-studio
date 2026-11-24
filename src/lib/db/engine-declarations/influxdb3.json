@@ -314,12 +314,39 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "token",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/timeseries/influxdb/sql-policy.ts",
+          "symbol": "evaluateInfluxSql"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
   }
 }

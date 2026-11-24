@@ -18,8 +18,11 @@ import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020"
 import {
   type EngineDeclaration,
   MANIFEST_SCHEMA_SHA256,
+  type MaskingExemption,
   type ProviderManifest,
   type TypeFamilies,
+  type WritePaths,
+  type WriteReachClaim,
 } from "./manifest-types.generated";
 
 /** Every rule a schema refusal can name: the schema's own first, then the code rules. */
@@ -72,6 +75,11 @@ export const SCHEMA_REFUSAL_RULES = Object.freeze([
   "agent-credential-form-missing",
   "read-roots-field-undeclared",
   "denied-file-access-unread",
+  "masking-exemption-unanchored",
+  "write-reach-summary-differs",
+  "editor-write-path-unproven",
+  "metadata-operation-duplicate",
+  "metadata-column-duplicate",
 ] as const);
 
 export type SchemaRefusalRule = (typeof SCHEMA_REFUSAL_RULES)[number];
@@ -469,10 +477,47 @@ function editorRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
 }
 
 /**
+ * Whether a masking exemption's column pattern matches whole column names only, read from its source text and never
+ * run: the source opens with `^`, closes with a `$` no backslash escapes and no character class holds, and holds no
+ * `|` outside every group and class, so no alternative reaches past the anchors. `^a$|^b$`, anchored per alternative,
+ * is refused for the group form `^(?:a|b)$`, which says the same once.
+ */
+function matchesWholeNames(source: string): boolean {
+  if (!source.startsWith("^")) return false;
+  let depth = 0;
+  let inClass = false;
+  let closed = false;
+  for (let index = 1; index < source.length; index += 1) {
+    const char = source.charAt(index);
+    closed = false;
+    if (char === "\\") index += 1;
+    else if (inClass) inClass = char !== "]";
+    else if (char === "[") inClass = true;
+    else if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "|" && depth === 0) return false;
+    else closed = char === "$" && depth === 0;
+  }
+  return closed;
+}
+
+/**
+ * The rules of an engine's masking exemption the schema cannot state, at pointers under `at`: its column pattern
+ * compiles with no flag, the way Studio's masking compiles it, and, where it compiles, matches whole column names only.
+ */
+function maskingExemptionRefusals(exemption: MaskingExemption, at: string): SchemaRefusal[] {
+  if (exemption === null) return [];
+  const pointer = `${at}/policy/maskingExemptColumns/column`;
+  if (compiled(exemption.column, "") === null) return [schemaRefusal("pattern-invalid", pointer)];
+  return matchesWholeNames(exemption.column) ? [] : [schemaRefusal("masking-exemption-unanchored", pointer)];
+}
+
+/**
  * The rules of one engine's policy and MCP claims the schema cannot state, at pointers under `at`. Each checks a
  * request, never the value Studio grants it: a statement read only on an engine exposed to MCP, an agent credential
  * required only of an engine whose seeds take one, read roots required only of an engine whose seeds can declare them,
- * and a denied file access refusal only on an engine that reads the file-access posture.
+ * a denied file access refusal only on an engine that reads the file-access posture, and a masking exemption only of
+ * whole column names, in a pattern that compiles.
  */
 function claimRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
   const refusals: SchemaRefusal[] = [];
@@ -489,12 +534,56 @@ function claimRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal
   if (policy.deniedFileAccessRefusal !== null && !policy.readsFileAccessPosture) {
     refusals.push(schemaRefusal("denied-file-access-unread", `${at}/policy/deniedFileAccessRefusal`));
   }
+  refusals.push(...maskingExemptionRefusals(policy.maskingExemptColumns, at));
+  return refusals;
+}
+
+/** The write reach `paths` sum to: open where any path is open, else guarded where any is gated, else none. */
+function summaryOf(paths: WritePaths): WriteReachClaim {
+  const reaches = Object.values(paths).map((path) => path.reach);
+  if (reaches.includes("open")) return "open";
+  return reaches.includes("gated") ? "guarded" : "none";
+}
+
+/**
+ * The rules of one engine's safeguards the schema cannot state, at pointers under `at`. The write reach claim is the
+ * summary of the write paths, so the request and its evidence are one statement; an absent editor path names its
+ * proof; the inline edit refusal's type pattern compiles with no flag, the way the inline editor compiles it; and the
+ * metadata-only answer names each operation once, and each column once within its operation, the later repeat refused.
+ */
+function safeguardRuleRefusals(engine: EngineDeclaration, at: string): SchemaRefusal[] {
+  const refusals: SchemaRefusal[] = [];
+  const { policy, safeguards } = engine;
+  const { editor } = safeguards.writePaths;
+  if (policy.writeReach !== summaryOf(safeguards.writePaths)) {
+    refusals.push(schemaRefusal("write-reach-summary-differs", `${at}/policy/writeReach`));
+  }
+  if (editor.reach === "absent" && editor.proof === null) {
+    refusals.push(schemaRefusal("editor-write-path-unproven", `${at}/safeguards/writePaths/editor/proof`));
+  }
+  const inline = safeguards.inlineEditRefusedColumns;
+  if (inline !== null && compiled(inline.type, "") === null) {
+    refusals.push(schemaRefusal("pattern-invalid", `${at}/safeguards/inlineEditRefusedColumns/type`));
+  }
+  const operations = new Set<string>();
+  safeguards.metadataOnly?.forEach(({ operation, columns }, index) => {
+    const pointer = `${at}/safeguards/metadataOnly/${index}`;
+    if (operations.has(operation)) refusals.push(schemaRefusal("metadata-operation-duplicate", `${pointer}/operation`));
+    operations.add(operation);
+    const named = new Set<string>();
+    columns.forEach(({ column }, position) => {
+      if (named.has(column)) {
+        refusals.push(schemaRefusal("metadata-column-duplicate", `${pointer}/columns/${position}/column`));
+      }
+      named.add(column);
+    });
+  });
   return refusals;
 }
 
 /**
- * The rules of one engine's connection, editor, SQL text, SQL writing facts and claims the schema cannot state, at
- * pointers under `at`.
+ * The rules of one engine's connection, editor, SQL text, SQL writing facts, claims and safeguards the schema cannot
+ * state, at pointers under `at`.
  */
 function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies: FieldVocabularies): SchemaRefusal[] {
   const seedOnlyNames = vocabularies.seedOnly;
@@ -527,6 +616,7 @@ function engineRuleRefusals(engine: EngineDeclaration, at: string, vocabularies:
   refusals.push(...clausePatternRefusals(engine, at));
   refusals.push(...sqlWritingRuleRefusals(engine, at, vocabularies));
   refusals.push(...claimRuleRefusals(engine, at));
+  refusals.push(...safeguardRuleRefusals(engine, at));
   return refusals;
 }
 
@@ -763,5 +853,15 @@ export function refusalSentence(refusal: ManifestRefusal): string {
       return `The read roots claim at ${at} is made for an engine whose seed-only fields do not name agentReadRoots.`;
     case "denied-file-access-unread":
       return `The denied file access refusal at ${at} is stated for an engine that reads no file-access posture.`;
+    case "masking-exemption-unanchored":
+      return `The masking exemption pattern at ${at} does not match whole column names only: it must open with ^, close with an unescaped $ and keep every alternative inside a group.`;
+    case "write-reach-summary-differs":
+      return `The write reach claim at ${at} is not the summary of the engine's write paths.`;
+    case "editor-write-path-unproven":
+      return `The editor write path at ${at} is absent but names no proof of what keeps it so.`;
+    case "metadata-operation-duplicate":
+      return `The metadata operation at ${at} is already named by an earlier operation.`;
+    case "metadata-column-duplicate":
+      return `The metadata column at ${at} is already named earlier in its operation.`;
   }
 }

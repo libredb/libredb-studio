@@ -65,12 +65,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   },
   { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: claim("policy.deniedFileAccessRefusal") },
   { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: claim("policy.singleWriterFile") },
-  {
-    module: COMPATIBILITY,
-    name: "MASKING_EXEMPT_COLUMNS",
-    destination:
-      "planned segment: the provider's policy facts, with the masking exemption an engine's provider requests, which this table grants as Studio's review record of the claim",
-  },
+  { module: COMPATIBILITY, name: "MASKING_EXEMPT_COLUMNS", destination: claim("policy.maskingExemptColumns") },
   { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: claim("mcp.exposable") },
   { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: claim("mcp.statementRead") },
   {
@@ -123,12 +118,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "SEED_AGENT_CREDENTIAL",
     destination: claim("connection.agentCredential"),
   },
-  {
-    module: CONNECTION_FIELDS_MODULE,
-    name: "AGENT_CREDENTIAL_FORM",
-    destination:
-      "planned segment: the provider's policy facts, with the agent credential form an engine's provider requests, which this table grants as Studio's review record of the claim",
-  },
+  { module: CONNECTION_FIELDS_MODULE, name: "AGENT_CREDENTIAL_FORM", destination: claim("policy.agentCredentialForm") },
   {
     module: "src/lib/db/connect-budget.ts",
     name: "CONNECT_BUDGET",

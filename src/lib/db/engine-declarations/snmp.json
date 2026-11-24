@@ -315,12 +315,39 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": true,
     "statementRead": true,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/network/snmp/statement.ts",
+          "symbol": "parseStatement"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": null,
+    "inlineEditRefusedColumns": null
   }
 }

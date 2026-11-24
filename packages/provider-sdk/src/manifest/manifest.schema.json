@@ -265,6 +265,9 @@
         },
         "mcp": {
           "$ref": "#/$defs/mcpClaims"
+        },
+        "safeguards": {
+          "$ref": "#/$defs/safeguards"
         }
       },
       "required": [
@@ -280,7 +283,8 @@
         "migrationDdl",
         "sqlGenerators",
         "policy",
-        "mcp"
+        "mcp",
+        "safeguards"
       ],
       "additionalProperties": false
     },
@@ -2644,7 +2648,7 @@
       "pattern": "^[A-Za-z][A-Za-z0-9_]*\\(\\*\\)$"
     },
     "policyClaims": {
-      "description": "What the engine asks of the gates Studio decides before a provider exists. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description.",
+      "description": "What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description.",
       "type": "object",
       "properties": {
         "writeReach": {
@@ -2667,6 +2671,12 @@
         "readRootsRequired": {
           "description": "Whether agent mode and MCP read the engine only beneath read roots a seed declares, refusing a connection that declares none. Restrictive value: true.",
           "type": "boolean"
+        },
+        "agentCredentialForm": {
+          "$ref": "#/$defs/agentCredentialFormClaim"
+        },
+        "maskingExemptColumns": {
+          "$ref": "#/$defs/maskingExemption"
         }
       },
       "required": [
@@ -2674,8 +2684,35 @@
         "readsFileAccessPosture",
         "deniedFileAccessRefusal",
         "singleWriterFile",
-        "readRootsRequired"
+        "readRootsRequired",
+        "agentCredentialForm",
+        "maskingExemptColumns"
       ],
+      "additionalProperties": false
+    },
+    "agentCredentialFormClaim": {
+      "description": "The form of the agent credential every agent acquisition of the engine takes. pair: a user and a password, both required. token: a password alone, sent as the bearer token instead of the connection's own, with no user. service-account-key: a password alone holding a service-account key, from which the provider mints its own access token, with no user. dedicated-user: a user other than the connection's own and that user's password, both required. none: the engine has no principal to sign an agent in as, so every agent credential is refused. The forms are unordered: a host reads a request that differs from Studio's record at its restrictive value. Restrictive value: none.",
+      "type": "string",
+      "enum": ["pair", "token", "service-account-key", "dedicated-user", "none"]
+    },
+    "maskingExemption": {
+      "description": "The result columns no masking rule of Studio masks on the engine, and why; null where the engine exempts no column. Restrictive value: null, so every column the masking rules match stays masked.",
+      "type": ["object", "null"],
+      "properties": {
+        "column": {
+          "description": "A regular expression over a result column's name, compiled with no flag, that matches whole names only: it opens with ^, closes with an unescaped $ and keeps every alternative inside a group.",
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 512
+        },
+        "reason": {
+          "description": "Why the columns the pattern matches hold no value a masking rule protects.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["column", "reason"],
       "additionalProperties": false
     },
     "writeReachClaim": {
@@ -2705,6 +2742,185 @@
         }
       },
       "required": ["exposable", "statementRead", "metadataReadChangesState", "agentCredentialRequired"],
+      "additionalProperties": false
+    },
+    "safeguards": {
+      "description": "What the engine's provider states its own code does: the reach of each write path, the answer of its metadata-only read and the result columns its inline editor refuses. Every member is a fact the provider declares, never a request: no gate of Studio reads it, so none is a claim, and Studio's census reads each back to the provider's own declaration. A review reads them as the evidence of the policy claims.",
+      "type": "object",
+      "properties": {
+        "writePaths": {
+          "$ref": "#/$defs/writePaths"
+        },
+        "metadataOnly": {
+          "description": "Each operation the engine's metadata-only read permits, in the provider's order, with the columns its answer holds; null where the provider answers its machine surfaces as it reads, which no empty list states.",
+          "type": ["array", "null"],
+          "items": {
+            "$ref": "#/$defs/metadataOnlyOperation"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        },
+        "inlineEditRefusedColumns": {
+          "$ref": "#/$defs/inlineEditRefusal"
+        }
+      },
+      "required": ["writePaths", "metadataOnly", "inlineEditRefusedColumns"],
+      "additionalProperties": false
+    },
+    "writePaths": {
+      "description": "What the provider's code can send on each of Studio's four write paths: the query editor, object edit, maintenance and transactions. A provider that states no path is written open on every path, the reading Studio gives that absence. The policy claim writeReach is their summary: open where any path is open, else guarded where any is gated, else none.",
+      "type": "object",
+      "properties": {
+        "editor": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "objectEdit": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "maintenance": {
+          "$ref": "#/$defs/writePathEvidence"
+        },
+        "transaction": {
+          "$ref": "#/$defs/writePathEvidence"
+        }
+      },
+      "required": ["editor", "objectEdit", "maintenance", "transaction"],
+      "additionalProperties": false
+    },
+    "writePathEvidence": {
+      "description": "One write path's reach: absent, gated or open.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/writePathAbsent"
+        },
+        {
+          "$ref": "#/$defs/writePathGated"
+        },
+        {
+          "$ref": "#/$defs/writePathOpen"
+        }
+      ]
+    },
+    "writePathAbsent": {
+      "description": "The provider has no code on the path that can send a write. On the editor path it names the structural proof that keeps it so; elsewhere the proof is null where it names none.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "absent"
+        },
+        "proof": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/writePathProof"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["reach", "proof"],
+      "additionalProperties": false
+    },
+    "writePathGated": {
+      "description": "Provider code refuses every write on the path while read-only mode holds, naming the mode, before any request, and the gate names that code.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "gated"
+        },
+        "gate": {
+          "$ref": "#/$defs/writePathProof"
+        }
+      },
+      "required": ["reach", "gate"],
+      "additionalProperties": false
+    },
+    "writePathOpen": {
+      "description": "The path sends a write no Studio gate refuses.",
+      "type": "object",
+      "properties": {
+        "reach": {
+          "const": "open"
+        }
+      },
+      "required": ["reach"],
+      "additionalProperties": false
+    },
+    "writePathProof": {
+      "description": "The export that keeps a write path's answer: its module by its path relative to the root of the package declaring the engine, under src/ with no dot segment and ending in .ts, and the export's name.",
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^src(?:/[A-Za-z0-9][A-Za-z0-9_-]*)+\\.ts$"
+        },
+        "symbol": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        }
+      },
+      "required": ["module", "symbol"],
+      "additionalProperties": false
+    },
+    "metadataOnlyOperation": {
+      "description": "One operation a metadata-only read permits, by the name the provider gives it, and the columns its answer holds, in the answer's order, each named once.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "pattern": "^[A-Za-z](?:[A-Za-z0-9 _-]{0,62}[A-Za-z0-9_])?$"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/metadataOnlyColumn"
+          },
+          "minItems": 1,
+          "maxItems": 64
+        }
+      },
+      "required": ["operation", "columns"],
+      "additionalProperties": false
+    },
+    "metadataOnlyColumn": {
+      "description": "One column of a metadata-only answer and the kind of fact it holds.",
+      "type": "object",
+      "properties": {
+        "column": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]{0,63}$"
+        },
+        "kind": {
+          "$ref": "#/$defs/metadataOnlyKind"
+        }
+      },
+      "required": ["column", "kind"],
+      "additionalProperties": false
+    },
+    "metadataOnlyKind": {
+      "description": "name: a name the store keeps for an object of its own, printable, 1 to 512 characters. count: a non-negative safe integer. flag: true or false.",
+      "type": "string",
+      "enum": ["name", "count", "flag"]
+    },
+    "inlineEditRefusal": {
+      "description": "The result columns the engine's inline editor refuses to edit, by their type, and the reason a refused cell shows; null where it refuses none by type.",
+      "type": ["object", "null"],
+      "properties": {
+        "type": {
+          "description": "A regular expression over a result column's type name, compiled with no flag.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      },
+      "required": ["type", "reason"],
       "additionalProperties": false
     },
     "compatibilityEntry": {

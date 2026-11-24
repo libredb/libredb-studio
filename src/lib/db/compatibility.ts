@@ -700,7 +700,8 @@ export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Objec
  * each exempting row to the protected names it was accepted for. Frozen like the records above it, each row too.
  *
  * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.maskingExemptColumns`
- * (docs/providers/CONTRACT.md, clause M-57), and it is never computed from providers.
+ * (docs/providers/CONTRACT.md, clause M-57), and that an engine declaration requests at `policy.maskingExemptColumns`,
+ * which the generator writes from this row (clause M-59); it is never computed from providers.
  */
 export const MASKING_EXEMPT_COLUMNS: Readonly<
   Record<DatabaseType, NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null>

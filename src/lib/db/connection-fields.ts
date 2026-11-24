@@ -836,7 +836,8 @@ export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCrede
  * both `"none"` and engines that take the pair at open but no agent credential on a seed.
  *
  * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.agentCredential`
- * (docs/providers/CONTRACT.md, clause M-57).
+ * (docs/providers/CONTRACT.md, clause M-57), and that an engine declaration requests at `policy.agentCredentialForm`,
+ * which the generator writes from this row, `pair` for a null row (clause M-58).
  */
 export const AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> = Object.freeze({
   postgres: null,

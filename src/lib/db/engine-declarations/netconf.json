@@ -296,12 +296,57 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": false,
     "statementRead": false,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/network/netconf/requests.ts",
+          "symbol": "buildRpc"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "withheld",
+        "columns": [
+          {
+            "column": "path",
+            "kind": "name"
+          },
+          {
+            "column": "withheld",
+            "kind": "name"
+          },
+          {
+            "column": "nodes",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

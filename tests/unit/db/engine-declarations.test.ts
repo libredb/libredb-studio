@@ -14,6 +14,7 @@ import path from "node:path";
 import { DEFAULT_CONNECT_BUDGET_MS } from "@libredb/provider-sdk/calls";
 import {
   type AgentCredentialForm,
+  type AgentCredentialFormClaim,
   type BlockCommentRule,
   type BracketRule,
   compileManifestValidator,
@@ -33,6 +34,7 @@ import {
   type JwtAccessClaim,
   type MaintenanceOperation as ManifestMaintenanceOperation,
   type McpClaims,
+  type MetadataOnlyKind,
   type MigrationDdl,
   type MonacoLanguageId,
   type NonFiniteLiterals,
@@ -41,12 +43,15 @@ import {
   type ProcedureBodies,
   type QueryDialect as ManifestQueryDialect,
   type QueryLanguage,
+  type Safeguards,
   type ScriptFacts,
   type ScriptUnit,
   type SelectFieldName,
   type StatementLanguage,
   type StatementRedaction,
   type TypeFamilies,
+  type WritePathEvidence,
+  type WritePaths,
   type WriteReachClaim,
 } from "@libredb/provider-sdk/manifest";
 import type {
@@ -92,6 +97,7 @@ import {
   CONNECTION_STRING_ACCEPTED,
   EXTERNAL_DATABASE_TYPES,
   HOST_PATH_FIELDS,
+  MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_METADATA_READ_CHANGES_STATE,
@@ -109,6 +115,7 @@ import {
   WRITE_REACH,
 } from "@/lib/db/compatibility";
 import {
+  AGENT_CREDENTIAL_FORM,
   CONNECTION_FIELD_DESCRIPTORS,
   CONNECTION_FIELDS,
   type ConnectionField,
@@ -157,7 +164,8 @@ import type { EditorLanguageContribution } from "@/lib/db/editor-language/types"
 import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
-import type { WriteReach } from "@/lib/db/write-reach";
+import type { MetadataKind } from "@/lib/db/redaction/metadata-only";
+import { summarizeWriteReach, WRITE_PATHS, type WriteReach } from "@/lib/db/write-reach";
 import type {
   ExportSpec,
   ExportTypeVocabulary,
@@ -189,7 +197,14 @@ import {
 } from "@/lib/db/providers/sql/snowflake/account-host";
 import { SNOWFLAKE_CONNECTION_STRING } from "@/lib/db/providers/sql/snowflake/connection-string";
 import { SPARK_CONNECTION_STRING } from "@/lib/db/providers/sql/spark/connection-string";
-import type { ExplainFormat, MaintenanceOperation, ProviderCapabilities } from "@/lib/db/types";
+import type {
+  AgentCredentialForm as ProviderAgentCredentialForm,
+  ExplainFormat,
+  MaintenanceOperation,
+  ProviderCapabilities,
+  WritePath,
+  WritePathReach,
+} from "@/lib/db/types";
 import { getExplainStrategy } from "@/lib/explain";
 import { DIALECT_EDITORS, type DialectEditor } from "@/lib/editor/dialect-editors";
 import { editorLanguageOf, resolveTabType } from "@/lib/editor/tab-language";
@@ -1234,6 +1249,11 @@ const POLICY_CLAIM_RECORDS: { readonly [K in keyof PolicyClaims]: Readonly<Recor
   deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS,
   singleWriterFile: SINGLE_WRITER_FILE,
   readRootsRequired: READ_ROOTS_REQUIRED,
+  // The record writes the pair, the form a user and a password take together, as null; a declaration names it `pair`.
+  agentCredentialForm: Object.fromEntries(
+    SHIPPED_DATABASE_TYPES.map((type) => [type, AGENT_CREDENTIAL_FORM[type] ?? "pair"]),
+  ) as Record<DatabaseType, AgentCredentialFormClaim>,
+  maskingExemptColumns: MASKING_EXEMPT_COLUMNS,
 };
 
 /** Studio's review record of each MCP claim, by the member that requests it, written as `POLICY_CLAIM_RECORDS` is. */
@@ -1242,6 +1262,55 @@ const MCP_CLAIM_RECORDS: { readonly [K in keyof McpClaims]: Readonly<Record<Data
   statementRead: MCP_STATEMENT_READ,
   metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
   agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+};
+
+/** A provider's answer for one write path in the declaration's form: a proof or gate as its module and export. */
+function writePathEvidence(path: WritePathReach): WritePathEvidence {
+  if (path.reach === "gated") return { reach: "gated", gate: { module: path.gate.module, symbol: path.gate.symbol } };
+  if (path.reach === "open") return { reach: "open" };
+  return {
+    reach: "absent",
+    proof: path.proof === undefined ? null : { module: path.proof.module, symbol: path.proof.symbol },
+  };
+}
+
+/**
+ * A provider's write paths in the declaration's form: open on every path where it declares no write reach, the
+ * reading Studio gives that absence, each declared path as declared, and a declared write reach that misses a path
+ * refused by name.
+ */
+function declaredWritePaths(type: DatabaseType, declared: ProviderCapabilities["writeReach"]): WritePaths {
+  const evidence = (path: WritePath): WritePathEvidence => {
+    if (declared === undefined) return { reach: "open" };
+    const reach: WritePathReach | undefined = declared[path];
+    if (reach === undefined) throw new Error(`${type}: the provider declares a write reach with no ${path} path`);
+    return writePathEvidence(reach);
+  };
+  return Object.fromEntries(WRITE_PATHS.map((path) => [path, evidence(path)])) as unknown as WritePaths;
+}
+
+/**
+ * Each fact of the safeguards segment as its provider declares it, read from the provider's capabilities in the
+ * declaration's form (docs/providers/CONTRACT.md, clause M-60): a provider that declares no write reach open on every
+ * path, the reading Studio gives that absence, each metadata-only operation in the provider's order with its columns in
+ * theirs, and null where the provider declares no metadata-only answer or no inline edit refusal. Written here apart
+ * from the generator, and typed by the schema's members, so a member the schema gains fails the typecheck here until
+ * its reader is named.
+ */
+const SAFEGUARD_FACTS: { readonly [K in keyof Safeguards]: (type: DatabaseType) => Safeguards[K] } = {
+  writePaths: (type) => declaredWritePaths(type, CAPABILITIES[type].writeReach),
+  metadataOnly: (type) => {
+    const declared = CAPABILITIES[type].metadataOnly;
+    if (declared === undefined) return null;
+    return Object.entries(declared).map(([operation, columns]) => ({
+      operation,
+      columns: columns.map(({ column, kind }) => ({ column, kind })),
+    }));
+  },
+  inlineEditRefusedColumns: (type) => {
+    const declared = CAPABILITIES[type].inlineEditRefusedColumns;
+    return declared === undefined ? null : { type: declared.type, reason: declared.reason };
+  },
 };
 
 /** How the census reads one claim of an earlier segment: the engine's request, and Studio's record of it. */
@@ -3071,7 +3140,7 @@ describe("the census", () => {
         (member) =>
           [
             `policy.${member}`,
-            differing((type, d) => d.policy[member] === POLICY_CLAIM_RECORDS[member][type]),
+            differing((type, d) => sameValue(d.policy[member], POLICY_CLAIM_RECORDS[member][type])),
           ] as const,
       ),
       ...mcpMembers.map(
@@ -3083,7 +3152,94 @@ describe("the census", () => {
     expect(readBack.filter(([, ids]) => ids.length > 0).map(([claim, ids]) => `${claim}: ${ids.join(", ")}`)).toEqual(
       [],
     );
-    expect(readBack.length).toBe(9);
+    expect(readBack.length).toBe(11);
+  });
+
+  test("every fact of the safeguards segment is its provider's own declaration", () => {
+    const facts = Object.keys(SAFEGUARD_FACTS) as (keyof Safeguards)[];
+    const readBack = facts.map(
+      (fact) =>
+        [
+          `safeguards.${fact}`,
+          differing((type, d) => sameValue(d.safeguards[fact], SAFEGUARD_FACTS[fact](type))),
+        ] as const,
+    );
+    const stated = (read: (d: EngineDeclaration) => boolean) =>
+      SHIPPED_DATABASE_TYPES.filter((type) => read(declared(type)));
+
+    expect(readBack.filter(([, ids]) => ids.length > 0).map(([fact, ids]) => `${fact}: ${ids.join(", ")}`)).toEqual([]);
+    expect(readBack.length).toBe(3);
+    // Vacuity: some provider declares no write reach and some does, with an editor proof and a gate among them, and
+    // some declares a metadata-only answer and an inline edit refusal.
+    const paths = (d: EngineDeclaration) => Object.values(d.safeguards.writePaths);
+    expect(stated((d) => paths(d).every((path) => path.reach === "open")).length).toBeGreaterThan(0);
+    expect(stated((d) => d.safeguards.writePaths.editor.reach === "absent").length).toBeGreaterThan(0);
+    expect(stated((d) => paths(d).some((path) => path.reach === "gated")).length).toBeGreaterThan(0);
+    expect(stated((d) => d.safeguards.metadataOnly !== null).length).toBeGreaterThan(0);
+    expect(stated((d) => d.safeguards.inlineEditRefusedColumns !== null).length).toBeGreaterThan(0);
+  });
+
+  test("each declaration's safeguards segment holds exactly the facts the census reads back to the providers", () => {
+    const facts = sorted(Object.keys(SAFEGUARD_FACTS));
+
+    expect(sorted(Object.keys(SCHEMA.$defs.safeguards?.properties ?? {}))).toEqual(facts);
+    expect(sorted(SCHEMA.$defs.safeguards?.required ?? [])).toEqual(facts);
+    expect(differing((_type, d) => sameList(sorted(Object.keys(d.safeguards)), facts))).toEqual([]);
+  });
+
+  test("a declared write reach that misses a path is refused by name, by the generator and by the census", () => {
+    const { editor, objectEdit, maintenance } = CAPABILITIES.etcd.writeReach ?? {};
+    const partial = { editor, objectEdit, maintenance } as unknown as ProviderCapabilities["writeReach"];
+    const refusal = "etcd: the provider declares a write reach with no transaction path";
+
+    expect(CAPABILITIES.etcd.writeReach).toBeDefined();
+    expect(() => buildEngineDeclaration("etcd", { ...CAPABILITIES.etcd, writeReach: partial })).toThrow(refusal);
+    expect(() => declaredWritePaths("etcd", partial)).toThrow(refusal);
+    // The documented absence stays open on every path.
+    expect(Object.values(declaredWritePaths("etcd", undefined)).map((path) => path.reach)).toEqual([
+      "open",
+      "open",
+      "open",
+      "open",
+    ]);
+  });
+
+  test("the validator admits a write reach claim exactly where it is Studio's summary of the write paths", () => {
+    const validator = compileManifestValidator(readFileSync(SCHEMA_FILE));
+    const gate = { module: "src/lib/db/read-only-gate.ts", symbol: "refuseWrites" };
+    const kafka = declared("kafka");
+    const reaches: readonly WritePathReach[] = [
+      { reach: "absent", proof: { module: "src/lib/db/read-policy.ts", symbol: "READS" } },
+      { reach: "gated", gate },
+      { reach: "open" },
+    ];
+    const combinations: Record<WritePath, WritePathReach>[] = reaches.flatMap((editor) =>
+      reaches.flatMap((objectEdit) =>
+        reaches.flatMap((maintenance) =>
+          reaches.map((transaction) => ({ editor, objectEdit, maintenance, transaction })),
+        ),
+      ),
+    );
+    const wrong: string[] = [];
+    for (const paths of combinations) {
+      const summary = summarizeWriteReach(paths);
+      for (const request of ["none", "guarded", "open"] as const) {
+        const writePaths = Object.fromEntries(
+          WRITE_PATHS.map((path) => [path, writePathEvidence(paths[path])]),
+        ) as unknown as WritePaths;
+        const changed: EngineDeclaration = {
+          ...kafka,
+          policy: { ...kafka.policy, writeReach: request },
+          safeguards: { ...kafka.safeguards, writePaths },
+        };
+        if (validator.validateEngine(changed).admitted !== (request === summary)) {
+          wrong.push(`${WRITE_PATHS.map((path) => paths[path].reach).join("/")} requesting ${request}`);
+        }
+      }
+    }
+
+    expect(combinations.length).toBe(81);
+    expect(wrong).toEqual([]);
   });
 
   test("every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it", () => {
@@ -3302,7 +3458,15 @@ describe("the vocabularies", () => {
       Equal<QueryLanguage, ProviderCapabilities["queryLanguage"]>,
       Equal<MonacoLanguageId, EditorLanguage>,
       Equal<WriteReachClaim, WriteReach>,
+      Equal<keyof WritePaths, WritePath>,
+      Equal<WritePathEvidence["reach"], WritePathReach["reach"]>,
+      Equal<MetadataOnlyKind, MetadataKind>,
+      Equal<Exclude<AgentCredentialFormClaim, "pair">, ProviderAgentCredentialForm>,
     ] = [
+      true,
+      true,
+      true,
+      true,
       true,
       true,
       true,
@@ -3335,7 +3499,7 @@ describe("the vocabularies", () => {
       true,
     ];
 
-    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 30 }, () => true));
+    expect<readonly boolean[]>(parity).toEqual(Array.from({ length: 34 }, () => true));
   });
 
   test("the explain formats, the query dialects and the generic fence tags are Studio's", () => {

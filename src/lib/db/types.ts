@@ -1119,6 +1119,9 @@ export interface ProviderCapabilities {
    * DBCLOB or BLOB column declared 32768 bytes or longer (K24 in `docs/providers/db2.md`), and a
    * result declares those columns without their length.
    *
+   * The engine declaration states it at `safeguards.inlineEditRefusedColumns`, read back to this
+   * declaration by the census (docs/providers/CONTRACT.md, clause M-60).
+   *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent refuses no
    * column.
    */
@@ -1159,6 +1162,9 @@ export interface ProviderCapabilities {
    * JSON dialects declares false. The day a JSON dialect opens profiling, this exemption has to
    * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
    * another in the profiler.
+   *
+   * An engine declaration requests it at `policy.maskingExemptColumns`, which the generator writes
+   * from the record's row (docs/providers/CONTRACT.md, clause M-59).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent exempts
    * no column.
@@ -1434,6 +1440,9 @@ export interface ProviderCapabilities {
    * Absent means open on every path; every provider whose reach is not open declares all four paths. Optional for the
    * same published-interface reason as `supportsInlineRowEdit` (`src/exports/types.ts`): a required field added after
    * the fact stops every external implementer compiling.
+   *
+   * The engine declaration states it at `safeguards.writePaths`, every path open where it is absent, read back to this
+   * declaration by the census (docs/providers/CONTRACT.md, clauses M-60 and M-61).
    */
   readonly writeReach?: Readonly<Record<WritePath, WritePathReach>>;
   /**
@@ -1443,7 +1452,8 @@ export interface ProviderCapabilities {
    * in `src/lib/db/connection-fields.ts`, Studio's review record of the claim, and refuses a credential in a shape
    * the form does not take before the provider connects (docs/providers/CONTRACT.md, clause M-57).
    * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
-   * type-id.
+   * type-id. An engine declaration requests it at `policy.agentCredentialForm`, which the generator writes from the
+   * record's row, `pair` for the user-and-password form (clause M-58).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
@@ -1465,7 +1475,8 @@ export interface ProviderCapabilities {
    * or a flag. Every other operation is refused before anything is sent. Absent: the provider answers as it reads.
    * The projection helpers are provider-neutral, in `src/lib/db/redaction/metadata-only.ts`, which derives this
    * declaration from the provider's projections, so the two cannot differ. Separate from `machineRedaction`, which
-   * masks names and neither names nor withholds a value.
+   * masks names and neither names nor withholds a value. The engine declaration states it at `safeguards.metadataOnly`,
+   * read back to this declaration by the census (docs/providers/CONTRACT.md, clause M-60).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
    */
@@ -1513,7 +1524,8 @@ export interface ProviderCapabilities {
    * sentence saying each refresh keeps the billed compute running; auto-refresh stays off until the
    * user starts it, as it does for every provider, and then polls on its timer. A request the user
    * makes still runs and still resumes the compute.
-   * Read from an unconnected provider, so the declaration answers before any connect.
+   * Read from an unconnected provider, so the declaration answers before any connect. No manifest member states it,
+   * since the answer is the provider's for each connection (docs/providers/CONTRACT.md, clause M-63).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared,

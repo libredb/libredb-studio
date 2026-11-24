@@ -336,12 +336,99 @@
     "readsFileAccessPosture": false,
     "deniedFileAccessRefusal": null,
     "singleWriterFile": false,
-    "readRootsRequired": false
+    "readRootsRequired": false,
+    "agentCredentialForm": "pair",
+    "maskingExemptColumns": null
   },
   "mcp": {
     "exposable": false,
     "statementRead": false,
     "metadataReadChangesState": false,
     "agentCredentialRequired": false
+  },
+  "safeguards": {
+    "writePaths": {
+      "editor": {
+        "reach": "absent",
+        "proof": {
+          "module": "src/lib/db/providers/keyvalue/oxia/grpc-client.ts",
+          "symbol": "allowlistedServices"
+        }
+      },
+      "objectEdit": {
+        "reach": "absent",
+        "proof": null
+      },
+      "maintenance": {
+        "reach": "absent",
+        "proof": null
+      },
+      "transaction": {
+        "reach": "absent",
+        "proof": null
+      }
+    },
+    "metadataOnly": [
+      {
+        "operation": "shards",
+        "columns": [
+          {
+            "column": "namespace",
+            "kind": "name"
+          },
+          {
+            "column": "shards",
+            "kind": "count"
+          },
+          {
+            "column": "leaders",
+            "kind": "count"
+          }
+        ]
+      },
+      {
+        "operation": "key metadata",
+        "columns": [
+          {
+            "column": "exists",
+            "kind": "flag"
+          },
+          {
+            "column": "version_id",
+            "kind": "count"
+          },
+          {
+            "column": "modifications",
+            "kind": "count"
+          },
+          {
+            "column": "created",
+            "kind": "name"
+          },
+          {
+            "column": "modified",
+            "kind": "name"
+          },
+          {
+            "column": "value_bytes",
+            "kind": "count"
+          },
+          {
+            "column": "ephemeral",
+            "kind": "flag"
+          }
+        ]
+      },
+      {
+        "operation": "key count",
+        "columns": [
+          {
+            "column": "keys",
+            "kind": "count"
+          }
+        ]
+      }
+    ],
+    "inlineEditRefusedColumns": null
   }
 }

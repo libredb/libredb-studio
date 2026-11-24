@@ -272,13 +272,33 @@
         "readsFileAccessPosture": false,
         "deniedFileAccessRefusal": null,
         "singleWriterFile": false,
-        "readRootsRequired": false
+        "readRootsRequired": false,
+        "agentCredentialForm": "pair",
+        "maskingExemptColumns": null
       },
       "mcp": {
         "exposable": false,
         "statementRead": false,
         "metadataReadChangesState": false,
         "agentCredentialRequired": false
+      },
+      "safeguards": {
+        "writePaths": {
+          "editor": {
+            "reach": "open"
+          },
+          "objectEdit": {
+            "reach": "open"
+          },
+          "maintenance": {
+            "reach": "open"
+          },
+          "transaction": {
+            "reach": "open"
+          }
+        },
+        "metadataOnly": null,
+        "inlineEditRefusedColumns": null
       }
     }
   ],
