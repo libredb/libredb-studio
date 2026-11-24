@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D910, U17 · 384
+- [Drivers and connections](#drivers-and-connections) — D1-D920, U17 · 385
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5073,6 +5073,17 @@ It is not new with the host core: the choice has been unraced since the `databas
 Found 2026-11-25 while moving MCP's schema reads onto the host core.
 
 **Done when:** a statement tool's catalog session open ends at the call's deadline and when the client leaves, answered as the timeout or the cancel, with a test holding a `forCatalog` that never settles.
+
+### D920. A script's answer carries every row of every unit, with no byte bound
+
+`POST /api/db/multi-query` answers each unit's rows whole in `statements`, and the last successful unit's again as the main result, and the transaction route's script of several statements does the same.
+Every unit but the last is sent unbounded, so `SELECT * FROM big; SELECT 1` answers every row of `big`.
+The host core measures each unit's first result within its 32 MiB page (`openEditorScript` in `src/lib/api/editor-script.ts`, clause C-83 of `docs/providers/CONTRACT.md`), but the answer is the provider's rows, since a script's answer has no field to say where a cut fell.
+It is not new with the host core: the route has answered so since it existed.
+
+Found 2026-11-25 while moving the script's units onto the host core.
+
+**Done when:** a script's answer bounds each unit's rows by the host's page and says so per unit in a field the editor shows, or the owner decides that the provider's statement is the bound and the API documentation says so, with a test either way.
 
 ## Value interpolation
 
