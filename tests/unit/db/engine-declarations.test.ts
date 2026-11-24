@@ -1026,7 +1026,7 @@ describe("the committed declarations", () => {
         seedOnly: null,
         refused: [],
         connectionString: { accepted: false, dialogOffersUri: false },
-        tls: "not-offered",
+        tls: { modes: [] },
         readsTrustMaterial: false,
         dialog: bigquery.connection.dialog,
         hostUriSchemes: [],
@@ -1063,7 +1063,7 @@ describe("the committed declarations", () => {
       connectionString: { ...committed.connection.connectionString, dialogOffersUri: true },
       connectBudgetMs: 90_000,
       defaults: { port: 6543 },
-      tls: "not-offered" as const,
+      tls: { modes: [] },
       dialog: { ...committed.connection.dialog, labels: [{ field: "host" as const, text: "Edited by hand" }] },
       hostUriSchemes: ["https" as const],
       fieldRules: [{ field: "user" as const, required: "Edited by hand.", format: null, charRange: null, check: null }],
@@ -1927,8 +1927,13 @@ describe("the census", () => {
     expect(differing(matches)).toEqual([]);
   });
 
-  test("connection.tls is offered exactly where the dialog offers the SSL panel", () => {
-    expect(differing((type, d) => (d.connection.tls === "offered") === offersSslPanel(type))).toEqual([]);
+  test("connection.tls lists TLS modes exactly where the dialog offers the SSL panel", () => {
+    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
+      const listsModes = d.connection.tls.modes.length > 0;
+      return listsModes === offersSslPanel(type);
+    };
+
+    expect(differing(matches)).toEqual([]);
   });
 
   test("connection.opensLocalFile and serverLevelWithoutDatabase are their records", () => {

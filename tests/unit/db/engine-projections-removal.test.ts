@@ -130,6 +130,7 @@ describe("each projection of the admitted declarations, built with and without a
     const entry = withFixture.acmefoo as ConnectionFormEntry;
     expect(entry.displayName).toBe("Acme Foo");
     expect(entry.dialog).toEqual(POSTGRES.connection.dialog);
+    expect(entry.tls).toEqual({ modes: ["verify-system", "verify-full"] });
     expect([entry.hostHint, entry.hostIdentity, entry.import]).toEqual([null, null, null]);
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
     // Its form composes with Studio's function table, which holds nothing for it, since it names no function.

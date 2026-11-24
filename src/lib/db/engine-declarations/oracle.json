@@ -30,7 +30,15 @@
       },
       "seedCheck": null
     },
-    "tls": "offered",
+    "tls": {
+      "modes": [
+        "disable",
+        "require",
+        "verify-system",
+        "verify-ca",
+        "verify-full"
+      ]
+    },
     "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true

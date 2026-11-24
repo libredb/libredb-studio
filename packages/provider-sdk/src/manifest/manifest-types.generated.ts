@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "6e32d68e5a9a12e3183628000079c19913a2c940d49c4afd2f8e8b6381cf8942";
+export const MANIFEST_SCHEMA_SHA256 = "4b6fbc159a19a4a80927412cbc9fbe3f14b3ac45778854eda44117d2ff696781";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -151,7 +151,7 @@ export interface Connection {
   /** The fields the engine refuses by name, each with the sentence core refuses a connection that sets it with, in the order core checks them: core refuses such a connection before any provider is built, so no provider receives one. None of them is one of the engine's fields, and each is listed once. */
   readonly refused: readonly RefusedField[];
   readonly connectionString: ConnectionStringOffer;
-  readonly tls: FacetOffer;
+  readonly tls: TlsOffer;
   /** Whether the engine's provider is handed the CA certificates of the file NODE_EXTRA_CA_CERTS names, as data: true where its TLS library does not read Node.js's trust store, so the variable never reaches it on its own. Not a claim: no gate reads it, the certificates are the operator's public ones, and a provider that needs them and does not ask fails to verify, never verifies less. */
   readonly readsTrustMaterial: boolean;
   readonly sshTunnel: SshTunnelOffered | SshTunnelRefused;
@@ -376,6 +376,15 @@ export type ConnectionStringPaste = {
   readonly catchAll: boolean;
   readonly formats: readonly string[];
 } | null;
+
+/** A TLS mode a connection asks for. Each means what Studio's published SSLMode type says, the same on every engine that lists it, so no engine's modes are mapped onto another's. An engine lists its modes in this order. */
+export type TlsMode = "disable" | "require" | "verify-system" | "verify-ca" | "verify-full";
+
+/** The TLS modes the engine's provider takes. */
+export interface TlsOffer {
+  /** The modes, each once and in the order of tlsMode; empty where the engine offers no TLS, so no surface draws the TLS panel for it and its provider receives no TLS settings. */
+  readonly modes: readonly TlsMode[];
+}
 
 /** offered: the engine, or for a call the package's code, has something to read or do for it. not-offered: it has nothing, so no surface draws it and no call is made. */
 export type FacetOffer = "offered" | "not-offered";

@@ -8,7 +8,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   bigquery: Object.freeze({
     displayName: "BigQuery",
     defaults: Object.freeze({}),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: Object.freeze(["password", "database", "location", "schema"] as const),
       labels: Object.freeze([
@@ -42,7 +42,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   cassandra: Object.freeze({
     displayName: "Apache Cassandra",
     defaults: Object.freeze({ port: 9042 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "database", text: "Keyspace Name" })] as const),
@@ -71,7 +73,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   clickhouse: Object.freeze({
     displayName: "ClickHouse",
     defaults: Object.freeze({ port: 8123 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -93,7 +97,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   couchbase: Object.freeze({
     displayName: "Couchbase",
     defaults: Object.freeze({ port: 8091 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "database", text: "Bucket Name" })] as const),
@@ -118,7 +124,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   databend: Object.freeze({
     displayName: "Databend",
     defaults: Object.freeze({ port: 8000 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "warehouse", text: "Warehouse" })] as const),
@@ -179,7 +187,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   db2: Object.freeze({
     displayName: "Db2 LUW",
     defaults: Object.freeze({ port: 50000 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -204,7 +214,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   druid: Object.freeze({
     displayName: "Apache Druid",
     defaults: Object.freeze({ port: 8888 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -224,7 +236,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   duckdb: Object.freeze({
     displayName: "DuckDB",
     defaults: Object.freeze({}),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -244,7 +258,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   elasticsearch: Object.freeze({
     displayName: "Elasticsearch",
     defaults: Object.freeze({ port: 9200 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -264,7 +280,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   etcd: Object.freeze({
     displayName: "etcd",
     defaults: Object.freeze({ port: 2379 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -297,7 +315,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   firestore: Object.freeze({
     displayName: "Firestore",
     defaults: Object.freeze({}),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -334,7 +352,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   influxdb: Object.freeze({
     displayName: "InfluxDB (InfluxQL)",
     defaults: Object.freeze({ port: 8086 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "Password or token" })] as const),
@@ -371,7 +391,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   influxdb3: Object.freeze({
     displayName: "InfluxDB 3 (SQL)",
     defaults: Object.freeze({ port: 8181 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "Token" })] as const),
@@ -408,7 +430,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   kafka: Object.freeze({
     displayName: "Apache Kafka",
     defaults: Object.freeze({ port: 9092 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "saslMechanism", text: "SASL mechanism" })] as const),
@@ -437,7 +461,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   kubernetes: Object.freeze({
     displayName: "Kubernetes",
     defaults: Object.freeze({ port: 6443 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -520,7 +546,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   libredb: Object.freeze({
     displayName: "LibreDB",
     defaults: Object.freeze({}),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -540,7 +568,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   libsql: Object.freeze({
     displayName: "libSQL",
     defaults: Object.freeze({ port: 8080 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "Auth Token" })] as const),
@@ -571,7 +601,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   milvus: Object.freeze({
     displayName: "Milvus",
     defaults: Object.freeze({ port: 19530 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "Password or token" })] as const),
@@ -608,7 +640,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   modbus: Object.freeze({
     displayName: "Modbus",
     defaults: Object.freeze({ port: 502 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "registerMap", text: "Register map" })] as const),
@@ -642,7 +676,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   mongodb: Object.freeze({
     displayName: "MongoDB",
     defaults: Object.freeze({ port: 27017 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -669,7 +705,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   mqtt: Object.freeze({
     displayName: "MQTT",
     defaults: Object.freeze({ port: 1883 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "database", text: "Topic filter" })] as const),
@@ -710,7 +748,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   mssql: Object.freeze({
     displayName: "SQL Server",
     defaults: Object.freeze({ port: 1433 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -735,7 +775,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   mtconnect: Object.freeze({
     displayName: "MTConnect",
     defaults: Object.freeze({ port: 5000 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -758,7 +800,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   mysql: Object.freeze({
     displayName: "MySQL",
     defaults: Object.freeze({ port: 3306 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -778,7 +822,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   neo4j: Object.freeze({
     displayName: "Neo4j",
     defaults: Object.freeze({ port: 7687 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -800,7 +846,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   netconf: Object.freeze({
     displayName: "NETCONF",
     defaults: Object.freeze({ port: 830 }),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -820,7 +866,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   opcua: Object.freeze({
     displayName: "OPC UA",
     defaults: Object.freeze({ port: 4840 }),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -870,7 +916,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   opensearch: Object.freeze({
     displayName: "OpenSearch",
     defaults: Object.freeze({ port: 9200 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -890,7 +938,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   oracle: Object.freeze({
     displayName: "Oracle",
     defaults: Object.freeze({ port: 1521 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -912,7 +962,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   oxia: Object.freeze({
     displayName: "Oxia",
     defaults: Object.freeze({ port: 6648 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -957,7 +1009,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   postgres: Object.freeze({
     displayName: "PostgreSQL",
     defaults: Object.freeze({ port: 5432 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -977,7 +1031,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   prometheus: Object.freeze({
     displayName: "Prometheus",
     defaults: Object.freeze({ port: 9090 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1002,7 +1058,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   qdrant: Object.freeze({
     displayName: "Qdrant",
     defaults: Object.freeze({ port: 6333 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "API key or JWT" })] as const),
@@ -1031,7 +1089,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   rabbitmq: Object.freeze({
     displayName: "RabbitMQ",
     defaults: Object.freeze({ port: 15672 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1103,7 +1163,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   redis: Object.freeze({
     displayName: "Redis",
     defaults: Object.freeze({ port: 6379 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -1123,7 +1185,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   s3: Object.freeze({
     displayName: "S3-compatible object storage",
     defaults: Object.freeze({ port: 9000 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1217,7 +1281,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   snmp: Object.freeze({
     displayName: "SNMP",
     defaults: Object.freeze({ port: 161 }),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1257,7 +1321,7 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   snowflake: Object.freeze({
     displayName: "Snowflake",
     defaults: Object.freeze({ host: "" }),
-    tls: "not-offered",
+    tls: Object.freeze({ modes: Object.freeze([] as const) }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1358,7 +1422,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   spark: Object.freeze({
     displayName: "Apache Spark",
     defaults: Object.freeze({ port: 15002 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([
@@ -1453,7 +1519,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   sparkplug: Object.freeze({
     displayName: "Sparkplug B",
     defaults: Object.freeze({ port: 1883 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "database", text: "Group" })] as const),
@@ -1482,7 +1550,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   sqlite: Object.freeze({
     displayName: "SQLite",
     defaults: Object.freeze({}),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([] as const),
@@ -1502,7 +1572,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   trino: Object.freeze({
     displayName: "Trino",
     defaults: Object.freeze({ port: 8080 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "database", text: "Catalog Name" })] as const),
@@ -1531,7 +1603,9 @@ export const BUNDLED_CONNECTION_FORMS: Readonly<Record<DatabaseType, ConnectionF
   weaviate: Object.freeze({
     displayName: "Weaviate",
     defaults: Object.freeze({ port: 8080 }),
-    tls: "offered",
+    tls: Object.freeze({
+      modes: Object.freeze(["disable", "require", "verify-system", "verify-ca", "verify-full"] as const),
+    }),
     dialog: Object.freeze({
       order: null,
       labels: Object.freeze([Object.freeze({ field: "password", text: "API key or token" })] as const),

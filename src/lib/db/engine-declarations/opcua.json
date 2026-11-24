@@ -35,7 +35,9 @@
       "paste": null,
       "seedCheck": "seedCheck"
     },
-    "tls": "not-offered",
+    "tls": {
+      "modes": []
+    },
     "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": true

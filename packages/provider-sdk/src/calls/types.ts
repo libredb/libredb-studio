@@ -26,6 +26,7 @@ import type {
   MonitoringPanels,
   ObjectsCalls,
   ProviderManifest,
+  TlsMode,
 } from "../manifest/manifest-types.generated";
 import type { SessionState } from "../errors";
 import type { EnvReader } from "./env";
@@ -126,9 +127,13 @@ export interface CallContext {
   readonly env: EnvReader;
 }
 
-/** The connection's TLS settings, as the connection holds them. */
+/**
+ * The connection's TLS settings, as the connection holds them. `mode` is typed as one of the provider contract's TLS
+ * modes; that the engine's declaration lists it is not yet held on every path, and the test-connection route and the
+ * storage writes do not yet hold a mode to the contract's modes either (BACKLOG D790).
+ */
 export interface TlsSettings {
-  readonly mode: "disable" | "require" | "verify-system" | "verify-ca" | "verify-full";
+  readonly mode: TlsMode;
   readonly caCert?: string;
   readonly clientCert?: string;
   readonly clientKey?: string;

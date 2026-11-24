@@ -994,9 +994,9 @@ describe("schema refusals", () => {
   test.each([
     ["a location outside the vocabulary", (m: Json) => (m.engines[0].location = "remote"), "/engines/0/location"],
     [
-      "a TLS offer outside the vocabulary",
-      (m: Json) => (m.engines[0].connection.tls = "maybe"),
-      "/engines/0/connection/tls",
+      "a TLS mode outside the vocabulary",
+      (m: Json) => (m.engines[0].connection.tls = { modes: ["disable", "prefer"] }),
+      "/engines/0/connection/tls/modes/1",
     ],
     [
       "a field name outside the vocabulary",
@@ -1047,6 +1047,44 @@ describe("schema refusals", () => {
     const changed = manifest((m) => m.engines[0].connection.fields.push("host"));
 
     expect(refusalsFor(changed)).toEqual([refusal("duplicate", "/engines/0/connection/fields/5")]);
+  });
+
+  test.each([
+    ["every mode", ["disable", "require", "verify-system", "verify-ca", "verify-full"]],
+    ["the two verifying against Studio's trust store or the connection's CA", ["verify-system", "verify-full"]],
+    ["one mode", ["disable"]],
+    ["no mode", []],
+  ])("TLS modes in the provider contract's order, %s, are admitted", (_name, modes) => {
+    const changed = manifest((m) => (connectionOf(m).tls = { modes }));
+
+    expect(refusalsFor(changed)).toEqual([]);
+    expect(validator.validateEngine(changed.engines[0]).admitted).toBe(true);
+  });
+
+  test("a TLS mode outside the provider contract's modes is refused as value-not-allowed at its own pointer", () => {
+    const changed = manifest((m) => (connectionOf(m).tls = { modes: ["disable", "prefer", "verify-full"] }));
+
+    expect(refusalsFor(changed)).toEqual([refusal("value-not-allowed", "/engines/0/connection/tls/modes/1")]);
+  });
+
+  test("a TLS mode listed twice is refused as duplicate at the second", () => {
+    const changed = manifest((m) => (connectionOf(m).tls = { modes: ["require", "require"] }));
+
+    expect(refusalsFor(changed)).toEqual([refusal("duplicate", "/engines/0/connection/tls/modes/1")]);
+  });
+
+  test.each(["offered", "not-offered"])("a TLS offer stated as the word %s is refused as wrong-type", (word) => {
+    const changed = manifest((m) => (connectionOf(m).tls = word));
+
+    expect(refusalsFor(changed)).toEqual([refusal("wrong-type", "/engines/0/connection/tls")]);
+  });
+
+  test("a TLS offer with no modes member is refused as missing-key, and one with another member as unknown-key", () => {
+    const empty = manifest((m) => (connectionOf(m).tls = {}));
+    const extra = manifest((m) => (connectionOf(m).tls = { modes: [], extra: 1 }));
+
+    expect(refusalsFor(empty)).toEqual([refusal("missing-key", "/engines/0/connection/tls", "modes")]);
+    expect(refusalsFor(extra)).toEqual([refusal("unknown-key", "/engines/0/connection/tls", "extra")]);
   });
 
   test.each([0, 70000])("port %d is refused as out-of-range", (port) => {
@@ -2646,12 +2684,12 @@ describe("schema refusals", () => {
     const changed = manifest((m) => {
       m.bogus = true;
       m.engines[0].location = "remote";
-      m.engines[0].connection.tls = "maybe";
+      m.engines[0].connection.tls = { modes: ["maybe"] };
     });
 
     expect(refusalsFor(changed)).toEqual([
       refusal("unknown-key", "", "bogus"),
-      refusal("value-not-allowed", "/engines/0/connection/tls"),
+      refusal("value-not-allowed", "/engines/0/connection/tls/modes/0"),
       refusal("value-not-allowed", "/engines/0/location"),
     ]);
   });
@@ -3173,6 +3211,37 @@ describe("rules the schema cannot state", () => {
       refusal("url-tls-without-paste", "/engines/0/connection/connectionString/urlTls"),
     ]);
     expect(refusalsFor(withPaste)).toEqual([]);
+  });
+
+  test("a TLS mode listed after one the provider contract orders after it is refused as tls-mode-order, at each such mode", () => {
+    const TLS = "/engines/0/connection/tls/modes";
+    const modes = (...listed: string[]) => manifest((m) => (connectionOf(m).tls = { modes: listed }));
+
+    expect(refusalsFor(modes("verify-full", "disable", "require"))).toEqual([
+      refusal("tls-mode-order", `${TLS}/1`),
+      refusal("tls-mode-order", `${TLS}/2`),
+    ]);
+    expect(refusalsFor(modes("require", "disable"))).toEqual([refusal("tls-mode-order", `${TLS}/1`)]);
+    expect(refusalsFor(modes("disable", "verify-ca", "verify-system", "verify-full"))).toEqual([
+      refusal("tls-mode-order", `${TLS}/2`),
+    ]);
+    expect(refusalsFor(modes("disable", "verify-system", "verify-full"))).toEqual([]);
+    expect(validator.validateEngine(modes("verify-full", "verify-ca").engines[0])).toEqual({
+      admitted: false,
+      refusals: [refusal("tls-mode-order", "/connection/tls/modes/1")],
+    });
+  });
+
+  test("a TLS mode out of order is refused in one sentence naming its pointer and no mode", () => {
+    const [refused] = refusalsFor(
+      manifest((m) => (connectionOf(m).tls = { modes: ["verify-full", "verify-system"] })),
+    ) as ManifestRefusal[];
+    const sentence = refusalSentence(refused);
+
+    expect(sentence).toBe(
+      "The TLS mode at /engines/0/connection/tls/modes/1 is listed after a mode the provider contract orders after it.",
+    );
+    for (const mode of ["verify-full", "verify-system"]) expect(sentence).not.toContain(mode);
   });
 
   /** The fixture with a second engine, `otherdb`, and its compatibility entry. */

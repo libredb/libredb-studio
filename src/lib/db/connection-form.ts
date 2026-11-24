@@ -141,8 +141,9 @@ export interface ConnectionFormSpec {
    */
   fieldDefaults?: Partial<Record<ConnectionField, string>>;
   /**
-   * `false` where the engine's endpoint fixes its own TLS, so an SSL mode would be read by nothing. Absent
-   * means the dialog offers the panel. Read through `offersSslPanel`, never directly.
+   * `false` where the engine's declaration lists no TLS mode (`connection.tls.modes` empty), since its endpoint fixes
+   * its own TLS, so an SSL mode would be read by nothing. Absent means the dialog offers the panel. Read through
+   * `offersSslPanel`, never directly.
    */
   showSslPanel?: false;
   /**
@@ -311,7 +312,7 @@ function ruleOf(id: DatabaseType, rule: FieldRule, functions: ConnectionFormFunc
  * declared `displayName`; the default port the decimal text of `defaults.port`, or empty; the default host only where
  * declared; the connection string toggle `CONNECTION_FORM_URI_MODE`'s answer; the fields `CONNECTION_FIELDS`' row, by
  * reference; each per-field record built from its dialog list, keyed in field order, and only where the list is not
- * empty; each field rule's pattern compiled once; `showSslPanel: false` only where `tls` is `not-offered`; the Host
+ * empty; each field rule's pattern compiled once; `showSslPanel: false` only where `tls` lists no mode; the Host
  * box's schemes only where it takes any; each named function bound through `functions`; and `credentialWarnings` a
  * getter onto `CREDENTIAL_WARNINGS`, so the dialog's warning and the seed loader's refusal read one record. The entry
  * and every record in it are frozen.
@@ -353,7 +354,7 @@ export function composeConnectionForm(
     ...(fieldOptions === undefined ? {} : { fieldOptions }),
     ...(fieldShownWhen === undefined ? {} : { fieldShownWhen }),
     ...(fieldDefaults === undefined ? {} : { fieldDefaults }),
-    ...(entry.tls === "not-offered" ? { showSslPanel: false as const } : {}),
+    ...(entry.tls.modes.length === 0 ? { showSslPanel: false as const } : {}),
     ...(entry.hostUriSchemes.length === 0 ? {} : { hostAcceptsUri: entry.hostUriSchemes }),
     ...(entry.import === null
       ? {}

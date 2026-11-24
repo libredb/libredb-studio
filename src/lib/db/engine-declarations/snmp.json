@@ -22,7 +22,9 @@
       "paste": null,
       "seedCheck": null
     },
-    "tls": "not-offered",
+    "tls": {
+      "modes": []
+    },
     "readsTrustMaterial": false,
     "sshTunnel": {
       "offered": false,
