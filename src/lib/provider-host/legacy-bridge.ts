@@ -106,6 +106,13 @@
  * spliced back unless the unit is a module body, never probed, with the run id where the provider cancels and the
  * request's scope. Its calls offer execute honouring `offset`, and cancel and endScope as the console session offers
  * them; it answers through the same result record, `pageApplied` exactly when the prepare bounded the unit.
+ *
+ * Each unit of a script of `POST /api/db/transaction` is served by `bridgedTransactionScriptUnit`, a session of its own
+ * built per unit by `openTransactionScript` in src/lib/api/editor-script.ts: its execute takes only a statement sent
+ * with `transaction`, sends the unit's text as the transaction route always sent it, every unit as written but a last
+ * unit of one statement, which the provider's prepare bounds whole, never probed, through `queryInTransaction` with
+ * that text alone, and answers the session state read after it. Its calls offer execute honouring `offset` and the
+ * transaction facet with the console session's member; it answers through the same result record.
  */
 import {
   BATCH_MAX_BYTES,
@@ -948,5 +955,91 @@ export function bridgedScriptUnit(provider: DatabaseProvider, open: ScriptUnitOp
     answered: record.answered,
     pumpLimits: record.pumpLimits,
     cancelSent: () => cancelSent,
+  };
+}
+
+/**
+ * What a transaction script unit session is opened with: the unit it serves, and, for the script's last unit only,
+ * `lastUnitOptions`, the caller's own page options a unit of one statement is prepared with.
+ */
+export interface TransactionScriptUnitOpen {
+  readonly unit: ExecutionUnit;
+  readonly lastUnitOptions?: QueryPrepareOptions;
+}
+
+/** A bridged transaction script unit session, the legacy result its execute answered, and the page limits read from it. */
+export type BridgedTransactionScriptUnit = BridgedReadOnlyStatements;
+
+/** The calls of every transaction script unit session: execute honouring `offset`, and the transaction facet. */
+const TRANSACTION_SCRIPT_UNIT_CALLS: Calls = sessionCalls(
+  {
+    console: {
+      execute: { honours: ["offset"] },
+      cancel: "not-offered",
+      endScope: "not-offered",
+      transaction: "offered",
+    },
+    objects: { tree: "not-offered" },
+    maintenance: { run: "not-offered", preview: "not-offered" },
+    monitoring: { panel: "not-offered", poolStats: "not-offered" },
+  },
+  undefined,
+);
+
+/**
+ * One unit of a script of `POST /api/db/transaction` served as a transaction script unit session (clause C-50), built
+ * per unit by `openTransactionScript` in src/lib/api/editor-script.ts. Its execute takes only the unit's own text as
+ * the request's statement, and only sent with `transaction`, either other request a host defect thrown by name before
+ * anything is called, and sends the text as the transaction route always sent it: as written, or, for a unit opened
+ * with `lastUnitOptions` that holds exactly one statement, the query the provider's `prepareQuery` answers for it on a
+ * fresh copy of those options, never probed. It calls `queryInTransaction` with that text alone, no params, run id or
+ * scope, since it runs on the transaction's own connection, throws `noteAppendedBound` on a failure, by reference, and
+ * reads nothing after a failure. Its calls offer execute honouring `offset`, the last unit's page, and
+ * `console.transaction` with the member `bridgedConsole` offers; it offers no cancel, endScope, tree, maintenance or
+ * monitoring facet and is no read-only statement session. It answers one source per result set, the main rows first,
+ * `pageApplied` exactly when the prepare bounded the unit, and the session state read after the statement, and its
+ * page's row limit is every row the provider returned, at least one.
+ */
+export function bridgedTransactionScriptUnit(
+  provider: DatabaseProvider & TransactionProvider,
+  open: TransactionScriptUnitOpen,
+): BridgedTransactionScriptUnit {
+  const record = resultRecord("transaction script unit");
+
+  async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
+    const { unit, lastUnitOptions } = open;
+    if (request.statement !== unit.sql) {
+      throw new Error(
+        "The bridge's transaction script unit session was sent a statement other than its unit's text, a defect of the host.",
+      );
+    }
+    if (!Object.hasOwn(request, "transaction")) {
+      throw new Error(
+        "The bridge's transaction script unit session was sent a statement without transaction, which it serves only inside the transaction, a defect of the host.",
+      );
+    }
+    const sent =
+      lastUnitOptions !== undefined && unit.statements.length === 1
+        ? provider.prepareQuery(unit.sql, { ...lastUnitOptions })
+        : { query: unit.sql, wasLimited: false };
+    let result: QueryResult;
+    try {
+      result = await provider.queryInTransaction(sent.query);
+    } catch (error) {
+      // An error that names the bound the limiter added says so, rather than pointing into text the user never wrote.
+      throw noteAppendedBound(error, unit.sql, sent.query);
+    }
+    return { ...record.keep(result, sent.wasLimited), sessionState: sessionStateOf(provider) };
+  }
+
+  return {
+    session: Object.freeze({
+      calls: TRANSACTION_SCRIPT_UNIT_CALLS,
+      readOnlyStatements: false,
+      execute,
+      transaction: (request: TransactionRequest) => legacyTransaction(provider, request),
+    }),
+    answered: record.answered,
+    pumpLimits: record.pumpLimits,
   };
 }

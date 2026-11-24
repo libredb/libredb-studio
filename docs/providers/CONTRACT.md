@@ -2778,7 +2778,19 @@ It sends the unit as the script route always sent it: every unit but the last as
 It runs the provider's `query` with that text, no params, the run id only for a provider that can cancel a run, and the request's scope, and a failure that names the bound Studio added says so, passed by reference.
 Its calls offer execute honouring `offset`, and `console.cancel` and `console.endScope` exactly as the console session offers them, with the same members; it offers no transaction, tree, maintenance or monitoring facet and is no read-only statement session.
 It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and its page's row limit is every row the provider returned, at least one, within one page.
+Each unit of a script of `POST /api/db/transaction` is served as a transaction script unit session of its own, built per unit by its facade, opened with the unit and, for the script's last unit only, the caller's page options.
+Its execute takes only the unit's own text as the request's statement, sent with `transaction`, and any other text, or a request without `transaction`, is a defect of the host, thrown by name before anything is called.
+It sends the unit as the transaction route always sent it: every unit as written, except a last unit of exactly one statement, which the provider's prepare bounds whole on a fresh copy of the options, and never the probe row past the page.
+It runs the provider's `queryInTransaction` with that text alone, no params, no run id and no scope, and a failure that names the bound Studio added says so, passed by reference, with nothing read after it.
+Its calls offer execute honouring `offset`, and `console.transaction` with the member the console session offers; it offers no cancel, endScope, tree, maintenance or monitoring facet and is no read-only statement session.
+It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and the session state read after the statement, and its page's row limit is every row the provider returned, at least one, within one page.
 
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a unit of a script inside a transaction is sent as written through queryInTransaction alone, and answers the session state read after it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the last unit of a script inside a transaction is prepared whole when it is one statement and sent as written otherwise, never probed"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit's failure that names the bound Studio added says so, passes by reference, and reads no state after it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit session offers execute honouring offset and the transaction facet, and nothing else"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit session sent another statement or a statement outside the transaction is a host defect, named, and calls nothing"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit answers one source per result set, and its page's row limit is every row it returned"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sends an earlier unit as written, with the run id only where the provider cancels and the request's scope, and never prepares or probes it"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the script's last unit has its last read statement bounded by the provider's prepare and spliced back, never probed, and a write or a module body is sent as written"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session offers execute honouring offset, and cancel and endScope as the console session offers them, and nothing else"
@@ -3953,3 +3965,4 @@ Against this contract's earlier text:
 - A connection whose statement timeout is malformed is refused before a script is split or opened, and a script's connection opens within its engine's connect budget and while its request stays, C-83, where the script ran and the open was waited for alone.
 - A script's units are sent the script's scope only where the session offers `console.endScope`, and such a provider's script is asked to end none, C-83, where every unit was sent a scope and the end was refused as not offered.
 - A unit's failure after Studio stopped waiting for it, and a failed end of a stopped script's scope, are logged by kind and code, C-83.
+- The legacy bridge serves a transaction script unit session that sends a unit of the transaction route's script as that route always sent it, C-50.

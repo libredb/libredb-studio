@@ -57,6 +57,7 @@ import {
   bridgedMaintenance,
   bridgedReadOnlyStatements,
   bridgedScriptUnit,
+  bridgedTransactionScriptUnit,
 } from "@/lib/provider-host/legacy-bridge";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
@@ -1701,6 +1702,199 @@ describe("bridgedScriptUnit", () => {
     );
     expect(callsOf(provider.query)).toEqual([]);
     expect(callsOf(provider.prepareQuery)).toEqual([]);
+  });
+});
+
+/** A request for a unit of a script inside a transaction: `unitRequest`'s, sent with `transaction`. */
+function transactionUnitRequest(statement: string, over: Partial<ExecuteRequest> = {}): ExecuteRequest {
+  return unitRequest(statement, { transaction: true, ...over });
+}
+
+describe("bridgedTransactionScriptUnit", () => {
+  test("a unit of a script inside a transaction is sent as written through queryInTransaction alone, and answers the session state read after it", async () => {
+    const [unit] = unitsOf("UPDATE t SET a = 1", "postgres");
+    const cancelQuery = mock(async () => true);
+    const endOpenQueryTransaction = mock(async () => "none");
+    const fx = transactionalFake(undefined, { cancelQuery, endOpenQueryTransaction });
+    fx.open = true;
+    fx.provider.queryInTransaction.mockImplementation(async () => {
+      // The statement ended the transaction, so the state read after it says so.
+      fx.open = false;
+      return resultOf([]);
+    });
+
+    const answer = await bridgedTransactionScriptUnit(fx.provider, { unit }).session.execute(
+      transactionUnitRequest(unit.sql),
+      contextOf(),
+    );
+
+    expect(callsOf(fx.provider.queryInTransaction)).toEqual([["UPDATE t SET a = 1"]]);
+    expect(callsOf(fx.provider.query)).toEqual([]);
+    expect(callsOf(fx.provider.prepareQuery)).toEqual([]);
+    expect(callsOf(cancelQuery)).toEqual([]);
+    expect(callsOf(endOpenQueryTransaction)).toEqual([]);
+    expect(callsOf(fx.provider.isInTransaction)).toHaveLength(1);
+    expect(answer.sessionState).toBe("not-in-transaction");
+    expect(answer.pageApplied).toBe(false);
+  });
+
+  test("the last unit of a script inside a transaction is prepared whole when it is one statement and sent as written otherwise, never probed", async () => {
+    const options: QueryPrepareOptions = { limit: 50 };
+    const single = transactionalFake();
+    const [read] = unitsOf("SELECT * FROM t", "postgres");
+
+    const readAnswer = await bridgedTransactionScriptUnit(single.provider, {
+      unit: read,
+      lastUnitOptions: options,
+    }).session.execute(transactionUnitRequest(read.sql, { page: { limit: 50, offset: 0 } }), contextOf());
+
+    expect(callsOf(single.provider.prepareQuery)).toEqual([["SELECT * FROM t", { limit: 50 }]]);
+    expect(callsOf(single.provider.prepareQuery)[0]?.[1]).not.toBe(options);
+    expect(callsOf(single.provider.queryInTransaction)).toEqual([["SELECT * FROM t LIMIT 50 OFFSET 0"]]);
+    expect(readAnswer.pageApplied).toBe(true);
+
+    const batch = transactionalFake(undefined, { type: "mssql" });
+    const [both] = unitsOf("INSERT INTO t VALUES (1); SELECT * FROM t", "mssql");
+    expect(both.statements).toHaveLength(2);
+
+    const batchAnswer = await bridgedTransactionScriptUnit(batch.provider, {
+      unit: both,
+      lastUnitOptions: options,
+    }).session.execute(transactionUnitRequest(both.sql, { page: { limit: 50, offset: 0 } }), contextOf());
+
+    expect(callsOf(batch.provider.prepareQuery)).toEqual([]);
+    expect(callsOf(batch.provider.queryInTransaction)).toEqual([["INSERT INTO t VALUES (1); SELECT * FROM t"]]);
+    expect(batchAnswer.pageApplied).toBe(false);
+  });
+
+  test("a transaction script unit's failure that names the bound Studio added says so, passes by reference, and reads no state after it", async () => {
+    const [last] = unitsOf("SELECT * FROM t", "postgres");
+    const bounded = new Error('syntax error at or near "LIMIT"');
+    const fx = transactionalFake();
+    fx.provider.queryInTransaction.mockImplementation(async () => {
+      throw bounded;
+    });
+
+    const caught = await failure(() =>
+      bridgedTransactionScriptUnit(fx.provider, { unit: last, lastUnitOptions: { limit: 50 } }).session.execute(
+        transactionUnitRequest(last.sql),
+        contextOf(),
+      ),
+    );
+
+    expect(caught).toBe(bounded);
+    expect(bounded.message).toBe(`syntax error at or near "LIMIT" ${appendedBoundNote("LIMIT 50 OFFSET 0")}`);
+    expect(callsOf(fx.provider.isInTransaction)).toEqual([]);
+
+    const text = marker();
+    const earlier = new Error(text);
+    const plain = transactionalFake();
+    plain.provider.queryInTransaction.mockImplementation(async () => {
+      throw earlier;
+    });
+    const unbounded = await failure(() =>
+      bridgedTransactionScriptUnit(plain.provider, { unit: last }).session.execute(
+        transactionUnitRequest(last.sql),
+        contextOf(),
+      ),
+    );
+    expect(unbounded).toBe(earlier);
+    expect(earlier.message).toBe(text);
+    expect(callsOf(plain.provider.isInTransaction)).toEqual([]);
+
+    // The state is read after every statement sent with `transaction`, so a read that throws there is the unit's error.
+    const readFailure = new Error(marker());
+    const unreadable = transactionalFake();
+    unreadable.provider.isInTransaction.mockImplementation(() => {
+      throw readFailure;
+    });
+    const unread = await failure(() =>
+      bridgedTransactionScriptUnit(unreadable.provider, { unit: last }).session.execute(
+        transactionUnitRequest(last.sql),
+        contextOf(),
+      ),
+    );
+    expect(unread).toBe(readFailure);
+  });
+
+  test("a transaction script unit session offers execute honouring offset and the transaction facet, and nothing else", async () => {
+    const [unit] = unitsOf("SELECT 1", "postgres");
+    const fx = transactionalFake(undefined, {
+      cancelQuery: mock(async () => true),
+      endOpenQueryTransaction: mock(async () => "rolled-back"),
+    });
+    const bridged = bridgedTransactionScriptUnit(fx.provider, { unit });
+
+    expect(bridged.session.calls).toEqual({
+      console: {
+        execute: { honours: ["offset"] },
+        cancel: "not-offered",
+        endScope: "not-offered",
+        transaction: "offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    });
+    expect(bridged.session.readOnlyStatements).toBe(false);
+    expect(Object.isFrozen(bridged.session)).toBe(true);
+    expect(Object.keys(bridged.session).sort()).toEqual(["calls", "execute", "readOnlyStatements", "transaction"]);
+
+    fx.open = true;
+    const transaction = bridged.session.transaction as NonNullable<ConsoleSession["transaction"]>;
+    expect(await transaction({ action: "state" }, contextOf())).toEqual({ sessionState: "in-transaction" });
+    fx.open = false;
+    expect(await transaction({ action: "state" }, contextOf())).toEqual({ sessionState: "not-in-transaction" });
+  });
+
+  test("a transaction script unit session sent another statement or a statement outside the transaction is a host defect, named, and calls nothing", async () => {
+    const [unit] = unitsOf("SELECT * FROM t", "postgres");
+    const fx = transactionalFake();
+    const session = () => bridgedTransactionScriptUnit(fx.provider, { unit, lastUnitOptions: {} }).session;
+
+    const other = await failure(() => session().execute(transactionUnitRequest(`SELECT ${marker()}`), contextOf()));
+    const outside = await failure(() => session().execute(unitRequest(unit.sql), contextOf()));
+
+    expect((other as Error).message).toBe(
+      "The bridge's transaction script unit session was sent a statement other than its unit's text, a defect of the host.",
+    );
+    expect((outside as Error).message).toBe(
+      "The bridge's transaction script unit session was sent a statement without transaction, which it serves only inside the transaction, a defect of the host.",
+    );
+    expect(callsOf(fx.provider.queryInTransaction)).toEqual([]);
+    expect(callsOf(fx.provider.query)).toEqual([]);
+    expect(callsOf(fx.provider.prepareQuery)).toEqual([]);
+    expect(callsOf(fx.provider.isInTransaction)).toEqual([]);
+  });
+
+  test("a transaction script unit answers one source per result set, and its page's row limit is every row it returned", async () => {
+    const [read] = unitsOf("SELECT n FROM t", "postgres");
+    const result = resultOf(rowsOf(3), {
+      resultSets: [
+        { rows: rowsOf(3), fields: ["n"] },
+        { rows: [{ m: 9 }], fields: ["m"] },
+      ],
+    });
+    const fx = transactionalFake();
+    fx.provider.queryInTransaction.mockImplementation(async () => result);
+    const empty = transactionalFake();
+    const bridged = bridgedTransactionScriptUnit(fx.provider, { unit: read });
+    const none = bridgedTransactionScriptUnit(empty.provider, { unit: read, lastUnitOptions: {} });
+
+    expect(() => bridged.answered()).toThrow(
+      "The bridge's transaction script unit run was read before its execute answered, a defect of the host.",
+    );
+    const answer = await bridged.session.execute(transactionUnitRequest(read.sql), contextOf());
+    const noneAnswer = await none.session.execute(transactionUnitRequest(read.sql), contextOf());
+
+    expect(answer.results.map((source) => source.columns)).toEqual([[{ name: "n" }], [{ name: "m" }]]);
+    expect(bridged.answered()).toBe(result);
+    expect(bridged.pumpLimits(answer)).toEqual({
+      maxRows: 3,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+    expect(none.pumpLimits(noneAnswer).maxRows).toBe(1);
   });
 });
 
