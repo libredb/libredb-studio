@@ -26,10 +26,10 @@ import { discoverRoutes } from "./helpers/discover-routes";
  * reason a caller's connection cannot reach the factory through it, and the modules under src/lib
  * that build a provider outside the factory are pinned to a known set the same way.
  *
- * The detector is the factory's own announcement: `createDatabaseProvider` logs
- * `[DB] Creating <type> provider` for every provider it builds, and `getOrCreateProvider` and
- * `acquireExecutionProfileProvider` both build through it. The control at the bottom proves the
- * detector sees a build, so a zero above it is a measurement and not a blind spot.
+ * The detector is the factory's own announcement: `createDatabaseProvider` logs `[DB] Creating <type> provider` for
+ * every provider it builds, and `getOrCreateProvider`, `getOrCreateMetadataProvider` and
+ * `acquireExecutionProfileProvider` all build through it. The control at the bottom proves the detector sees a build,
+ * so a zero above it is a measurement and not a blind spot.
  *
  * The agent runtime and the MCP endpoint are not sent a connection here because neither accepts
  * one at all: an agent run is opened on a seed id and refuses an inline connection with 400
@@ -98,7 +98,7 @@ const PROVIDER_ROUTES_OUTSIDE_DB: Record<string, string> = {
 const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
   "agent/runtime.ts": "drives an agent run on the seed its recorded connectionId resolves to through resolveConnection",
   "api/editor-provider.ts":
-    "editorProvider builds for the connection its caller hands it, and every caller is a route this census reaches, which resolved it through resolveConnection first",
+    "editorProvider and metadataProvider build for the connection their caller hands them, and every caller is a route this census reaches, which resolved it through resolveConnection first",
   "api/object-route.ts":
     "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
@@ -109,17 +109,19 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
 const PROVIDER_BUILDERS = [
   "createDatabaseProvider",
   "getOrCreateProvider",
+  "getOrCreateMetadataProvider",
   "acquireExecutionProfileProvider",
   "withOneShotTunnel",
 ];
 
 /**
  * In a route, `handleObjectRequest` builds too: it is the shared body of the object routes. So does
- * `editorProvider`, which every editor route opens its provider through (#1530), and so does
+ * `editorProvider`, which every editor route opens its provider through (#1530), and `metadataProvider`, which the
+ * monitoring, health and maintenance routes open the connection's metadata session through, and so does
  * `testConnection`, the Test Connection core, which builds a provider for the connection it is handed.
  */
 const ROUTE_BUILDS = new RegExp(
-  `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider", "testConnection"].join("|")})\\s*\\(`,
+  `\\b(${[...PROVIDER_BUILDERS, "handleObjectRequest", "editorProvider", "metadataProvider", "testConnection"].join("|")})\\s*\\(`,
 );
 
 /** In src/lib, where `handleObjectRequest` is declared, only the factory's entry points count. */
@@ -290,6 +292,15 @@ describe("the census reaches the whole API tree, not only src/app/api/db", () =>
     const route = 'return Response.json(await testConnection(body.connection, context, "api/x"));';
 
     expect(ROUTE_BUILDS.test(withoutComments(route))).toBe(true);
+  });
+
+  test("the route detector sees a route that builds only through the metadata session", () => {
+    const routes = [
+      "const provider = await metadataProvider(guard.session, connection, requestCatalog(body));",
+      "const provider = await getOrCreateMetadataProvider(resolved, {}, execution);",
+    ];
+
+    expect(routes.map((route) => ROUTE_BUILDS.test(withoutComments(route)))).toEqual([true, true]);
   });
 
   test("testConnection has one caller in src, the db/test-connection route its exemption names", () => {

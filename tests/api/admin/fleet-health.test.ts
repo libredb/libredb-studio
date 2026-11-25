@@ -19,7 +19,7 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
-import type { DatabaseOverview, HealthInfo } from "@/lib/db/types";
+import type { DatabaseOverview, DatabaseProvider, HealthInfo } from "@/lib/db/types";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { HealthRecord, PanelRecord } from "@/lib/provider-host/core/monitoring";
 import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
@@ -27,6 +27,15 @@ import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/i
 // ─── Mock provider ──────────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
 const mockGetOrCreateProvider = mock(async () => mockProvider);
+/**
+ * The metadata session each row's health and overview are read on (docs/providers/CONTRACT.md, clause C-66), answered
+ * by default with the same `mockProvider`, so a title written against the provider the route opens passes unchanged.
+ * The route imports it from the barrel, so it is mocked there beside the editor's stand-in, which the route never
+ * calls.
+ */
+const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<DatabaseProvider>>(
+  async () => mockProvider,
+);
 // The declarations the route reads capabilities from, the provider-meta pattern: data read off a provider.
 const declarationsOf = (provider: ReturnType<typeof createMockProvider>) => ({
   capabilities: provider.getCapabilities(),
@@ -57,6 +66,7 @@ mock.module("@/lib/auth", () => ({
 // ─── Mock @/lib/db BEFORE importing the route ───────────────────────────────
 mock.module("@/lib/db", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
   readProviderDeclarations: mockReadProviderDeclarations,
   removeProvider: mock(),
   clearProviderCache: mock(),
@@ -113,10 +123,11 @@ describe("POST /api/admin/fleet-health", () => {
     clearRateLimitState();
     mockGetSession.mockClear();
     mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
     mockReadProviderDeclarations.mockClear();
     mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
@@ -172,7 +183,7 @@ describe("POST /api/admin/fleet-health", () => {
         indexCount: 2,
       },
     });
-    mockGetOrCreateProvider.mockImplementation(async () => noByteProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => noByteProvider);
 
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",
@@ -191,7 +202,7 @@ describe("POST /api/admin/fleet-health", () => {
     (throwingProvider.getOverview as ReturnType<typeof mock>).mockImplementation(async () => {
       throw new Error("overview query timed out");
     });
-    mockGetOrCreateProvider.mockImplementation(async () => throwingProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => throwingProvider);
 
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",
@@ -210,7 +221,7 @@ describe("POST /api/admin/fleet-health", () => {
     expect(ENGINE_FACETS.kafka.monitoring.overview).toBe("offered");
     expect(ENGINE_FACETS.kafka.monitoring.tables).toBe("not-offered");
     const kafkaProvider = createMockProvider({ type: "kafka" });
-    mockGetOrCreateProvider.mockImplementation(async () => kafkaProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => kafkaProvider);
     const kafka = {
       id: "conn-kafka",
       name: "Events",
@@ -232,7 +243,7 @@ describe("POST /api/admin/fleet-health", () => {
 
   test("an engine that does not offer the overview panel is never asked for it, and its row carries no byte figure", async () => {
     const s3Provider = createMockProvider({ type: "s3" });
-    mockGetOrCreateProvider.mockImplementation(async () => s3Provider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => s3Provider);
     const s3 = {
       id: "conn-s3",
       name: "Objects",
@@ -302,7 +313,7 @@ describe("POST /api/admin/fleet-health", () => {
 
   test("connection error results in error status for that item", async () => {
     let callCount = 0;
-    mockGetOrCreateProvider.mockImplementation(async () => {
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
         throw new Error("Connection refused");
@@ -339,7 +350,9 @@ describe("POST /api/admin/fleet-health", () => {
       "conn-2": mockProvider,
       "conn-3": failing(new ConnectionError("could not connect", "postgres")),
     };
-    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => providers[resolved.id]) as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(
+      (async (resolved: { id: string }) => providers[resolved.id]) as never,
+    );
     const items = [
       { ...connections[0], password },
       connections[1],
@@ -361,7 +374,7 @@ describe("POST /api/admin/fleet-health", () => {
   });
 
   test("an item whose check throws a value that is not an Error answers Connection failed", async () => {
-    mockGetOrCreateProvider.mockImplementation((async (resolved: { id: string }) => {
+    mockGetOrCreateMetadataProvider.mockImplementation((async (resolved: { id: string }) => {
       if (resolved.id !== "conn-1") return mockProvider;
       const provider = createMockProvider();
       (provider.getHealth as ReturnType<typeof mock>).mockRejectedValue("socket closed");
@@ -413,7 +426,7 @@ describe("POST /api/admin/fleet-health", () => {
           error: "Custom connections are disabled on this server",
         }),
       ]);
-      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
     } finally {
       delete process.env.ALLOW_CUSTOM_CONNECTIONS;
     }
@@ -455,12 +468,12 @@ describe("POST /api/admin/fleet-health billed compute", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     mockReadProviderDeclarations.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
   });
 
   test("a resumesBilledCompute connection is answered not-checked, with no cached provider and no statement", async () => {
@@ -469,7 +482,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     mockReadProviderDeclarations.mockImplementation(async (conn) =>
       declarationsOf(conn.id === billed.id ? billedProvider : createMockProvider()),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => controlProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => controlProvider);
 
     const req = createMockRequest("/api/admin/fleet-health", {
       method: "POST",
@@ -495,8 +508,8 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     expect(billedProvider.query).not.toHaveBeenCalled();
     expect(billedProvider.getHealth).not.toHaveBeenCalled();
     expect(billedProvider.getOverview).not.toHaveBeenCalled();
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
-    expect((mockGetOrCreateProvider.mock.calls[0] as unknown as [{ id: string }])[0].id).toBe("conn-1");
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
+    expect((mockGetOrCreateMetadataProvider.mock.calls[0] as unknown as [{ id: string }])[0].id).toBe("conn-1");
 
     // The control connection beside it is checked as before.
     expect(data.results[1].connectionId).toBe("conn-1");
@@ -520,7 +533,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     expect(res.status).toBe(200);
     expect(data.results).toMatchObject([{ connectionId: "conn-tunnelled", status: "healthy" }]);
     expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(1);
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
   });
 
   test("other connections are checked as before", async () => {
@@ -535,7 +548,7 @@ describe("POST /api/admin/fleet-health billed compute", () => {
     expect(res.status).toBe(200);
     expect(data.results.map((r) => r.status)).toEqual(["healthy", "healthy"]);
     expect(mockReadProviderDeclarations).toHaveBeenCalledTimes(2);
-    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(2);
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -558,11 +571,11 @@ describe("POST /api/admin/fleet-health fan-out cap", () => {
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
   });
 
   test("returns 400 above the cap, names the bound, and opens nothing", async () => {
@@ -576,7 +589,7 @@ describe("POST /api/admin/fleet-health fan-out cap", () => {
 
     expect(res.status).toBe(400);
     expect(data.error).toContain("100");
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
   });
 
   test("accepts exactly the cap", async () => {
@@ -619,7 +632,7 @@ describe("what fleet health answers today, which the host core keeps", () => {
 
   afterEach(() => {
     now.mockRestore();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
   });
 
   const health: HealthInfo = {
@@ -637,7 +650,7 @@ describe("what fleet health answers today, which the host core keeps", () => {
       clock += advance;
       return answer();
     });
-    mockGetOrCreateProvider.mockImplementation(async () => provider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => provider);
     return provider;
   }
 
@@ -732,7 +745,7 @@ describe("fleet health on the host core", () => {
 
   afterEach(() => {
     now.mockRestore();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
   });
 
   const s3Connection = {
@@ -764,7 +777,7 @@ describe("fleet health on the host core", () => {
     signal?: AbortSignal,
   ): Promise<{ rows: Record<string, unknown>[]; providers: Map<string, ReturnType<typeof createMockProvider>> }> {
     const providers = new Map<string, ReturnType<typeof createMockProvider>>();
-    mockGetOrCreateProvider.mockImplementation((async (connection: { type: string }) => {
+    mockGetOrCreateMetadataProvider.mockImplementation((async (connection: { type: string }) => {
       const provider = createMockProvider({ type: connection.type as never });
       providers.set(connection.type, provider);
       return provider;
@@ -875,5 +888,91 @@ describe("fleet health on the host core", () => {
       expect(provider.getOverview).not.toHaveBeenCalled();
     }
     expect(providers.size).toBe(2);
+  });
+});
+
+describe("fleet health on the metadata session", () => {
+  type Mocked = ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
+    mockReadProviderDeclarations.mockClear();
+    mockReadProviderDeclarations.mockImplementation(async () => declarationsOf(mockProvider));
+  });
+
+  afterEach(() => {
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
+  });
+
+  const check = () => POST(createMockRequest("/api/admin/fleet-health", { method: "POST", body: { connections } }));
+
+  test("each row's health and overview are read on the connection's metadata session, opened under the posture its declarations were read with", async () => {
+    const metadata = new Map<string, ReturnType<typeof createMockProvider>>();
+    mockGetOrCreateMetadataProvider.mockImplementation((async (connection: { id: string }) => {
+      const provider = createMockProvider();
+      metadata.set(connection.id, provider);
+      return provider;
+    }) as never);
+    const editor = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => editor);
+
+    const res = await check();
+
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(2);
+    for (const [connection, options, execution] of mockGetOrCreateMetadataProvider.mock.calls) {
+      const id = (connection as { id: string }).id;
+      const declarationsRead = mockReadProviderDeclarations.mock.calls.find(([read]) => read.id === id);
+      expect([id, options]).toEqual([id, {}]);
+      // The very execution object the row's declarations read received, so the two reads keep one posture.
+      expect(execution).toBe((declarationsRead as unknown[] | undefined)?.[1]);
+      expect(execution).toEqual({ allowExternalFileAccess: true });
+      expect(metadata.has(id)).toBe(true);
+      const provider = metadata.get(id) as DatabaseProvider;
+      expect([id, (provider.getHealth as Mocked).mock.calls.length]).toEqual([id, 1]);
+      expect([id, (provider.getOverview as Mocked).mock.calls.length]).toEqual([id, 1]);
+    }
+    expect([...metadata.keys()].sort()).toEqual(["conn-1", "conn-2"]);
+    expect(editor.getHealth).not.toHaveBeenCalled();
+    expect(editor.getOverview).not.toHaveBeenCalled();
+  });
+
+  test("a row answers while the editor's provider holds every read, without waiting for it", async () => {
+    // The editor's provider holds: its health read signals `reached` and settles only when this test rejects it.
+    const held = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<"editor held">();
+    const editor = createMockProvider();
+    (editor.getHealth as Mocked).mockImplementation(() => {
+      reached.resolve("editor held");
+      return held.promise;
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => editor);
+    const databaseSize = crypto.randomUUID();
+    const metadata = createMockProvider({
+      health: { activeConnections: 3, databaseSize, cacheHitRatio: "99%", slowQueries: [], activeSessions: [] },
+    });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
+
+    const answering = check();
+    const first = await Promise.race([answering, reached.promise]);
+    held.reject(new Error("released by the test"));
+    const response = await answering;
+    await held.promise.catch(() => undefined);
+
+    expect(first).toBeInstanceOf(Response);
+    expect(response.status).toBe(200);
+    const { results } = await parseResponseJSON<{ results: Record<string, unknown>[] }>(response);
+    expect(results.map((row) => [row.connectionId, row.status, row.activeConnections, row.databaseSize])).toEqual([
+      ["conn-1", "healthy", 3, databaseSize],
+      ["conn-2", "healthy", 3, databaseSize],
+    ]);
+    expect(editor.getHealth).not.toHaveBeenCalled();
   });
 });

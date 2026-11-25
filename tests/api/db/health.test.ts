@@ -19,7 +19,7 @@ import {
 } from "@/lib/db/errors";
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
-import type { HealthInfo } from "@/lib/db/types";
+import type { DatabaseProvider, HealthInfo } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
 import type { HealthRecord } from "@/lib/provider-host/core/monitoring";
@@ -88,8 +88,24 @@ mock.module("@/lib/db", () => ({
   BaseDatabaseProvider: class {},
 }));
 
+// ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+/**
+ * The metadata session health is read on (docs/providers/CONTRACT.md, clause C-66), answered by default with the same
+ * `mockProvider`, so a title written against the provider the route resolves passes unchanged. The editor's stand-in
+ * above stays in the barrel's mock, and the titles below hold that the route never calls it.
+ */
+const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<DatabaseProvider>>(
+  async () => mockProvider,
+);
+mock.module("@/lib/db/factory", () => ({
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
+  findCachedProvider: mock(() => null),
+}));
+
 // ─── Import route handlers AFTER mocking ────────────────────────────────────
 const { GET, POST } = await import("@/app/api/db/health/route");
+const { editorProvider } = await import("@/lib/api/editor-provider");
 
 // The route reads health through the process's host core (src/lib/provider-host/instance.ts), so this file composes
 // its own.
@@ -127,6 +143,7 @@ describe("POST /api/db/health", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     (mockProvider.getHealth as ReturnType<typeof mock>).mockClear();
   });
 
@@ -184,7 +201,7 @@ describe("POST /api/db/health", () => {
   });
 
   test("returns 503 for ConnectionError", async () => {
-    mockGetOrCreateProvider.mockRejectedValueOnce(new ConnectionError("Connection refused"));
+    mockGetOrCreateMetadataProvider.mockRejectedValueOnce(new ConnectionError("Connection refused"));
 
     const req = createMockRequest("/api/db/health", {
       method: "POST",
@@ -201,7 +218,7 @@ describe("POST /api/db/health", () => {
 
   test("returns 500 for DatabaseError", async () => {
     const dbError = new DatabaseError("Database internal error", "postgres", "INTERNAL_ERROR");
-    mockGetOrCreateProvider.mockResolvedValueOnce(mockProvider);
+    mockGetOrCreateMetadataProvider.mockResolvedValueOnce(mockProvider);
     (mockProvider.getHealth as ReturnType<typeof mock>).mockRejectedValueOnce(dbError);
 
     const req = createMockRequest("/api/db/health", {
@@ -269,7 +286,7 @@ describe("POST /api/db/health: a body that is not a JSON object", () => {
     ["a string", '"x"'],
     ["text that is not JSON", "{not json"],
   ])("a body that is %s answers 400 and opens no provider", async (_label, raw) => {
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     const res = await POST(
       new Request("http://localhost:3000/api/db/health", {
         method: "POST",
@@ -280,7 +297,7 @@ describe("POST /api/db/health: a body that is not a JSON object", () => {
 
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
   });
 });
 
@@ -293,7 +310,7 @@ describe("what the health route answers today, which the host core keeps", () =>
 
   beforeEach(() => {
     clearRateLimitState();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
     (mockProvider.getHealth as Mocked).mockClear();
   });
 
@@ -376,12 +393,12 @@ describe("the health route on the host core", () => {
   });
 
   afterEach(() => {
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
   });
 
   /** A health request for `provider`, whose signal is `signal`, as a browser that may leave sends it. */
   function healthWith(provider: unknown, signal?: AbortSignal): Promise<Response> {
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => provider as never);
     return POST(
       new Request("http://localhost:3000/api/db/health", {
         method: "POST",
@@ -467,5 +484,124 @@ describe("the health route on the host core", () => {
       "The health read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
     );
     expect(getHealth).not.toHaveBeenCalled();
+  });
+});
+
+describe("the health route on the metadata session", () => {
+  type Mocked = ReturnType<typeof mock>;
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
+  });
+
+  afterEach(() => {
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider);
+  });
+
+  /** A health request for `connection`, in `catalog` when one is given. */
+  function check(connection: Record<string, unknown>, catalog?: string): Promise<Response> {
+    const body = catalog === undefined ? { connection } : { connection, catalog };
+    return POST(createMockRequest("/api/db/health", { method: "POST", body }) as never);
+  }
+
+  test("the health read runs on the connection's metadata session, opened with the editor's connection and posture", async () => {
+    const databaseSize = crypto.randomUUID();
+    const metadata = createMockProvider({
+      health: { databaseSize, cacheHitRatio: "99%", slowQueries: [], activeSessions: [] },
+    });
+    const editor = createMockProvider();
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
+    mockGetOrCreateProvider.mockImplementation(async () => editor);
+
+    const asAdmin = await check(validConnection);
+
+    expect(asAdmin.status).toBe(200);
+    expect(await parseResponseJSON(asAdmin)).toMatchObject({ databaseSize });
+    expect(mockGetOrCreateMetadataProvider.mock.calls).toEqual([
+      [validConnection, {}, { allowExternalFileAccess: true }],
+    ]);
+
+    // The pulse runs for every role, so a user's inline connection reads on its metadata session too, under the
+    // user's posture.
+    mockGetSession.mockImplementation(async () => ({ role: "user", username: "bob" }));
+    const asUser = await check(validConnection);
+
+    expect(asUser.status).toBe(200);
+    expect(mockGetOrCreateMetadataProvider.mock.calls[1]).toEqual([
+      validConnection,
+      {},
+      { allowExternalFileAccess: false },
+    ]);
+    expect((metadata.getHealth as Mocked).mock.calls).toEqual([[], []]);
+    expect(editor.getHealth).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a health read answers while the editor's provider holds every read, without waiting for it", async () => {
+    // The editor's provider holds: its health read signals `reached` and settles only when this test rejects it.
+    const held = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<"editor held">();
+    const editor = createMockProvider();
+    (editor.getHealth as Mocked).mockImplementation(() => {
+      reached.resolve("editor held");
+      return held.promise;
+    });
+    mockGetOrCreateProvider.mockImplementation(async () => editor);
+    const databaseSize = crypto.randomUUID();
+    const metadata = createMockProvider({
+      health: { databaseSize, cacheHitRatio: "99%", slowQueries: [], activeSessions: [] },
+    });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata);
+
+    const answering = check(validConnection);
+    const first = await Promise.race([answering, reached.promise]);
+    held.reject(new Error("released by the test"));
+    const response = await answering;
+    await held.promise.catch(() => undefined);
+
+    expect(first).toBeInstanceOf(Response);
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toMatchObject({ databaseSize });
+    expect(editor.getHealth).not.toHaveBeenCalled();
+  });
+
+  test("a health read's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words", async () => {
+    const serverLevel = { ...validConnection, database: "" };
+    const shop = createMockProvider();
+    const root = Object.assign(
+      createMockProvider({ config: serverLevel as never, capabilities: { catalogSessions: true } }),
+      { forCatalog: mock(async (catalog: string) => (catalog === "shop" ? shop : undefined)) },
+    );
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => root as never);
+
+    const inShop = await check(serverLevel, "shop");
+
+    expect(inShop.status).toBe(200);
+    expect(root.forCatalog.mock.calls).toEqual([["shop"]]);
+    expect((shop.getHealth as Mocked).mock.calls).toEqual([[]]);
+    expect(root.getHealth).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    // A connection that names its database honours no catalog, on the metadata session as on the editor's.
+    const named = createMockProvider({ config: validConnection as never, capabilities: { catalogSessions: true } });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => named);
+    mockGetOrCreateProvider.mockImplementation(async () => named);
+    const refused = await check(validConnection, "shop");
+    const body = await parseResponseJSON<{ error: string }>(refused);
+    expect(named.getHealth).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    const editorRefusal = await editorProvider({ role: "admin" }, validConnection as never, "shop").then(
+      () => "no refusal",
+      (error: Error) => error.message,
+    );
+    expect(refused.status).toBe(400);
+    expect(body.error).toBe(editorRefusal);
+    expect(editorRefusal).toContain('cannot run one in "shop"');
   });
 });

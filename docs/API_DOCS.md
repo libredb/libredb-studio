@@ -394,6 +394,7 @@ The body's JSON Schema is `readiness.schema` in `tests/fixtures/governance/contr
 #### POST /api/db/health
 
 Detailed health check for a specific database connection.
+The health read runs on the connection's metadata session (`docs/providers/CONTRACT.md`, clause C-66), the pool the object tree reads on, opened with the connection's own credentials and through the same checks as the editor's provider, so it never waits for a connection the editor's statements hold; a `catalog` is honoured on it as on the editor's provider, and on a connection that serves one session it reads on the editor's provider.
 
 **Authentication:** Required
 
@@ -2692,6 +2693,7 @@ Events of type `agent_operation` come from the agent execution path (#328) and a
 Body `{ "connections": [...] }`; returns per-connection health `{ "results": [{ connectionId, status, latencyMs, ... }] }`. `400` if `connections` is missing. `401` with no session, `403` with a session that is not an admin — see the note above.
 Each connection is resolved the way the db routes resolve one: a managed seed by its `seedId`, a copy that claims a `seed:` id by the operator's record (so a seed that no longer exists is an `error` row), and an inline connection as sent, or as an `error` row while `ALLOW_CUSTOM_CONNECTIONS` is off.
 `status` is `healthy`, `degraded` (the check took over 5 s), `error`, or `not-checked`.
+Each row's health and overview are read on the connection's metadata session (clause C-66), so a row never waits for the editor's statements.
 `databaseSizeBytes` comes from the engine's overview panel, read only where the engine's `ENGINE_FACETS` row offers it; elsewhere the field is absent and no overview is read.
 It is also absent where the engine offers the overview but the overview read failed: the row does not report that failure, and its `status` still comes from the health read alone.
 Each health read and each overview read waits until the connection's statement timeout plus 10 seconds, and the request itself.
@@ -2763,6 +2765,9 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 >
 > Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED"}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
+>
+> `POST /api/db/monitoring` reads every panel, and the `maintenance` it answers beside them, on the connection's metadata session (`docs/providers/CONTRACT.md`, clause C-66), the pool the object tree reads on, opened with the connection's own credentials and through the same checks as the editor's provider, so it never waits for a connection the editor's statements hold; a `catalog` is honoured on it as on the editor's provider, and on a connection that serves one session it reads on the editor's provider.
+> `POST /api/db/pool-stats` reads the editor's provider, since it reports the pool the editor's statements run on.
 >
 > A monitoring or pool statistics read answers `499` `QUERY_CANCELLED` when its request leaves, and `504` `TIMEOUT_ERROR` (`studio-timeout-refusal`) when no read answers within the connection's statement timeout plus 10 seconds; a monitoring panel stopped beside answered ones carries the sentence in its `errors` entry.
 > `POST /api/db/monitoring` answers `400` naming the option, before any connection resolves, for an `options.slowQueryLimit` or `options.sessionLimit` that is not a whole number of at least 1 and an `options.schemaFilter` that is not text naming a schema.
