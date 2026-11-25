@@ -61,7 +61,10 @@ export interface McpStatementArm {
   /** The input key the statement arrives in: the agent's own argument for the language. */
   readonly argument: AgentStatementArgument;
   readonly inputSchema: z.ZodObject;
-  /** Offset paging through the provider's `prepareQuery`, or none: the statement is sent as written. */
+  /**
+   * Offset paging, one row past max_rows from the offset, applied by the read-only statement session through the
+   * provider's own paging (clause C-85), or none: every row, the statement sent as written.
+   */
   readonly paging: "offset" | "none";
   /** The engines this tool serves, from the served-engine resolver, and their names as the texts say them. */
   readonly types: readonly DatabaseType[];

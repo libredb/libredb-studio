@@ -86,19 +86,23 @@
  *
  * The console session is no read-only statement session (`readOnlyStatements` false): it serves the editor's and the
  * operations profile's sessions, none of which is sent read-only statements. A provider's read-only statement path is
- * served by `bridgedReadOnlyStatements`, a session of its own built per call by its facade, `runReadOnlyExecute` in
+ * served by `bridgedReadOnlyStatements`, a session of its own built per call by its facade, `runReadOnlyPage` in
  * src/lib/api/read-only-execute.ts (clause C-78). Its open refuses a provider without `queryReadOnly` by name, before
  * anything is called, so the plain `query()` is never the fallback (clause C-39); its calls offer execute alone,
- * honouring `readOnly`; its execute runs `queryReadOnly` with the statement, a fresh budget of the open's statement
- * timeout and read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one
- * source per result set, `pageApplied` false. Its page limits read every row the provider returned, at least one,
- * within one page, and it keeps the legacy result for the facade to answer from.
+ * honouring `offset` and `readOnly`. Its execute applies a bounded page through the provider's own `prepareQuery`, on a
+ * fresh options object of the page's limit and offset, and refuses a non-zero offset the prepare did not apply as
+ * `StudioOffsetRefusal`, outcome not-sent, before anything is sent; every row calls no prepare (clause C-85). It then
+ * runs `queryReadOnly` with the statement it prepared, or as written, a fresh budget of the open's statement timeout
+ * and read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one source
+ * per result set, its page applied exactly when the prepare says it applied it. Its page limits read every row the
+ * provider returned, at least one, within one page, and it keeps the legacy result for the facade to answer from.
  *
  * A statement Studio composed, which must reach the provider exactly as composed, is served by
  * `bridgedComposedStatements`, a session of its own built per call by `runComposedStatement` in
  * src/lib/api/composed-statement.ts: its calls offer execute alone, honouring no request field, and its execute runs
  * the plain `query` with the statement alone, never `prepareQuery` or the probe, so no page bound is appended. It
- * answers and limits its page as the read-only statement session does, through the same result record.
+ * answers and limits its page as the read-only statement session does, through the same result record, its page not
+ * applied.
  *
  * Each unit of a script of `POST /api/db/multi-query` is served by `bridgedScriptUnit`, a session of its own built per
  * unit by `openEditorScript` in src/lib/api/editor-script.ts: its execute sends the unit's text as the script route
@@ -150,7 +154,7 @@ import type { SessionState } from "@libredb/provider-sdk/errors";
 import type { Calls, ExecuteRequestField, MaintenanceSpec } from "@libredb/provider-sdk/manifest";
 import { probePastPage } from "@/lib/api/page-probe";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
-import { StudioProfileRefusal } from "@/lib/db/errors";
+import { StudioOffsetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
 import { type PanelReads, readPanel } from "@/lib/db/engine-facets/monitoring";
 import { MONITORING_PANELS, type MonitoringPanel, type MonitoringPanelOffer } from "@/lib/db/engine-facets/types";
 import { type QueryCancelProvider, supportsQueryCancel } from "@/lib/db/query-cancel";
@@ -717,18 +721,49 @@ function executeAloneCalls(honours: readonly ExecuteRequestField[]): Calls {
   );
 }
 
-/** The calls of every read-only statement session: execute alone, honouring `readOnly`. */
-const READ_ONLY_STATEMENT_CALLS: Calls = executeAloneCalls(["readOnly"]);
+/** The calls of every read-only statement session: execute alone, honouring `offset` and `readOnly`. */
+const READ_ONLY_STATEMENT_CALLS: Calls = executeAloneCalls(["offset", "readOnly"]);
+
+/**
+ * The statement a read-only statement session sends for `request`, and whether its page was applied (clause C-85).
+ * Every row sends the statement as written, the page not applied, and calls no prepare. A bounded page runs the
+ * provider's own `prepareQuery` with a fresh options object of the page's limit and offset, so a legacy member may
+ * write what it receives, and sends the statement it prepared, the page applied exactly when the prepare says it
+ * limited it; a non-zero offset the prepare did not apply is refused before anything is sent, since the provider would
+ * answer the first rows as the page the offset names. The prepare's own error passes by reference.
+ *
+ * @throws {StudioOffsetRefusal} For a non-zero offset the prepare did not apply, outcome not-sent.
+ */
+function pagedReadOnlyStatement(
+  provider: DatabaseProvider,
+  type: DatabaseType,
+  request: ExecuteRequest,
+): { readonly statement: string; readonly pageApplied: boolean } {
+  const { page, statement } = request;
+  if ("unlimited" in page) return { statement, pageApplied: false };
+  const prepared = provider.prepareQuery(statement, { limit: page.limit, offset: page.offset });
+  if (!prepared.wasLimited && page.offset > 0) {
+    throw new StudioOffsetRefusal(
+      `The "${type}" provider did not apply offset ${page.offset} to this statement, so Studio did not send it: its first rows would have been answered as the page that offset names.`,
+      type,
+    );
+  }
+  return { statement: prepared.query, pageApplied: prepared.wasLimited };
+}
 
 /**
  * `provider`'s read-only statement path served as a read-only statement session (clause C-50): its open refuses, by
  * name and before anything is called, a provider without `queryReadOnly`, in the words the execution-profile
- * acquisition refuses it with, so the plain `query()` is never the fallback (clause C-39). Its execute runs
- * `queryReadOnly` with the statement, a fresh budget of the open's timeout and read allowance and the request's rows
- * and bytes, and the request's mode, absent where the request names none; it never calls `query`, `prepareQuery` or
- * the probe. Its calls offer execute alone, honouring `readOnly`, and it is a read-only statement session, so the host
- * core refuses any execute without `readOnly` before the call. The caller states the policy: it builds this session
- * only over a provider it acquired under a profile whose open policy has both `readOnly` and `sendsStatements`.
+ * acquisition refuses it with, so the plain `query()` is never the fallback (clause C-39). Its execute sends the
+ * request's page through `pagedReadOnlyStatement` (clause C-85): every row as written with no prepare, a bounded page
+ * through the provider's `prepareQuery`, and a non-zero offset the prepare did not apply refused as
+ * `StudioOffsetRefusal` before `queryReadOnly` is called. It then runs `queryReadOnly` with that statement, a fresh
+ * budget of the open's timeout and read allowance and the request's rows and bytes, and the request's mode, absent
+ * where the request names none, and answers `pageApplied` as the prepare said; it never calls `query` or the probe.
+ * Its calls offer execute alone, honouring `offset` and `readOnly`, and it is a read-only statement session, so the
+ * host core refuses any execute without `readOnly` before the call. The caller states the policy: it builds this
+ * session only over a provider it acquired under a profile whose open policy has both `readOnly` and
+ * `sendsStatements`.
  *
  * @throws {StudioProfileRefusal} `PROFILE_UNSUPPORTED_BY_PROVIDER` for a provider without `queryReadOnly`.
  */
@@ -752,13 +787,14 @@ export function bridgedReadOnlyStatements(
         "The bridge's read-only statement session was sent an execute without readOnly, which the host core refuses before the call, so this is a defect of the host.",
       );
     }
+    const { statement, pageApplied } = pagedReadOnlyStatement(provider, open.type, request);
     const budget: ReadOnlyStatementBudget = {
       statementTimeoutMs: open.statementTimeoutMs,
       maxResultRows: readOnly.budget.maxRows,
       maxResultBytes: readOnly.budget.maxBytes,
       ...(open.readAllowance === undefined ? {} : { readAllowance: open.readAllowance }),
     };
-    return record.keep(await queryReadOnly(request.statement, budget, readOnly.mode), false);
+    return record.keep(await queryReadOnly(statement, budget, readOnly.mode), pageApplied);
   }
 
   return {

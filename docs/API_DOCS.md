@@ -3114,7 +3114,7 @@ Every database error body `createErrorResponse` answers carries `kind` and `outc
 An answer without them is not a database error's: an unhandled error (`INTERNAL_ERROR`) and the codes a route or the middleware answers itself carry neither.
 Both are closed vocabularies and never hold the error's text.
 A route that resolves the calling connection and reaches its provider (every such route under `/api/db`, the object routes among them, the agent runs route, the hand-over route and the agent drive route) also answers `sqlState`, the SQLSTATE the driver reported, when there is one and the error's text was not withheld.
-An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
+An MCP tool's error answer built from a failure carries the same record, `kind`, `code`, `outcome` and that `sqlState`, in `structuredContent.error` ([MCP](MCP.md)); there every kind can appear except `studio-offset-refusal`, which MCP answers in its own words with no record, and `code` is the deny code of an `execution-profile` or `studio-profile-refusal` failure.
 
 `kind` names the class of failure, so a client can branch on it without reading the sentence:
 
@@ -3131,6 +3131,7 @@ An MCP tool's error answer built from a failure carries the same record, `kind`,
 | `pool-exhausted` | No connection was free in the pool |
 | `query` | The statement failed on the database, or a bound Studio set on it refused it |
 | `offset-unsupported` | The engine's query language cannot page a result by offset |
+| `studio-offset-refusal` | Studio refused an offset the provider did not apply to the statement, before sending it |
 | `refused-before-send` | Studio or the provider refused the statement before sending it |
 | `read-allowance-exceeded` | The read would spend more billed reads than the run has left |
 | `row-budget-refusal` | A provider refused its answer for holding more rows than the read's row budget, on the agent, hand-over or MCP read path |
@@ -3150,6 +3151,7 @@ An MCP tool's error answer built from a failure carries the same record, `kind`,
 | `internal` | Any other failure |
 
 No route body carries `execution-profile`, `studio-profile-refusal` or `internal`: the routes answer those failures as `INTERNAL_ERROR`, which carries no kind.
+Nor does one carry `studio-offset-refusal`: only a paged read-only statement can raise it, and no route sends one.
 
 A provider's budget refusal made before it sent anything answers `refused-before-send`, and one a provider raises as a timeout answers `timeout`.
 

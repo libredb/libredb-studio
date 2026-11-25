@@ -1578,11 +1578,14 @@ A record holds no message, detail, statement or identifier of the error.
 `outcome` is `not-sent` only when the statement cannot have reached the database.
 The host marks every failure of a provider's connect, and a provider claims not-sent only by raising `refused-before-send`, whose class marks it, by taking its connection or session through `checkoutPhase` before it sends anything, which marks what the checkout raised and turns a deadline the checkout met into a `ConnectionError` naming the wait, or by raising `transaction-lost` with `beforeSend` for a call on a held transaction whose session it found already ended, which the class then marks.
 The host also marks not-sent a console call it refuses before making it, a deadline already passed or a caller already gone, C-51.
+Studio's own refusal of an offset a legacy provider's prepare did not apply, C-85, is not-sent, since the bridge raises it before the provider's read path is called.
 No provider writes an error's `outcome` itself, and every other failure is `unknown`.
 
 - test `tests/unit/db/provider-error-kinds.test.ts` "provider code never writes an error's outcome"
 - test `tests/unit/lib/db/error-record.test.ts` "a refusal before send answers not-sent wherever it is raised"
 - test `tests/unit/lib/db/error-record.test.ts` "every other class answers unknown"
+- test `tests/unit/db/errors.test.ts` "is an OffsetUnsupportedError only Studio raises, outcome not-sent"
+- test `tests/unit/lib/db/error-record.test.ts` "Studio's refusal of an offset it did not see applied answers not-sent wherever it is raised"
 - test `tests/unit/db/errors.test.ts` "a failure the connect raises keeps its identity and answers not-sent"
 - test `tests/unit/db/errors.test.ts` "a connect deadline becomes a ConnectionError that answers not-sent"
 - test `tests/unit/db/errors.test.ts` "a failure the checkout raises is thrown as its mapped class and answers not-sent"
@@ -2764,13 +2767,14 @@ The page's row limit is set once execute answered: one past the page when the pr
 That session is no read-only statement session: it serves the editor's and the operations profile's sessions, none of which is sent read-only statements.
 A provider's read-only statement path is served as a read-only statement session of its own, C-78, built per call by its facade over a provider acquired under a profile whose open policy has both `readOnly` and `sendsStatements`, C-79.
 Its open refuses a provider without `queryReadOnly` by name, in the words the execution-profile acquisition uses, and calls nothing, C-39.
-Its calls offer execute alone, honouring `readOnly`.
-Its execute runs `queryReadOnly` with the statement, a fresh budget of the open's statement timeout and billed-read allowance, by reference, and the request's rows and bytes, and the request's mode, and never the prepare, the probe or the plain query.
-It answers one source per result set, the main rows first, its page not applied, and its page's row limit is every row the provider returned, at least one, within one page.
+Its calls offer execute alone, honouring `offset` and `readOnly`.
+Its execute sends every row as its statement as written, with no prepare, and applies a bounded page through the provider's prepare, on a fresh options object of the page's limit and offset, refusing a non-zero offset the prepare did not apply before anything is sent, C-85.
+It then runs `queryReadOnly` with the statement it prepared, or as written, a fresh budget of the open's statement timeout and billed-read allowance, by reference, and the request's rows and bytes, and the request's mode, and never the probe or the plain query.
+It answers one source per result set, the main rows first, its page applied exactly when the prepare says it applied it, and its page's row limit is every row the provider returned, at least one, within one page.
 A statement Studio composed and its statement guard admitted, which must reach the provider exactly as composed, is served as a composed statement session of its own, built per call by its facade, C-80.
 Its calls offer execute alone, honouring no request field, and it is no read-only statement session.
 Its execute runs the provider's plain `query` with exactly one argument, the request's statement, and never the prepare, the probe, params, a run id or a scope, so no page bound is appended to the statement.
-It answers and limits its page as the read-only statement session does, and reads no engine row.
+It answers and limits its page as the read-only statement session does, its page not applied, and reads no engine row.
 Each unit of a script of `POST /api/db/multi-query` is served as a script unit session of its own, built per unit by its facade, C-83, opened with the unit and, for the script's last unit only, the dialect and the caller's page options its last statement is bounded with.
 Its execute takes only the unit's own text as the request's statement, and any other text is a defect of the host, thrown by name before anything is called.
 It sends the unit as the script route always sent it: every unit but the last as written, and the last with its last read statement bounded by the provider's prepare, on a fresh copy of the options, and spliced back in place, a write or a module body as written, and never the probe row past the page.
@@ -2799,6 +2803,10 @@ It answers one source per result set, the main rows first, its page applied exac
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session honours offset, runs the provider's prepare on a bounded page with a fresh copy of it, and sends the statement it prepared to queryReadOnly"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bounded page the prepare did not apply with no offset sends the prepared statement and answers its page not applied"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "an offset the provider's prepare did not apply is refused as Studio's own refusal, not-sent, and no read-only path is called"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a refusal or failure the prepare raises passes by reference, and no read-only path is called"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session runs the provider's plain query with the statement as composed and nothing else, never prepareQuery or the probe"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session offers execute alone, honouring no request field, and is no read-only statement session"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
@@ -3603,6 +3611,7 @@ The agent's drive passes no wait of its own: it has no signal of its own, C-76, 
 A read-only execute is console execute sent with `readOnly`: the statement runs on the session's read-only boundary, and `readOnly` carries its budget, the most rows and the most UTF-8 JSON bytes of those rows it may answer, and its mode, of `READ_ONLY_MODES`.
 A request without a mode executes the statement, and `estimate-plan` asks for the engine's estimated plan, which the provider answers or refuses and never runs the statement instead.
 Its time is the call's deadline, C-26, so `readOnly` carries no timeout of its own.
+Its page is every row or a limit and an offset, and a session sent a bounded page applies it, or refuses a non-zero offset it does not apply, before it sends anything, C-85.
 A provider answers within the budget's rows and bytes or refuses, and never truncates; an estimating plan's rows are the optimizer's operators, so its answer is held to the bytes alone.
 `readOnly` is a request field, so a package lists it in `honours`, C-5, and the host sends it only to a session that honours it, C-9.
 A read-only statement session is a session whose open policy has both `readOnly` and `sendsStatements`.
@@ -3657,7 +3666,7 @@ MCP's statements run through the same read-only execute under the MCP call's dea
 - test `tests/unit/lib/agent/tools.test.ts` "a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query"
 - test `tests/unit/lib/agent/tools.test.ts` "an acquired provider without a read-only path is refused by the host at the session's open, and the run propagates it"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no module outside the providers calls queryReadOnly except the legacy bridge's read-only statement session"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "runReadOnlyPage reads the review record before it reads the budget, the host core or the provider"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, the hand-over and MCP call no runReadOnlyStatement, and no module declares it: every statement runs through the host core's read-only execute"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
 - test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its statement runs answers 499 QUERY_CANCELLED, outcome unknown, and its later failure is logged by kind and code"
@@ -3730,7 +3739,7 @@ A provider without `queryReadOnly` is refused at the session's open, C-39, answe
 A statement that fails after MCP stopped waiting for it is logged under `/api/mcp` by kind and code, never its text, and a later answer is not logged.
 A value the host's page cannot carry, refused by the value codec as the host measures the rows, refuses the answer by the codec's sentence behind the notice naming the provider, as a value outside the codec in the answer's own rows does.
 An answer over 1 MiB in the host's measure waits for the host's large-page slot, C-53, within the call's deadline.
-Only the SQL arm's paging through the provider's `prepareQuery`, which sends nothing, still calls the provider directly; the database choice's listing and inspect_schema's tree reads run through the host core's tree call, C-82.
+No statement tool calls a provider's member directly: run_read_query's page is applied by the read-only statement session, C-85, and the database choice's listing and inspect_schema's tree reads run through the host core's tree call, C-82.
 
 - test `tests/unit/mcp/read-query-limits.test.ts` "hands the acquisition the call's wait, ended by the request leaving or the call's deadline"
 - test `tests/unit/mcp/read-query-limits.test.ts` "answers cancelled or timeout without acquiring when the request has left or the deadline has passed"
@@ -3879,6 +3888,49 @@ The script records its one `open` event as before, and after a unit Studio stopp
 - test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
 - test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the profile, whose statements still run on the provider"
 
+### C-85 (normative): A read-only execute's page, and MCP's offset paging on the host
+
+A read-only execute's page is every row or a limit and an offset, as any execute's, C-78.
+A session sent a bounded page applies it before it sends anything and answers `pageApplied` true, or sends a statement that does not apply it and answers `pageApplied` false.
+A non-zero offset it does not apply it refuses before it sends anything, and never answers the first rows as the page the offset names; a provider's refusal is `offset-unsupported`.
+The host's half and the legacy bridge's are normative and tested here; that a native provider keeps the rule is the provider's own, which no kit checks yet, as C-8 states for a request field a provider ignores.
+
+The legacy bridge's read-only statement session, C-50, honours `offset` beside `readOnly`.
+On every row its execute calls no prepare and sends the statement as written, its page not applied.
+On a bounded page it runs the provider's own prepare with a fresh options object of the page's limit and offset, so a legacy member may write what it receives, and sends the statement it prepared to `queryReadOnly`, its page applied exactly when the prepare says it limited the statement.
+A non-zero offset the prepare did not apply is refused as Studio's own refusal, `StudioOffsetRefusal`, kind `studio-offset-refusal`, outcome not-sent, E-5, before `queryReadOnly` is called, in a sentence that names no statement text.
+The prepare's own error, a provider's `OffsetUnsupportedError` included, passes by reference, and `queryReadOnly` is not called.
+
+The paged read-only execute, `runReadOnlyPage`, sends the caller's page through the one host core execute of C-79 and answers the provider's result with whether the session applied the page; `runReadOnlyExecute` is it with every row as its page, so the agent's statements and the hand-over replay send every row as before.
+Studio's refusal of an offset passes out of it by reference.
+
+run_read_query sends a page one row past `max_rows` from its offset, and offers a next offset only where the page was applied and the engine's SQL has an offset.
+No module of MCP calls a provider's prepare: the read-only statement session applies the page.
+An offset on an engine whose SQL has none is still refused before the statement's execute, in the words that say how to page there.
+Studio's refusal of an offset the prepare did not apply is answered in Studio's words, which say which case kept the provider from paging, with no record, and a provider's `offset-unsupported` refusal of a non-zero offset, from its prepare or its read path, is answered in its own words behind the notice naming the provider; both are recorded as `mcp_offset_unsupported`, and both are answered by class before the rule that answers a failure at or after the deadline as the timeout.
+Since the prepare now runs inside the host call, a call whose deadline passed or whose request left before the statement starts is answered with the timeout or the cancel, where an offset the prepare did not apply was refused first.
+A statement tool that does not page sends every row as its page.
+
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session honours offset, runs the provider's prepare on a bounded page with a fresh copy of it, and sends the statement it prepared to queryReadOnly"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bounded page the prepare did not apply with no offset sends the prepared statement and answers its page not applied"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "an offset the provider's prepare did not apply is refused as Studio's own refusal, not-sent, and no read-only path is called"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a refusal or failure the prepare raises passes by reference, and no read-only path is called"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only execute with an offset reaches the bridged read-only statement session through the host core"
+- test `tests/unit/db/errors.test.ts` "is an OffsetUnsupportedError only Studio raises, outcome not-sent"
+- test `tests/unit/db/operations/provider-text.test.ts` "Studio's refusal of an offset is Studio's, and a provider's OffsetUnsupportedError is not"
+- test `tests/unit/db/operations/provider-text-census.test.ts` "only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does"
+- test `tests/unit/lib/api/read-only-execute.test.ts` "a paged read-only execute sends its page through one host core execute call and answers whether the provider applied it"
+- test `tests/unit/lib/api/read-only-execute.test.ts` "a paged read-only execute whose offset the provider's prepare did not apply is refused as Studio's own refusal before the read-only path is called"
+- test `tests/integration/mcp/run-read-query.test.ts` "run_read_query's page, one row past max_rows from the offset, is applied by the read-only statement session through the host core, never by MCP"
+- test `tests/integration/mcp/run-read-query.test.ts` "the next page with offset 100 answers rows 101 to 150 and no more"
+- test `tests/integration/mcp/run-read-query.test.ts` "a query with its own LIMIT is cut without a next offset, and says how to page in SQL"
+- test `tests/integration/mcp/run-read-query.test.ts` "whose preparation refuses an offset is answered in the provider's words behind a notice naming it, and nothing runs"
+- test `tests/integration/mcp/run-read-query.test.ts` "an offset the provider's read path refuses with OffsetUnsupportedError is answered in its words behind the notice, as its prepare's refusal is"
+- test `tests/integration/mcp/run-read-query.test.ts` "a call whose deadline passed while its connection opened is answered with the timeout before its offset is read"
+- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no MCP module calls a provider's prepareQuery: run_read_query's page is applied by the read-only statement session"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -4013,3 +4065,6 @@ Against this contract's earlier text:
 - A query action of the transaction route whose connection statement timeout is malformed is refused with the query route's sentence before it is gated or opens anything, C-84, where a script ran and one statement failed with the host's deadline error.
 - A script inside a transaction whose unit Studio stopped waiting for records its `open` event with the stop's code, and the end found after it is recorded `unknown`, C-58 and C-84.
 - A provider whose state read throws right after a unit of a script inside a transaction fails that unit with its error, C-50, where only the read after the script was taken.
+- A read-only execute's page is every row or a limit and an offset, and a session sent a bounded page applies it or refuses a non-zero offset it does not apply before it sends anything, C-78 and C-85, where a read-only execute answered every row and the read-only statement session took no offset.
+- The legacy bridge's read-only statement session applies a bounded page through the provider's prepare and refuses an offset the prepare did not apply as Studio's own refusal, not-sent, C-50, C-85 and E-5, where the read-only session read no page.
+- run_read_query's page is applied by the read-only statement session through the host core, C-81 and C-85, where MCP called the provider's `prepareQuery` itself; an offset the provider does not apply is refused when the statement starts, so a call whose deadline passed or whose request left before then is answered with the timeout or the cancel, and a provider's `offset-unsupported` refusal from its read path is answered as an offset refusal, where it was the engine's error.

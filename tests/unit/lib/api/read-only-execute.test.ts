@@ -14,13 +14,14 @@
 import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import type { CallContext, ExecuteRequest } from "@libredb/provider-sdk/calls";
-import { type ReadOnlyExecuteCall, runReadOnlyExecute } from "@/lib/api/read-only-execute";
+import { type ReadOnlyExecuteCall, runReadOnlyExecute, runReadOnlyPage } from "@/lib/api/read-only-execute";
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
   StudioTimeBudgetRefusal,
@@ -453,5 +454,79 @@ describe("runReadOnlyExecute", () => {
       await runReadOnlyExecute(provider, callOf({ budget: budgetOf({ statementTimeoutMs: 2_147_483_647 }) })),
     ).toBe(result);
     expect(budgetAt(queryReadOnly, 0).statementTimeoutMs).toBe(2_147_483_647);
+  });
+});
+
+describe("runReadOnlyPage", () => {
+  /**
+   * A provider whose prepare answers `wasLimited` with a text of its own, and whose read-only path answers `result`.
+   */
+  function pagingProviderOf(wasLimited: boolean, result: QueryResult) {
+    const prepared = `SELECT ${marker()}`;
+    const prepareQuery = mock((_statement: string, options: { limit: number; offset: number }) => ({
+      query: prepared,
+      wasLimited,
+      ...options,
+    }));
+    const queryReadOnly = mock<(...args: unknown[]) => Promise<QueryResult>>(async () => result);
+    const provider: DatabaseProvider = Object.assign(createMockProvider(), { prepareQuery, queryReadOnly });
+    return { provider, prepareQuery, queryReadOnly, prepared };
+  }
+
+  test("a paged read-only execute sends its page through one host core execute call and answers whether the provider applied it", async () => {
+    const result = resultOf([{ n: 1 }, { n: 2 }]);
+    const applying = pagingProviderOf(true, result);
+    const notApplying = pagingProviderOf(false, result);
+    const seen: ExecuteRequest[] = [];
+    const call = callOf({ type: "sqlite" });
+
+    const [applied, notApplied] = await withCore(
+      (real) => ({
+        ...real,
+        executeCall: (session, request, ctx, limits, ports) => {
+          seen.push(request);
+          return real.executeCall(session, request, ctx, limits, ports);
+        },
+      }),
+      async () => [
+        await runReadOnlyPage(applying.provider, { ...call, page: { limit: 4, offset: 2 } }),
+        await runReadOnlyPage(notApplying.provider, { ...call, page: { limit: 4, offset: 0 } }),
+      ],
+    );
+
+    expect(seen).toEqual([
+      {
+        statement: call.statement,
+        page: { limit: 4, offset: 2 },
+        readOnly: { budget: { maxRows: 200, maxBytes: 262_144 } },
+      },
+      {
+        statement: call.statement,
+        page: { limit: 4, offset: 0 },
+        readOnly: { budget: { maxRows: 200, maxBytes: 262_144 } },
+      },
+    ]);
+    expect(applied).toEqual({ result, pageApplied: true });
+    expect(applied.result).toBe(result);
+    expect(notApplied).toEqual({ result, pageApplied: false });
+    expect(applying.prepareQuery.mock.calls).toEqual([[call.statement, { limit: 4, offset: 2 }]]);
+    expect(applying.queryReadOnly.mock.calls[0]?.[0]).toBe(applying.prepared);
+    expect(notApplying.queryReadOnly.mock.calls[0]?.[0]).toBe(notApplying.prepared);
+    expect(applying.provider.query).not.toHaveBeenCalled();
+  });
+
+  test("a paged read-only execute whose offset the provider's prepare did not apply is refused as Studio's own refusal before the read-only path is called", async () => {
+    const { provider, prepareQuery, queryReadOnly } = pagingProviderOf(false, resultOf([{ n: 1 }]));
+
+    const refused = await failure(() =>
+      runReadOnlyPage(provider, { ...callOf({ type: "sqlite" }), page: { limit: 4, offset: 2 } }),
+    );
+
+    expect(refused).toBeInstanceOf(StudioOffsetRefusal);
+    expect(errorKind(refused)).toBe("studio-offset-refusal");
+    expect(errorOutcome(refused)).toBe("not-sent");
+    expect(prepareQuery).toHaveBeenCalledTimes(1);
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(provider.query).not.toHaveBeenCalled();
   });
 });

@@ -46,6 +46,7 @@ const PROVIDER_CODE = join("src", "lib", "db", "providers") + sep;
 const READ_ALLOWANCE = join("src", "lib", "db", "read-allowance.ts");
 const PROVIDER_TEXT = join("src", "lib", "db", "operations", "provider-text.ts");
 const READ_ONLY_STATEMENT = join("src", "lib", "db", "operations", "read-only-statement.ts");
+const LEGACY_BRIDGE = join("src", "lib", "provider-host", "legacy-bridge.ts");
 
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
@@ -364,6 +365,11 @@ describe("who wrote a refusal", () => {
     expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
   });
 
+  test("only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does", () => {
+    expect(constructed("StudioOffsetRefusal", (file) => file.provider)).toEqual([]);
+    expect(constructed("StudioOffsetRefusal", () => true)).toEqual([`${LEGACY_BRIDGE}: pagedReadOnlyStatement`]);
+  });
+
   test("no provider module constructs a Studio budget refusal or StudioTimeoutRefusal", () => {
     for (const className of [
       "StudioRowBudgetRefusal",
@@ -487,7 +493,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "run-statement.ts"), "failureAnswer", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "profileRefusal", "scrubProviderText"],
   [mcp("tools", "run-statement.ts"), "profileRefusal", "providerTextError"],
-  [mcp("tools", "run-statement.ts"), "prepare", "providerTextError"],
+  [mcp("tools", "run-statement.ts"), "statementFailure", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "callDatabase", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "executeOpened", "withScrubbedWarnings"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "textScrub"],

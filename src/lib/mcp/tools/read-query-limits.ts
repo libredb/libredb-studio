@@ -54,7 +54,9 @@ type McpFailureClass = Exclude<ReadOnlyRefusalKind, "time"> | "timeout" | "allow
  * One answer for every error kind, so a kind added to `ERROR_KINDS` fails typecheck until it has one. A budget
  * refusal is too large (`rows`, `bytes`, `cut-value`, `serialised`) or the timeout, Studio's and the provider's alike;
  * the call's read allowance is too large in its own sentence; a statement refused before it was sent is the
- * provider's refusal; every other kind, `timeout` among them, is the engine's error.
+ * provider's refusal; every other kind, `timeout` among them, is the engine's error. MCP answers Studio's offset
+ * refusal, and a provider's under a non-zero offset, by class before this table is read, so the `studio-offset-refusal`
+ * row is never reached on an MCP statement path, and the `offset-unsupported` row only for a refusal with no offset.
  */
 export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> = {
   database: "engine",
@@ -68,6 +70,7 @@ export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> =
   "pool-exhausted": "engine",
   query: "engine",
   "offset-unsupported": "engine",
+  "studio-offset-refusal": "engine",
   "refused-before-send": "not-sent",
   "read-allowance-exceeded": "allowance",
   "row-budget-refusal": "rows",

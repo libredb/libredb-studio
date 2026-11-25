@@ -43,6 +43,7 @@ import {
   RowBudgetRefusal,
   SerialisedResultRefusal,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
   StudioTimeBudgetRefusal,
@@ -112,6 +113,7 @@ const CLASSES: readonly (readonly [ErrorClass, ErrorKind, (text: string) => Erro
   [PoolExhaustedError, "pool-exhausted", (text) => new PoolExhaustedError(text, "postgres", 10)],
   [QueryError, "query", (text) => new QueryError(text, "postgres", text, 3, text)],
   [OffsetUnsupportedError, "offset-unsupported", (text) => new OffsetUnsupportedError(text, "cassandra", text)],
+  [StudioOffsetRefusal, "studio-offset-refusal", (text) => new StudioOffsetRefusal(text, "sqlite")],
   [RefusedBeforeSendError, "refused-before-send", (text) => new RefusedBeforeSendError(text, "postgres", text)],
   [ReadAllowanceExceededError, "read-allowance-exceeded", (text) => new ReadAllowanceExceededError(text, "postgres")],
   [RowBudgetRefusal, "row-budget-refusal", (text) => new RowBudgetRefusal(text, "postgres", text)],
@@ -245,6 +247,12 @@ describe("outcome", () => {
     expect(errorKind(new LocalRefusal(marker()))).toBe("refused-before-send");
   });
 
+  test("Studio's refusal of an offset it did not see applied answers not-sent wherever it is raised", async () => {
+    const refusal = new StudioOffsetRefusal(marker(), "sqlite");
+    expect(errorOutcome(refusal)).toBe("not-sent");
+    expect(errorOutcome(await throughConnect(refusal))).toBe("not-sent");
+  });
+
   test("a connection error raised by a statement answers unknown", () => {
     expect(errorOutcome(new ConnectionError(marker(), "postgres"))).toBe("unknown");
     expect(errorOutcome(new TransportError("network", marker(), { truncated: true }))).toBe("unknown");
@@ -252,8 +260,9 @@ describe("outcome", () => {
 
   test("every other class answers unknown", () => {
     for (const [Class, , make] of CLASSES) {
-      if (make(marker()) instanceof RefusedBeforeSendError) continue;
-      expect(errorOutcome(make(marker())), Class.name).toBe("unknown");
+      const made = make(marker());
+      if (made instanceof RefusedBeforeSendError || made instanceof StudioOffsetRefusal) continue;
+      expect(errorOutcome(made), Class.name).toBe("unknown");
     }
     for (const value of [new Error(marker()), marker(), undefined]) expect(errorOutcome(value)).toBe("unknown");
   });
@@ -393,6 +402,7 @@ describe("carries what today's branches read", () => {
         "studio-time-budget-refusal",
         "studio-timeout-refusal",
         "studio-profile-refusal",
+        "studio-offset-refusal",
       ];
       expect(studio.includes(kind), label).toBe(isStudioRefusal(error));
     }
@@ -403,7 +413,7 @@ describe("carries what today's branches read", () => {
       const record = errorRecord(scrub, error);
       const refused = error instanceof RefusedBeforeSendError;
       expect(record.kind === "refused-before-send" || record.kind === "read-allowance-exceeded", label).toBe(refused);
-      expect(record.outcome === "not-sent", label).toBe(refused);
+      expect(record.outcome === "not-sent", label).toBe(refused || error instanceof StudioOffsetRefusal);
     }
   });
 
