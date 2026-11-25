@@ -10,7 +10,9 @@
  * STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 asks for them,
  * then install the process's one provider host core
  * (src/lib/provider-host/instance.ts), so a boot a check refuses installs
- * none, and start copying the built-in samples (src/lib/seed/samples.ts), which
+ * none, then admit the provider packages of the providers directory and
+ * install the server's engine catalog (src/lib/provider-host/boot.ts), and
+ * start copying the built-in samples (src/lib/seed/samples.ts), which
  * boot never waits for: a sample whose copy fails is logged once and listed
  * unavailable.
  */
@@ -111,6 +113,14 @@ export async function register(): Promise<void> {
   const { createHostCore } = await import("@/lib/provider-host/core/host-core");
   const { installHostCore } = await import("@/lib/provider-host/instance");
   installHostCore(createHostCore(), "server");
+
+  // Boot admission (docs/providers/CONTRACT.md, clause C-105): read the providers lock, admit each package it verified,
+  // run the catalog's set rules, register the packages they keep and install the server's engine catalog, once per
+  // process, before governance, the banner and the samples, so no request is served before it. A lock that cannot be
+  // read stops the boot with exit 1; with no providers directory set, nothing is read and the bundled catalog is the
+  // server's. A refused package leaves Studio running without its engines.
+  const { admitProvidersAtBoot } = await import("@/lib/provider-host/boot");
+  if (!(await admitProvidersAtBoot())) return;
 
   // Governance snapshot (docs/GOVERNANCE.md#operating-notes): load the
   // governance source in the background and keep it current. Not awaited, so
