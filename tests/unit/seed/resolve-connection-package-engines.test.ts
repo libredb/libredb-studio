@@ -95,7 +95,12 @@ describe("a package engine on a connection route", () => {
       );
     }
 
-    const resolved = await resolveConnection({ connection: inline("acmeserved") }, ADMIN, undefined, "bundled-and-package");
+    const resolved = await resolveConnection(
+      { connection: inline("acmeserved") },
+      ADMIN,
+      undefined,
+      "bundled-and-package",
+    );
     expect(resolved).toMatchObject({ type: "acmeserved", host: "db.example", managed: false });
     const engine = serverEngine(resolved.type);
     if (engine.kind !== "package") throw new Error(`resolved ${engine.kind}`);
@@ -106,7 +111,12 @@ describe("a package engine on a connection route", () => {
     const seed = await resolveConnection({ connectionId: "seed:served" }, ADMIN, undefined, "bundled-and-package");
     expect([seed.id, seed.type, serverEngine(seed.type).kind]).toEqual(["seed:served", "acmeserved", "package"]);
 
-    const bundled = await resolveConnection({ connection: inline("postgres") }, ADMIN, undefined, "bundled-and-package");
+    const bundled = await resolveConnection(
+      { connection: inline("postgres") },
+      ADMIN,
+      undefined,
+      "bundled-and-package",
+    );
     expect([bundled.type, serverEngine(bundled.type).kind]).toEqual(["postgres", "bundled"]);
   });
 });
