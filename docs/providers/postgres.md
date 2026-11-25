@@ -2890,6 +2890,7 @@ It fails unless the editor's pool is full at the kill, the kill answers success 
 Measured on 24 November 2026 against PostgreSQL 18: the kill answered in 2 ms on the pinned connection and in 1 ms in the catalog, each with the editor's pool held at 10 of 10 and 3 of 3; the same kill sent on the editor's provider waited 3,845 ms for a holder to end.
 Last, it reads a dashboard and a health check as `POST /api/db/monitoring` and `POST /api/db/health` read them, on the metadata session through the host core, while statements hold every connection of the editor's pool: once on the shared pool of 10, and once in the catalog `postgres` of the server-level copy, whose editor catalog session of 3 is held.
 It fails unless the editor's pool statistics show the pool full with none idle, the dashboard and the health check each answer within 1,000 ms, and, once the holders end, a dashboard on the editor's provider answers the same panel states and both providers declare the same maintenance.
+Measured on 25 November 2026 against PostgreSQL 18: with the editor's pool held at 10 of 10 on the pinned connection, the dashboard answered in 20 ms and the health check in 4 ms, and with its catalog session held at 3 of 3, in 12 ms and 3 ms; each dashboard answered all seven panels, as the editor's did once the holders ended.
 
 ---
 
