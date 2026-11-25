@@ -5,7 +5,7 @@
  * Studio dials the socket itself and gives ssh2 the connected socket through its `sock` option,
  * rather than letting the library resolve and connect. That is what puts a NETCONF connection
  * inside `DB_HTTP_BLOCK_PRIVATE_HOSTS` from the first release, where the gRPC providers are
- * outside it because grpc-js resolves names itself (`docs/BACKLOG.md` D212).
+ * outside it because grpc-js resolves names itself (backlog D212).
  *
  * The same pattern is already in the tree: `providers/stream/rabbitmq/amqp/dial.ts` dials through
  * `socketEgress(host, { refusesLinkLocal: true }, decision)` with `noDelay: true`, and this follows it: the

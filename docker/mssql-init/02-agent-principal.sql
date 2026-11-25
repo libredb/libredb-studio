@@ -49,7 +49,7 @@
 --  * `db_datareader` is the whole read surface. It is a role rather than per-table grants
 --    because the profile's job is to bound what a statement may DO, and what it may READ is
 --    bounded by the grants an operator chooses: narrow this to per-table `SELECT` grants and
---    the profile still holds, with a smaller reach. `docs/BACKLOG.md` A3 and A8 record what
+--    the profile still holds, with a smaller reach. Backlog A3 and A8 record what
 --    is still unbounded either way.
 --
 --  * `VIEW DEFINITION` is what makes the catalog reads answer for anything that is not a

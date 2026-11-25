@@ -335,7 +335,7 @@ rather than the POSIX one twice.
 
 The consequence for the product is bounded but real, and it is not fixed here.
 Browsing serves one connection record from one cached handle, and the connection dialog's Test Connection borrows the handle already holding the file (`findOpenSingleWriterProvider`), so neither opens a second one.
-Two different connection records naming one file do get two handles, because `getOrCreateProvider` never borrows: on Linux and macOS each keeps its own catalog and whichever closes last checkpoints over the other's committed rows, and on Windows the second open is refused (BACKLOG D240).
+Two different connection records naming one file do get two handles, because `getOrCreateProvider` never borrows: on Linux and macOS each keeps its own catalog and whichever closes last checkpoints over the other's committed rows, and on Windows the second open is refused (backlog D240).
 The one path that really does want two handles at once is an agent run reaching a connection the editor already has open: `acquireExecutionProfileProvider` opens the file under the profiled key while the writable handle is live.
 On Windows that open is refused, and the run fails with the engine's sentence instead of reading.
 Not yet measured against a running Studio on Windows, only against the engine.
@@ -352,7 +352,7 @@ An `agent-operations` acquisition borrows only a handle of its requester's own e
 rather than declared unsupported: a long analytical scan is exactly the workload a user needs to be
 able to stop, and this engine has no session to `KILL` from a second connection.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `interrupt()` on its connection, when the request named a `queryId`.
 
 ### 3.10 `access_mode: 'READ_ONLY'` is not a filesystem sandbox — `enable_external_access` is

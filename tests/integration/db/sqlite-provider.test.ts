@@ -4091,7 +4091,7 @@ describe("SQLiteProvider agent read-only execution profile (#328)", () => {
     // control for out-of-scope READS through ATTACH is the input-stage denial in
     // the operations layer (tests/security/agent-statement-boundary.test.ts),
     // which is why that denial exists. Recorded as a known limitation in
-    // docs/providers/sqlite.md section 12 and docs/BACKLOG.md.
+    // docs/providers/sqlite.md section 12 and the backlog.
     const leaked = await profile.queryReadOnly("SELECT v FROM other.t", AGENT_BUDGET);
     expect(leaked.rows).toEqual([{ v: "seeded" }]);
 

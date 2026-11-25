@@ -34,7 +34,7 @@ import { readTrustProxyHeaders } from "@/lib/security/config";
  *
  * What remains is a caller that sets its own Content-Type deliberately outside a browser
  * altogether - curl, a server-to-server integration, this project's own documented API examples
- * (scripts/engine-smoke.sh, docs/RANCHER.md, docs/API_DOCS.md all POST JSON with neither Origin
+ * (scripts/engine-smoke.sh and docs/RANCHER.md both POST JSON with neither Origin
  * nor Referer). That is not a CSRF vector: CSRF is specifically an unwitting BROWSER carrying
  * credentials it did not choose to send. A script that sets its own headers chose to send them.
  *

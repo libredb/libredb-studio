@@ -1,5 +1,5 @@
 /**
- * The host core's boundary (docs/ARCHITECTURE.md, "The provider host core"): every file under
+ * The host core's boundary: every file under
  * `src/lib/provider-host/core/` imports only a public subpath of `@libredb/provider-sdk` other than `testing`, a `node:`
  * built-in, or a file of core itself, and declares no module state.
  *

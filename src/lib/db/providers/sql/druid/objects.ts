@@ -60,7 +60,7 @@
  * as a JSON spec - but that spec lives on the Coordinator REST API, `DruidTransport`
  * publishes only `query(sql)` and `close()`, and the seam guard fails the build on any
  * endpoint reached from this directory, so it is a TRANSPORT change and is filed in
- * `docs/BACKLOG.md` rather than left as an unrecorded gap. What SQL answers for a lookup
+ * the backlog rather than left as an unrecorded gap. What SQL answers for a lookup
  * is its key/value PAIRS, which are its content and not its definition.
  *
  * Nothing here reads `sys` and that is deliberate, for the reason `introspect.ts`

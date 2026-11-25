@@ -33,7 +33,7 @@
  *   refused (measured on bun 1.4.2), and these messages reach the log and the client.
  *
  * `tlsMaterialFor` is the Couchbase transport's mapping, written again here because this
- * provider touches no other provider (#1085, section 3.4; docs/BACKLOG.md D37).
+ * provider touches no other provider (#1085, section 3.4; backlog D37).
  */
 import type { ClientRequest, IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";

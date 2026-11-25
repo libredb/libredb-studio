@@ -719,7 +719,7 @@ The twenty-first spec in `e2e/`, `base-path.spec.ts`, is not in that 20: it need
 ### Key Details
 
 - **Test runner**: [`tests/run-tests.ts`](tests/run-tests.ts) over `bun:test`. It discovers every `*.test.ts` and `*.test.tsx` file under `tests/` except `tests/live/`, so a new test file runs the moment it is added, and it runs each file in its own bun process, several at a time (one per CPU by default, `--jobs=N` to change it).
-- **Why a process per file**: bun's `mock.module()` is process-wide with no undo, and whole-module mocks are the standard pattern in `tests/api/`, so files that share a process contaminate each other. On Linux with 20 cores and bun 1.4.2, the suite took 211 seconds one file at a time, 61 seconds 4 at a time and 36 seconds 20 at a time, measured on 2026-09-15 over the 538 files the tree held then; `docs/BACKLOG.md` D86 carries the same three timings and the same basis.
+- **Why a process per file**: bun's `mock.module()` is process-wide with no undo, and whole-module mocks are the standard pattern in `tests/api/`, so files that share a process contaminate each other. On Linux with 20 cores and bun 1.4.2, the suite took 211 seconds one file at a time, 61 seconds 4 at a time and 36 seconds 20 at a time, measured on 2026-09-15 over the 538 files the tree held then; backlog D86 carries the same three timings and the same basis.
 - **One command everywhere**: the runner is TypeScript rather than shell so that the command a contributor is told to run works on Linux, macOS and Windows from the platform's own shell. The bash scripts it replaced did not: one used `mapfile`, a bash 4 builtin that macOS's bash 3.2 does not have.
 - **E2E**: Playwright runs the full suite on Chromium and the `security-headers` spec on WebKit (`webkit-security`), against a production build (`bun run build && bun start`)
 - **CI**: GitHub Actions runs lint + typecheck + build, the required `Unit & Integration Tests` job (`bun run test:coverage` then `bun run coverage:check`) on ubuntu, a non-required `Cross-platform Tests` job running `bun run test` on windows-latest and macos-latest, E2E tests, and SonarCloud analysis
@@ -1081,7 +1081,6 @@ Open **http://localhost:3000** and log in with the admin credentials the first r
 |----------|-------------|
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI-powered documentation — always up-to-date with the codebase |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | Code quality, security analysis, and technical debt tracking |
-| [API Docs](docs/API_DOCS.md) | Complete REST API reference |
 | [Agent Guide](docs/AGENT_GUIDE.md) | Using the agent: a run, the five workflows, what "answered" means, the budget meter, and the Ollama path |
 | [Agent Data Flow](docs/AGENT_DATA_FLOW.md) | What leaves the machine, when, and to which model provider — written from call sites |
 | [Local models](docs/llms/README.md) | Which local model can actually drive an agent run, measured across six surfaces, one page per model |
@@ -1093,8 +1092,6 @@ Open **http://localhost:3000** and log in with the admin credentials the first r
 | [Theming Guide](docs/ui/theming.md) | CSS theming, dark mode, and styling customization |
 | [Login Page](docs/ui/login-page.md) | Login page layout, OIDC/local modes, and design system |
 | [Editor Docs](docs/editor/) | SQL editor internals — completion, performance, query optimization |
-| [Architecture](docs/ARCHITECTURE.md) | System architecture and design patterns |
-| [Backlog](docs/BACKLOG.md) | Known defects and deferred work that is not yet filed as an issue |
 
 ### Cross-browser testing
 

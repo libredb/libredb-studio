@@ -250,7 +250,7 @@ run by asking `GET /api/agent/config`, the same way it discovers the storage mod
 | `AGENT_MODEL_TURN_TIMEOUT_MS` | unset (`90000`) | How long **one** model call may take before the drive stops waiting for it. Raise it for a LOCAL model: the default was chosen against hosted APIs, where a turn lands in seconds and a 90-second wait only ever means a request that is not coming back. Measured across 25 Ollama models on six surfaces, **nine** runs ended `model-timeout` with the model still working — one of them a reasoning model in plan mode, which holds no tools at all, cut 92 s into its **first** turn with a zero-event ledger. Those runs are scored as having answered nothing, which is a fact about this ceiling and not about the model. A value that is not a positive whole number is **ignored** and the default stands; a value is capped just under half the smallest workflow deadline, because a run has to be able to take two turns to finish. |
 | `AGENT_MODEL_TUNING_PATH` | unset | A JSON document of measured per-model settings, layered over the ones Studio ships with. Studio carries a document recording what specific models were measured under — turn limit, how many readings before it is asked to report, whether an empty turn is asked again — and a model not named in it is driven with the defaults, which is the honest treatment of a model nobody has measured — bar two settings whose gates are reachable only on a run that has already fallen short, where an absent entry is read as the absence it is rather than as a value somebody wrote. This is how a model Studio has never measured gets settings somebody else measured: mount a file in the same shape and restart, with no Studio release and no code change. Merged **per model and whole** — an entry here replaces the shipped entry for that model rather than contributing one field to it, because half of one measurement beside half of another is a configuration nobody has run. A file that is missing, unreadable or off-schema is **ignored** and the shipped measurements stand — which is the one setting here that fails **open**, so it is also the one that reports itself: `GET /api/agent/config` tells an **admin** session what became of the document (`{"modelTuning":{"state":"applied"\|"ignored"\|"unset",…}}`, with the path and the parser's reason), because an operator who mounts a file and is told nothing will believe it is in force. It carries numbers and switches only: the sentences the drive says to a model stay in Studio, so supplying this file cannot change what Studio tells a model. On Kubernetes the chart mounts it for you — see `agent.modelTuning.*` in [`charts/libredb-studio/README.md`](../charts/libredb-studio/README.md). The document's own contract — every setting, its bounds, what happens to a key this build does not implement, and the example to start from — is [`docs/llms/model-tuning.md`](llms/model-tuning.md). |
 | `WORKFLOW_LOCAL_DATA_DIR` | unset — but the packaged artifacts set it: `/app/data/workflow` from the Helm chart and (from an app version later than `0.11.0`) the container image, `~/.libredb-studio/workflow-data` under `npx`. The SDK's own fallback, which those replace, is `.workflow-data` relative to the working directory. | Where the `local` backend keeps run state, and therefore the second condition above. See [Deployment](#deployment) — the SDK's fallback is wrong in a container and wrong under `npx`, so no artifact leaves it in force. |
-| `LIBREDB_AGENT_RESUME_SWEEP_INTERVAL_MS` | unset (`60000`) | How often the resume sweep looks for runs a dead process left `running` and drives each one again, in-process (`docs/BACKLOG.md` B9). A value that is not a positive whole number is ignored and the default stands. |
+| `LIBREDB_AGENT_RESUME_SWEEP_INTERVAL_MS` | unset (`60000`) | How often the resume sweep looks for runs a dead process left `running` and drives each one again, in-process (backlog B9). A value that is not a positive whole number is ignored and the default stands. |
 | `LIBREDB_AGENT_STALE_RUN_AFTER_MS` | unset (longest run deadline + 120 s) | How old a running run's last ledger **activity** must be before the sweep claims it (B9). Whether it is *unowned* is the claim's decision, not the staleness reading's: a still-live drive refuses the sweep at claim time. A value that is not a positive whole number is ignored and the default stands. |
 
 The refusal is not pedantry. The workflow runtime reads that variable itself and treats any value
@@ -485,7 +485,7 @@ Every `database-error` refusal also carries `record`, the failure's error record
 
 **A provider's row or byte budget refusal is database content; Studio's own is Studio's.**
 A provider that refuses its own answer by the row, byte or time budget raises the class of that budget (`RowBudgetRefusal`, `ByteBudgetRefusal`, `TimeBudgetRefusal`, and SQL Server's `CutValueRefusal` and `SerialisedResultRefusal` in `src/lib/db/errors.ts`), each a `QueryError` with an error kind of its own, and the tool layer fences that sentence as database content relayed by the provider, as it fences any engine error.
-Two refusals keep the class they had, as `docs/API_DOCS.md` states beside the error kinds: a budget refusal a provider makes before it sends anything stays a `RefusedBeforeSendError`, kind `refused-before-send`, and Prometheus's time refusal stays a `TimeoutError`, kind `timeout`.
+Two refusals keep the class they had: a budget refusal a provider makes before it sends anything stays a `RefusedBeforeSendError`, kind `refused-before-send`, and Prometheus's time refusal stays a `TimeoutError`, kind `timeout`.
 Studio's core holds every answer to the same budgets and to the time the run granted, and raises its own refusals as `StudioRowBudgetRefusal`, `StudioByteBudgetRefusal` and `StudioTimeBudgetRefusal`, one for each budget, each a subclass of the provider's class of that budget with an error kind of its own; the statistics read outlasting its time raises `StudioTimeoutRefusal`.
 Every statement the run sends runs through the host core's read-only execute on a read-only statement session (`runReadOnlyExecute` in `src/lib/api/read-only-execute.ts`), whose deadline is the time the run granted, and its rows and bytes are held by the same check the other budgeted readings pass (`holdReadOnlyRows` in `src/lib/db/operations/read-only-statement.ts`).
 Only core constructs these four classes, so the tool layer tells them apart by class, never by text, says the sentence unfenced in this server's voice, and records `refusedBy: "studio"` on the sent statement.
@@ -867,7 +867,7 @@ Three consequences worth stating plainly, because each is easy to assume the oth
 2. **A plan run now writes `context-captured` to its own ledger**, which it never did before, and
    holds the reading in the process for the next run on that connection. Grounding therefore survives
    a restart. The deferral that recorded the opposite ("a plan run's grounding does not survive a
-   restart, because the inventory is held in memory") is closed and deleted from `docs/BACKLOG.md`.
+   restart, because the inventory is held in memory") is closed and deleted from the backlog.
 3. **The schema is never egressed anywhere it was not already going.** The same table and column
    names an agent run's prompt carries reach the same model, for a connection the same user can open
    an agent run on. The statistics add estimated row counts, null fractions and distinct counts to
@@ -2569,8 +2569,7 @@ decision is only honest while they are written down where a maintainer will find
 
 ## HTTP surface
 
-Six paths under `src/app/api/agent/`, seven handlers — documented request-by-request in
-[`docs/API_DOCS.md`](./API_DOCS.md#agent-api), in the shape every other route family there uses.
+Six paths under `src/app/api/agent/`, seven handlers.
 Each verifies authorization in its own handler
 (middleware is an optimisation, not the authorization boundary) rather than trusting the request. The
 five run-reaching handlers verify a **session** and answer **404** when the agent is unavailable —
@@ -3211,11 +3210,11 @@ src/hooks/                # use-agent-capability.ts (the flag probe; the rail's 
 
 ## Known limitations
 
-Each of these is recorded in [`docs/BACKLOG.md`](./BACKLOG.md) with what it would take to close it.
+Each of these is recorded in the backlog with what it would take to close it.
 They are listed here so the honest boundary is visible from the behaviour document rather than only
 from the tracker.
 
-**Inherited from the enforcement layer** — `docs/BACKLOG.md`, section "Agent M1 deferrals (#328)",
+**Inherited from the enforcement layer** — the backlog, section "Agent M1 deferrals (#328)",
 entries A1-A3. These bound what any agent statement can be promised: a SQLite statement has no
 engine-side interrupt, so stopping one over its timeout means killing the child process that runs
 it (A1);
@@ -3238,10 +3237,9 @@ the role's own grants are the whole boundary (A3).
   unreachable `WORKFLOW_POSTGRES_URL` still renders a rail whose first Start fails. Reported as a
   carve-out (`ledgerVerified: false`) rather than fixed; a real check is a connection attempt per page
   load.
-- **B32** — the route family above is documented in [`docs/API_DOCS.md`](./API_DOCS.md) and guarded
-  against drift, but that guard derives only the agent paths: every other family is still hand-kept,
-  and even here only a path's presence is asserted, never that a documented shape still matches its
-  handler.
+- **B32** — the route family above is documented in the API reference, and no guard compares it with the
+  handlers: every family is hand-kept, and neither a path's presence nor a documented shape is asserted
+  against its handler.
 - **B33** — a run is observable only from its own ledger. There is no OpenTelemetry export and no
   metrics: the record described above is complete, and getting it into a stack the operator already
   runs is designed (#332) and deliberately unbuilt.
@@ -3377,7 +3375,7 @@ Agent reads on a cluster are masked by structural rules and by request target (s
 - A guessed Secret name can be confirmed to exist through get secret NAME or auth can-i get secrets/NAME; RBAC decides that.
 - The connection's Namespaces field lists the tree; it does not bound a statement, which may use -A or any -n.
 
-**Settled as limits rather than as work.** The eight below have no entry in `docs/BACKLOG.md`, and
+**Settled as limits rather than as work.** The eight below have no entry in the backlog, and
 that is the point: each is how the product behaves, stated where a reader of this document will meet
 it, rather than a queue item nobody was going to pick up. A limitation needs a record; it does not
 need a work item to hold that record.
@@ -3439,9 +3437,7 @@ need a work item to hold that record.
   workflows, what "answered" means, the meter's numbers, and the Ollama path.
 - [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md) — what leaves the machine, when, and to which
   provider, written from call sites.
-- [`docs/API_DOCS.md`](./API_DOCS.md#agent-api) — the seven handlers as a documented route family.
 - [`docs/SECURITY.md`](./SECURITY.md) — controls 3.4 and 3.5, and the reasons they read as they do.
-- [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) — where this sits in the application.
-- [`docs/BACKLOG.md`](./BACKLOG.md) — the deferrals above, in full.
+- The backlog — the deferrals above, in full.
 - [`docs/providers/postgres.md`](./providers/postgres.md) and
   [`docs/providers/sqlite.md`](./providers/sqlite.md) — the agent execution profile per engine.

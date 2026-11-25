@@ -1,6 +1,6 @@
 /**
  * What one drive may spend, derived from the run's own ledger rather than from
- * the drive's construction (#329, epic #325; `docs/BACKLOG.md` B6).
+ * the drive's construction (#329, epic #325; backlog B6).
  *
  * The statement, elapsed-time and deadline ceilings were all per drive: a run
  * resumed after a process death was handed a fresh set and started each ceiling
@@ -8,7 +8,7 @@
  * missing read: it folds the run's persisted history into the ceilings a drive
  * starts with, and derives the artifact allowance the same way (#999), and the
  * billed reads the run has spent (`billedReadsSpent`). The repair ledger stays
- * per drive (`docs/BACKLOG.md` B6).
+ * per drive (backlog B6).
  *
  * Two clocks meet here and are kept apart on purpose. The deadline is derived
  * from `record.createdAtMs`, a WALL-CLOCK timestamp written when the run opened,

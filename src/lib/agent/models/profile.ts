@@ -114,7 +114,7 @@ export interface AgentModelProfile {
    * on `nemotron3:33b`, whose entry says `false` and whose empty turns are asked again anyway.
    * Written down rather than fixed: narrowing the gate to a non-empty turn would change the
    * behaviour the five passing runs were measured under, and this repository does not move a
-   * measured cell without re-measuring it. See `docs/BACKLOG.md`.
+   * measured cell without re-measuring it. See the backlog.
    */
   readonly retryUnreadStop?: boolean;
   /**

@@ -340,7 +340,7 @@ function workflowBudget(input: {
  *   - `runDeadlineMs` bounds the run too, and on the WALL clock: it is derived from
  *     `createdAtMs`, so time a run spends paused or between drives is spent against it.
  *   - `maxModelTurns` and the repair ledger are still per drive. A resumed run counts its
- *     own turns, and its repair attempts start again (`docs/BACKLOG.md` B6).
+ *     own turns, and its repair attempts start again (backlog B6).
  */
 export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, AgentWorkflowBudget>> = Object.freeze({
   investigation: workflowBudget({

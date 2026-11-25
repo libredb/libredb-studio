@@ -2047,7 +2047,6 @@ Every refusal reason it can print, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/clickhouse-provider.test.ts`](../../tests/integration/db/clickhouse-provider.test.ts) · [`tests/unit/db/clickhouse/`](../../tests/unit/db/clickhouse/) · [`tests/unit/lib/explain/clickhouse-json.test.ts`](../../tests/unit/lib/explain/clickhouse-json.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Tracking issue: [#264 — Add ClickHouse provider](https://github.com/libredb/libredb-studio/issues/264)
 - HTTP interface: <https://clickhouse.com/docs/en/interfaces/http>
 - System tables: <https://clickhouse.com/docs/en/operations/system-tables/tables>,

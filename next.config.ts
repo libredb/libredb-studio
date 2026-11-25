@@ -91,7 +91,7 @@ import { securityHeaders, type SecurityHeaderOptions } from "./src/lib/security/
  *   rule above bars it from this file - and this file is the only path that reaches a subresource.
  *   Under the current two-path split there is no place a configurable CORP can land where it would
  *   act; widening src/proxy.ts's matcher for header-only paths is the way out, and is tracked as
- *   `docs/BACKLOG.md` AU4 rather than done here.
+ *   backlog AU4 rather than done here.
  *
  *   The protection given up is narrow, and that is read off this repository's own code rather than
  *   waved at. A cross-SITE no-cors subresource request already arrives without `auth-token`

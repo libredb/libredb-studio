@@ -255,7 +255,7 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
 const VERSION_NOTE =
   "An Oxia 0.16 standalone server (measured on 0.16.10) stops sending shard assignments to every client after one request whose authority is not `host:port`, which Studio never sends, until restarted (upstream #1450, about standalone mode only). 0.17.1 is not affected; fixed on main by #1450, in no 0.16 release as of 2026-10-04.";
 
-/** The BACKLOG ids section 13 cites, each as a link to its entry (part 2, case P11). */
+/** The backlog ids section 13 cites (part 2, case P11). */
 const LIMITATION_IDS: readonly string[] = [
   "D205",
   "D206",
@@ -793,7 +793,6 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
       "client_identity",
     ];
     for (const word of words) expect(limits).toContain(word);
-    for (const id of LIMITATION_IDS) expect(limits).toContain(`([${id}](../BACKLOG.md#`);
   });
 
   test("26. nothing the doc must not say", () => {
@@ -820,7 +819,6 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
 });
 
 const SECURITY = read("docs/SECURITY.md");
-const BACKLOG = read("docs/BACKLOG.md");
 const SEED_FIXTURE = "tests/fixtures/seed-connections/oxia-read-only-config.yaml";
 
 /** One row of the SECURITY control table, split into its five cells. */
@@ -852,34 +850,9 @@ function knownLimit(lead: string): string {
   return flat(limits.slice(start, end < 0 ? limits.length : end));
 }
 
-/** A BACKLOG entry, from its heading to the next heading, as one line. */
-function backlogEntry(id: string): string {
-  const start = BACKLOG.indexOf(`\n### ${id}. `);
-  if (start < 0) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
-  const end = BACKLOG.indexOf("\n#", start + 1);
-  return flat(BACKLOG.slice(start, end));
-}
-
-/** GitHub's heading anchor: lower case, spaces to `-`, everything but letters, digits, `-` and `_` dropped. */
-const anchorOf = (heading: string): string =>
-  heading
-    .toLowerCase()
-    .replace(/ /g, "-")
-    .replace(/[^a-z0-9_-]/g, "");
-
-/** The anchor of BACKLOG entry `id`, from its heading. */
-function backlogAnchor(id: string): string {
-  const heading = BACKLOG.split("\n").find((line) => line.startsWith(`### ${id}. `));
-  if (heading === undefined) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
-  return anchorOf(heading.slice("### ".length));
-}
-
 /** A token with a payload that declares no expiry, as the Qdrant doc test builds one (no signature is checked). */
 const b64url = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64url");
 const NO_EXPIRY_TOKEN = `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ sub: "studio" })}.c2lnbmF0dXJl`;
-
-/** A review finding id (C6, F11 d, SEC-01, J1-10) or TRIAGE: private documents a BACKLOG reader cannot open (SB3-4.8). */
-const PRIVATE_FINDING_ID = /\b(?:C\d+|F\d+(?: [a-z]\b)?|SEC-\d+|J\d+(?:-\d+)?|TRIAGE)\b/;
 
 /** The SB3-4.2 Control text of row 3.14. */
 const CONTROL_3_14 =
@@ -937,7 +910,6 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     expect(MCP_EXPOSABLE.oxia).toBe(false);
     expect(MCP_STATEMENT_READ.oxia).toBe(false);
     expect(AGENT_EXECUTION_ENGINES).toContain("oxia");
-    expect(machine).toContain(`](../BACKLOG.md#${backlogAnchor("B100")})`);
   });
 
   test("P6. the seed fixture loads as a seed file, read-only, and section 3.5 points to it", () => {
@@ -1036,49 +1008,20 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     );
   });
 
-  test("P11. every BACKLOG id the doc cites exists, and section 13 links each", () => {
+  test("P11. the doc cites exactly its backlog ids in section 13", () => {
     const limits = sectionOf(DOC, "## 13. Known limitations");
     const cited = new Set([...limits.matchAll(/\b([DB]\d+)\b/g)].map((match) => match[1]));
     expect([...cited].sort()).toEqual([...LIMITATION_IDS].sort());
-    const anchors = BACKLOG.split("\n")
-      .filter((line) => line.startsWith("### "))
-      .map((line) => anchorOf(line.slice("### ".length)));
-    for (const [, anchor] of DOC.matchAll(/\]\(\.\.\/BACKLOG\.md#([^)]+)\)/g))
-      expect(anchors, anchor).toContain(anchor);
-    for (const id of LIMITATION_IDS) {
-      expect(BACKLOG, id).toContain(`\n### ${id}. `);
-      expect(limits, id).toContain(`[${id}](../BACKLOG.md#${backlogAnchor(id)})`);
-    }
-    expect(anchorOf("D210. Pasting Pulsar's oxia://host:6648/ns does not split it")).toBe(
-      "d210-pasting-pulsars-oxiahost6648ns-does-not-split-it",
-    );
   });
 
-  test("P12. the version note is identical in the doc, the fixtures README and D217", () => {
+  test("P12. the version note is identical in the doc and the fixtures README", () => {
     expect(flat(sectionOf(DOC, "### 4.7 Server versions"))).toContain(VERSION_NOTE);
     expect(flat(read("docker/oxia/README.md"))).toContain(VERSION_NOTE);
-    expect(backlogEntry("D217")).toContain(VERSION_NOTE);
   });
 
-  test("P13. the shell-word rule's BACKLOG entry is filed", () => {
-    const entry = backlogEntry("D215");
-    expect(entry).toContain("`src/lib/db/console/shell-words.ts`");
-    expect(entry).toContain("`tests/unit/db/etcd/lexer.test.ts`");
-  });
-
-  test("P15. a key several shards hold is one key in every walk without --index, and D224 files its one record (ruling R38)", () => {
+  test("P15. a key several shards hold is one key in every walk without --index (ruling R38)", () => {
     expect(flat(sectionOf(DOC, "## 13. Known limitations"))).toContain(
-      "Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).",
+      "Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy (D224).",
     );
-    expect(backlogEntry("D224")).toContain("lowest shard id");
-    expect(backlogEntry("D224")).toContain(
-      "An `--index` walk lists the shards one after another, so it shows each copy.",
-    );
-    expect(backlogEntry("D224")).not.toMatch(PRIVATE_FINDING_ID);
-  });
-
-  test("P14. no Oxia BACKLOG entry cites a private finding id", () => {
-    for (let n = 205; n <= 218; n++) expect(backlogEntry(`D${n}`)).not.toMatch(PRIVATE_FINDING_ID);
-    expect(backlogEntry("B100")).not.toMatch(PRIVATE_FINDING_ID);
   });
 });

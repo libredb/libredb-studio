@@ -80,7 +80,7 @@ import {
  * It bounds the metric listing and the tree's Metrics count, and it keeps plan mode no room for
  * the other kinds: the agent's grounding walk bounds the metric batch at the listing's length and
  * stops at the first truncated batch, so past 2,000 names plan mode grounds metrics only
- * (`docs/BACKLOG.md` B84). The design fixes 2,000; `tests/fixtures/prometheus/README.md`, section
+ * (backlog B84). The design fixes 2,000; `tests/fixtures/prometheus/README.md`, section
  * "Measurements", entry M10, records the live check that keeps it or the number that replaces it.
  */
 export const METRIC_LIST_CAP = 2000;

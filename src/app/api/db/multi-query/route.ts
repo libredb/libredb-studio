@@ -334,7 +334,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No valid SQL statements found" }, { status: 400 });
     }
 
-    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"), over the whole submitted
+    // The server's confirmation gate, over the whole submitted
     // script: after every field check, and before the admission gate and any provider, so a request it answers opens
     // nothing, runs nothing and records no query event.
     const gate = await gateRun({

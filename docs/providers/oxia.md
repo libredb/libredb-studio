@@ -181,7 +181,7 @@ A read-only seed of one standalone server on this machine, managed, with no toke
 
 ### 3.6 Machine access
 
-Agent mode reads metadata only, and MCP stays closed: the provider's read-only query path is agent mode's alone, it answers names, counts and sizes and never a key name or a value, because Oxia key paths name Pulsar tenants, namespaces and topics, and an Oxia connection is not exposed to MCP clients ([B100](../BACKLOG.md#b100-oxias-agent-reads-are-metadata-only-and-it-has-no-mcp-statement-tool)).
+Agent mode reads metadata only, and MCP stays closed: the provider's read-only query path is agent mode's alone, it answers names, counts and sizes and never a key name or a value, because Oxia key paths name Pulsar tenants, namespaces and topics, and an Oxia connection is not exposed to MCP clients (B100).
 Section 15 states what an agent command may read and what bounds it.
 Plan mode drafts one read command that a person runs, in the grammar of section 5.
 The agent's grounding carries shard rows only, never a key name, a value, version metadata or a leader address, because the `key` kind is enumerated by the Keys panel and no listing of every kind reads it.
@@ -829,22 +829,22 @@ For TLS, start each data server with `--tls-cert-file` and `--tls-key-file`; for
 
 ## 13. Known limitations
 
-- Connections are read-only: no write, typed or confirmed ([D205](../BACKLOG.md#d205-oxia-connections-cannot-write)).
-- Ephemeral records are shown with their session, but no session is made or listed ([D206](../BACKLOG.md#d206-oxia-ephemeral-records-and-sessions-are-shown-never-made-or-listed)).
-- No notifications watch ([D207](../BACKLOG.md#d207-no-bounded-notifications-watch-on-oxia)).
-- No namespace list, and no list of data servers: both are typed ([D208](../BACKLOG.md#d208-oxia-namespaces-and-data-servers-cannot-be-listed)).
+- Connections are read-only: no write, typed or confirmed (D205).
+- Ephemeral records are shown with their session, but no session is made or listed (D206).
+- No notifications watch (D207).
+- No namespace list, and no list of data servers: both are typed (D208).
 - Data servers takes exact addresses only, never a wildcard.
-- A port-forwarded cluster cannot be read without the hosts-file workaround of section 4.4 ([D209](../BACKLOG.md#d209-a-port-forwarded-oxia-cluster-cannot-be-read)).
-- Pulsar's `oxia://` URL is not split on paste ([D210](../BACKLOG.md#d210-pasting-pulsars-oxiahost6648ns-does-not-split-it)).
-- A token is pasted, never read from a file ([D211](../BACKLOG.md#d211-an-in-cluster-studio-cannot-read-its-oxia-token-from-a-file)).
-- grpc-js resolves names itself, so the HTTP egress guard does not cover Oxia ([D212](../BACKLOG.md#d212-grpc-providers-are-outside-the-http-egress-guard)).
-- No metrics panel ([D213](../BACKLOG.md#d213-no-oxia-metrics-panel)).
-- The key order is probed, because no released server reports it ([D214](../BACKLOG.md#d214-key-order-is-probed-because-no-released-oxia-reports-it)).
-- The first Keys page discovers folders within 256 rounds and its other bounds, and a deeper or wider tree is narrowed by prefix ([D216](../BACKLOG.md#d216-the-oxia-keys-panel-discovers-folders-on-its-first-page-only)).
-- A 0.16 standalone server needs the version note of section 4.7 ([D217](../BACKLOG.md#d217-studios-oxia-doc-recommends-0171-because-of-a-016-standalone-lock)).
-- The cluster dial policy is checked live by hand only ([D218](../BACKLOG.md#d218-the-oxia-cluster-dial-policy-is-checked-by-hand-only)).
-- Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).
-- Agent mode reads metadata only, and there is no MCP surface ([B100](../BACKLOG.md#b100-oxias-agent-reads-are-metadata-only-and-it-has-no-mcp-statement-tool)).
+- A port-forwarded cluster cannot be read without the hosts-file workaround of section 4.4 (D209).
+- Pulsar's `oxia://` URL is not split on paste (D210).
+- A token is pasted, never read from a file (D211).
+- grpc-js resolves names itself, so the HTTP egress guard does not cover Oxia (D212).
+- No metrics panel (D213).
+- The key order is probed, because no released server reports it (D214).
+- The first Keys page discovers folders within 256 rounds and its other bounds, and a deeper or wider tree is narrowed by prefix (D216).
+- A 0.16 standalone server needs the version note of section 4.7 (D217).
+- The cluster dial policy is checked live by hand only (D218).
+- Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy (D224).
+- Agent mode reads metadata only, and there is no MCP surface (B100).
 - `client_identity` is what the writing client reported, which the server does not check.
 
 ## Migration DDL

@@ -1,5 +1,5 @@
 /**
- * The shared REST transport for driver-free providers (vector-family design 3.7; docs/BACKLOG.md D37)
+ * The shared REST transport for driver-free providers (vector-family design 3.7; backlog D37)
  *
  * A provider hands it a validated origin, the TLS material of its SSL / TLS panel, its in-flight bound and the headers
  * its connection sends, and gets back `request` and `close`. Nothing here knows about an engine, and no provider is
@@ -691,7 +691,7 @@ const HEADER_VALUE = /^[\x20-\x7e]*$/;
 const MAX_HEADER_VALUE_BYTES = 1024;
 /**
  * A signer's values may be longer than a request's own: an AWS session token from STS is longer than 1024 bytes
- * (docs/BACKLOG.md D262). Visible ASCII is one byte a character, so the length is the byte count.
+ * (backlog D262). Visible ASCII is one byte a character, so the length is the byte count.
  */
 const MAX_SIGNATURE_VALUE_BYTES = 8192;
 
@@ -1139,7 +1139,7 @@ function transportCore(settings: CoreSettings): TransportCore {
    * because the Agent keeps a request destroyed in its own queue and later dials a socket for it, so a cancel would
    * still cost a lookup and a handshake. A request stopped while it waits here never reaches the Agent. One stopped by
    * the signal that also stopped the request ahead of it can be started before its own abort listener runs: the byte
-   * transport fails it then, before it is signed, and the text transport still sends it (docs/BACKLOG.md D258).
+   * transport fails it then, before it is signed, and the text transport still sends it (backlog D258).
    */
   let sending = 0;
   const waiting: Array<() => void> = [];

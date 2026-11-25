@@ -164,13 +164,7 @@ describe("what the client facet and plan mode are told", () => {
 });
 
 describe("the B entry, both ways", () => {
-  test("BACKLOG holds it, docs/AGENT.md cites it, and the provider document links it", () => {
-    expect(read("docs/BACKLOG.md")).toContain(
-      "### B159. NETCONF's agent reads withhold keys, password hashes and access rules, and it has no MCP surface",
-    );
+  test("docs/AGENT.md cites it", () => {
     expect(read("docs/AGENT.md")).toContain("- **B159**: NETCONF's `netconfrpc` request language reads");
-    expect(read("docs/providers/netconf.md")).toContain(
-      "(../BACKLOG.md#b159-netconfs-agent-reads-withhold-keys-password-hashes-and-access-rules-and-it-has-no-mcp-surface)",
-    );
   });
 });

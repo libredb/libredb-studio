@@ -418,7 +418,7 @@ const ALL_CASES: readonly Case[] = [...CASES, ...MORE_CASES];
 
 /**
  * The cases whose target holds no code: the web editor sends it, where `analyzeStatement` answers nothing to run, the
- * divergence `docs/BACKLOG.md` U200 records. Where the target is an unclosed comment (M2, M3), the web asks first,
+ * divergence backlog U200 records. Where the target is an unclosed comment (M2, M3), the web asks first,
  * with the notice that part of it could not be read.
  */
 const NO_CODE_TARGETS: readonly string[] = ["RT23", "N1", "N2", "N3", "N4", "N5", "M2", "M3"];

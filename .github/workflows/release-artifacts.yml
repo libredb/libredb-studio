@@ -906,7 +906,7 @@ jobs:
           - arch: x64
             runner: ubuntu-22.04
           # arm64 still builds on 24.04-arm; lowering it (Raspberry Pi OS
-          # bookworm ships glibc 2.36) is tracked in docs/BACKLOG.md.
+          # bookworm ships glibc 2.36) is tracked in the backlog.
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:

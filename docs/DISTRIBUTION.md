@@ -258,7 +258,7 @@ Set the variable in the environment that starts the server, never in a `.env` fi
 Next.js reads it before it loads `.env` files and Studio reads it after, so a value in `.env` would leave both handlers ending the process.
 The three images set `NEXT_MANUAL_SIG_HANDLE=true` from the first release after 1.3.0, so Studio's handler ends a container started from one.
 A container started from such an image with the variable set to the empty string, `docker run -e NEXT_MANUAL_SIG_HANDLE= ...`, leaves the exit to Next.js's handler.
-The Helm chart and the OpenShift operator run that image, so they take the variable from it once their `appVersion` names such a release; the chart writes none itself yet, and writing it in that release's chart bump is GOV33 in [docs/BACKLOG.md](BACKLOG.md#governance-follow-ups).
+The Helm chart and the OpenShift operator run that image, so they take the variable from it once their `appVersion` names such a release; the chart writes none itself yet, and writing it in that release's chart bump is GOV33 in the backlog.
 Every launcher that starts the standalone server sets it too, where the server runs on Node.js:
 
 | Channel | What sets it | When |
@@ -374,7 +374,7 @@ Limits:
   Before Next.js adds its own listener, or with `NEXT_MANUAL_SIG_HANDLE=true` before `register()` has run, Node.js's default for the signal applies: it ends the process, or, as PID 1 in a container, ignores the signal until the platform's SIGKILL.
   With the variable unset, a signal after Next.js has added its listener but before `register()` has run ends the process through Next.js's handler with 143 or 130, and no Studio hook runs.
 
-The npm package and the VS Code extension's backend child run no Next.js server: importing `@libredb/studio` adds no signal listener, and an embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler ([ARCHITECTURE.md](ARCHITECTURE.md)).
+The npm package and the VS Code extension's backend child run no Next.js server: importing `@libredb/studio` adds no signal listener, and an embedder that wants its pools closed on a signal calls `clearProviderCache()` from its own handler.
 
 ## Built-in sample assets
 
@@ -1943,7 +1943,7 @@ not an automated process, and does not happen immediately even if you are the so
 most cases only *"after a few versions have been approved by moderators without any changes being
 required"*. LibreDB qualifies on the first route and has one clean approval (0.9.59). After two or
 three more, ask on the Chocolatey Community Hub (`#community-maintainers`) as the software vendor —
-tracked as REL3 in [`docs/BACKLOG.md`](BACKLOG.md). A trusted package skips human review entirely,
+tracked as REL3 in the backlog. A trusted package skips human review entirely,
 and the channel then behaves the way winget does today.
 
 ### Channel inventory and drift check

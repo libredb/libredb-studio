@@ -83,7 +83,7 @@ limit shown as a zero, not a measured one. **Garnet extends that to two more num
 `used_memory`, so `getOverview().databaseSize` and the memory storage panel read `0 B` for a
 populated server, and neither `keyspace_hits` nor `keyspace_misses`, so the cache hit ratio reads
 the `: 100` fallback and the dashboard rates it *Excellent* (recorded as D14 in
-[`../BACKLOG.md`](../BACKLOG.md)). Its `connected_clients` also stays 0 with a client attached,
+the backlog). Its `connected_clients` also stays 0 with a client attached,
 though `CLIENT LIST` itself answers correctly - the session list is right while the count above it
 is not.
 
@@ -601,7 +601,7 @@ ioredis records with a command it queues the database the client is in, and rese
 Without the option, a command sent after the next connection opened and before it was ready was recorded as database 0 and went out ahead of the `SELECT` that put the connection back, so it ran in database 0.
 `openClient()` still sends its own `SELECT` after the connect, because a refusal of the `db` option's `SELECT` is only an `error` event ([§6.1](#61-the-object-surface-789), "Reads go to the CONTAINER's database").
 The agent's one-command connection never reconnects and is given no `db` option.
-A connection that resets again before it is ready, while ioredis's own ready check waits, is not covered: a command ioredis wrote to it in that window, such as an `INFO`, is dropped without an answer or an error (D470 in [`../BACKLOG.md`](../BACKLOG.md)).
+A connection that resets again before it is ready, while ioredis's own ready check waits, is not covered: a command ioredis wrote to it in that window, such as an `INFO`, is dropped without an answer or an error (D470 in the backlog).
 
 On the connection that follows a reset, ioredis sends a `SELECT` of its own for the `db` option to put it back in a numbered database, before the ready check, and no caller awaits that `SELECT`.
 Its failure is the client's `error` event, which the provider logs, for example the parser's message, and the client reconnects and selects the database again, so the next command still runs in it.
@@ -1892,7 +1892,7 @@ been no traffic.
 The monitoring methods that depend on optional Redis features (`SLOWLOG`, `CLIENT LIST`) are wrapped
 in try/catch and degrade to `[]` rather than throwing — a restricted ACL that forbids those commands
 won't break the monitoring dashboard.
-The same catch also answers `[]` for a read that failed for any other reason, a connection reset included, so the panel shows no sessions or no slow queries with no error (D39 and D472 in [`../BACKLOG.md`](../BACKLOG.md)).
+The same catch also answers `[]` for a read that failed for any other reason, a connection reset included, so the panel shows no sessions or no slow queries with no error (D39 and D472 in the backlog).
 The other reads, `getOverview()`, `getPerformanceMetrics()` and `getStorageStats()`, raise a failure the driver or the server gave them as a `QueryError`, *"Redis error: …"* ([§4.6](#46-a-reply-the-driver-cannot-read-and-a-tls-stream-that-fails-twice)).
 
 ### Engine facets
@@ -2264,16 +2264,14 @@ await provider.disconnect();
 
 ### 12.2 Over the API
 
-`POST /api/db/query` with the Redis command in the `sql` field — see the
-[Redis Query Format](../API_DOCS.md#redis-query-format) section of `API_DOCS.md` for the full
-request/response contract.
+`POST /api/db/query` with the Redis command in the `sql` field.
 
 ---
 
 ## 13. Known limitations & future work
 
 - **No editor command timeout of the provider's own, and no cancel.**
-  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
   A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
   This provider cannot cancel a run, so Studio sends no cancel, and the command runs on in the server until it ends.
 - **A pasted `rediss://` URL selects `require`, not a verifying mode.** The parser carries the
@@ -2338,7 +2336,6 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/redis-provider.test.ts`](../../tests/integration/db/redis-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md#redis-query-format)
 
 ---
 
@@ -2356,8 +2353,7 @@ This Redis provider is a good template for a non-relational backend. To add anot
 5. **Add** the driver dependency to `package.json`.
 6. **Map** native driver errors onto the `errors.ts` classes (`ConnectionError`, `QueryError`, …).
 7. **Test** with a `mock.module()`-based integration test mirroring the structure above.
-8. **Document** the provider in `docs/providers/<name>.md` using this file as the template, and add
-   the query format to `docs/API_DOCS.md`.
+8. **Document** the provider in `docs/providers/<name>.md` using this file as the template.
 
 ---
 

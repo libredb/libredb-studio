@@ -116,7 +116,7 @@ describe("security-scan.yml wiring", () => {
     // (refs/heads/main). Without the event in the group, a push cancels that
     // day's only image scan mid-run - image-scan excludes `push` entirely - and
     // a cancelled run sends no failed-run email, the only notification path
-    // docs/BACKLOG.md's Phase 2 deferrals name.
+    // the backlog's Phase 2 deferrals name.
     expect(workflow.concurrency?.group).toContain("github.event_name");
   });
 

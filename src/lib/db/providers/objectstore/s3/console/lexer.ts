@@ -6,7 +6,7 @@
  * is S3's: a scan for the Windows `^` continuation before the reader runs, the prompt and the optional `aws` a
  * pasted line carries, the refusal of a leading environment assignment, the option-word rule, where the service and
  * the operation stand, and the role each token takes in the editor. The lead-stripping layer repeats the Oxia CLI
- * language's (`src/lib/languages/oxiacli/lexer.ts`) with S3's lead words; BACKLOG D268 consolidates the two into one
+ * language's (`src/lib/languages/oxiacli/lexer.ts`) with S3's lead words; backlog D268 consolidates the two into one
  * engine-neutral module under `src/lib/db/console/`.
  *
  * The line-by-line reading names the lead, the service and the operation only on the line the command begins on,

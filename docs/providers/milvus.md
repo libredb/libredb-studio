@@ -208,7 +208,7 @@ Zilliz Cloud speaks the Milvus API and has not been tested with Studio.
 To try it, paste the cluster endpoint into the Host box, or enter the host and port (19530 for Dedicated, 443 for Free and Serverless), choose `verify-system`, and put the API key in Password or token with User empty, or `db_admin` and its password.
 Its gaps (no GetMetrics or GetReplicas, databases only on Dedicated) are found by the server's answer, never by the host name.
 Prefer a cluster-scoped user or key to a project-wide key.
-The claim waits for a test cluster to pass the provider's evidence gate (`docs/BACKLOG.md` D157).
+The claim waits for a test cluster to pass the provider's evidence gate (backlog D157).
 
 ### 4.10 A user who is not root
 
@@ -265,7 +265,7 @@ A Milvus request, one per run: optional comment lines starting with #, then a li
 A hybrid sub-request in `search` takes `annsField`, `data`, `filter`, `exprParams`, `limit`, `params` and `metricType`, and every sub-request's `data` has the request's length.
 An unknown key is refused by name, at every level, although the server would drop it silently.
 `collections/load`, `collections/release` and `collections/refresh_load` are refused with a sentence pointing at Admin > Operations; every other documented route (writes, schema changes, flush, compaction, users and roles, resource groups, snapshots and the rest) is refused with the list above.
-A body takes no `//` comment (`docs/BACKLOG.md` D158).
+A body takes no `//` comment (backlog D158).
 
 ### 5.2 Request rules
 

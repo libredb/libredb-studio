@@ -575,7 +575,7 @@ never offered does not exist for it, and a claim citing something the run never 
 composed — each asserted against the deciding function in
 `tests/unit/agent-policy-gates.test.ts`.
 
-The entry was deleted from `docs/BACKLOG.md` when the fix landed.
+The entry was deleted from the backlog when the fix landed.
 
 ---
 
@@ -604,7 +604,7 @@ database-time figure bound the run: since #999 a drive is seeded with what the r
 earlier drives spent. `runDeadlineMs` bounds the run on the wall clock, measured from the moment
 the run opened, so time it spends paused or between drives is spent against it. `maxModelTurns` and
 the repair ledger are still per drive: a resumed run counts its own turns and its repair attempts
-start again (`docs/BACKLOG.md` B6).
+start again (backlog B6).
 
 **The classification is outside all of it**, by construction: it happens before a run exists, so
 there is no budget to charge it to. Its own bounds are its 8-second ceiling and its 16-token

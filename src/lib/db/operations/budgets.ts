@@ -103,7 +103,7 @@ export class ExecutionBudgetTracker {
   /**
    * Seeds a run's accounting with what a PREVIOUS drive already spent, so a
    * resumed run's ceilings continue from its ledger rather than from zero
-   * (`docs/BACKLOG.md` B6). Seeds only when this process has no account for the
+   * (backlog B6). Seeds only when this process has no account for the
    * run yet: the tracker's own `beginExecution`/`endExecution` pair is the
    * authority once a drive starts in THIS process, so re-seeding would
    * double-count a spend the ledger and the tracker both recorded.

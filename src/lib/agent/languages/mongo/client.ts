@@ -117,7 +117,7 @@ export const MONGO_CLIENT_PACK = Object.freeze({
      * an `agentReading` of one, so every ticked run would be declined, and the hand-over's replay of a MongoDB command has never
      * been verified end to end either. A setting that can only ever be declined is a consent it cannot honour, so the
      * route refuses it and the rail raises no consent step. What would turn it on is one change, recorded as
-     * `docs/BACKLOG.md` B118: a MongoDB plan reading, its rule in the gate and a verified replay, together.
+     * backlog B118: a MongoDB plan reading, its rule in the gate and a verified replay, together.
      */
     "data-analysis": Object.freeze({
       tools: Object.freeze<AgentToolName[]>([...READ_CLASS_TOOLS, "profile_table", "present_answer"]),

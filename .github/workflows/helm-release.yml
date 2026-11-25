@@ -197,7 +197,7 @@ jobs:
       # chart SOURCE directory, never the .tgz that release-github-pages packages
       # with Helm 4 - so this proves "Helm 3 installs this chart", not "Helm 3
       # installs the released artifact". That residual gap is tracked in
-      # docs/BACKLOG.md. Every other setup-helm site here is v4.1.3 - see
+      # the backlog. Every other setup-helm site here is v4.1.3 - see
       # tests/unit/helm-pin-matrix.test.ts. Do not "consistency fix" this.
       - name: Set up Helm
         uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0

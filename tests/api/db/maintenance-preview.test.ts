@@ -62,7 +62,7 @@ const mockGetSession = mock(
 const mockAuditPush = mock((_event?: unknown) => ({}));
 
 // The spread form, not a hand-written five-key stub: `src/lib/auth.ts` exports more
-// names than such a stub carries, and only one of them is being replaced here (BACKLOG D85).
+// names than such a stub carries, and only one of them is being replaced here (backlog D85).
 const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
   ...realAuth,

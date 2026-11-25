@@ -267,7 +267,7 @@ describe("Redis over the patched ioredis, on Bun and Node", () => {
 
   // ioredis selects a numbered database again on the connection that follows a reset with a SELECT it sends itself for
   // its `db` option, which no caller awaits, before the ready check. A failure of it is the client's `error` event, which
-  // the provider logs; a reset before the ready check leaves it unsettled (D470 in docs/BACKLOG.md), and the next
+  // the provider logs; a reset before the ready check leaves it unsettled (D470 in the backlog), and the next
   // connection sends its own. The next command still runs in the database. The SELECTs ioredis sends itself after the
   // ready check have no handler (the patch leaves them as ioredis ships them), so a connection that reached one here,
   // instead of being selected before the ready check, would fail these cases with an unhandled rejection.

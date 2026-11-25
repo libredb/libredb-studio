@@ -14,7 +14,7 @@
  * - **One process per file.** DuckDB takes an operating-system lock at open and
  *   refuses a second process even in read-only mode, so `singleWriterFile` is declared
  *   and the three routes that would otherwise open a second handle borrow this one
- *   instead (`findOpenSingleWriterProvider`, BACKLOG D3). A second handle inside THIS
+ *   instead (`findOpenSingleWriterProvider`, backlog D3). A second handle inside THIS
  *   process is allowed, which is what makes the agent's read-only handle possible at
  *   all.
  * - **`access_mode: 'READ_ONLY'` is not a filesystem sandbox.** It refuses every write
@@ -495,7 +495,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       supportsTransactions: false,
       // The file admits ONE operating-system process, measured in read-only mode too,
       // so a second Studio handle on it is not a lesser handle - it is no handle at
-      // all. See `findOpenSingleWriterProvider` (BACKLOG D3, B49).
+      // all. See `findOpenSingleWriterProvider` (backlog D3, B49).
       singleWriterFile: true,
       // This provider reads `ProviderExecutionContext.allowExternalFileAccess` and opens its editor
       // handle under that posture (the non-admin DuckDB file-access change). The cache key and the

@@ -681,7 +681,7 @@ bun run test:coverage
 
 * **Test runner**: [`tests/run-tests.ts`](tests/run-tests.ts)는 `bun:test`를 기반으로 합니다. `tests/live/`를 제외한 `tests/` 아래의 모든 `*.test.ts`와 `*.test.tsx` 파일을 찾아 실행하므로 새로운 테스트 파일을 추가하면 별도의 등록 없이 자동으로 실행 대상에 포함됩니다. 각 파일은 별도의 bun process에서 실행되며 여러 파일을 동시에 실행합니다. 기본적으로 CPU 수만큼 동시에 실행하며 `--jobs=N`으로 조정할 수 있습니다.
 
-* **파일마다 별도의 process를 사용하는 이유**: bun의 `mock.module()`은 process 전체에 적용되며 해제할 수 없습니다. 전체 module mock은 `tests/api/`에서 일반적으로 사용하는 방식이기 때문에 여러 테스트 파일이 같은 process를 사용하면 서로 영향을 줄 수 있습니다. 20-core Linux 환경에서 bun 1.4.2를 사용해 측정한 결과, 테스트를 한 번에 1개씩 실행하면 211초, 4개씩 실행하면 61초, 20개씩 실행하면 36초가 걸렸습니다. 이 결과는 2026-09-15 당시 repository의 539개 파일을 기준으로 측정했으며 `docs/BACKLOG.md` D86에도 동일한 조건과 수치가 기록되어 있습니다.
+* **파일마다 별도의 process를 사용하는 이유**: bun의 `mock.module()`은 process 전체에 적용되며 해제할 수 없습니다. 전체 module mock은 `tests/api/`에서 일반적으로 사용하는 방식이기 때문에 여러 테스트 파일이 같은 process를 사용하면 서로 영향을 줄 수 있습니다. 20-core Linux 환경에서 bun 1.4.2를 사용해 측정한 결과, 테스트를 한 번에 1개씩 실행하면 211초, 4개씩 실행하면 61초, 20개씩 실행하면 36초가 걸렸습니다. 이 결과는 2026-09-15 당시 repository의 539개 파일을 기준으로 측정했으며 backlog D86에도 동일한 조건과 수치가 기록되어 있습니다.
 
 * **모든 플랫폼에서 동일한 명령어 사용**: runner를 shell이 아닌 TypeScript로 작성해 Linux, macOS, Windows에서 동일한 명령어를 사용할 수 있습니다. 이전에 사용하던 bash script에서는 이것이 불가능했습니다. 그중 하나가 bash 4의 built-in command인 `mapfile`을 사용했는데, macOS에 기본으로 포함된 bash 3.2에서는 사용할 수 없었기 때문입니다.
 
@@ -1028,7 +1028,6 @@ docker compose -f docker-compose.vault-demo.yml up
 | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio)                        | 코드베이스와 항상 동기화되는 AI 기반 문서                                                     |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | 코드 품질, 보안 분석 및 기술 부채 추적                                                      |
-| [API 문서](docs/API_DOCS.md)                                                     | 전체 REST API reference                                                        |
 | [Agent 가이드](docs/AGENT_GUIDE.md)                                               | Agent 사용 방법: 한 번의 실행, 세 가지 workflow, "answered"의 의미, budget 표 및 Ollama 사용 방법 |
 | [Agent 데이터 흐름](docs/AGENT_DATA_FLOW.md)                                        | 어떤 데이터가 언제 로컬 환경을 벗어나 어느 model provider로 전송되는지 호출 지점별로 설명                    |
 | [로컬 모델](docs/llms/README.md)                                                   | 실제 Agent 실행이 가능한 로컬 모델을 세 가지 workflow에서 테스트한 결과. 모델별 문서 제공                   |
@@ -1038,8 +1037,6 @@ docker compose -f docker-compose.vault-demo.yml up
 | [Theme 가이드](docs/ui/theming.md)                                                | CSS theme, Dark Mode 및 스타일 설정                                                |
 | [로그인 페이지](docs/ui/login-page.md)                                               | 로그인 페이지 layout, OIDC/local mode 및 디자인 시스템                                    |
 | [Editor 문서](docs/editor/)                                                      | SQL Editor 내부 구현: 자동 완성, 성능, 쿼리 최적화                                          |
-| [아키텍처](docs/ARCHITECTURE.md)                                                   | 시스템 아키텍처 및 디자인 패턴                                                            |
-| [Backlog](docs/BACKLOG.md)                                                     | 알려진 문제와 아직 issue로 등록되지 않은 보류 작업                                              |
 
 ### 크로스 브라우저 테스트
 
@@ -1078,9 +1075,9 @@ libredb-studio는 무료 오픈소스 프로젝트입니다. 이 프로젝트가
 
 아래의 상세 문서는 현재 영어로만 제공됩니다.
 
-* [아키텍처](docs/ARCHITECTURE.md) · [Database Provider](docs/DATABASE_PROVIDERS.md) · [엔진별 Reference](docs/providers/README.md)
+* [Database Provider](docs/DATABASE_PROVIDERS.md) · [엔진별 Reference](docs/providers/README.md)
 
-* [API 문서](docs/API_DOCS.md) · [OIDC 설정](docs/OIDC.md) · [Storage Layer](docs/STORAGE.md)
+* [OIDC 설정](docs/OIDC.md) · [Storage Layer](docs/STORAGE.md)
 
 * [Helm Chart](docs/HELM_CHART.md) · [배포 채널](docs/CHANNELS.md)
 

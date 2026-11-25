@@ -21,7 +21,7 @@
  *     fencing, so TWO loops driving one run concurrently would both read "not
  *     invoked" and both execute. Nothing in this repository enforces single
  *     ownership of a running run — the durable backend's queue is what would, and
- *     `docs/BACKLOG.md` B5 records both the gap and what would lift it. The
+ *     backlog B5 records both the gap and what would lift it. The
  *     milestone's criterion is about a RESTART, where the dead process is gone by
  *     construction, and that case this does cover.
  *  3. **Cancellation is enforced here, not by a driver.** `cancel` records a
@@ -276,7 +276,7 @@ export type AgentRunServiceReason =
    * serializes its read-then-append per store instance, which two OS processes
    * over the same ledger do not share: both could read "no claim" and both
    * append one. Making the durable half hold needs a conditional append on the
-   * stream's tail index, which the world does not offer (`docs/BACKLOG.md` B5,
+   * stream's tail index, which the world does not offer (backlog B5,
    * B16).
    */
   | "RUN_ALREADY_DRIVEN";
@@ -306,7 +306,7 @@ const DRIVE_CLAIM_GRACE_MS = 60_000;
 /**
  * The runs this process is currently driving, and the drive id each one holds.
  * Process memory plus the durable claim in the ledger: the set refuses fast and
- * the ledger refuses across processes (`docs/BACKLOG.md` B5).
+ * the ledger refuses across processes (backlog B5).
  */
 const activeDrives = new Map<string, string>();
 
@@ -727,7 +727,7 @@ export class AgentRunService {
    * reads process-local accounting before an `await`, so an execution starting
    * during that append, or one live on another replica, is invisible to it, and
    * only an execution begun while the wait above settled is refused by it. Both
-   * need a second writer on one run, which `docs/BACKLOG.md` B5 puts outside this
+   * need a second writer on one run, which backlog B5 puts outside this
    * layer's contract; within one loop the reading is reliable, because
    * `execution.ts` releases every execution it begins, on the throwing path too,
    * and the wait above outlasts every provider call one still holds.

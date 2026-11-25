@@ -819,7 +819,7 @@ for a measurement that has not been taken yet — treat them as bounds, not as a
 
 ## Not yet — and what each one is waiting on
 
-Say these plainly if asked. Everything here is recorded in `docs/BACKLOG.md` with the design that
+Say these plainly if asked. Everything here is recorded in the backlog with the design that
 would close it, so "not yet" means deferred with a reason, not overlooked.
 
 | Not yet | What happens today | Waiting on |

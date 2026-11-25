@@ -120,7 +120,7 @@ In practice that is the first expand of a connection in the tree, the first Add 
 The supervisor sends `initialize` with `PROTOCOL_VERSION`; the child answers its runtime and enabled providers, or refuses with `PROTOCOL_MISMATCH` or `RUNTIME_UNSUPPORTED` (a Node older than the root `package.json` `engines.node`).
 `PROTOCOL_VERSION` is 2 since the child holds the run confirmation contract (section 5): a host and a child of different versions refuse each other, so a host that asks no question never meets a child that runs what it is sent.
 Concurrent callers share one start.
-The child's entry, `src/backend/main.ts`, is its composition root: it installs the process's one provider host core (`installHostCore(createHostCore(), "vscode-backend")`, `src/lib/provider-host/instance.ts`) before it starts the backend, as `register()` does for the server, so every `query/run` and `query/cancel` reads that core ([Architecture](ARCHITECTURE.md), "The provider host core").
+The child's entry, `src/backend/main.ts`, is its composition root: it installs the process's one provider host core (`installHostCore(createHostCore(), "vscode-backend")`, `src/lib/provider-host/instance.ts`) before it starts the backend, as `register()` does for the server, so every `query/run` and `query/cancel` reads that core.
 
 ```mermaid
 stateDiagram-v2
@@ -201,7 +201,7 @@ Step by step, with the code that does it:
 2. `RunRegistry.prepare` registers a preparing run with its own cancellation token, so Cancel works even while the connection opens.
 3. `BackendClient.ensureOpen` returns the connection's `ProviderDescription`, opening it first when needed; where the capabilities declare catalog sessions, the person picks a catalog once per binding.
 4. `query/target` sends the whole text, the selection, the cursor and the binding's catalog; the child applies the web editor's run target rule through `runnableTarget`, with the engine's grammar and the editor language `editorLanguageOf` reads from its capabilities, and a target that holds no code becomes "Nothing to run.".
-   The answer also carries the server's run gate's verdict on that statement: the child calls `gateRun` with `"ask"`, under the same `LIBREDB_RUN_CONFIRMATION` mode and production rule as the run routes ([API reference](API_DOCS.md#server-confirmation-of-a-run)), and answers `confirmation: null` where the gate does not ask, or the offer of the routes' 428 (`token`, `expiresAt`, `unreadable`, `typedConfirmation`, `classificationFailed`).
+   The answer also carries the server's run gate's verdict on that statement: the child calls `gateRun` with `"ask"`, under the same `LIBREDB_RUN_CONFIRMATION` mode and production rule as the run routes, and answers `confirmation: null` where the gate does not ask, or the offer of the routes' 428 (`token`, `expiresAt`, `unreadable`, `typedConfirmation`, `classificationFailed`).
    The range that will run is highlighted for one second.
    For an offer, `askToRun` in `src/host/editor/run-confirmation.ts` asks a modal `showWarningMessage` that shows the statement and offers Run Anyway, then, where `typedConfirmation` is not null, one input box that names what to type (the connection's name, with the targets of a name ask, or the row's text, such as an etcd lease) and accepts only that value, compared exactly.
    Cancel or Escape at either step runs nothing.
@@ -209,7 +209,7 @@ Step by step, with the code that does it:
    Neither the token nor the typed value is kept past that request: they are not in `RunStart`, the run registry or the presenter's record.
 6. In the child, `createHandlers().runQuery` checks the params, runs `checkEditorQuery` (the page bounds, the connection's statement timeout, and the console text bound, which answers `TEXT_TOO_LARGE`), then `gateRun` under the route `vscode/query/run`, before any provider: a statement the gate asks about runs only with a token the child minted for that statement, connection and catalog, once.
    It then resolves the provider through `getOrCreateProvider` and `scopeToCatalog`, and calls `runEditorQuery`, the same function `POST /api/db/query` uses.
-   It waits for the provider's open as the route does, through `openWithinCall`: at most its engine's connect budget, 70 s unless the engine's document states another, then `TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, and the open goes on for the next request ([API reference](API_DOCS.md)).
+   It waits for the provider's open as the route does, through `openWithinCall`: at most its engine's connect budget, 70 s unless the engine's document states another, then `TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "not-sent"`, and the open goes on for the next request.
 7. The answer is a `QueryPage`: the route's `EditorQueryBody` (first result set, `pagination` always present), plus `resultSetCount` when the text produced more than one result set, and `confirmation: "unconfirmed"` where advisory mode ran a statement the gate asks about without its confirmation.
 8. `ResultsViewPresenter.runSucceeded` keeps the page in the document's record and posts `runSucceeded` with a `GridContext` built by `gridContextOf`; `fanOut` also hands every event to `LogResultsPresenter`, which writes a log line per run event and never the statement or a row.
 9. In the webview, `startResultsView` (`src/webview/start.tsx`) has already rendered `ResultsApp`, which renders Studio's `ResultsGrid` with the page, `supportsResultPagination`, `databaseType` and `EXTENSION_MASKING_CONFIG`.
@@ -266,10 +266,10 @@ The five calls read on the connection's metadata session, beside the editor's, s
 The child never answers a raw exception.
 `toResponseError` in `src/backend/handlers.ts` passes through its own refusals, maps a database error class through `databaseErrorBody`, and answers anything else as `INTERNAL_ERROR`; the JSON-RPC error code is the HTTP status the route would answer, and `data.code` is a `BackendErrorCode`.
 `BackendErrorCode` is Studio's `ApiErrorCode` plus six of the extension's own: `CONNECTION_NOT_OPEN`, `SHUTTING_DOWN`, `PROTOCOL_MISMATCH`, `RUNTIME_UNSUPPORTED`, `TEXT_TOO_LARGE` and `CANCEL_UNSUPPORTED`.
-For a database error, `data` also carries `kind` and `outcome`, as the route body does ([API reference](API_DOCS.md#error-kind-and-outcome)); an `INTERNAL_ERROR` and the extension's own refusals carry neither.
+For a database error, `data` also carries `kind` and `outcome`, as the route body does; an `INTERNAL_ERROR` and the extension's own refusals carry neither.
 A handler that reaches a provider runs that step inside `answeringFor`, which answers every failure of that step through `toResponseError` with the connection's scrub.
 On a database error whose text was not withheld, `data` then also carries `sqlState`, the SQLSTATE the driver reported, when there is one, as the route body does.
-An error whose text holds a credential of the connection is answered as the routes answer it: the JSON-RPC code and the `data` fields stay the error's own, the message is Studio's sentence naming the error's class, `data.details` keeps only `position`, and `data.fixStatement` is left out ([API reference](API_DOCS.md#error-response-format)).
+An error whose text holds a credential of the connection is answered as the routes answer it: the JSON-RPC code and the `data` fields stay the error's own, the message is Studio's sentence naming the error's class, `data.details` keeps only `position`, and `data.fixStatement` is left out.
 A warning field of `query/run` that holds such a credential is withheld the same way.
 An `objects/counts` answer's `unavailable` and `sampledFrom` sentences and an `objects/describe` answer's `indexes.unavailable` sentence that hold such a credential answer `(Studio withheld this text because it contained a credential of this connection)`, as the object routes answer them.
 
@@ -286,7 +286,7 @@ Two codes trigger recovery in `BackendClient`:
 
 - `CONNECTION_NOT_OPEN` (the child's `ConnectionRegistry` holds no record for the id) makes the client open the connection again and retry once.
 - `AUTH_ERROR` or `CONNECTION_ERROR` from `connection/open` makes `ProfileConnectionSource.reask` show the error in a modal with an **Enter Credentials** button, ask every secret field again in masked input boxes, and retry the open once.
-  `CONNECTION_ERROR` is included because the four v0 providers wrap a refused login in a `ConnectionError`; D387 in `docs/BACKLOG.md` tracks narrowing it to `AUTH_ERROR`.
+  `CONNECTION_ERROR` is included because the four v0 providers wrap a refused login in a `ConnectionError`; D387 in the backlog tracks narrowing it to `AUTH_ERROR`.
 
 ## 6. Adding a connection and browsing it
 
@@ -408,7 +408,7 @@ Select Rows asks the child for `objects/selectStatement`, which writes the state
 - **No login or roles.** The extension serves one person's VS Code: no host or backend code signs anyone in or checks a role, and the host bundle check refuses `src/lib/config/auth-env.ts`.
 - **No storage layer or sync.** Connections are the setting plus SecretStorage, not `src/lib/storage`; the webview's `@/lib/storage` shim throws on any use; editor bindings are in memory only.
 - **A plainer run confirmation.** The child holds the routes' contract, but the question is a modal, then an input box where a value is typed: no AI risk analysis.
-  Nor does Run apply the connection type's refusal: a statement the web editor refuses before sending it (a Redis `GET a` with `DEL b` on the line after it, or `kubectl delete pod web-1`) reaches the gate, and only the gate's question or the provider's own guard stops it (`docs/BACKLOG.md` U201).
+  Nor does Run apply the connection type's refusal: a statement the web editor refuses before sending it (a Redis `GET a` with `DEL b` on the line after it, or `kubectl delete pod web-1`) reaches the gate, and only the gate's question or the provider's own guard stops it (backlog U201).
   Select Rows and Load More ask only where the gate asks, as the web editor's table click does, so a generated read on an object whose name the gate cannot read safely (a ClickHouse table named `a$$b`) asks in both.
   Load More asks again for every page of a statement the gate asks about, since a page runs the statement again; the web editor's page path resends a 428 that asks nothing typed with its token, and the extension asks the person instead.
 - **No query events or governance.** The child bundle refuses `src/lib/governance/start.ts` and `src/lib/query-events/sink.ts`, and `query/run` runs no admission gate.

@@ -556,7 +556,7 @@ The sentence after `Couchbase request failed: ` depends on the path and the answ
 On a TLS connection a close reads `Couchbase request failed: the server ended the answer before it was complete`, and a reset reads `Couchbase request failed: connection to <host>:<port> was reset (ECONNRESET)`.
 On a plaintext connection the runtime's `fetch` names the failure: for a keep-alive answer a close reads `Couchbase request failed: connection to <host>:<port> was reset (UND_ERR_SOCKET)` and a reset ends in `(ECONNRESET)`, a `Connection: close` answer cut short ends in `(UND_ERR_RES_CONTENT_LENGTH_MISMATCH)`, and a chunked answer cut before its last chunk ends in `(Invalid EOF state)`.
 With `DB_HTTP_BLOCK_PRIVATE_HOSTS` set, a plaintext answer cut short reads `... was reset (ECONNRESET)`.
-An answer with neither a length nor chunking ends where its connection closes, so a cut there cannot be told from the end; a body that is then not JSON reads as an empty result (`docs/BACKLOG.md` D467).
+An answer with neither a length nor chunking ends where its connection closes, so a cut there cannot be told from the end; a body that is then not JSON reads as an empty result (backlog D467).
 
 A `101 Switching Protocols` answer fails as a `ConnectionError` reading `Couchbase request failed: the server switched protocols instead of answering`, on the TLS path, and its socket is closed.
 On the plaintext path the runtime's `fetch` fails it as a closed connection, ending in `(UND_ERR_SOCKET)`.
@@ -1637,7 +1637,6 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/couchbase-provider.test.ts`](../../tests/integration/db/couchbase-provider.test.ts) · [`tests/unit/db/couchbase/`](../../tests/unit/db/couchbase/)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Query Service REST API: <https://docs.couchbase.com/server/current/n1ql/n1ql-rest-api/index.html>
 - Listing Node Services: <https://docs.couchbase.com/server/current/rest-api/rest-list-node-services.html>
 - System namespace catalogs: <https://docs.couchbase.com/server/current/n1ql/n1ql-intro/sysinfo.html>
@@ -1710,7 +1709,7 @@ The overlay overrides the `sql` family's grounding: it keeps the family's own an
 The fence's one `SELECT` is not a planning rule: a plan run drafts writes too, for the owner to run in the editor.
 A collection declares no columns, so the column kind samples at most 100 documents of one collection, named by its scope as the schema and its own name as the table, and answers each top-level field's name and JSON type once as `table_schema`, `table_name`, `column_name` and `data_type` (capture 07); it describes the sample, as the schema explorer's INFER does, and a selector without both names is refused.
 The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: SQL++ has no foreign key, `system:indexes` shows a user holding only `query_select` no row, and the server keeps no row count it can vouch for.
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B150](../BACKLOG.md)); plan mode drafts here as on every engine.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile (B146), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` (B150); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's `run_read_query` runs statements here under the same boundary (`MCP_STATEMENT_READ.couchbase` is true), as 15.7 records.
 

@@ -646,10 +646,10 @@ than accepting it and quietly doing nothing.)
 
 **It is not offered on Kubernetes or MongoDB at all.**
 An answer there is never run in your editor, so no consent step is raised and the API refuses `autoExecute: true` on such a connection.
-On MongoDB it waits on a reading of the engine's plans the gate below could weigh and a verified replay of an answer in the editor, which have to land together (B118 in `docs/BACKLOG.md`).
+On MongoDB it waits on a reading of the engine's plans the gate below could weigh and a verified replay of an answer in the editor, which have to land together (B118 in the backlog).
 
 **On SQL Server, DuckDB and MySQL it is offered and never runs anything for you.**
-The gate below weighs only PostgreSQL's and SQLite's plans, so every answer of a ticked run on those engines is put in your editor unrun, with the reason beside it (A6 in `docs/BACKLOG.md`).
+The gate below weighs only PostgreSQL's and SQLite's plans, so every answer of a ticked run on those engines is put in your editor unrun, with the reason beside it (A6 in the backlog).
 
 **You are asked for it after Start, not before it** (`AgentRail` in `AgentRail.tsx`). Pressing Start on
 an Analyze run in Agent mode — whether you named the workflow or the server read it — raises a
@@ -863,7 +863,7 @@ gauges it is about:
 - **A resumed run continues its spend.** The statement and database-time ceilings are folded from
   the run's own ledger, so a resume does not start them again, and the run deadline is wall clock
   from the moment the run opened, so time the run spends paused or between drives counts against it.
-  Repair attempts are the exception and are counted per drive (`docs/BACKLOG.md` B6).
+  Repair attempts are the exception and are counted per drive (backlog B6).
 - **Every figure is a floor, never a ceiling.** The ledger records less than the server charges: the
   schema capture now contributes the statements and the span it was charged, but a call that failed
   while acquiring its provider settles no step and so cannot be seen, and a completed read reports the
@@ -1054,7 +1054,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   A run whose ledger names a statement language, workflow or goal rule this Studio does not have is the exception: it is left as it is, for a Studio that has it.
 - **It reads what your connection's role can read.** The declared-target allowlist, the statement
   guard and the role's own grants are the whole boundary on out-of-scope reads
-  (`docs/BACKLOG.md`, "Agent M1 deferrals", A3).
+  (the backlog, "Agent M1 deferrals", A3).
 
 What it sends to your model provider, and what it does not, is a page of its own:
 [`docs/AGENT_DATA_FLOW.md`](./AGENT_DATA_FLOW.md).

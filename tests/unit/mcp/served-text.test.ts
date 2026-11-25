@@ -5,7 +5,7 @@
  * instructions, every listed tool's titles and descriptions, its input and output schema descriptions included, and
  * every string literal of MCP's own sources and statement facets, the refusals MCP writes among them, say what MCP
  * does in MCP's terms. A refusal MCP relays from a provider or a statement language is that code's own sentence and
- * waits for one change that rewords it for both features (`docs/BACKLOG.md` MCP20). Comments are not read: no client
+ * waits for one change that rewords it for both features (backlog MCP20). Comments are not read: no client
  * sees them.
  */
 import { afterAll, afterEach, describe, expect, test } from "bun:test";

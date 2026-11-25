@@ -1543,7 +1543,7 @@ describe("OpenSearchProvider monitoring", () => {
 
     expect(overview.databaseSize).toBe("N/A");
     // The number used to say 0 bytes while the string beside it said "N/A", in the same
-    // object (docs/BACKLOG.md D44). `in` rather than `toBeUndefined()` because a
+    // object (backlog D44). `in` rather than `toBeUndefined()` because a
     // fabricated 0 is the other outcome being told apart, and it is not undefined.
     expect("databaseSizeBytes" in overview).toBe(false);
   });

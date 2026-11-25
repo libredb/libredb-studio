@@ -527,7 +527,7 @@ describe("AgentRunService — finishing a run", () => {
     // first: a run recorded as finished whose budget and artifacts were never
     // released is unrecoverable — `finish` then refuses it as already terminal,
     // and its stream never closes. Only a second writer on the run can begin an
-    // execution between the wait and the check (`docs/BACKLOG.md` B5).
+    // execution between the wait and the check (backlog B5).
     const h = harness();
     const { runId } = await h.service.start(START_INPUT);
     await h.service.markRunning(runId);

@@ -311,7 +311,7 @@ polling immediately after the DELETE still reported state `QUEUED`, so nothing h
 instant `FAILED`/`CANCELED`. `cancelQuery()` returning `true` means *the coordinator accepted the
 termination*; `false` means only that nothing was ever recorded under that token.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `DELETE /v1/query/{id}`, when the request named a `queryId`.
 
 ### 3.8 No keys, no indexes — and why that is a fact about the engine
@@ -1956,7 +1956,6 @@ curl -X POST http://localhost:3000/api/db/query \
   -d '{"connectionId":"trino-analytics","query":"SELECT * FROM tpch.tiny.region"}'
 ```
 
-See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
 
 ---
 
@@ -2022,7 +2021,6 @@ Every refusal reason it can print, verbatim:
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/trino-provider.test.ts`](../../tests/integration/db/trino-provider.test.ts) · [`tests/unit/db/trino/`](../../tests/unit/db/trino/) · [`tests/unit/lib/explain/trino-json.test.ts`](../../tests/unit/lib/explain/trino-json.test.ts) · [`e2e/trino-provider.spec.ts`](../../e2e/trino-provider.spec.ts)
 - Container fixture: [`database-compose.yml`](../../database-compose.yml) (service `trino`)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Tracking issue: [#424 — Wire-compatibility and new engines](https://github.com/libredb/libredb-studio/issues/424)
 - Trino client protocol: <https://trino.io/docs/current/develop/client-protocol.html>
 - `SHOW STATS`: <https://trino.io/docs/current/sql/show-stats.html>
@@ -2133,7 +2131,7 @@ The overlay overrides no Shared member, so the engine resolves to the `sql` fami
 The column kind reads `information_schema.columns` of the connection's pinned catalog, which the server filters to the tables the access control lets the user see, leaving `information_schema` itself out, and answers `table_schema`, `table_name`, `column_name`, `data_type`, `is_nullable` and `ordinal_position`; a connection that pins no catalog is answered the server's own refusal.
 The relation kind answers the same projection the other engines answer with no rows, since Trino declares no key on any connector ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
 The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: there is no index object, and the row counts Trino has come from `SHOW STATS`, which is not a `SELECT`.
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B166](../BACKLOG.md)); plan mode drafts here as on every engine.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile (B146), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` (B166); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's statement read stays closed on Trino (`MCP_STATEMENT_READ.trino` is false) until a change of its own opens it, and that change needs an open that proves the connection's user cannot read other users' query text, since the statement fence above is the only layer between it and `system.runtime.queries` (B166), and the MCP metadata tools serve it as before (`MCP_EXPOSABLE.trino` is true).
 

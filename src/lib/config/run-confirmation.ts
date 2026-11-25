@@ -1,6 +1,6 @@
 /**
  * The run confirmation mode: who the run routes refuse when a statement needs a confirmation and the request carries
- * none, as `LIBREDB_RUN_CONFIRMATION` sets it (FND-5, docs/API_DOCS.md "Server confirmation of a run").
+ * none, as `LIBREDB_RUN_CONFIRMATION` sets it (FND-5).
  *
  * - `advisory`, the default: a request that carries no `confirmation` field runs as it did before the server
  *   classified runs, its answer says `"confirmation": "unconfirmed"`, and one warning is logged. A request that asks

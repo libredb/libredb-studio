@@ -186,7 +186,7 @@ No `user` field and no `readOnly`: Spark Connect takes a bearer token, and Spark
 
 ### Diagnostics
 
-The admin Overview page (`/admin/overview`) shows a Seed sources card, fed by `GET /api/admin/seed-sources` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#get-apiadminseed-sources)).
+The admin Overview page (`/admin/overview`) shows a Seed sources card, fed by `GET /api/admin/seed-sources` (admin only).
 For each operator source it shows the state (Loaded, Empty, Not found or Failed), the file path, the error with its code, the connections it listed, the connections it lists as unavailable because their type names no provider, each with the reason, the connections it skipped with their reasons, and the names it ignored.
 A connection skipped for an undefined `${ENV_VAR}` is listed with the variable in its reason, and the endpoint's record of the skip also names the field.
 Every message names files, variables, fields and ids only, never a value, and never quotes a seed file, with one exception: an entry listed as unavailable is shown with its type as written, in its type and in the reason sentence.
@@ -1233,7 +1233,7 @@ An image that matches no engine is not a skipped entry, and neither is an app th
 
 ### Admin status
 
-`GET /api/admin/discovery` (admin only, [`docs/API_DOCS.md`](./API_DOCS.md#admin-api)) and a card on the admin Overview page (`/admin/overview`) report the state and its message, the last successful scan, the exporter's error, the connected databases and the skipped apps with their reasons.
+`GET /api/admin/discovery` (admin only) and a card on the admin Overview page (`/admin/overview`) report the state and its message, the last successful scan, the exporter's error, the connected databases and the skipped apps with their reasons.
 Neither carries a host name beyond app names, nor any environment value.
 `GET /api/connections/managed` carries no status, because every role can read it.
 While the request reached Studio over plain HTTP, or `AUTH_COOKIE_SECURE` is `false`, `off` or `0` in any letter case, and at least one database is connected, the card warns:
@@ -1445,7 +1445,7 @@ A write the exporter cannot make, to an export Secret that is missing or that it
 
 ### Kubernetes admin status
 
-`GET /api/admin/discovery` reports this source under `kubernetesDiscovery` ([`docs/API_DOCS.md`](./API_DOCS.md#admin-api)), and the admin Overview page shows it in a card of its own beside CapRover's: the state and its message, the last successful scan, the exporter's error, each namespace with the reason it could not be read, the connected databases, and the skipped ones with their reasons.
+`GET /api/admin/discovery` reports this source under `kubernetesDiscovery`, and the admin Overview page shows it in a card of its own beside CapRover's: the state and its message, the last successful scan, the exporter's error, each namespace with the reason it could not be read, the connected databases, and the skipped ones with their reasons.
 Neither carries a host or a Secret value.
 
 ### Upgrading CloudNativePG discovery

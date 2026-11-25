@@ -23,7 +23,7 @@
  *   A transport failure the driver reports is a connection failure rather than a fault in the statement, but the
  *   driver reports a server cut mid-read only after its own 30 s server selection (it retries a read's first command,
  *   and a failed `getMore` first sends `killCursors` to the lost server), so a read under a shorter deadline ends as
- *   the client giving up instead (measured on 9.0.4; `docs/BACKLOG.md` D371).
+ *   the client giving up instead (measured on 9.0.4; backlog D371).
  * - **The bound database.** A run reads the database its connection is bound to; a command naming another is refused
  *   before anything is sent, as issue #1614 settled.
  *

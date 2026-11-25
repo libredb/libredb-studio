@@ -273,10 +273,10 @@ Nothing is trimmed silently, credentials never appear in a URL, and a response b
 ### 3.6 TLS is its own implementation
 
 `request.ts` sends plaintext through `fetch` and TLS through `node:https`, with `ca`, `cert`, `key` and `rejectUnauthorized` mapped from the TLS panel by the Couchbase rule, `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`.
-It is a second implementation of that mapping by maintainer decision (the PR touches no other provider), recorded in `docs/BACKLOG.md` D37, whose consolidation covers it.
-It differs from the Couchbase helper where this provider needs more: an `AbortSignal` and timeout, the byte cap, and IPv6 literals, which are passed to `node:https` without brackets through `url.urlToHttpOptions` (the Couchbase path fails on them, `docs/BACKLOG.md` D104).
+It is a second implementation of that mapping by maintainer decision (the PR touches no other provider), recorded in backlog D37, whose consolidation covers it.
+It differs from the Couchbase helper where this provider needs more: an `AbortSignal` and timeout, the byte cap, and IPv6 literals, which are passed to `node:https` without brackets through `url.urlToHttpOptions` (the Couchbase path fails on them, backlog D104).
 Neither follows a redirect: Prometheus refuses one on both paths through the shared `rejectRedirect` of `src/lib/db/http/endpoint.ts`, and Couchbase does on its `fetch` path since #1086, while its `node:https` path reports a 3xx as an HTTP failure (`docs/providers/couchbase.md` section 4.4).
-The TLS path runs under Bun in the test suite and under Node in production, a gap `docs/BACKLOG.md` D106 records.
+The TLS path runs under Bun in the test suite and under Node in production, a gap backlog D106 records.
 A handshake or verification failure is a `ConnectionError` carrying the Node error code, and nothing is retried over plain HTTP (#1085 S8).
 
 ### 3.7 `NaN` and `Inf` stay strings, and what the chart does with them
@@ -289,7 +289,7 @@ A column whose strings are 20% or more of its filled cells is not typed as numbe
 It is typed categorical only while it holds at most 50 distinct values, each number and each of `NaN`, `+Inf` and `-Inf` counted once, and only then does the first categorical column in field order replace `timestamp` as the chart's default x axis; past 50, as in a mostly-`NaN` latency ratio over `[6h:1m]`, it is typed unknown and `timestamp` stays the default.
 An answer with no numeric column draws no chart.
 Filtering the non-finite values in PromQL (`x > -Inf < +Inf`, or `x == x` for `NaN`) takes them out of the answer, which keeps a single series a line with no row at those instants, while in a matrix of several series each filtered cell holds `null` and is drawn at 0 as well.
-The chart is unchanged by #1085, and `docs/BACKLOG.md` U44 records its zeros.
+The chart is unchanged by #1085, and backlog U44 records its zeros.
 
 ### 3.8 Measurements
 
@@ -302,13 +302,13 @@ The constants are read by [`tests/unit/db/prometheus/provider-doc.test.ts`](../.
 | M2 | The overview's metric count | The head block's distinct metric names: the value of the `__name__` entry of `labelValueCountByLabelName` in `/api/v1/status/tsdb`, read with `TSDB_LABEL_SCAN_LIMIT` (`10000`); that value is exact whenever the entry is listed, at any length of the list, because the endpoint cuts only the list and each kept entry carries its label's full count; absent from a list shorter than the limit it is `0`, an empty head; and only when a full list of that many label names omits it is the overview refused as unmeasurable; never a capped list's length | Fixture README, M2 |
 | M3 | The wide matrix's cell budget | `MATRIX_SAMPLE_BUDGET` = `250000` cells of the wide grid, distinct instants times kept series; for a stepped subquery, whose series share their instants, the cells are about its samples | Fixture README, M3 |
 | M5 | Credentials the server does not need | A stock server with no web config answers 200 with a bogus credential and with none; with basic auth configured, a wrong credential answers 401 with `WWW-Authenticate: Basic` and the plain-text body `Unauthorized` | Fixture README, M5 |
-| M7 | Whether plan mode grounds every kind within the provider path's bounds | Not on a large server: the grounding walk stops at the first truncated `describeObjects` batch, and the metric batch, the first the walk reads, is truncated past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, so plan mode there grounds metrics only (`docs/BACKLOG.md` B84); the compose server is far below both caps, which is why the limit is recorded from the code | `walkObjectInventory` in `src/lib/agent/tools.ts`, and the PR's live plan run |
+| M7 | Whether plan mode grounds every kind within the provider path's bounds | Not on a large server: the grounding walk stops at the first truncated `describeObjects` batch, and the metric batch, the first the walk reads, is truncated past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, so plan mode there grounds metrics only (backlog B84); the compose server is far below both caps, which is why the limit is recorded from the code | `walkObjectInventory` in `src/lib/agent/tools.ts`, and the PR's live plan run |
 | M8 | How truncation is detected from the server | Prometheus sends the warning `results truncated due to limit` for `/api/v1/query`, the label values and the series listing when a `limit` bites; where no warning arrives, receiving more items than the cap (each read asks for cap + 1) is the signal | Fixture README, M8 |
-| M10 | The metric list cap | `METRIC_LIST_CAP` = `2000` names: it bounds the one label-values read that lists metrics, and past it the tree's Metrics count is a floor, badged `2,000+`; it keeps plan mode no room for the other kinds, because past it the metric batch, bounded at the listing's length, is marked truncated and the grounding walk stops there, so on a server with 2,001 to 4,999 names and at most `DESCRIBE_SERIES_CAP` series in the hour it is this cap, not the inventory's budget of 5,000 objects, that leaves plan mode with metrics only (M7, `docs/BACKLOG.md` B84) | Fixture README, M10 |
+| M10 | The metric list cap | `METRIC_LIST_CAP` = `2000` names: it bounds the one label-values read that lists metrics, and past it the tree's Metrics count is a floor, badged `2,000+`; it keeps plan mode no room for the other kinds, because past it the metric batch, bounded at the listing's length, is marked truncated and the grounding walk stops there, so on a server with 2,001 to 4,999 names and at most `DESCRIBE_SERIES_CAP` series in the hour it is this cap, not the inventory's budget of 5,000 objects, that leaves plan mode with metrics only (M7, backlog B84) | Fixture README, M10 |
 | M11 | Queries in flight per connection | `QUERY_CONCURRENCY_LIMIT` = `4`: with four heavy queries in flight for 60 s, every rule group kept its evaluation interval and no iteration was missed | Fixture README, M11 |
 | M12 | The response byte cap | `RESPONSE_BYTE_CAP` = `33554432` bytes (32 MiB) | Fixture README, M12 |
 | M13 | The series cap of a whole-folder describe | `DESCRIBE_SERIES_CAP` = `20000` series | Fixture README, M13 |
-| M14 | The result byte budget | `RESULT_BYTE_BUDGET` = `16777216` bytes of rows and fields as JSON: each answer shaped against it completed through the provider in the image's runtime, under its 384 MiB heap and the chart's `512Mi` memory limit, while three quarters of the heap was held live; the bodies of responses waiting to be sent are outside it, and nothing bounds how many wait (`docs/BACKLOG.md` D112) | Fixture README, M14 |
+| M14 | The result byte budget | `RESULT_BYTE_BUDGET` = `16777216` bytes of rows and fields as JSON: each answer shaped against it completed through the provider in the image's runtime, under its 384 MiB heap and the chart's `512Mi` memory limit, while three quarters of the heap was held live; the bodies of responses waiting to be sent are outside it, and nothing bounds how many wait (backlog D112) | Fixture README, M14 |
 
 ### 3.9 Shared records with no `prometheus` entry, and why
 
@@ -422,7 +422,7 @@ PromQL has no statement that writes, and editor text only ever reaches `POST /ap
 The gate's SQL keyword test, which still reads a MongoDB or Redis buffer first, never reads PromQL: a metric may legally be named `update`, `delete` or `drop`, and read as SQL its bare selector is a write.
 On a PromQL tab there is no formatter: no Format button, no Format SQL entry in the editor's menu, and the format shortcut does nothing.
 In the standalone app the run shortcut on a PromQL tab sends the selection when there is one and otherwise the whole buffer, never cut at a `;`.
-In the embedded `StudioWorkspace` the run shortcut, the Run Query menu entry and Run Selected reach no listener, so only the toolbar Run sends, and it sends the whole buffer (`docs/BACKLOG.md` U47).
+In the embedded `StudioWorkspace` the run shortcut, the Run Query menu entry and Run Selected reach no listener, so only the toolbar Run sends, and it sends the whole buffer (backlog U47).
 Both shells type a Prometheus connection's tabs from its declared `queryLanguage`, the embedded `StudioWorkspace` as the standalone app does, and the editor reads its shortcuts' handlers when one is invoked, so a tab mounted before the connection's capabilities arrived behaves as a PromQL tab once it is one.
 The editor's tokenizer (`src/lib/db/providers/timeseries/prometheus/editor-syntax.ts`) colours a `#` comment wherever the lexer starts one: at the top level, inside `{}` and inside a range's `[]`; inside a raw string, between backticks, a `#` is text.
 
@@ -444,7 +444,7 @@ The rows are the sorted union of every series' timestamps, and a series with no 
 The wide shape is what lets the existing chart tab draw each series as its own line with no change to the chart.
 For a stepped subquery whose series have a sample at every step, it charts as lines over the timestamps without false zeros: the tab opens on the first series, more are added from the Y-Axis menu, one line each, and at most eight, the palette's size (`MAX_SERIES` in `src/components/DataCharts.tsx`), are drawn at once, past which it says "Showing first 8 of N series".
 The chart tab draws a `null` at 0, though ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them)), so a raw range over targets scraped at their own offsets, whose rows each hold few of its series' samples, charts the rest at 0 on each row, and a series that starts or stops inside a subquery's window drops to 0 where it has no sample.
-Measured through the provider's shaper and the chart's own mapping, `up[5m]` from the compose server shaped into 29 rows of 4 series with 87 of its 116 cells `null`, each drawn at 0, which for `up` reads as a target that was down; `docs/BACKLOG.md` U44 records it.
+Measured through the provider's shaper and the chart's own mapping, `up[5m]` from the compose server shaped into 29 rows of 4 series with 87 of its 116 cells `null`, each drawn at 0, which for `up` reads as a target that was down; backlog U44 records it.
 
 ### 5.3 Value encoding
 
@@ -531,7 +531,7 @@ A metric for which that read names no label is one the server holds no series of
 When the series cap bites, the batch's `truncated` names the series bound in these words: "the series read stopped at 20,000 series, so a metric may be missing from this batch or described without a label only its unread series carry".
 That sentence is joined with the caller's own when both bite, and no partial column list is presented as complete.
 The batch takes its metrics from its `/api/v1/series` read and not from the listing, and on Prometheus 3.13.3 the two can disagree: the head block answers the listing and the labels read with no per-series time filter, while the series read skips a series with no sample in the window.
-So a metric whose series all stopped sampling before the hour, while the head still holds them, is listed and `describeObject` answers its columns, yet the batch leaves it out without marking itself truncated, and the inventory carries it with no columns (`docs/BACKLOG.md` D107).
+So a metric whose series all stopped sampling before the hour, while the head still holds them, is listed and `describeObject` answers its columns, yet the batch leaves it out without marking itself truncated, and the inventory carries it with no columns (backlog D107).
 The other five kinds have no columns, and describing one sends no read.
 
 #### Listing, counting and scale
@@ -597,8 +597,8 @@ Each surface reads the HTTP API only, and a surface that cannot give an honest n
 | `getHealth()` | `/-/healthy` and `/-/ready`, then `buildinfo` | Driven by the answers, never by identifying the product: `/health` is tried only after a 404 from `/-/healthy`; the first probe answering neither 200 nor a `/-/healthy` 404 that the `/health` probe superseded is named with its path and status, and ends the read before `buildinfo` is sent; a 401 or 403 is an `AuthenticationError` |
 | `getOverview()` | `buildinfo` (version), `runtimeinfo` (`startTime` and `serverTime`: uptime is the server's own clock minus its start time), `status/flags` (`web.max-connections`, a real `maxConnections`), `status/tsdb` (the metric count, M2) | `databaseSize` is "N/A" with `databaseSizeBytes` absent, because the API does not measure it; `tableCount` is the metric count and `indexCount` is 0; a server clock behind its start time reads the uptime "N/A"; a full label list that omits `__name__` refuses the overview with a `QueryError` rather than report a count it did not measure |
 | `getPerformanceMetrics()` | none | `cacheHitRatio` is absent, so the panel is not offered: never read and not drawn |
-| `getTableStats()` | `/api/v1/status/tsdb?limit=&topN=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (`docs/BACKLOG.md` D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the admin Operations list the same way, which then titles the rows "Listed (N)" rather than "Tables (N)" and answers a filter that matches none of them with "No listed table matches the filter."; it heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
-| `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (`docs/BACKLOG.md` D105); a TSDB status with no head statistics, the one VictoriaMetrics answers, is refused with a `QueryError` saying "The server reports no head block statistics: its TSDB status carries none, so the storage row has no series count, chunk count or sample span to show", because an empty list or a row of zeros would claim a measurement the server never sent |
+| `getTableStats()` | `/api/v1/status/tsdb?limit=&topN=`, `seriesCountByMetricName` | Real series counts for the top `TSDB_TOP_METRICS` (`50`) metrics by head series, with the size "N/A" beside the 0 the required `totalSizeBytes` carries (backlog D105); the provider's `tableStatsCaption`, "The metrics with the most head series, at most 50", heads the Tables tab, which then counts the rows as listed, under "Listed" rather than "Tables", and answers a search that matches none of them with "No listed table matches the search."; the caption heads the admin Operations list the same way, which then titles the rows "Listed (N)" rather than "Tables (N)" and answers a filter that matches none of them with "No listed table matches the filter."; it heads the agent's table-stats reading too, which hands a model that 0 as each row's `totalSizeBytes`; the endpoint truncates silently and refuses a `limit` above 10,000; a schema filter naming any schema but the empty one answers `[]` without a read |
+| `getStorageStats()` | `status/tsdb` `headStats` (series, chunks, min and max time), `runtimeinfo.storageRetention` | One row named `Head block: N series, M chunks`, with the head span and the retention as its location, and "no samples" as the span of an empty head; size "N/A" with `sizeBytes` 0, because the type requires a number (backlog D105); a TSDB status with no head statistics, the one VictoriaMetrics answers, is refused with a `QueryError` saying "The server reports no head block statistics: its TSDB status carries none, so the storage row has no series count, chunk count or sample span to show", because an empty list or a row of zeros would claim a measurement the server never sent |
 | `getSlowQueries()`, `getActiveSessions()` | none | `[]`: Prometheus publishes no query log and no session list over its HTTP API; neither panel is offered, so neither is read by the dashboard or drawn, and `getLabels()` declares no empty-state sentence for either |
 | `getIndexStats()` | none | `[]`: a Prometheus TSDB has no secondary index object to describe, so the panel is not offered |
 | `getPoolStats()` | not implemented | The route detects it by presence and shows its fallback |
@@ -781,7 +781,6 @@ curl -X POST http://localhost:3000/api/db/query \
 ```
 
 `seed:metrics-prom` is the Prometheus seed example of [`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md); an inline `connection` object works as well.
-See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contract.
 
 ---
 
@@ -794,10 +793,10 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **No AWS Managed Prometheus**: it needs SigV4 signing for the `aps` service.
 - **No EXPLAIN**, because the only parse endpoint is experimental.
 - **Agent mode reads instant queries only** ([§14](#14-agent-mode)): no range query and no request parameter is written by the model, so a window is a range vector or a subquery inside the expression.
-- **On a server past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, plan mode grounds metrics only**, because the grounding walk stops at the metric folder's truncated batch (M7, `docs/BACKLOG.md` B84).
-- **A listed metric whose series went quiet before the hour is left out of the bulk column read**, and the inventory carries it with no columns ([§6.1](#metric-columns), `docs/BACKLOG.md` D107).
+- **On a server past `METRIC_LIST_CAP` metric names or `DESCRIBE_SERIES_CAP` series in the hour, plan mode grounds metrics only**, because the grounding walk stops at the metric folder's truncated batch (M7, backlog B84).
+- **A listed metric whose series went quiet before the hour is left out of the bulk column read**, and the inventory carries it with no columns ([§6.1](#metric-columns), backlog D107).
 - **The overview's metric count is unavailable only when a full list of `TSDB_LABEL_SCAN_LIMIT` label names omits the `__name__` entry** (M2), and a listed entry is the full count at any length of that list.
-- **The chart tab draws a missing sample, and a `NaN` or `Inf` among numbers, at 0**, so a raw range over targets scraped at their own offsets charts false zeros, while a stepped subquery charts correctly as long as every series has a sample at every step; a column 20% or more `NaN` or `Inf` is not drawn as a series, and becomes the default x axis only while it holds at most 50 distinct values ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them), [§5.2](#52-result-shaping), `docs/BACKLOG.md` U44).
+- **The chart tab draws a missing sample, and a `NaN` or `Inf` among numbers, at 0**, so a raw range over targets scraped at their own offsets charts false zeros, while a stepped subquery charts correctly as long as every series has a sample at every step; a column 20% or more `NaN` or `Inf` is not drawn as a series, and becomes the default x axis only while it holds at most 50 distinct values ([§3.7](#37-nan-and-inf-stay-strings-and-what-the-chart-does-with-them), [§5.2](#52-result-shaping), backlog U44).
 - **Queries compete with the server's own rule evaluation** ([§3.4](#34-the-servers-query-slots-are-shared)).
 
 ---
@@ -865,7 +864,7 @@ On every handle opened for an agent-mode profile the transport is wrapped by the
 Measured raw, a target with a token parameter carries it in its scrape URL, its global URL, its last error and as `__param_token`, and a target whose address holds userinfo carries it in `__address__` and `instance` (and, on VictoriaMetrics, in its scrape URL) (`rawTargets`); the agent's target names carry neither (`surfaces.targets`).
 The projection runs on the decoded answer, so a target's path segment, its scrape URL and a digest of its labels, is built from the projected answer and carries nothing withheld, not even as a digest.
 A PromQL answer's labels are projected the same way, so `up` names a target whose address holds userinfo by its host and port.
-The projection goes by a value's shape, so what it cannot reach is a label value an expression rewrites (`label_replace`) so that it no longer reads as a URL or an address, and a matcher that selects on a stored value; both stay with what the server stores, the posture and the grounding name both, and the residual is recorded in [B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read).
+The projection goes by a value's shape, so what it cannot reach is a label value an expression rewrites (`label_replace`) so that it no longer reads as a URL or an address, and a matcher that selects on a stored value; both stay with what the server stores, the posture and the grounding name both, and the residual is recorded in B161.
 
 ### 14.4 Values, and what each path reads
 
@@ -889,7 +888,7 @@ Plan mode's safety strip says the family's own words (`posture.plan` in [`client
 The editor language id stays `promql`, and the fence alias `promql` names this engine.
 VictoriaMetrics is served by the same provider and the same type-id, so it takes the same agent path; it was measured beside Prometheus in the capture, and its own admin and import endpoints are not on the table either.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs PromQL: the family declares no MCP facet and `MCP_STATEMENT_READ.prometheus` is false ([B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read)); `MCP_EXPOSABLE.prometheus` stays true for the metadata tools, which read through the same projection, and no MCP code reads the write reach record.
+No MCP tool runs PromQL: the family declares no MCP facet and `MCP_STATEMENT_READ.prometheus` is false (B161); `MCP_EXPOSABLE.prometheus` stays true for the metadata tools, which read through the same projection, and no MCP code reads the write reach record.
 
 ---
 

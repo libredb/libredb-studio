@@ -36,9 +36,8 @@
   "pages": [
     {
       "title": "Architecture Overview",
-      "purpose": "High-level system architecture including the tech stack (Next.js 16, React 19, TypeScript strict mode, Tailwind CSS 4, Monaco Editor, Bun), directory structure (src/app, src/components, src/lib, src/hooks, src/workspace, src/exports), key architectural patterns (Strategy Pattern, App Router, Server/Client Components), the dual run modes (standalone Next.js app vs embedded @libredb/studio npm package), and how the frontend, API layer, database providers, storage layer, and AI services interact. Cover the mermaid architecture diagram from docs/ARCHITECTURE.md.",
+      "purpose": "High-level system architecture including the tech stack (Next.js 16, React 19, TypeScript strict mode, Tailwind CSS 4, Monaco Editor, Bun), directory structure (src/app, src/components, src/lib, src/hooks, src/workspace, src/exports), key architectural patterns (Strategy Pattern, App Router, Server/Client Components), the dual run modes (standalone Next.js app vs embedded @libredb/studio npm package), and how the frontend, API layer, database providers, storage layer, and AI services interact.",
       "page_notes": [
-        "The full directory tree and data-flow diagrams are in docs/ARCHITECTURE.md - treat that file as the source of truth for this page.",
         "This project deliberately runs two ways; make the standalone-vs-embedded distinction explicit rather than describing only the standalone app."
       ]
     },

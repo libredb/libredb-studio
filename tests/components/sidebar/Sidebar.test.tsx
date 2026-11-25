@@ -1125,7 +1125,7 @@ describe("Sidebar", () => {
   });
 
   /*
-   * A PATTERN BELONGS TO THE CONNECTION IT WAS ASKED FOR ON. `docs/BACKLOG.md` U108 recorded the
+   * A PATTERN BELONGS TO THE CONNECTION IT WAS ASKED FOR ON. Backlog U108 recorded the
    * opposite as deferred - a Browse Keys pattern carried to the next connection, where it reads
    * `Scanned 0` - and the Keys default above turned it from "a reader who presses Keys meets it"
    * into "it is the first screen after connecting", because MQTT and OPC UA open on that panel.

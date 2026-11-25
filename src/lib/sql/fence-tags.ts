@@ -35,7 +35,7 @@ import type { DatabaseType } from "@/lib/types";
  *
  * `sql` names no engine: mapping it to the connection's would turn a generic tag into a claim the model never made.
  * `cql` names none either, for the same reason, though `cassandra` is the only type-id that runs CQL today; that is a
- * known defect rather than a design (docs/BACKLOG.md B86).
+ * known defect rather than a design (backlog B86).
  */
 const GENERIC_FENCE_TAGS: Readonly<Record<GenericFenceTag, true>> = Object.freeze({ sql: true, cql: true });
 

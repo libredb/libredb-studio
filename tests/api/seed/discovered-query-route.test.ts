@@ -40,7 +40,7 @@ const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
 );
 
-// The spread form, not a hand-written stub: only getSession is replaced (BACKLOG D85).
+// The spread form, not a hand-written stub: only getSession is replaced (backlog D85).
 const realAuth = await import("@/lib/auth");
 mock.module("@/lib/auth", () => ({
   ...realAuth,

@@ -427,7 +427,7 @@ results:  ok               error                ok
 ```
 
 A failing statement does NOT abort the pipeline. Collapsing that onto one rejection is how a single
-refused read costs a whole dashboard (#477, BACKLOG D22), so `LibSQLBatchOutcome` is a discriminated
+refused read costs a whole dashboard (#477, backlog D22), so `LibSQLBatchOutcome` is a discriminated
 per-statement result and the provider decides, per reading, what an absent one means.
 
 ### 3.9 `dbstat` answers here, so the sizes are real

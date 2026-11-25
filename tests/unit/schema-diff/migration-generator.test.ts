@@ -2179,7 +2179,7 @@ describe("an Oracle MODIFY states the nullability only when it changes (#1240)",
 });
 
 // ============================================================================
-// Qualified names and objects that are not tables (SF-047, BACKLOG D150)
+// Qualified names and objects that are not tables (SF-047, backlog D150)
 // ============================================================================
 
 describe("generateMigrationSQL: qualified names and non-table objects", () => {

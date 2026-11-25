@@ -235,7 +235,7 @@ export const Sidebar = React.memo(function Sidebar({
    * has anything to put in - and that default is derived per connection below, never stored. Storing
    * it is the bug this shape exists to make impossible: one OPC UA or MQTT connection used to leave
    * `keys` in this state for good, so the next Redis, etcd, Oxia or S3 connection opened on a key
-   * walk nobody asked for with the object tree simply absent (measured in a browser; `docs/BACKLOG.md`
+   * walk nobody asked for with the object tree simply absent (measured in a browser; the backlog
    * U108 records the sibling defect for `keyPatternRequest`).
    *
    * The CHOICE is deliberately not dropped when the connection changes: a reader who chose Keys and
@@ -327,7 +327,7 @@ export const Sidebar = React.memo(function Sidebar({
   /*
    * AND IT BELONGS TO THE CONNECTION IT WAS MADE ON. The request used to be held for the whole
    * sidebar, so the Keys panel of the NEXT connection opened on the previous one's pattern -
-   * `docs/BACKLOG.md` U108, measured on Redis `bulk:*` carried onto etcd and Oxia, where it read
+   * backlog U108, measured on Redis `bulk:*` carried onto etcd and Oxia, where it read
    * `Scanned 0`. It was deferred because a reader had to press Keys to meet it; the default above
    * makes it the FIRST screen after connecting on MQTT and OPC UA, where a Redis glob matches
    * nothing in a `prefix` walk, so it is scoped here rather than left for later.

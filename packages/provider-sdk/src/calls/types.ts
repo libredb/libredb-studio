@@ -155,7 +155,7 @@ export interface CallContext {
 /**
  * The connection's TLS settings, as the connection holds them. `mode` is typed as one of the provider contract's TLS
  * modes; that the engine's declaration lists it is not yet held on every path, and the test-connection route and the
- * storage writes do not yet hold a mode to the contract's modes either (BACKLOG D790).
+ * storage writes do not yet hold a mode to the contract's modes either (backlog D790).
  */
 export interface TlsSettings {
   readonly mode: TlsMode;

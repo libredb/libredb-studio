@@ -4794,7 +4794,7 @@ describe("a run that stops having read nothing is told to read it itself", () =>
 
       Not narrowed to a non-empty turn, which is the obvious repair: that would change what the
       five passing runs were measured under, and a measured cell does not move without being
-      re-measured. Recorded in `docs/BACKLOG.md` instead.
+      re-measured. Recorded in the backlog instead.
     */
     const b = boot(freshDataDir());
     const run = await startRun(b);
@@ -5537,7 +5537,7 @@ describe("the run reads its schema context through the catalog tool", () => {
    * inventory reaches no database for it at all. The ledger carries the inventory
    * itself, so the fingerprint is checked against the rows it summarises rather
    * than against a catalog read — which is the whole point, since a resumed run
-   * starts every cost ceiling again (`docs/BACKLOG.md` B6) and would otherwise
+   * starts every cost ceiling again (backlog B6) and would otherwise
    * spend three of its twenty statements re-reading rows it already has.
    */
   test("a drive whose run already recorded its inventory performs NO database operation for it", async () => {

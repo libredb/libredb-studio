@@ -125,7 +125,6 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
 
   test.each([
     "docs/GOVERNANCE.md",
-    "docs/ARCHITECTURE.md",
     "docs/providers/libredb.md",
     "docs/providers/redis.md",
     "docs/providers/postgres.md",

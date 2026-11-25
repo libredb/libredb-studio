@@ -15,7 +15,7 @@
  *
  * The TLS rule `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`
  * is the Couchbase mapping, written again here rather than imported, because the
- * isolation rule forbids importing another provider (spec 3.5). docs/BACKLOG.md D37
+ * isolation rule forbids importing another provider (spec 3.5). Backlog D37
  * names this copy.
  *
  * The parameter is named `config` in every function here on purpose: the db-ui-config

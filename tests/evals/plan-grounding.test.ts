@@ -60,7 +60,7 @@ beforeEach(() => {
   // That is a property of the fixture's ids and not of the hold, but it is also the
   // shape of a hazard worth naming: the hold is keyed on a connection id alone, and a
   // connection whose id survives being re-pointed at another database would be served
-  // the old one's tables. Recorded for `docs/BACKLOG.md` rather than fixed here.
+  // the old one's tables. Recorded for the backlog rather than fixed here.
   forgetHeldSnapshots();
 });
 

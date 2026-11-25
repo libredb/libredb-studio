@@ -122,7 +122,7 @@ Every agent read is billed, so each request, the grounding's collection id listi
 Plan mode works: it grounds on collection ids and `__name__` as each collection's column, at the cost of three root id listings charged to its run, and drafts statements fenced with the `firestore` tag, which it never runs.
 Sampled fields never reach a model.
 The Explain panel's AI tab sends the statement and the plan, which names indexed fields, to the configured model when the user clicks it.
-[B107](../BACKLOG.md#b107-firestores-agent-reads-are-metadata-only-and-it-has-no-mcp-surface) records what stays closed.
+B107 records what stays closed.
 
 ## 4. Connection
 
@@ -500,7 +500,7 @@ Agent readings offered: `health`.
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |
 | `keyScan` | separator `/`, opaque cursor, prefix pattern, no total, levels rooted at `collection`, 100 by default and 1,000 at most |
 
-`READ_ONLY_ENFORCED.firestore` is true and `MCP_EXPOSABLE.firestore` is false; MCP stays closed under BACKLOG B107.
+`READ_ONLY_ENFORCED.firestore` is true and `MCP_EXPOSABLE.firestore` is false; MCP stays closed under backlog B107.
 `metadataOnly` states the agent reads' columns ([section 15.3](#153-metadata-only)).
 
 ### SQL writing
@@ -593,7 +593,7 @@ On 2026-10-12 a real project's `(default)` database answered as those built answ
 
 ## 14. Known limitations
 
-Not supported in this version, each a BACKLOG entry: writes of any kind, Pipelines, Datastore mode, the MongoDB-compatible API (use the `mongodb` type), Firebase Auth user sign-in under Security Rules, service-account impersonation, regional endpoints, real-time listeners, MCP, collection export, point-in-time reads, `limitToLast`, bytes literals in the console, a read budget meter, an absent-cell marker in the grid, full support for the Enterprise BSON types, and a CI job running the emulator.
+Not supported in this version, each a backlog entry: writes of any kind, Pipelines, Datastore mode, the MongoDB-compatible API (use the `mongodb` type), Firebase Auth user sign-in under Security Rules, service-account impersonation, regional endpoints, real-time listeners, MCP, collection export, point-in-time reads, `limitToLast`, bytes literals in the console, a read budget meter, an absent-cell marker in the grid, full support for the Enterprise BSON types, and a CI job running the emulator.
 An egress HTTPS proxy is not supported.
 
 ## Migration DDL
@@ -693,7 +693,7 @@ The family offers the investigation workflow, through `run_read_query` with one 
 The workflow classifier offers the model only these two.
 The editor language id stays `firestore`, and the fence alias `fsquery` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Firestore statement: the family declares no MCP facet, and `MCP_STATEMENT_READ.firestore` is false ([B107](../BACKLOG.md#b107-firestores-agent-reads-are-metadata-only-and-it-has-no-mcp-surface)).
+No MCP tool runs a Firestore statement: the family declares no MCP facet, and `MCP_STATEMENT_READ.firestore` is false (B107).
 
 ## 16. References
 

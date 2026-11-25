@@ -403,7 +403,7 @@ refactor(components): extract query editor logic to hook
 
 When working on this codebase:
 
-1. **Understand the architecture** - Read `docs/ARCHITECTURE.md` before making changes
+1. **Understand the architecture** - Read the code and `docs/` before making changes
 2. **Follow patterns** - Match existing code patterns and conventions
 3. **Ask for clarification** - If unsure about approach, ask before implementing
 4. **Test thoroughly** - Ensure changes work across different database types
@@ -414,8 +414,6 @@ When working on this codebase:
 
 ## Resources
 
-- **Architecture**: `docs/ARCHITECTURE.md`
-- **API Documentation**: `docs/API_DOCS.md`
 - **Theming Guide**: `docs/THEMING.md`
 - **Contributing**: `CONTRIBUTING.md`
 - **Claude Guide**: `CLAUDE.md`

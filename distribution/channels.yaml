@@ -1256,7 +1256,7 @@ channels:
         versions only, so a drift row here means the
         version is waiting on human moderation rather than that the push failed; the release run's
         job summary reports the push outcome and that version's PackageStatus. Trusted status is
-        what removes the wait - docs/BACKLOG.md REL3.
+        what removes the wait - backlog REL3.
   
   - id: scoop
     name: Scoop Extras bucket (extras/libredb-studio)

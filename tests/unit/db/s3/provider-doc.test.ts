@@ -1086,7 +1086,7 @@ describe("docs/providers/s3.md: the probe, the declarations and the errors, as t
 });
 
 /**
- * The backlog ids section 13 cites, each as a link to its entry, under the PR's id mapping;
+ * The backlog ids section 13 cites, under the PR's id mapping;
  * D273 and D274 are the Parquet schema and row-group entries the measured caps left.
  */
 const LIMITATION_IDS: readonly string[] = [
@@ -1144,11 +1144,10 @@ describe("docs/providers/s3.md: networks, tests, limits and references", () => {
     );
   });
 
-  test("32. section 13 cites exactly its backlog ids, each as a link", () => {
+  test("32. section 13 cites exactly its backlog ids", () => {
     const limits = sectionOf(DOC, "## 13. Known limitations");
     const cited = new Set([...limits.matchAll(/\b([DUB]\d+)\b/g)].map((match) => match[1]));
     expect([...cited].sort()).toEqual([...LIMITATION_IDS].sort());
-    for (const id of LIMITATION_IDS) expect(limits, id).toContain(`([${id}](../BACKLOG.md#`);
     expect(flat(limits)).toContain(`at most ${S3_PARQUET_DECODE_SLOTS} at a time`);
     const leaves = S3_PREVIEW_LIMITS.parquetMaxLeafColumns;
     expect(flat(limits)).toContain(
@@ -1157,8 +1156,7 @@ describe("docs/providers/s3.md: networks, tests, limits and references", () => {
     expect(flat(limits)).toContain("previews fewer columns");
     expect(flat(limits)).toContain("only its schema and statistics when its first column alone");
     expect(flat(limits)).toContain("is refused when one page declares more values than a preview allows");
-    expect(limits).toContain("(../BACKLOG.md#d274-large-parquet-row-groups-preview-fewer-columns-or-none)");
-    const rowGroups = limits.split("\n").find((line) => line.includes("[D274]"));
+    const rowGroups = limits.split("\n").find((line) => line.includes("D274"));
     expect(rowGroups).toBeDefined();
     expect(rowGroups).not.toContain("previews as its schema and statistics without rows");
     expect(flat(limits)).toContain(
@@ -1181,82 +1179,9 @@ describe("docs/providers/s3.md: networks, tests, limits and references", () => {
   });
 });
 
-const BACKLOG = read("docs/BACKLOG.md");
 const AGENT_DOC = read("docs/AGENT.md");
 
-/** A BACKLOG entry, from its heading to the next heading, as one line. */
-function backlogEntry(id: string): string {
-  const start = BACKLOG.indexOf(`\n### ${id}. `);
-  if (start < 0) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
-  const end = BACKLOG.indexOf("\n#", start + 1);
-  return flat(BACKLOG.slice(start, end));
-}
-
-/** GitHub's heading anchor: lower case, spaces to `-`, everything but letters, digits, `-` and `_` dropped. */
-const anchorOf = (heading: string): string =>
-  heading
-    .toLowerCase()
-    .replace(/ /g, "-")
-    .replace(/[^a-z0-9_-]/g, "");
-
-/** The anchor of BACKLOG entry `id`, from its heading. */
-function backlogAnchor(id: string): string {
-  const heading = BACKLOG.split("\n").find((line) => line.startsWith(`### ${id}. `));
-  if (heading === undefined) throw new Error(`docs/BACKLOG.md has no entry ${id}`);
-  return anchorOf(heading.slice("### ".length));
-}
-
-/** The entries this part files in PR 3, with a phrase each must hold. */
-const S3_ENTRIES: Readonly<Record<string, string>> = {
-  D261: "No SQL over files in an S3 bucket",
-  D262: "S3 connections cannot use temporary credentials",
-  D263: "S3 connections address buckets by path only",
-  D264: "S3 connections cannot write",
-  D265: "The S3 provider is not verified on AWS S3 or any hosted service",
-  D266: "Each provider carries its own UTF-8 helpers",
-  D267: "The MinIO fixture is a frozen build of an archived project",
-  D268: "The CLI lead and verb-role tokenizer exists twice",
-  D269: "Four providers carry private byte-size formatters",
-  D270: "The HTTP egress guard is the same for every role",
-  D271: "Parquet previews decode on the server's main thread",
-  D273: "Wide Parquet schemas are refused above 1,024 elements",
-  D274: "Large Parquet row groups preview fewer columns or none",
-  U109: "The object tree is not paged, so an account with thousands of buckets lists them in one folder",
-  // U110 ("Databend declares a User placeholder the dialog never draws") was settled by SF-039 and deleted.
-  B104: "S3's agent and MCP reads are metadata only until a ruling opens object keys and values",
-};
-
 describe("the backlog record of the S3 provider", () => {
-  test("34. every entry exists under its title, with a Done when", () => {
-    for (const [id, title] of Object.entries(S3_ENTRIES)) {
-      expect(BACKLOG, id).toContain(`\n### ${id}. ${title}\n`);
-      expect(backlogEntry(id), id).toContain("**Done when:**");
-    }
-  });
-
-  test("35. every backlog link the provider doc holds lands on an entry", () => {
-    const anchors = BACKLOG.split("\n")
-      .filter((line) => line.startsWith("### "))
-      .map((line) => anchorOf(line.slice("### ".length)));
-    for (const [, anchor] of DOC.matchAll(/\]\(\.\.\/BACKLOG\.md#([^)]+)\)/g))
-      expect(anchors, anchor).toContain(anchor);
-    for (const id of LIMITATION_IDS) {
-      expect(sectionOf(DOC, "## 13. Known limitations"), id).toContain(`[${id}](../BACKLOG.md#${backlogAnchor(id)})`);
-    }
-  });
-
-  test("36. D223 carries the S3 hex-dump sentence and U82 the amendment", () => {
-    expect(backlogEntry("D223")).toContain(
-      "The S3 object preview's hex dump carries the same caption (src/lib/db/providers/objectstore/s3/preview-render.ts).",
-    );
-    expect(backlogEntry("U82")).toContain(
-      "Since the S3 provider the label is declarable: the dialog draws DB_UI_CONFIG.<type>.fieldLabels.allowInsecureAuth when a type declares it, and S3 declares Connect without TLS.",
-    );
-    expect(backlogEntry("U82")).toContain(
-      "**Done when:** Oxia, influxdb and influxdb3 each declare a fieldLabels.allowInsecureAuth that names their token, every refusal that quotes the label quotes the new one, and a test renders the dialog for a password type and a token type and asserts each label.",
-    );
-  });
-
   test("37. docs/AGENT.md cites B104 with its reason, after B103", () => {
     const b103 = AGENT_DOC.indexOf("- **B103**:");
     const b104 = AGENT_DOC.indexOf("- **B104**:");
@@ -1637,7 +1562,7 @@ const FEATURES_GROUP = [
 const BRAND_RULE_9 =
   '9. **Studio\'s S3 provider is read-only object browsing on S3-compatible servers, verified on four of them.** Write "S3-compatible object storage", never "S3" alone as a supported product, and never "AWS S3" or "Amazon S3" as one, because Studio was verified on MinIO, Silo, Garage and RustFS and not on AWS S3 or any hosted service. Never write that Studio queries files in a bucket with SQL; it previews them.';
 
-describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
+describe("FEATURES and BRAND_MESSAGING", () => {
   const engines = EXTERNAL_DATABASE_TYPES.length;
 
   test("51. FEATURES has the Object Storage group in its place, naming the networks of LINK_LOCAL_NETWORKS", () => {
@@ -1672,53 +1597,6 @@ describe("FEATURES, BRAND_MESSAGING and API_DOCS", () => {
     const rules = brand.split("\n");
     const rule8 = rules.findIndex((line) => line.startsWith("8. **AI is not described as magic.**"));
     expect(rules[rule8 + 1]).toBe(BRAND_RULE_9);
-  });
-
-  test("53. API_DOCS names S3 where it lists engines and states S3's declarations", () => {
-    const api = read("docs/API_DOCS.md");
-    const capabilities = provider.getCapabilities();
-    const keyScan = capabilities.keyScan;
-    expect(api).toContain(
-      "Milvus, Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B.",
-    );
-    expect(api).toMatch(
-      new RegExp(
-        `- \\*\\*Multi-Database Support\\*\\* - ${Word(engines)} engines: .*, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP, NETCONF, Sparkplug B$`,
-        "m",
-      ),
-    );
-    expect(capabilities.supportsResultPagination).toBe(false);
-    expect(api).toContain("Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage and Firestore ignore it.");
-    expect(capabilities.containerLevels).toEqual([]);
-    expect(api).toContain(
-      "etcd, Oxia and S3-compatible object storage declare the walk and no container level, because one connection is one key space (one etcd cluster, one Oxia namespace, one S3 endpoint), so they refuse the field as well.",
-    );
-    expect(api).toContain(
-      // The parenthetical is the whole set, measured over the shipped declarations rather than
-      // listed from memory: MQTT, Firestore and OPC UA declare a key walk and no container level
-      // too, and were missing from it until an OPC UA audit read this row against the code.
-      "| The provider declares `keyScan` and no container level (etcd, Oxia, S3-compatible object storage, MQTT, Firestore, OPC UA) | `400` |",
-    );
-    expect(consoleTextByteLimit("s3")).toBe(S3_MAX_TEXT_BYTES);
-    expect(api).toContain(
-      `InfluxDB (InfluxQL), Oxia, S3-compatible object storage, Kubernetes and Firestore one of ${n(S3_MAX_TEXT_BYTES)} bytes each`,
-    );
-    expect(api).toContain(
-      `S3-compatible object storage declares \`{ "defaultCount": ${keyScan?.defaultCount}, "maxCount": ${keyScan?.maxCount} }\` ([providers/s3.md](./providers/s3.md), section 6.4).`,
-    );
-    expect(api).toContain(
-      `S3-compatible object storage declares \`"${keyScan?.separator}"\`, \`"${keyScan?.cursor}"\`, \`"${keyScan?.pattern}"\` and \`"${keyScan?.totalScope}"\` too, with \`levels.rootKind\` \`"${keyScan?.levels?.rootKind}"\`: one folder level at a time, a cursor only it can read, a literal prefix, and no count.`,
-    );
-    expect(api).toContain(
-      "Cassandra: the KEYSPACE; S3: the optional pinned bucket; Kubernetes: the Default namespace; Firestore: the project id)",
-    );
-    const union = /^type DatabaseType = (.+);$/m.exec(api)?.[1] ?? "";
-    expect(
-      union
-        .split(" | ")
-        .map((member) => member.replace(/'/g, ""))
-        .sort(),
-    ).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 });
 
@@ -1849,7 +1727,7 @@ describe("docs/providers/README.md", () => {
 describe("the architecture, provider, editor and guide docs", () => {
   const ids = SHIPPED_DATABASE_TYPES.length;
 
-  test("57. CLAUDE.md, ARCHITECTURE and DATABASE_PROVIDERS count the ids and draw S3", () => {
+  test("57. CLAUDE.md and DATABASE_PROVIDERS count the ids and draw S3", () => {
     const claude = read("CLAUDE.md");
     expect(claude).toContain(
       `${word(EXTERNAL_DATABASE_TYPES.length)} external engines, plus the embedded LibreDB store`,
@@ -1857,16 +1735,6 @@ describe("the architecture, provider, editor and guide docs", () => {
     expect(claude).toContain(
       "`oxia`, `milvus`, `qdrant`, `weaviate`, `s3`, `kubernetes`, `rabbitmq`, `libredb`) extend `BaseDatabaseProvider` directly",
     );
-    const architecture = read("docs/ARCHITECTURE.md");
-    expect(architecture).toContain(`It supports **${ids} database backends**`);
-    expect(architecture).toContain(
-      "Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, NETCONF, SNMP, Sparkplug B, LibreDB.",
-    );
-    expect(architecture).toContain("        DBFactory --> ObjectStore[Object Storage Providers]");
-    expect(architecture).toContain("        ObjectStore --> S3[(S3-compatible object storage)]");
-    expect(architecture).toContain("    BaseDatabaseProvider <|-- S3Provider");
-    expect(architecture).toContain("│   │   ├── objectstore/ # s3/");
-    expect(architecture).toContain("each other language is a row of");
     const providers = read("docs/DATABASE_PROVIDERS.md");
     // Two pairs of type-ids share one module each: elasticsearch and opensearch, influxdb and influxdb3.
     expect(providers).toContain(`${Word(ids)} type-ids are supported by ${word(ids - 2)} provider modules:`);

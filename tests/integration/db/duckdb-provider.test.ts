@@ -224,7 +224,7 @@ describe("DuckDBProvider capabilities", () => {
 
   test("declares singleWriterFile, because the file admits one operating-system process", () => {
     // Measured: a second PROCESS is refused even in read-only mode, so the three routes
-    // that would open a second handle borrow this one instead (BACKLOG D3).
+    // that would open a second handle borrow this one instead (backlog D3).
     expect(capabilities.singleWriterFile).toBe(true);
   });
 
@@ -522,7 +522,7 @@ describe("connect / disconnect", () => {
     // would be about something other than the hold, and the assertion would mean nothing.
     //
     // Browsing does not lean on the allowance either way - the editor is handed the open
-    // handle rather than a second one (`findOpenSingleWriterProvider`, BACKLOG D3). The one
+    // handle rather than a second one (`findOpenSingleWriterProvider`, backlog D3). The one
     // path that really wants two at once is an agent run reaching a connection the editor
     // already holds; what Windows does to that is recorded in docs/providers/duckdb.md
     // §3.8 and is not fixed here.

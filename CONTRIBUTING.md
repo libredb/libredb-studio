@@ -142,7 +142,7 @@ The issues we have vetted for outside pickup are labeled
 [`help wanted`](https://github.com/libredb/libredb-studio/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
 (medium). Each states what is wrong, where to look and what "done" looks like, and none needs a live
 database cluster or a cloud account. That list is the one to pick from during Hacktoberfest, Social
-Winter of Code, GSSoC or any other contributor program. Entries in `docs/BACKLOG.md` that carry no
+Winter of Code, GSSoC or any other contributor program. Entries in the backlog that carry no
 label have not been vetted for outside pickup; ask in an issue first if one interests you.
 
 - **Claim before you start.** Comment on the issue so two people do not build the same fix. A
@@ -267,7 +267,7 @@ So the table above is what you need to run the WHOLE suite; a machine without on
 On Windows the POSIX tools come from the Git for Windows installation the clone already needed, and the tests locate them through git itself rather than through `PATH`.
 PowerShell's `PATH` carries `git.exe` but not the `bin` and `usr\bin` directories beside it that hold `bash.exe`, `grep.exe` and `unzip.exe`, and where WSL is installed a bare `bash` does resolve, to `C:\Windows\System32\bash.exe`, a Linux shell that cannot read the Windows temp paths the fixtures hand it.
 So `tests/helpers/posix-tools.ts` asks the git binary for its exec path, derives the installation root from it, falls back to `%LOCALAPPDATA%\Programs\Git` and the two `Program Files` defaults, and spawns each tool by absolute path; 7-Zip is looked for at `C:\Program Files\7-Zip\7z.exe` as well as on `PATH`.
-Git for Windows carries no `zip`, so the tests that build the Azure package skip there whatever else you install (`docs/BACKLOG.md` D87).
+Git for Windows carries no `zip`, so the tests that build the Azure package skip there whatever else you install (backlog D87).
 Assertions about POSIX file modes skip on Windows in every case: NTFS has no exec bit, and Windows cannot exec an extension-less `#!` script.
 
 macOS needs nothing of its own, and the one thing that used to stop it is gone: the old shell runner called `mapfile`, a bash 4 builtin that the system bash 3.2 does not have, and the runner is TypeScript now.
@@ -489,7 +489,7 @@ CI's test and lint lanes run Helm 4.1.3, so that is the client to develop agains
 That is not the chart's floor: the chart README states Helm >= 3.12, and CI's only
 Helm 3 evidence is 3.16.0. The release workflow's `ct install` job stays on Helm 3.16
 deliberately, so a Helm 3 client keeps installing the chart source - see
-`tests/unit/helm-pin-matrix.test.ts`, and R1 in `docs/BACKLOG.md` for what that
+`tests/unit/helm-pin-matrix.test.ts`, and R1 in the backlog for what that
 still does not cover.
 
 ## Coding Guidelines

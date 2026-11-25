@@ -3804,7 +3804,7 @@ services:
   # prepared protocol, and SingleStore answers `This command is not supported in the
   # prepared statement protocol yet` to the parameterless SHOW and EXPLAIN
   # statements that Test Connection, health, the overview and the monitoring
-  # dashboard need (D8 in docs/BACKLOG.md). Row counts and sizes read 0 for a
+  # dashboard need (D8 in the backlog). Row counts and sizes read 0 for a
   # populated table because information_schema.TABLES is left zeroed, and `ANALYZE`
   # does not change it.
   singlestore:

@@ -1,6 +1,6 @@
 /**
  * The Firestore rows and names the docs and listings carry beyond the provider doc: the providers README (its
- * Firestore and MQTT rows), the API docs, the seed docs, `.env.example`, the READMEs and Docker Hub. Counts and
+ * Firestore and MQTT rows), the seed docs, `.env.example`, the READMEs and Docker Hub. Counts and
  * exhaustive lists are held by the existing guards.
  */
 import { describe, expect, test } from "bun:test";
@@ -43,23 +43,6 @@ describe("docs/providers/README.md", () => {
   test("names Firestore among the providers split across modules", () => {
     // OPC UA joins the same sentence (#1677), so the tail this asserts moves with it.
     expect(index).toContain("Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name");
-  });
-});
-
-describe("docs/API_DOCS.md", () => {
-  const api = read("docs/API_DOCS.md");
-
-  test("the Keys panel declaration and the console text bound name Firestore", () => {
-    expect(api).toContain(
-      'Firestore declares `{ "defaultCount": 100, "maxCount": 1000 }` and `"/"`, `"opaque"`, `"prefix"` and `"none"`, with `levels.rootKind` `"collection"`',
-    );
-    expect(api).toContain("S3-compatible object storage, Kubernetes and Firestore one of 65,536 bytes each");
-  });
-
-  test("the DatabaseType block and the connection fields name it", () => {
-    expect(api).toMatch(/^type DatabaseType = .*'firestore'.*;$/m);
-    expect(api).toContain("Firestore: the project id");
-    expect(api).toContain("Firestore: the database id, empty for (default)");
   });
 });
 

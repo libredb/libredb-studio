@@ -2586,7 +2586,7 @@ describe("ElasticsearchProvider monitoring", () => {
 
     expect(overview.databaseSize).toBe("N/A");
     // The string said "N/A" while the number said 0 bytes, in the SAME object
-    // (docs/BACKLOG.md D44). `databaseSizeBytes` is optional so the absence can be said,
+    // (backlog D44). `databaseSizeBytes` is optional so the absence can be said,
     // and the Storage tab draws its own refusal rather than a 0.0% breakdown from a 0.
     expect("databaseSizeBytes" in overview).toBe(false);
     expect(overview.tableCount).toBe(3);

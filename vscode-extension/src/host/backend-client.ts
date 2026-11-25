@@ -76,7 +76,7 @@ export class BackendExitedError extends Error {
  * The codes of a failed connection/open that offer Enter Credentials, read from data.code only, never the message.
  * CONNECTION_ERROR is here because the v0 providers wrap a refused login in ConnectionError, so a wrong password
  * answers 503 CONNECTION_ERROR on postgres, mssql, mysql and mongodb and the host cannot tell it from an unreachable
- * server; the offer is harmless there. D387 in docs/BACKLOG.md narrows this back to AUTH_ERROR.
+ * server; the offer is harmless there. D387 in the backlog narrows this back to AUTH_ERROR.
  */
 const CREDENTIALS_OFFER_CODES: ReadonlySet<BackendErrorCode | null> = new Set<BackendErrorCode>([
   "AUTH_ERROR",

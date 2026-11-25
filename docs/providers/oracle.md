@@ -209,7 +209,7 @@ A provider created with an `owner` in its execution context, which only governan
 When the timer fires, `expireTransaction()` rolls the transaction back and closes the held connection, which releases it to the pool; a rollback or a close that fails is logged, and the transaction is released all the same.
 `commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
 A provider without an owner, which is every install without governance, arms **no** timer: an abandoned transaction holds its connection (and locks) until explicitly committed or rolled back, or the connection is reclaimed by the pool.
-Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision ([GOV3](../BACKLOG.md#gov3-arming-the-mssql-and-oracle-transaction-timeout-in-every-mode-needs-a-design-decision-first)).
+Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision (GOV3).
 
 ### 3.5 SSL through the connect string, not a `buildSSLConfig()`
 
@@ -663,7 +663,7 @@ A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(q
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `connection.break()`, when the request named a `queryId`.
 
 ### 5.3 What each Oracle type arrives as
@@ -3033,5 +3033,4 @@ It prints no refusal reason.
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts), and the `ORA-*` mapping in [`src/lib/db/providers/sql/oracle-driver-errors.ts`](../../src/lib/db/providers/sql/oracle-driver-errors.ts)
 - Tests: [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Trino](./trino.md) · [Redis](./redis.md)

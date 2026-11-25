@@ -1,5 +1,5 @@
 /**
- * @file The server's confirmation gate on a run (FND-5, docs/API_DOCS.md "Server confirmation of a run").
+ * @file The server's confirmation gate on a run (FND-5).
  *
  * `POST /api/db/query`, `POST /api/db/multi-query` and `POST /api/db/transaction` (its `query` action) call `gateRun`
  * after their own field checks and before the admission gate and any provider, and so does the VS Code extension's

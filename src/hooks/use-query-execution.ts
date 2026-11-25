@@ -57,7 +57,7 @@ export interface QueryExecutionOptions {
   onFailure?: (message: string) => void;
   /**
    * The confirmation token the server issued for this statement in a 428 answer, sent as the run's
-   * `confirmation` in place of `"ask"` (docs/API_DOCS.md, "Server confirmation of a run"). Set by
+   * `confirmation` in place of `"ask"`. Set by
    * `forceExecuteQuery` when the safety dialog it answers was opened by the server's 428.
    */
   confirmationToken?: string;
@@ -795,7 +795,7 @@ export function useQueryExecution({
         // The two routes that hand the provider the run's queryId: one statement, and a script,
         // whose route binds it to each unit in turn.
         run.serverCancellable = queryEndpoint !== "/api/db/transaction";
-        // The run's `confirmation` (docs/API_DOCS.md, "Server confirmation of a run"): every run that is not an explain
+        // The run's `confirmation`: every run that is not an explain
         // asks the server, which answers 428 with a token where its gate asks about the statement; a token the server
         // issued for this statement confirms it. An explain is not classified, so it carries none.
         const sendRun = (confirmation: "ask" | { token: string; typed?: string } | undefined) =>

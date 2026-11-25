@@ -116,7 +116,7 @@ const COMPLETED_LINE = `${JSON.stringify({
   },
 })}\n`;
 
-/** A drive whose database time already exceeds the per-drive ceiling (`docs/BACKLOG.md` B6). */
+/** A drive whose database time already exceeds the per-drive ceiling (backlog B6). */
 const OVERSPENT_LINE = `${JSON.stringify({
   kind: "event",
   event: {
@@ -1747,7 +1747,7 @@ describe("AgentRail", () => {
    * The case a user actually hits: an operator enables the runtime and starts a run
    * before configuring a model. The drive dies before the loop, and what the rail
    * used to show was a run sitting at `queued` forever with the reason visible only
-   * in the server log (`docs/BACKLOG.md` B9 means nothing comes back to it either).
+   * in the server log (backlog B9 means nothing comes back to it either).
    */
   test("a run that failed before it started says why, in the app's own words", async () => {
     const failedLine = `${JSON.stringify({

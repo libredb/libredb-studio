@@ -3829,7 +3829,7 @@ describe("PostgresProvider", () => {
     // RisingWave 3.1.0's measured shape: pg_table_size and pg_indexes_size answer, and
     // pg_total_relation_size does not bind. The rows and the two sizes that ARE published
     // survive, and the total comes from PostgreSQL's own definition of it rather than from a
-    // 0 nobody measured (BACKLOG D105).
+    // 0 nobody measured (backlog D105).
     //
     // Measured on RisingWave 3.1.0 on 2026-10-08, one table of two rows:
     //   pg_table_size(relid)           -> 89
@@ -11138,52 +11138,6 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
         // count and must keep reaching the SQLSTATE classifier.
         const outcome = await applyWithEngineError(Object.assign(new Error("boom"), { code: "LB001" }));
         expect(outcome.outcome).toBe("conflict");
-      });
-
-      /**
-       * THE CITATION THE TWO DOCBLOCKS AROUND THIS ARM MAKE, ASSERTED (wave 3 review, finding 2).
-       *
-       * This arm is used outside what `src/lib/db/types.ts` documents it as, and both the provider
-       * and `docs/providers/postgres.md` record that deviation on purpose. The first version of
-       * those two paragraphs also said the residual was "in the backlog". It was not:
-       * `docs/BACKLOG.md` carries no entry for it, the proposal lives in a gitignored work file,
-       * and a reader following either sentence finds nothing. That is the same class as the
-       * dangling `src/lib/audit.ts` citation this same commit was sent to repair, so it gets a
-       * check rather than a correction.
-       *
-       * THE GENERAL FORM RATHER THAN THAT ONE SENTENCE, because a sentence is just reworded next
-       * time. Every mention of the backlog in these two files must NAME the entry, the way
-       * `docs/providers/postgres.md` already names B4 for the cancel mapper, and that entry must
-       * be a heading `docs/BACKLOG.md` really carries. A residual with nowhere to be filed is
-       * recorded in the two files themselves and does not send the reader anywhere else.
-       *
-       * MEASURED before the correction: exactly two sentences failed it, one per file.
-       */
-      test("every backlog mention in this provider and in its doc names an entry docs/BACKLOG.md carries", () => {
-        const read = (file: string) => readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
-        const filed = new Set([...read("docs/BACKLOG.md").matchAll(/^### ([A-Z]+\d+)\./gm)].map((match) => match[1]));
-        // POPULATION CONTROL ON THE BACKLOG ITSELF: a file that moved or changed heading shape
-        // would report every citation below as unfiled, which is a different defect entirely.
-        expect(filed.size).toBeGreaterThan(50);
-        const unfiled: string[] = [];
-        let mentions = 0;
-        for (const file of ["src/lib/db/providers/sql/postgres.ts", "docs/providers/postgres.md"]) {
-          // Comment markers off and wrapped lines rejoined, so a claim spread over four comment
-          // lines is ONE sentence here; then split where a sentence ends.
-          const prose = read(file)
-            .replace(/^[ \t]*(?:\/\/|\*\/|\/\*\*?|\*)[ \t]?/gm, "")
-            .replace(/\s*\n\s*/g, " ");
-          for (const sentence of prose.split(/(?<=\.)\s+/)) {
-            if (!/backlog/i.test(sentence)) continue;
-            mentions++;
-            if ([...sentence.matchAll(/\b([A-Z]+\d+)\b/g)].some((match) => filed.has(match[1]))) continue;
-            unfiled.push(`${file} :: ${sentence.trim().slice(0, 160)}`);
-          }
-        }
-        // AND THE CONTROL THAT KEEPS THE ASSERTION ABOVE NON-VACUOUS: two files with no mention of
-        // the backlog at all would satisfy it while checking nothing.
-        expect(mentions).toBeGreaterThan(0);
-        expect(unfiled).toEqual([]);
       });
     });
 

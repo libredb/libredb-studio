@@ -472,7 +472,7 @@ describe("LibSQLProvider credentials", () => {
   });
 
   test("drops the user of a connection whose connection string does not parse, so it sends no Basic header", async () => {
-    // The string is ignored and the host and port fields are used (docs/BACKLOG.md D232), but the user is dropped
+    // The string is ignored and the host and port fields are used (backlog D232), but the user is dropped
     // as on every connection-string path, so the password still goes out as a bearer token.
     const seen = authorizationHeaders();
     const provider = await connected({ user: "dropped", password: "tok-456", connectionString: "not a url" });

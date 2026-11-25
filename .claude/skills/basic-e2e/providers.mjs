@@ -161,7 +161,7 @@ GO
     treePath: ["shopdb", "dbo", "Tables"],
     objects: { customers: "city", orders: "status" },
     queries: sqlQueries("dbo."),
-    // Documented: on SQL Server the gate never fires (docs/AGENT.md, BACKLOG A6).
+    // Documented: on SQL Server the gate never fires (docs/AGENT.md, backlog A6).
     autoExecute: { offered: true, handover: ["applied"] },
   },
 

@@ -77,7 +77,6 @@ describe("docs/DISTRIBUTION.md, Uncaught errors and restarts", () => {
   });
 
   test.each([
-    ["docs/ARCHITECTURE.md", [`ends the process with exit code ${C}`, `\`bun dev\` ends with code ${C}`]],
     ["docs/HELM_CHART.md", [`uncaught exception exits with code ${C}`]],
     ["docs/providers/kafka.md", [`the exception ends the process with exit code ${C}`]],
     ["docs/GOVERNANCE.md", []],

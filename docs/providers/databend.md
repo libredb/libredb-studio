@@ -180,7 +180,7 @@ ROLLBACK and logout are never retried.
 
 Databend counts failed sign-ins for a user under a password policy, and five within 15 minutes lock that user for 15 minutes, during which the right password is refused too (measured, L10: the sixth wrong password and then the right one answer HTTP 500 with code 2215).
 Studio retries on its own (the connection pulse, the fleet check, a tree read and a probe sent at once on activation), so the latch lives in the process: once Databend refuses a sign-in, on any request of a statement, its kill, ROLLBACK and logout included, that Studio process sends that password to that server again only after 15 minutes, or after the credential changes.
-Each Studio process holds a latch of its own, so several replicas each send a refused password once per 15 minutes, and five or more can still lock the user ([D252](../BACKLOG.md)).
+Each Studio process holds a latch of its own, so several replicas each send a refused password once per 15 minutes, and five or more can still lock the user (D252).
 A gateway's sign-in refusal latches over any HTTP status, 200 included, and only an answer proves a sign-in, never a refusal.
 Two connections with the same key share the latch, a disconnect does not clear it, and a restart does.
 The key is an HMAC-SHA-256, keyed by random bytes each process draws once, over the scheme, the far end, the SSH bastion route, the user and the password; no secret is kept, and a key seen outside the process cannot be used to test a guessed password.
@@ -256,7 +256,7 @@ The server cuts a page at about 4 MiB of block memory, and display text multipli
 The cap stays at 16 MiB by the owner's decision.
 Every budget was verified on the local fixture.
 Through the Databend Cloud gateway the live check read 100,000 rows whole over the page chain and cut a statement at the 16 MiB budget of answer text; the bounds of one answer, the cell budget and the warning bound were not run there.
-No SQL provider bounds the statement text it is handed ([D249](../BACKLOG.md)).
+No SQL provider bounds the statement text it is handed (D249).
 
 ## 4. Connection
 
@@ -275,7 +275,7 @@ No SQL provider bounds the statement text it is handed ([D249](../BACKLOG.md)).
 The connection-string box is not offered, because it reads `http://` and `https://` as ClickHouse; a pasted address goes into Host, and a DSN goes into Paste URL of a new connection, which fills the fields.
 Paste URL reads `databend://`, `databend+http://` and `databend+https://` as BendSQL reads a DSN: TLS unless `sslmode=disable` (`databend+http://` without TLS), the DSN's port, else 443 with TLS and 80 without, the path as Database and `warehouse=` as Warehouse, or, with no `warehouse=`, the warehouse an older Databend Cloud host names (section 4.4).
 A paste that names a host sets Warehouse, clearing it when the DSN names none, and clears Send the password without TLS, which no DSN carries, so a box ticked for an earlier connection or paste never sends the password in cleartext to the pasted host.
-It keeps a password, user or database the DSN does not carry, so check them after a second paste ([D250](../BACKLOG.md)).
+It keeps a password, user or database the DSN does not carry, so check them after a second paste (D250).
 A spelling Studio does not connect with fills no field and says what to paste instead; a DSN's `sslmode=require` or `sslmode=enable` fills SSL mode verify-system, not the unverified `require` of section 4.3, and says so; and a `tls_ca_file`, or an `sslmode` BendSQL does not read, fills the other fields and says what to set under SSL / TLS:
 
 | Paste | What Studio says |
@@ -508,7 +508,7 @@ The lexer reads a run of `<` in pairs from its start, so after `<<` the `@` open
 The rows from the form feed down are refused inside an array literal too, whose contents are code to both readers.
 The last row is the measured case: without the guard Databend ends the hint at the second `*/` and answers `hidden`, a statement the confirmation gate never saw.
 A plain hint passes: `SELECT /*+ SET_VAR(timezone='UTC') */ now()` is sent.
-Databend's backslash escapes are a fact of the grammar row (`backslashAlwaysEscapes`), so a backslash before a quote never ends a literal in Studio's reading either, and a backslash before a line feed inside a literal leaves it unterminated, as Databend's lexer does ([S2](../BACKLOG.md)).
+Databend's backslash escapes are a fact of the grammar row (`backslashAlwaysEscapes`), so a backslash before a quote never ends a literal in Studio's reading either, and a backslash before a line feed inside a literal leaves it unterminated, as Databend's lexer does (S2).
 
 ### 5.3 The Databend grammar
 
@@ -671,7 +671,7 @@ A backslash always escapes: the string token is `'([^'\\]|\\.|'')*'` and its `"`
 The row bound goes before a trailing `FORMAT` clause, measured on the pinned image over `POST /v1/query`: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
 The confirmation gate asks before `REPLACE` when `ON` follows it (`confirmFormsWhen`), as it asks before `UPDATE` and `DELETE`: measured on the pinned image against a table holding `(1, 'a', 'keep-me')`, `REPLACE INTO t ON (id) VALUES (1, 'new', NULL)`, its `SELECT` form and `REPLACE t ON (id) ...` without `INTO` each left `(1, 'new', NULL)`, and a `REPLACE` without `ON` is 1005 "expecting `ON`".
 So every `REPLACE` that runs asks, unless a `SETTINGS (...)` clause leads it (D246), and a `replace()` call inside a script led by `BEGIN` asks only when an `ON` follows it.
-Databend's other destructive forms still run with no confirmation (section 13, BACKLOG D246).
+Databend's other destructive forms still run with no confirmation (section 13, backlog D246).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
@@ -803,7 +803,7 @@ A kill Databend accepts is answered with the provider's own message, which the m
 
 > Asked Databend to stop the current statement of session [session id].
 
-The Sessions panel does not show that message, and words a kill its own way for every engine ([U98](../BACKLOG.md)).
+The Sessions panel does not show that message, and words a kill its own way for every engine (U98).
 Its kill button opens a "Terminate Session?" dialog, which says the action "will forcefully end the connection and may cause data loss if the session has uncommitted transactions", and a kill that went through is toasted "Session [session id] terminated successfully".
 On Databend the session is not ended: only the statement it is running is stopped, and a session of another client, such as BendSQL, runs its next statement.
 
@@ -852,7 +852,7 @@ The analyze and vacuum cards are never drawn, and are worded true all the same:
 `containerLevels` are Catalog and Database, and `objectKinds` are `table`, `view`, `materialized_view` and `dynamic_table`, each with columns and a SQL source.
 `resumesBilledCompute` is declared when Warehouse is set or the host is Databend Cloud's (section 4.4).
 `schemaRefreshPattern` re-reads the tree after a statement that leads with `CREATE`, `DROP`, `ALTER`, `RENAME`, `UNDROP`, `TRUNCATE` or `REPLACE`.
-MCP's metadata tools and plan mode work; agent execution and MCP `run_read_query` do not run a statement on this type ([B103](../BACKLOG.md)).
+MCP's metadata tools and plan mode work; agent execution and MCP `run_read_query` do not run a statement on this type (B103).
 MCP's `inspect_schema` tells a token that reaches a Databend connection `readOnlyHint: false` and `destructiveHint: false`, since on Databend Cloud a call resumes a suspended warehouse, which bills while it runs (section 4.4); the hint is per engine (`MCP_METADATA_READ_CHANGES_STATE`), so a self-hosted server, which bills nothing, is told the same.
 Import Data has no target on Databend: Studio draws the IMPORT control for every connection, and its dialog writes only into an existing object of a kind that declares `acceptsRowWrites`, which no Databend kind does (section 6.3), or into a table it creates, which the provider withholds by declaring no `createTable`, so it offers only Close and says:
 
@@ -1015,8 +1015,8 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 
 ## 13. Known limitations
 
-- Databend has no read-only session Studio can open, and SELECT-shaped writers exist (`nextval` and six table functions), so there is no agent execution and no MCP `run_read_query` ([B103](../BACKLOG.md)).
-- The confirmation gate does not know most of Databend's destructive forms: `INSERT OVERWRITE`, `OPTIMIZE TABLE ... PURGE`, the `VACUUM` forms, `FLASHBACK TABLE`, `COPY INTO ... PURGE = true`, `REMOVE @stage`, `EXECUTE IMMEDIATE`, `CALL`, a `SETTINGS (...)` clause and the SELECT-shaped writers run with no confirmation ([D246](../BACKLOG.md)); `REPLACE` asks (section 5.9).
+- Databend has no read-only session Studio can open, and SELECT-shaped writers exist (`nextval` and six table functions), so there is no agent execution and no MCP `run_read_query` (B103).
+- The confirmation gate does not know most of Databend's destructive forms: `INSERT OVERWRITE`, `OPTIMIZE TABLE ... PURGE`, the `VACUUM` forms, `FLASHBACK TABLE`, `COPY INTO ... PURGE = true`, `REMOVE @stage`, `EXECUTE IMMEDIATE`, `CALL`, a `SETTINGS (...)` clause and the SELECT-shaped writers run with no confirmation (D246); `REPLACE` asks (section 5.9).
 - A dollar-quoted run tagged other than `$$` (`$name$`) is refused, because Databend reads `$name` as a variable; use `$$`.
 - A form feed is refused anywhere in the text, because it ends a `--` comment in Databend.
 - A stage name (`@...`) holding a backslash, `--`, `/*`, a dollar quote or a bracket is refused, because Databend's stage token takes each into the name while Studio reads a quote, a comment, a literal or an array there; a space ends the name, so a comment can follow it.
@@ -1048,13 +1048,13 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 - The monitoring panels and sums cover the default catalog only.
 - The SQL INSERT export cannot write `Array`, `Map`, `Tuple`, `Bitmap`, `Interval`, geo or `Vector` values: each such row is skipped by name.
 - Import Data has no target on Databend (section 9): load rows with `INSERT` or `COPY INTO` in the editor.
-- A kill stops the session's current statement, not the session, though the Sessions panel's dialog and toast speak of ending it ([U98](../BACKLOG.md)): a session of another client, such as BendSQL, runs its next statement.
+- A kill stops the session's current statement, not the session, though the Sessions panel's dialog and toast speak of ending it (U98): a session of another client, such as BendSQL, runs its next statement.
 - Every budget was verified locally; through Databend Cloud's gateway, on one warehouse, only the 100,000-row read and the 16 MiB budget of answer text ran, and multi-node paging is not run yet.
 - A first statement or Test Connection on a suspended Databend Cloud warehouse fails with the resuming sentence while the resume outlasts the 10-second connect budget, and passes once the warehouse runs (section 4.4).
 - One Studio process runs at most two Databend statements at a time, across every Databend connection and user, the tree, monitoring and connect reads included; a third waits for a slot up to its deadline, and a tree read that waited 10 seconds says the slots stayed busy (section 3.10).
-- A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded ([U97](../BACKLOG.md)).
-- The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy ([D252](../BACKLOG.md)).
-- Driver-based SQL providers hold a whole result with no cell or byte budget, which Databend's provider has ([D247](../BACKLOG.md)), and the pulse of other engines resends a refused password, which the latch prevents here within one Studio process ([D248](../BACKLOG.md)).
+- A seed edited to add a Warehouse while it is open keeps its pulse until the page is reloaded (U97).
+- The sign-in latch is one Studio process's: several replicas each send a refused password once per 15 minutes, so five or more can still lock a user under a password policy (D252).
+- Driver-based SQL providers hold a whole result with no cell or byte budget, which Databend's provider has (D247), and the pulse of other engines resends a refused password, which the latch prevents here within one Studio process (D248).
 
 ## Migration DDL
 

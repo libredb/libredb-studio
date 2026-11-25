@@ -187,7 +187,7 @@ So on Prometheus 3.13.3 each of the four reads reports its own truncation in the
 ### M10. The metric list cap
 
 Measured by `bun probe-prometheus.ts capture` at 2026-09-23T10:16:48.509Z.
-Rule (#1085 M10): 2000 stands unless the live tree or the agent walk shows it wrong; the agent-walk half is M7, settled from the code, because this server holds far fewer names than the cap (`docs/BACKLOG.md` B84).
+Rule (#1085 M10): 2000 stands unless the live tree or the agent walk shows it wrong; the agent-walk half is M7, settled from the code, because this server holds far fewer names than the cap (backlog B84).
 Measured: `label-values-names.json`, the last hour's metric names, holds 344 names.
 Decision: `METRIC_LIST_CAP` = `2000` (candidate `2000`, confirmed): the compose server holds 344 metric names in the last hour, so the cap does not bite here.
 
@@ -245,7 +245,7 @@ A response keeps its body until its socket takes it, and nothing bounds how many
 - `compose-subquery`: M3's subquery `{__name__=~".+"}[1h:1m]` rebuilt from the first 501 label sets of the captured listing `v3.13.3/series-all.json`, with 60 steps 60 s apart, the value of series i at step j being ((i x 7919 + j x 104729) mod 1000003) / 997 as JavaScript writes the float.
 
 Decision: `RESULT_BYTE_BUDGET` = `16777216` (candidate `16777216`, confirmed): every answer completed with 288 MiB of the 384 MiB heap held live, and the one with the least room, `vector-own-labels`, with up to 312 MiB.
-Responses waiting to be sent are outside the budget, and nothing bounds how many wait: with 288 MiB held live, one more request completed beside 0 to 3 of them and, with nothing else live, beside 8 to 13; each time, the run with one more waiting ran out of heap or was killed at the memory limit (`docs/BACKLOG.md` D112).
+Responses waiting to be sent are outside the budget, and nothing bounds how many wait: with 288 MiB held live, one more request completed beside 0 to 3 of them and, with nothing else live, beside 8 to 13; each time, the run with one more waiting ran out of heap or was killed at the memory limit (backlog D112).
 
 ### The lexer's reserved words (#1085 S4)
 

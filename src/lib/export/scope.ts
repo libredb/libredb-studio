@@ -11,7 +11,7 @@ import type { QueryResult } from "@/lib/types";
  * number in it looks like an answer.
  *
  * Saying the count on the button is the cheap half of the fix. The other half — a
- * server-side export that streams the whole result — is `docs/BACKLOG.md` X2.
+ * server-side export that streams the whole result — is backlog X2.
  */
 
 /** Grouped digits, fixed to one locale so the number reads the same everywhere. */

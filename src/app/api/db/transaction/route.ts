@@ -412,8 +412,8 @@ export async function POST(req: NextRequest) {
     // Each database of a server-level connection holds its own transaction (#1530), so ownership is per database.
     const catalog = requestCatalog(body);
 
-    // A query action's own fields, then the server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a
-    // run"), both before any provider is built or the admission gate is asked, so a request either refuses opens
+    // A query action's own fields, then the server's confirmation gate,
+    // both before any provider is built or the admission gate is asked, so a request either refuses opens
     // nothing and runs nothing. BEGIN, COMMIT and ROLLBACK are Studio's own statements and are not classified.
     let query:
       | { readonly sql: string; readonly params: unknown[] | undefined; readonly unconfirmed: boolean }

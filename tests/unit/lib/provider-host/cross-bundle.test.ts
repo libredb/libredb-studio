@@ -1,6 +1,5 @@
 /**
- * One host core across two bundles of one process (docs/providers/CONTRACT.md, clauses C-51 and C-52;
- * docs/ARCHITECTURE.md, "The provider host core"), in the test process.
+ * One host core across two bundles of one process (docs/providers/CONTRACT.md, clauses C-51 and C-52), in the test process.
  *
  * Next.js loads instrumentation, which installs the host core, and each route handler as separate module instances,
  * each with its own copy of Studio's error classes. This file reproduces that with two `Bun.build` bundles of Studio's

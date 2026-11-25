@@ -39,7 +39,7 @@
  *  - **Opening a run is read-then-append with no fencing.** Two concurrent opens
  *    on one caller-supplied id therefore write two headers, and a second header is
  *    permanent corruption to the fold (below) rather than a race one side wins.
- *    Run creation has to be serialized by its caller; `docs/BACKLOG.md` B5 records
+ *    Run creation has to be serialized by its caller; backlog B5 records
  *    that constraint and what would lift it.
  *  - **Every entry passes `assertPersistableState` before it is written**, so the
  *    inertness rule T2 defined is enforced at the only place that can enforce it —
@@ -728,7 +728,7 @@ export class AgentRunStore {
    * **Scope:** the local `AgentLedgerWorld` provides single-process claim
    * serialization. Cross-process/distributed claim atomicity is outside this PR
    * and depends on the future Postgres world implementation (B16); the local
-   * world is single-process by construction, and `docs/BACKLOG.md` B5 records
+   * world is single-process by construction, and backlog B5 records
    * the Postgres case.
    *
    * An expired claim is no claim. The expiry must outlive the run's own deadline,

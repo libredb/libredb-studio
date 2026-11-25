@@ -335,8 +335,8 @@ bun run test:coverage  # coverage report
 <span dir="rtl">ابھی تفصیلی مواد صرف English میں دستیاب ہے:</span>
 
 <ul dir="rtl" align="right">
-<li><span dir="rtl"><a href="docs/ARCHITECTURE.md">Architecture</a> · <a href="docs/DATABASE_PROVIDERS.md">Database providers</a> · <a href="docs/providers/README.md">Engine reference</a></span></li>
-<li><span dir="rtl"><a href="docs/API_DOCS.md">API documentation</a> · <a href="docs/OIDC.md">OIDC configuration</a> · <a href="docs/STORAGE.md">Storage layer</a></span></li>
+<li><span dir="rtl"><a href="docs/DATABASE_PROVIDERS.md">Database providers</a> · <a href="docs/providers/README.md">Engine reference</a></span></li>
+<li><span dir="rtl"><a href="docs/OIDC.md">OIDC configuration</a> · <a href="docs/STORAGE.md">Storage layer</a></span></li>
 <li><span dir="rtl"><a href="docs/HELM_CHART.md">Helm Chart</a> · <a href="docs/CHANNELS.md">Distribution channels</a></span></li>
 </ul>
 

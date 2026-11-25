@@ -610,7 +610,7 @@ describe("diffSchemas: a column's default carries both readings", () => {
 });
 
 // ============================================================================
-// Identity by path below the roots (SF-047, BACKLOG D150)
+// Identity by path below the roots (SF-047, backlog D150)
 // ============================================================================
 
 describe("diffSchemas: objects keyed by their path below the compared roots", () => {

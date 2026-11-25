@@ -17,10 +17,6 @@ const GUARD_BULLET = LIMITS.slice(
   LIMITS.indexOf("- **The HTTP destination guard is opt-in and address-based.**"),
   LIMITS.indexOf("- **A PostgreSQL-wire cancel"),
 );
-const API_ROW =
-  readFileSync(path.join(ROOT, "docs/API_DOCS.md"), "utf8")
-    .split("\n")
-    .find((line) => line.startsWith("| `DB_HTTP_BLOCK_PRIVATE_HOSTS` |")) ?? "";
 
 describe("control 0.6 names the egress decision", () => {
   test.each([
@@ -91,14 +87,11 @@ describe("control 0.6 names the egress decision", () => {
     expect(GUARD_BULLET).toContain("SNMP's agent lookup is covered too");
   });
 
-  test("Known limits lists every engine whose connections pass the guard, and row 0.6 and the API_DOCS row point to it", () => {
+  test("Known limits lists every engine whose connections pass the guard, and row 0.6 points to it", () => {
     expect(GUARD_BULLET).toContain(
       "When enabled, it covers ClickHouse, Druid, Elasticsearch, OpenSearch, Trino, libSQL, Databend, BigQuery, Snowflake, Couchbase, Firestore, Prometheus, MTConnect, RabbitMQ's management API, Qdrant, Weaviate, InfluxDB (InfluxQL), InfluxDB 3 (SQL), S3-compatible object storage and Kubernetes HTTP requests, the dials of RabbitMQ's AMQP, MQTT, Modbus, NETCONF and Sparkplug B, and SNMP's agent lookup,",
     );
     expect(GUARD_BULLET).toContain("That list is complete: an engine it does not name, Kafka included,");
     expect(control).toContain("the engines that Known limits lists under the HTTP destination guard");
-    expect(API_ROW).toContain(
-      '[`SECURITY.md`](./SECURITY.md#known-limits) "Known limits" lists under the HTTP destination guard',
-    );
   });
 });

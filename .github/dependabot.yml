@@ -1,4 +1,4 @@
-# Dependabot version updates (docs/BACKLOG.md C5).
+# Dependabot version updates (backlog C5).
 #
 # Grouping is the whole point of this file. Ungrouped, a repository with ~1170
 # installed packages raises one pull request per package, every one of which has
@@ -156,7 +156,7 @@ updates:
 
       # db2-node 1.0.26 and 1.0.27 intermittently fail a statement with
       # QRYNOPRM on a live Db2, where 1.0.25 passes the live check 8 of 8
-      # (docs/BACKLOG.md P11). Our unit tests mock the driver, so the bump goes
+      # (backlog P11). Our unit tests mock the driver, so the bump goes
       # green in CI, and the weekly production group proposed it again in #1966
       # and #2167, to be held by hand. Only these two versions are ignored, so a
       # later release is still proposed, and it is measured live before it
@@ -166,7 +166,7 @@ updates:
 
       # neo4j-driver-lite 6.3.0 waits for the agent-boundary captures of
       # tests/live/neo4j-agent-captures.ts, which need Neo4j Enterprise, whose
-      # licence only the person running them can accept (docs/BACKLOG.md P13).
+      # licence only the person running them can accept (backlog P13).
       # The weekly production group proposed it in #2167 and again in #2188, to
       # be held by hand each time. Only this version is ignored, so a later
       # release is still proposed, and it is measured before it merges. Remove

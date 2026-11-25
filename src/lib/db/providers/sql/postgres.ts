@@ -2408,7 +2408,7 @@ function tableStatsSql(whereClause: string): string {
 // It reports what pg_class can answer and nothing else. On CockroachDB that is the names alone:
 // measured on the same server, reltuples, pg_table_size(), pg_indexes_size() and
 // pg_total_relation_size() all answer NULL for a table it has, so every figure is absent rather
-// than zero (BACKLOG D105). The names are the point - a row the panel can draw and an action a
+// than zero (backlog D105). The names are the point - a row the panel can draw and an action a
 // user can reach - and a fabricated 0 B beside them would be worse than the empty list was.
 //
 // The live and dead tuple counts have no counterpart in pg_class at all, so they are not
@@ -2438,7 +2438,7 @@ function tableStatsFromClassSql(whereClause: string): string {
 //
 // NOT a 0: a 0 is a measurement, and nobody measured this one. The Storage tab's
 // `tableSizeKnown` gate and the Tables tab both read the absence and draw "N/A", which is
-// the rule BACKLOG D105 states and the reason `tableSizeBytes` is optional at all.
+// the rule backlog D105 states and the reason `tableSizeBytes` is optional at all.
 //
 // Both spellings of the argument, because the two statements name the oid differently:
 // `relid` is the column pg_stat_user_tables publishes, `c.oid` the one pg_class does (#1540).
@@ -2476,7 +2476,7 @@ function sizeBytesOf(raw: unknown): number | undefined {
  * beside a total of 0. Both the Tables tab's Size card and the Storage tab's share gate on
  * `tableSizeBytes` by itself, because until now a measured table size always arrived with a
  * measured total, so that 0 was summed and drawn as "0 B" over a table with bytes in it -
- * the fabricated zero BACKLOG D105 is about, and the one this read exists to stop writing.
+ * the fabricated zero backlog D105 is about, and the one this read exists to stop writing.
  *
  * `undefined` where either part is missing too: there is nothing to add up, and the caller
  * drops the parts with it so those gates read the absence instead of summing the placeholder.

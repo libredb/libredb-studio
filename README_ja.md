@@ -355,8 +355,8 @@ bun run test:coverage  # カバレッジレポート
 
 詳細ドキュメントは現在のところ英語のみです。
 
-- [アーキテクチャ](docs/ARCHITECTURE.md) · [データベースプロバイダ](docs/DATABASE_PROVIDERS.md) · [エンジン別リファレンス](docs/providers/README.md)
-- [APIドキュメント](docs/API_DOCS.md) · [OIDC設定](docs/OIDC.md) · [ストレージ](docs/STORAGE.md)
+- [データベースプロバイダ](docs/DATABASE_PROVIDERS.md) · [エンジン別リファレンス](docs/providers/README.md)
+- [OIDC設定](docs/OIDC.md) · [ストレージ](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [配布チャネル](docs/CHANNELS.md)
 
 ## コントリビューション

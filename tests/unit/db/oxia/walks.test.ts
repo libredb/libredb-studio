@@ -2386,7 +2386,7 @@ describe("a key stored on two shards under different partition keys is one key i
   }
 });
 
-describe("an --index walk shows each shard's copy of a key several shards hold (ruling R38, BACKLOG D224)", () => {
+describe("an --index walk shows each shard's copy of a key several shards hold (ruling R38, backlog D224)", () => {
   for (const order of ORDERS) {
     test(`list --index and range-scan --index answer the key once per shard that holds it (${order})`, async () => {
       const { fake, snapshot } = await fakeOf(order, []);

@@ -700,7 +700,7 @@ How the editor and a multi-statement run record:
 - An `editor` event has `status` `success`, `error` or `cancelled`, `row_count` when the engine reported a count, and `access_level`, the level of the grant the statement ran with.
   An editor statement whose caller left while it ran, or whose server deadline passed (its statement timeout plus 10 s), is recorded when Studio stops waiting for it: `cancelled` with code `QUERY_CANCELLED` for a caller that left, and `error` with code `TIMEOUT_ERROR` at the deadline.
   The statement may still have run after that moment, and its own later end records nothing.
-  An editor statement whose caller left while its connection opened, or whose connection did not open within its engine's connect budget, is recorded the same way, `cancelled` with `QUERY_CANCELLED` or `error` with `TIMEOUT_ERROR`, although nothing reached the database: the answer says so with `outcome: "not-sent"` ([API reference](API_DOCS.md)).
+  An editor statement whose caller left while its connection opened, or whose connection did not open within its engine's connect budget, is recorded the same way, `cancelled` with `QUERY_CANCELLED` or `error` with `TIMEOUT_ERROR`, although nothing reached the database: the answer says so with `outcome: "not-sent"`.
 - The `multi-query` events of one request share one `correlation_id`, a UUIDv7, and `unit_index` counts its units from 0.
   A run stops at its first failing unit, so the units after it leave no row.
 - A request for a well-formed `seed:` id that Studio refuses before anything runs records one `refused` event with the refusal's API code in `error_code`.

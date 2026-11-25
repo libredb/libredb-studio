@@ -357,8 +357,8 @@ bun run test:coverage  # отчёт о покрытии
 
 Подробные материалы пока есть только на английском:
 
-- [Архитектура](docs/ARCHITECTURE.md) · [Провайдеры баз данных](docs/DATABASE_PROVIDERS.md) · [Справочник по СУБД](docs/providers/README.md)
-- [Документация по API](docs/API_DOCS.md) · [Настройка OIDC](docs/OIDC.md) · [Слой хранения](docs/STORAGE.md)
+- [Провайдеры баз данных](docs/DATABASE_PROVIDERS.md) · [Справочник по СУБД](docs/providers/README.md)
+- [Настройка OIDC](docs/OIDC.md) · [Слой хранения](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [Каналы распространения](docs/CHANNELS.md)
 
 ## Участие в разработке

@@ -27,7 +27,7 @@ import type { McpToolCall } from "../context";
  * once the deadline has passed is the deadline, answered as the deadline timer's own answer is, so which of the two
  * settles first never changes what the client reads.
  * The deadline race stops the wait for a statement, not the statement: no provider can cancel a read-only statement
- * yet (docs/BACKLOG.md D128).
+ * yet (backlog D128).
  * An acquisition waits within the call too (`acquireWithinCall`): the factory's open is handed the call's wait, so the
  * host's open releases the call at the same moment the race stops waiting (docs/providers/CONTRACT.md, clause C-81).
  * The schema reads, inspect_schema's and the database choice's, are host core tree calls within the call too

@@ -140,7 +140,7 @@ export function typedConfirmationExpected(
  * 1. The target, by `runnableTarget` under the connection's editor language, terminator and grammar: a non-blank
  *    selection, then the caret's statement, then the whole text, which the range then covers.
  * 2. A target that holds no code is nothing to run. The web editor sends such a target, after asking first where it is
- *    an unclosed comment, which is the one place the two differ in what reaches the engine (`docs/BACKLOG.md` U200).
+ *    an unclosed comment, which is the one place the two differ in what reaches the engine (backlog U200).
  * 3. The connection type's refusal, before anything else is asked of the statement.
  * 4. The route, and whether the confirmation gate asks; a statement it does not ask about runs.
  * 5. What the person types, and whether part of the statement could not be read. A name to type on a connection with
@@ -224,7 +224,7 @@ export function confirmationVerdict(
 }
 
 /**
- * What the person types before a statement the gate asks about runs on a connection in this environment (BACKLOG U217,
+ * What the person types before a statement the gate asks about runs on a connection in this environment (backlog U217,
  * FND-5 slice 6c).
  *
  * On a `production` connection every such statement is confirmed by typing the connection's name: a row's name ask

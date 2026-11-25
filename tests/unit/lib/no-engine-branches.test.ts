@@ -23,7 +23,7 @@
  *
  * It also carries the two other rules of the guard it replaces (#1822): `src/components/CreateTableModal.tsx` knows
  * no engine, and the removed `supportsCreateTable` flag is named nowhere under `src/`, `tests/` or `docs/`, apart
- * from this file and the history in `docs/BACKLOG.md`.
+ * from this file and the history in the backlog.
  */
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
@@ -658,7 +658,7 @@ describe("the Create Table form knows no engine (#1822)", () => {
 
 describe("the removed supportsCreateTable flag (#1822)", () => {
   test("is named nowhere under src, tests or docs", () => {
-    const exempt = new Set([THIS_FILE, "docs/BACKLOG.md"]);
+    const exempt = new Set([THIS_FILE]);
     const named = listedFiles("src", "tests", "docs")
       .filter((path) => !exempt.has(path))
       .filter((path) => readFileSync(join(ROOT, path), "utf8").includes("supportsCreateTable"));

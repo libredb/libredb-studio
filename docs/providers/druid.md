@@ -602,7 +602,7 @@ envelope at its closing brace, whose position is known because `JSON.stringify` 
 > The floor has since moved to `">=24.0.0"` (issue #326), so `JSON.rawJSON` is now available on every
 > supported runtime. The hand-serializer is kept rather than rewritten: it is covered, it is not the
 > bottleneck, and swapping a correctness-critical escaping path deserves its own change with its own
-> tests. Tracked in `docs/BACKLOG.md`.
+> tests. Tracked in the backlog.
 Everything that is not a `bigint` still goes through `JSON.stringify`, so user strings are escaped by
 the runtime rather than by us.
 
@@ -1025,7 +1025,7 @@ A quote after a backslash in a `'…'` literal is unresolved to the span reader,
 A `"…"` run holding a line feed is one name to the span reader, while Druid refuses it, because its quoted identifier excludes `\n` and `\r`.
 A backtick run is a name to the span reader, while Druid refuses the character: ``SELECT 1 AS `a` `` is a lexical error.
 An untagged `$$` run is a dollar string to the span reader, while Druid reads `$` as an identifier character (`SELECT $$x$$ AS a` is "Column '$$x$$' not found"), so text the run holds is refused with it, or, after a `--` or `//` inside the run, is a comment Druid reads where the span reader reads code; Druid SQL has no statement that writes ([§5.5](#55-druid-sql-cannot-write-and-the-server-says-so-clearly)), so the most such a run can cost is a bound.
-That reading is not fail-safe: `SELECT id AS $$ FROM libredb_demo -- $$` gets its `LIMIT` appended after the `-- $$`, inside Druid's comment, and the limiter still reports a bounded read (docs/BACKLOG.md S3).
+That reading is not fail-safe: `SELECT id AS $$ FROM libredb_demo -- $$` gets its `LIMIT` appended after the `-- $$`, inside Druid's comment, and the limiter still reports a bounded read (backlog S3).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `none`: a redacted statement is stored as `?`, because no Druid SQL redaction reader exists, and a reader guessing where a literal ends can store the literal.
 
@@ -1447,7 +1447,7 @@ transport change rather than a source read:
   which is a refusal sentence this provider does not have today.
 
 That last one is the reason `lookup` is a **deferral and not an absence**, and it is filed in
-[`docs/BACKLOG.md`](../BACKLOG.md) with this measurement rather than only here.
+the backlog with this measurement rather than only here.
 
 #### Object edit (#789): nothing to write, for the same reason there is nothing to read
 
@@ -1640,8 +1640,7 @@ request reaches it: `/api/db/maintenance`
 ([route.ts](../../src/app/api/db/maintenance/route.ts)) reads Druid's engine facets row, which offers
 no maintenance operation ([Engine facets](#engine-facets)), and refuses every operation by name with
 `400 FACET_NOT_OFFERED` before it builds a provider or opens a connection. So the message below is what a *programmatic* caller of the
-`@libredb/studio` package sees, not what the HTTP API returns — `docs/API_DOCS.md` documents the
-route's own wording. It throws a `QueryError` naming the reason:
+`@libredb/studio` package sees, not what the HTTP API returns: the route words it its own way. It throws a `QueryError` naming the reason:
 
 > Druid has no SQL-reachable maintenance operation, so "\<type\>" cannot run here. Compaction and
 > retention are Coordinator and task concerns, and Druid publishes no catalog of running queries to
@@ -2084,7 +2083,6 @@ The refusal reason it prints, verbatim:
 - Connection form config: [`src/lib/db/engine-declarations/druid.json`](../../src/lib/db/engine-declarations/druid.json), composed by [`src/lib/db/connection-form.ts`](../../src/lib/db/connection-form.ts)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`--profile druid`)
 - Tests: [`tests/integration/db/druid-provider.test.ts`](../../tests/integration/db/druid-provider.test.ts) · [`tests/unit/db/druid/`](../../tests/unit/db/druid/) · [`tests/unit/lib/explain/druid-native.test.ts`](../../tests/unit/lib/explain/druid-native.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Tracking issue: [#265 — Add Apache Druid provider](https://github.com/libredb/libredb-studio/issues/265)
 - Druid SQL: <https://druid.apache.org/docs/latest/querying/sql>
 - SQL HTTP endpoint and result formats: <https://druid.apache.org/docs/latest/api-reference/sql-api>
@@ -2146,7 +2144,7 @@ Measured in capture 08: a statement over datasources plans into a native query w
 So the statement is sent only when `RESOURCES` lists only datasources, and the plan is either a native plan whose every dataSource is one of those types, every table among them one `RESOURCES` lists, with no lookup anywhere in it, or a Calcite plan whose every scan reads `INFORMATION_SCHEMA`, which the server filters to the datasources the user may read; any other plan, and one that cannot be read, refuses the statement before it is sent, naming what the planner says it reads.
 A planner refusal, a datasource the user may not read included (403), is the statement's own, in the server's words.
 The prefix takes a line of its own, so a position the planner names keeps its column one line down, and the provider moves it back a line: measured on 2026-11-02, `SELECT nope` answers `(line [1], column [8])` sent raw, `(line [1], column [25])` after the prefix on the same line, and `(line [2], column [8])` after it on its own line, which the provider hands the agent as line 1, column 8.
-What the planner check cannot see: Druid evaluates `LOOKUP` of a literal key while it plans, and rewrites a filter on `LOOKUP` of a column into one on the keys it maps from, so neither plan shows a lookup (capture 08); there the statement fence, reading the text, is the only layer, which is why MCP's statement read stays closed here ([B151](../BACKLOG.md)).
+What the planner check cannot see: Druid evaluates `LOOKUP` of a literal key while it plans, and rewrites a filter on `LOOKUP` of a column into one on the keys it maps from, so neither plan shows a lookup (capture 08); there the statement fence, reading the text, is the only layer, which is why MCP's statement read stays closed here (B151).
 
 Each statement goes out on a request of its own (`DruidTransport.agentQuery` in [`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)) whose body holds the statement, the array result format and its three header flags, and the context above, in that order and nothing else: no parameter, and no key a previous request named.
 One deadline, the budget's, bounds the engine check, the planner check and the statement together, and the server stops the statement at the same `timeout` (504, category `TIMEOUT`).
@@ -2178,9 +2176,9 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 The overlay overrides no Shared member, so the engine resolves to the `sql` family pack itself for those.
 The column kind reads `INFORMATION_SCHEMA.COLUMNS`, which the server filters to the datasources the user may read (capture 06), leaving the `sys` schema, `INFORMATION_SCHEMA` itself and the `lookup` and `view` schemas out, since an agent statement may not read them, and answers `table_schema`, `table_name`, `column_name`, `data_type`, `is_nullable` and `ordinal_position`; the relation kind answers the same projection the other engines answer with no rows, since a datasource cannot reference another.
 The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: every dimension is indexed inside its segments, and the catalog keeps no row count.
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent composes no estimating plan: the provider's own `EXPLAIN PLAN FOR` before each statement is a check the agent never sees ([B151](../BACKLOG.md)); plan mode drafts here as on every engine.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile (B146), and the `sql-composers` requirement holds query optimization out, since the agent composes no estimating plan: the provider's own `EXPLAIN PLAN FOR` before each statement is a check the agent never sees (B151); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on Druid (`MCP_STATEMENT_READ.druid` is false): a `LOOKUP` of a literal key is kept from a statement by the statement fence alone, since the planner answers its value rather than a lookup, as [B151](../BACKLOG.md) records.
+MCP's statement read stays closed on Druid (`MCP_STATEMENT_READ.druid` is false): a `LOOKUP` of a literal key is kept from a statement by the statement fence alone, since the planner answers its value rather than a lookup, as B151 records.
 
 ### 15.6 Boundary record
 
