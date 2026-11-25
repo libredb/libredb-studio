@@ -13,12 +13,14 @@ import {
   connectPhase,
   CutValueRefusal,
   ExecutionProfileError,
+  OffsetUnsupportedError,
   QueryError,
   ReadAllowanceExceededError,
   RefusedBeforeSendError,
   RowBudgetRefusal,
   SerialisedResultRefusal,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioProfileRefusal,
   StudioRowBudgetRefusal,
   StudioTimeBudgetRefusal,
@@ -1006,6 +1008,12 @@ describe("isStudioRefusal", () => {
     expect(refusal).toBeInstanceOf(ExecutionProfileError);
     expect(refusal.name).toBe("ExecutionProfileError");
     expect(refusal.reasonCode).toBe("AGENT_CREDENTIAL_REQUIRED");
+  });
+
+  test("Studio's refusal of an offset is Studio's, and a provider's OffsetUnsupportedError is not", () => {
+    const sentence = `refused ${crypto.randomUUID()}`;
+    expect(isStudioRefusal(new StudioOffsetRefusal(sentence, "sqlite"))).toBe(true);
+    expect(isStudioRefusal(new OffsetUnsupportedError(sentence, "cassandra"))).toBe(false);
   });
 });
 

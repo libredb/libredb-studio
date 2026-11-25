@@ -28,6 +28,7 @@ export const ERROR_KINDS = [
   "pool-exhausted",
   "query",
   "offset-unsupported",
+  "studio-offset-refusal",
   "refused-before-send",
   "read-allowance-exceeded",
   "row-budget-refusal",
@@ -85,6 +86,11 @@ export const CORE_ERROR_KINDS = [
    * capabilities after connect: a provider declares what it offers, and never discovers a feature by being called.
    */
   "not-offered",
+  /**
+   * Studio's refusal, raised by the legacy bridge before the provider's read path is called, of an offset the
+   * provider's prepare did not apply; a provider raises `offset-unsupported`.
+   */
+  "studio-offset-refusal",
   /**
    * The read allowance is core's budget across an agent run, and core's allowance object raises this refusal: a
    * provider charges the allowance it is handed and lets the refusal pass unchanged, but never constructs one.

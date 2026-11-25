@@ -257,13 +257,33 @@ export class QueryError extends DatabaseError {
  * What `prepareQuery()` raises for a positive offset on an engine whose SQL cannot page a result: Cassandra's CQL and
  * Elasticsearch SQL have no OFFSET clause. A `QueryError`, so the query route answers it as before; its own class, so
  * MCP `run_read_query` answers exactly this refusal as `mcp_offset_unsupported`, in the provider's own sentence behind a
- * notice naming the provider, and every other failure of `prepareQuery()` as the engine's.
+ * notice naming the provider, and every other failure of `prepareQuery()` as the engine's. Studio's own refusal of an
+ * offset a provider's prepare did not apply is its subclass `StudioOffsetRefusal`.
  */
 export class OffsetUnsupportedError extends QueryError {
   constructor(message: string, provider?: DatabaseType, query?: string) {
     super(message, provider, query);
     this.name = "OffsetUnsupportedError";
     Object.setPrototypeOf(this, OffsetUnsupportedError.prototype);
+  }
+}
+
+/**
+ * Studio's refusal of a non-zero offset a legacy provider's `prepareQuery()` did not apply to a read-only statement,
+ * raised by the legacy bridge's read-only statement session before the provider's read path is called, so the first
+ * rows are never answered as the page the offset names (docs/providers/CONTRACT.md, clause C-85). An
+ * `OffsetUnsupportedError`, so a reader of an offset refusal sees it whoever raised it; its own class, so its error
+ * record answers kind `studio-offset-refusal`, outcome `not-sent`, and MCP says it in Studio's words where it answers a
+ * provider's behind a notice naming the provider. Its message is Studio's sentence and names no statement text. Its
+ * `name` stays `OffsetUnsupportedError`, so a log line and a reader of the name see no difference. No provider
+ * constructs it; tests/unit/db/operations/provider-text-census.test.ts holds that.
+ */
+export class StudioOffsetRefusal extends OffsetUnsupportedError {
+  constructor(message: string, provider?: DatabaseType) {
+    super(message, provider);
+    this.name = "OffsetUnsupportedError";
+    this.outcome = "not-sent";
+    Object.setPrototypeOf(this, StudioOffsetRefusal.prototype);
   }
 }
 

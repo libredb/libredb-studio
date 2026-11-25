@@ -46,6 +46,7 @@ const PROVIDER_CODE = join("src", "lib", "db", "providers") + sep;
 const READ_ALLOWANCE = join("src", "lib", "db", "read-allowance.ts");
 const PROVIDER_TEXT = join("src", "lib", "db", "operations", "provider-text.ts");
 const READ_ONLY_STATEMENT = join("src", "lib", "db", "operations", "read-only-statement.ts");
+const LEGACY_BRIDGE = join("src", "lib", "provider-host", "legacy-bridge.ts");
 
 function sourceFiles(directory: string): string[] {
   const found: string[] = [];
@@ -362,6 +363,11 @@ describe("who wrote a refusal", () => {
     ).toBe(true);
     expect(constructed("ReadAllowanceExceededError", (file) => !file.provider).length).toBeGreaterThan(0);
     expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
+  });
+
+  test("only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does", () => {
+    expect(constructed("StudioOffsetRefusal", (file) => file.provider)).toEqual([]);
+    expect(constructed("StudioOffsetRefusal", () => true)).toEqual([`${LEGACY_BRIDGE}: pagedReadOnlyStatement`]);
   });
 
   test("no provider module constructs a Studio budget refusal or StudioTimeoutRefusal", () => {

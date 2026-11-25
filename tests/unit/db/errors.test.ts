@@ -8,6 +8,7 @@ import {
   PoolExhaustedError,
   QueryError,
   OffsetUnsupportedError,
+  StudioOffsetRefusal,
   TimeoutError,
   QueryCancelledError,
   UnknownProviderError,
@@ -312,6 +313,26 @@ describe("OffsetUnsupportedError", () => {
     expect(err.provider).toBe("cassandra");
     expect(err.query).toBe("SELECT * FROM t");
     expect(new QueryError("syntax")).not.toBeInstanceOf(OffsetUnsupportedError);
+  });
+});
+
+describe("StudioOffsetRefusal", () => {
+  test("is an OffsetUnsupportedError only Studio raises, outcome not-sent", () => {
+    const sentence = `refused ${crypto.randomUUID()}`;
+    const err = new StudioOffsetRefusal(sentence, "sqlite");
+    expect(err).toBeInstanceOf(OffsetUnsupportedError);
+    expect(err).toBeInstanceOf(QueryError);
+    expect(err).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect(err.name).toBe("OffsetUnsupportedError");
+    expect(err.message).toBe(sentence);
+    expect(err.code).toBe("QUERY_ERROR");
+    expect(err.provider).toBe("sqlite");
+    expect(err.query).toBeUndefined();
+    expect(err.outcome).toBe("not-sent");
+    expect(errorOutcome(err)).toBe("not-sent");
+    expect(errorKind(err)).toBe("studio-offset-refusal");
+    expect(errorKind(new OffsetUnsupportedError(sentence, "cassandra"))).toBe("offset-unsupported");
+    expect(errorOutcome(new OffsetUnsupportedError(sentence, "cassandra"))).toBe("unknown");
   });
 });
 

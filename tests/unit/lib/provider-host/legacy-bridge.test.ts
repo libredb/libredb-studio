@@ -47,8 +47,8 @@ import {
   type QueryPrepareOptions,
 } from "@/lib/db/types";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
-import { runEditorQuery } from "@/lib/api/editor-query";
-import { providerTextScrub } from "@/lib/db/operations/provider-text";
+import { hostPorts, runEditorQuery } from "@/lib/api/editor-query";
+import { errorRecord, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { engineFacetsFor } from "@/lib/db/engine-facets";
 import { appendedBoundNote } from "@/lib/db/utils/query-limiter";
 import {
@@ -59,7 +59,7 @@ import {
   bridgedScriptUnit,
   bridgedTransactionScriptUnit,
 } from "@/lib/provider-host/legacy-bridge";
-import { StudioProfileRefusal } from "@/lib/db/errors";
+import { OffsetUnsupportedError, StudioOffsetRefusal, StudioProfileRefusal } from "@/lib/db/errors";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type ExecutionUnit, splitExecutionUnits } from "@/lib/sql/statement-splitter";
@@ -1425,7 +1425,7 @@ describe("bridgedReadOnlyStatements", () => {
     expect(bridged.session.readOnlyStatements).toBe(true);
     expect(bridged.session.calls).toEqual({
       console: {
-        execute: { honours: ["readOnly"] },
+        execute: { honours: ["offset", "readOnly"] },
         cancel: "not-offered",
         endScope: "not-offered",
         transaction: "not-offered",
@@ -1456,6 +1456,156 @@ describe("bridgedReadOnlyStatements", () => {
       ),
     );
     expect(failed).toBe(rejection);
+  });
+});
+
+/**
+ * A provider whose read-only statement path answers `answer` and whose prepare answers `prepared`, or throws it when it
+ * is an error, beside a plain path that is never to be called.
+ */
+function pagingFake(prepared: PreparedQuery | Error, answer: QueryResult = resultOf(rowsOf(2))) {
+  const prepareQuery = mock<(...args: unknown[]) => PreparedQuery>(() => {
+    if (prepared instanceof Error) throw prepared;
+    return prepared;
+  });
+  const queryReadOnly = mock<(...args: unknown[]) => Promise<QueryResult>>(async () => answer);
+  return { provider: fake(resultOf([]), { prepareQuery, queryReadOnly }), prepareQuery, queryReadOnly };
+}
+
+function pagedRequest(statement: string, limit: number, offset: number): ExecuteRequest {
+  return freezeData({
+    statement,
+    page: { limit, offset },
+    readOnly: { budget: { maxRows: 11, maxBytes: 2_048 }, mode: "execute" },
+  });
+}
+
+describe("bridgedReadOnlyStatements' page", () => {
+  test("a read-only statement session honours offset, runs the provider's prepare on a bounded page with a fresh copy of it, and sends the statement it prepared to queryReadOnly", async () => {
+    const statement = `SELECT ${marker()}`;
+    const preparedText = `SELECT ${marker()}`;
+    const result = resultOf(rowsOf(4));
+    const { provider, prepareQuery, queryReadOnly } = pagingFake(
+      { query: preparedText, wasLimited: true, limit: 3, offset: 5 },
+      result,
+    );
+    const readAllowance = new RunReadAllowance(5);
+    const bridged = bridgedReadOnlyStatements(provider, { type: "sqlite", statementTimeoutMs: 77, readAllowance });
+    const request = pagedRequest(statement, 3, 5);
+
+    const answer = await bridged.session.execute(request, contextOf());
+
+    expect(callsOf(prepareQuery)).toEqual([[statement, { limit: 3, offset: 5 }]]);
+    const [, options] = callsOf(prepareQuery)[0] as [string, QueryPrepareOptions];
+    expect(options).not.toBe(request.page);
+    expect(Object.isFrozen(options)).toBe(false);
+    expect(callsOf(queryReadOnly)).toEqual([
+      [preparedText, { statementTimeoutMs: 77, maxResultRows: 11, maxResultBytes: 2_048, readAllowance }, "execute"],
+    ]);
+    expect(callsOf(provider.query)).toEqual([]);
+    expect(answer.pageApplied).toBe(true);
+    expect(bridged.answered()).toBe(result);
+    expect(bridged.pumpLimits(answer)).toEqual({
+      maxRows: 4,
+      maxBytes: PAGE_MAX_BYTES,
+      batchMaxBytes: BATCH_MAX_BYTES,
+    });
+  });
+
+  test("a bounded page the prepare did not apply with no offset sends the prepared statement and answers its page not applied", async () => {
+    const statement = `SELECT ${marker()} LIMIT 2`;
+    const preparedText = `SELECT ${marker()}`;
+    const { provider, prepareQuery, queryReadOnly } = pagingFake({
+      query: preparedText,
+      wasLimited: false,
+      limit: 3,
+      offset: 0,
+    });
+    const bridged = bridgedReadOnlyStatements(provider, { type: "sqlite", statementTimeoutMs: 10 });
+
+    const answer = await bridged.session.execute(pagedRequest(statement, 3, 0), contextOf());
+
+    expect(callsOf(prepareQuery)).toEqual([[statement, { limit: 3, offset: 0 }]]);
+    expect(callsOf(queryReadOnly).map(([sent]) => sent)).toEqual([preparedText]);
+    expect(answer.pageApplied).toBe(false);
+  });
+
+  test("an offset the provider's prepare did not apply is refused as Studio's own refusal, not-sent, and no read-only path is called", async () => {
+    const statement = `SELECT ${marker()} LIMIT 2`;
+    const { provider, prepareQuery, queryReadOnly } = pagingFake({
+      query: statement,
+      wasLimited: false,
+      limit: 3,
+      offset: 5,
+    });
+    const bridged = bridgedReadOnlyStatements(provider, { type: "sqlite", statementTimeoutMs: 10 });
+
+    const refused = await failure(() => bridged.session.execute(pagedRequest(statement, 3, 5), contextOf()));
+
+    expect(refused).toBeInstanceOf(StudioOffsetRefusal);
+    expect(refused).toBeInstanceOf(OffsetUnsupportedError);
+    expect(
+      errorRecord(providerTextScrub({ id: "c", name: "c", type: "sqlite", createdAt: new Date(0) }, "any"), refused),
+    ).toEqual({
+      kind: "studio-offset-refusal",
+      code: "QUERY_ERROR",
+      outcome: "not-sent",
+    });
+    expect((refused as Error).message).toBe(
+      'The "sqlite" provider did not apply offset 5 to this statement, so Studio did not send it: its first rows would have been answered as the page that offset names.',
+    );
+    expect((refused as Error).message).not.toContain(statement);
+    expect(callsOf(prepareQuery)).toHaveLength(1);
+    expect(callsOf(queryReadOnly)).toEqual([]);
+    expect(callsOf(provider.query)).toEqual([]);
+  });
+
+  test("a refusal or failure the prepare raises passes by reference, and no read-only path is called", async () => {
+    const cases = [new OffsetUnsupportedError(marker(), "sqlite"), new TypeError(marker())].map((raised) =>
+      Object.assign(pagingFake(raised), { raised }),
+    );
+
+    const failed = await Promise.all(
+      cases.map(({ provider }) =>
+        failure(() =>
+          bridgedReadOnlyStatements(provider, { type: "sqlite", statementTimeoutMs: 10 }).session.execute(
+            pagedRequest(`SELECT ${marker()}`, 3, 5),
+            contextOf(),
+          ),
+        ),
+      ),
+    );
+
+    cases.forEach(({ raised, provider, queryReadOnly }, index) => {
+      expect(failed[index]).toBe(raised);
+      expect(callsOf(queryReadOnly)).toEqual([]);
+      expect(callsOf(provider.query)).toEqual([]);
+    });
+  });
+
+  test("a read-only execute with an offset reaches the bridged read-only statement session through the host core", async () => {
+    const statement = `SELECT ${marker()}`;
+    const preparedText = `SELECT ${marker()}`;
+    const { provider, prepareQuery, queryReadOnly } = pagingFake(
+      { query: preparedText, wasLimited: true, limit: 3, offset: 5 },
+      resultOf(rowsOf(3)),
+    );
+    const bridged = bridgedReadOnlyStatements(provider, { type: "sqlite", statementTimeoutMs: 10 });
+
+    const record = await createHostCore().executeCall(
+      bridged.session,
+      pagedRequest(statement, 3, 5),
+      contextOf(),
+      bridged.pumpLimits,
+      hostPorts("/test"),
+    );
+
+    if (record.kind !== "page") throw new Error(`The execute answered ${record.kind}, not a page.`);
+    record.release();
+    expect(record.pageApplied).toBe(true);
+    expect(record.page.rows).toHaveLength(3);
+    expect(callsOf(prepareQuery)).toEqual([[statement, { limit: 3, offset: 5 }]]);
+    expect(callsOf(queryReadOnly).map(([sent]) => sent)).toEqual([preparedText]);
   });
 });
 
