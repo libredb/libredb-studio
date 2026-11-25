@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D920, U17 · 385
+- [Drivers and connections](#drivers-and-connections) — D1-D940, U17 · 386
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5079,11 +5079,23 @@ Found 2026-11-25 while moving MCP's schema reads onto the host core.
 `POST /api/db/multi-query` answers each unit's rows whole in `statements`, and the last successful unit's again as the main result, and the transaction route's script of several statements does the same.
 Every unit but the last is sent unbounded, so `SELECT * FROM big; SELECT 1` answers every row of `big`.
 The host core measures each unit's first result within its 32 MiB page (`openEditorScript` in `src/lib/api/editor-script.ts`, clause C-83 of `docs/providers/CONTRACT.md`), but the answer is the provider's rows, since a script's answer has no field to say where a cut fell.
+The transaction route's script measures each unit within its page the same way (`openTransactionScript`, clause C-84), and answers the provider's rows too.
 It is not new with the host core: the route has answered so since it existed.
 
 Found 2026-11-25 while moving the script's units onto the host core.
 
 **Done when:** a script's answer bounds each unit's rows by the host's page and says so per unit in a field the editor shows, or the owner decides that the provider's statement is the bound and the API documentation says so, with a test either way.
+
+### D940. `POST /api/db/transaction` answers 500 for a malformed connection `queryTimeout` on begin, commit and rollback
+
+The route reads no `queryTimeout` for `begin`, `commit` and `rollback`: `executeDeadline` in `src/lib/api/editor-query.ts` reads the provider's configured value, and a value that is not a number makes the deadline NaN.
+The provider host then refuses to build the call's deadline signal, and the route answers 500 `INTERNAL_ERROR` "The call deadline must be a finite number of epoch milliseconds." (measured with a stand-in configured `queryTimeout: "abc"`).
+The `query` action refuses the same connection with the query route's 400 sentence since the script's statements moved onto the host core (clause C-84 of `docs/providers/CONTRACT.md`), and the `status` action waits on the cleanup deadline and is unaffected.
+It is not new with that move: `begin`, `commit` and `rollback` have answered so since they moved onto the host core.
+
+Found 2026-11-25 while moving the transaction route's script onto the host core.
+
+**Done when:** every action that sends a statement refuses a malformed connection `queryTimeout` with the query route's 400 sentence before the open, with a route test for each.
 
 ## Value interpolation
 

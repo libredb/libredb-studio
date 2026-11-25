@@ -30,6 +30,8 @@ import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
  * execute call, on the core the process's composition root installed, read before anything else in every call. Each
  * call builds a fresh request and context, so the core freezes nothing a caller holds, and the facade keeps no state:
  * every outcome carries the session state its own call answered, never one kept from an earlier call (clause C-58).
+ * A script of several statements inside the transaction runs its units through `openTransactionScript` in
+ * src/lib/api/editor-script.ts (clause C-84), whose stopped unit is this module's `UnansweredCall`.
  *
  * Deadlines (clause C-59). A begin, a COMMIT, a ROLLBACK and a statement wait until `executeDeadline`, the statement
  * timeout plus `EXECUTE_SLACK_MS`, and the state read until `CLEANUP_DEADLINE_MS`, each also ended by the caller's

@@ -6,11 +6,14 @@
  * seconds; the child holds a referenced interval, so Node cannot exit early on the unsettled statement
  * (tests/helpers/bounded-node-child.ts).
  *
+ * A unit of a script inside a transaction (clause C-84) whose `queryInTransaction` never settles is held to the same
+ * rule in a second case of the same child.
+ *
  * `editor-script.test.ts` holds the same rule with a short real deadline settled by a plain await.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import path from "node:path";
-import type { openEditorScript } from "@/lib/api/editor-script";
+import type { openEditorScript, openTransactionScript } from "@/lib/api/editor-script";
 import type { createHostCore } from "@/lib/provider-host/core/host-core";
 import type { installHostCore } from "@/lib/provider-host/instance";
 import type { splitExecutionUnits } from "@/lib/sql/statement-splitter";
@@ -18,6 +21,7 @@ import { boundedChild } from "../../../helpers/bounded-node-child";
 
 interface ChildDeps {
   readonly openEditorScript: typeof openEditorScript;
+  readonly openTransactionScript: typeof openTransactionScript;
   readonly createHostCore: typeof createHostCore;
   readonly installHostCore: typeof installHostCore;
   readonly splitExecutionUnits: typeof splitExecutionUnits;
@@ -28,12 +32,12 @@ const SRC = path.join(import.meta.dir, "..", "..", "..", "..", "src");
 const child = boundedChild({
   label: "editor-script-bounds",
   imports: [
-    { from: path.join(SRC, "lib", "api", "editor-script.ts"), names: ["openEditorScript"] },
+    { from: path.join(SRC, "lib", "api", "editor-script.ts"), names: ["openEditorScript", "openTransactionScript"] },
     { from: path.join(SRC, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SRC, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
     { from: path.join(SRC, "lib", "sql", "statement-splitter.ts"), names: ["splitExecutionUnits"] },
   ],
-  runCase: async (deps: ChildDeps) => {
+  runCase: async (deps: ChildDeps, name: string) => {
     deps.installHostCore(deps.createHostCore(), "test");
     // A statement timeout of 1 ms, so the unit's deadline is 10,001 ms after its start.
     const provider = {
@@ -41,18 +45,26 @@ const child = boundedChild({
       config: { id: "c1", name: "Prod", type: "postgres", host: "db", queryTimeout: 1 },
       query: () => new Promise<never>(() => {}),
       prepareQuery: (query: string) => ({ query, wasLimited: false, limit: 500, offset: 0 }),
-    } as unknown as Parameters<typeof deps.openEditorScript>[0];
-    const script = deps.openEditorScript(provider, {
-      units: deps.splitExecutionUnits("SELECT 1; SELECT 2"),
-      dialect: "postgres",
-      options: {},
-      signal: new AbortController().signal,
-      route: "bounds",
-    });
-    const outcome = await script.runUnit(0, (result) => result, Date.now() - 10_001 + 50);
-    return outcome.kind === "failed"
-      ? `${(outcome.error as Error).name}: ${(outcome.error as Error).message}`
-      : "answered";
+      beginTransaction: async () => {},
+      commitTransaction: async () => {},
+      rollbackTransaction: async () => {},
+      isInTransaction: () => true,
+      queryInTransaction: () => new Promise<never>(() => {}),
+    } as unknown as Parameters<typeof deps.openTransactionScript>[0];
+    const units = deps.splitExecutionUnits("SELECT 1; SELECT 2");
+    const signal = new AbortController().signal;
+    const start = Date.now() - 10_001 + 50;
+    const outcome =
+      name === "transaction-never-answers"
+        ? await deps
+            .openTransactionScript(provider, { units, options: {}, signal, route: "bounds" })
+            .runUnit(0, (result) => result, start)
+        : await deps
+            .openEditorScript(provider, { units, dialect: "postgres", options: {}, signal, route: "bounds" })
+            .runUnit(0, (result) => result, start);
+    return outcome.kind === "answered"
+      ? "answered"
+      : `${outcome.kind} ${(outcome.error as Error).name}: ${(outcome.error as Error).message}`;
   },
   heapLimitMiB: 256,
   timeoutMs: 3_000,
@@ -69,7 +81,13 @@ afterAll(() => {
 describe("a script unit in a bounded child", () => {
   test("a script unit whose provider never answers ends at its deadline in the statement's timeout refusal", async () => {
     expect(await child.run<unknown>("never-answers")).toBe(
-      "TimeoutError: The statement did not answer within its timeout of 0.1 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+      "failed TimeoutError: The statement did not answer within its timeout of 0.1 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
+    );
+  });
+
+  test("a unit of a script inside a transaction whose provider never answers ends at its deadline in the statement's timeout refusal", async () => {
+    expect(await child.run<unknown>("transaction-never-answers")).toBe(
+      "unanswered TimeoutError: The statement did not answer within its timeout of 0.1 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
     );
   });
 });
