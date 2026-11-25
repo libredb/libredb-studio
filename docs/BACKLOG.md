@@ -4962,15 +4962,6 @@ The other engines whose tree reads the server read it on a metadata session of t
 
 **Done when:** the session limits of at least two real NETCONF implementations are measured, and NETCONF's row follows the measurement, with a test that a tree read answers while an editor request is pending where a second session is admitted.
 
-### D710. A monitoring or health read waits behind the editor's statements, because both use the editor's pool
-
-`POST /api/db/monitoring`, `POST /api/db/health` and fleet health's reads (`POST /api/admin/fleet-health`) read on the editor's provider (`editorProvider` in `src/lib/api/editor-provider.ts`, and `getOrCreateProvider` in the fleet health route), so each panel and the health read take a connection from the pool the editor's statements run on.
-Measured on 2026-11-24 against `postgres:18-alpine` with Studio's default pool of 10: with every connection held by a running `SELECT pg_sleep(6)`, the seven-panel monitoring read answered after 5,273 ms and the health read after 5,325 ms, against 46 ms and 17 ms on the connection's metadata session; an owned pool of 3 held by three statements gave 5,276 ms and 5,324 ms.
-A statement that runs longer than the pool's acquire timeout, 60 seconds by default, leaves the dashboard waiting until then, when every panel fails, and the connection pulse reports a server that answers as degraded.
-The Sessions panel, where an administrator looks for what holds the database, is the panel that cannot answer while it is held.
-
-**Done when:** monitoring and health reads on a pooled connection run on a session apart from the editor's pool, except where Studio's record says the connection serves one session, and a test that holds every editor connection shows a monitoring read and a health read answer at once.
-
 ### D711. A kill handed the backend it targets ends its own connection instead of its target
 
 `POST /api/db/maintenance` runs `kill` on the connection's metadata session (`metadataProvider` in `src/lib/api/editor-provider.ts`), and the PostgreSQL and MySQL providers take a client from that session's pool and send `pg_terminate_backend(<pid>)` or `KILL <id>` on it (`runMaintenance` in `src/lib/db/providers/sql/postgres.ts` and `src/lib/db/providers/sql/mysql.ts`), with no check that the client is not the target.
