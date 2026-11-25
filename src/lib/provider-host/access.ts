@@ -23,7 +23,9 @@
  *
  * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
  * legacy caller asks for and is sent a scope only where it offers `console.endScope`, so no provider can cause one: a
- * plain `Error` naming each refusal's sentence, answered 500.
+ * `HostDefectError` naming each refusal's sentence and carrying the refusals, answered 500. On a provider package's
+ * session a refusal of what the package answered (a batch, a row, a refinement) is the package's defect instead, which
+ * the query route reads from those refusals (`packageCallError` in src/lib/api/package-errors.ts).
  */
 import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import {
@@ -43,6 +45,20 @@ const QUERY_CANCELLED_SENTENCE = "The query was cancelled.";
 /** The words that open the message of a refusal only a defect of Studio's own bridge can cause. */
 export const HOST_DEFECT_PREFIX =
   "Studio's provider bridge made a call the provider host refused, which is a defect of Studio:";
+
+/**
+ * The error of a refusal no row of the accessor reads, its message `HOST_DEFECT_PREFIX` and each refusal's sentence.
+ * Its class is Studio's own and outside a provider package's closure, so a package cannot build one.
+ */
+export class HostDefectError extends Error {
+  /** The refusals the host core answered, each naming its rule. */
+  readonly refusals: readonly CallRefusal[];
+
+  constructor(refusals: readonly CallRefusal[]) {
+    super(`${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`);
+    this.refusals = refusals;
+  }
+}
 
 /** What the accessor reads of the call's caller. */
 export interface CallerView {
@@ -143,7 +159,7 @@ function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () =
   }
   const notOffered = notOfferedError(refusals);
   if (notOffered !== undefined) return notOffered;
-  return new Error(`${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`);
+  return new HostDefectError(refusals);
 }
 
 /** The error a refused record answers, this bundle's class. */

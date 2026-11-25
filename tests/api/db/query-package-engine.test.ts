@@ -343,6 +343,45 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub", async () => {
+    const connection = connectionOf(MAIN);
+    const secret = connection.password as string;
+    const words = `words the package wrote ${randomUUID()}`;
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      hooksFor(MAIN, {
+        execute: () =>
+          Promise.resolve({
+            results: [source([["alpha", 1]])],
+            warnings: [
+              { message: `deprecated, as ${secret} said`, code: "W01", severity: "WARNING" },
+              { message: words },
+            ],
+            executionTimeMs: 1,
+            pageApplied: false,
+          }),
+      });
+      const answered = await post({ connection, sql: "SELECT 1" });
+      expect(answered.status).toBe(200);
+      expect(answered.body.warnings).toEqual([
+        { message: "The provider package returned 2 warnings; the server's log holds their words." },
+      ]);
+      expect(JSON.stringify(answered.body)).not.toContain(words);
+      expect(JSON.stringify(answered.body)).not.toContain(secret);
+
+      const lines = warn.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
+      expect(lines.map(([message]) => message)).toEqual([
+        "A provider package's execute returned a warning",
+        "A provider package's execute returned a warning",
+      ]);
+      expect(JSON.stringify(lines)).toContain(words);
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+    } finally {
+      warn.mockRestore();
+      hooksFor(MAIN);
+    }
+  });
+
   test("the session is opened once per key and reused by the next query", async () => {
     const seen = hooksFor(BARE);
     const connection = connectionOf(BARE);
