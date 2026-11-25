@@ -30,9 +30,12 @@ import {
   DIGEST_FORM,
   ENGINE_ID_FORM,
   ENTRY_FORM,
+  IMPORT_FROM_FORM,
+  IMPORT_SPECIFIER_FORM,
   LOCK_BYTE_CAP,
   LOCK_ENGINE_CAP,
   LOCK_ENTRY_CAP,
+  LOCK_IMPORT_CAP,
   type LockEntry,
   PACKAGE_NAME_FORM,
   PACKAGE_VERSION_FORM,
@@ -137,7 +140,7 @@ function lockRefusal(providers: string): { rule: string; pointer?: string; key?:
 
 /** A lock entry of the right form whose directory need not exist. */
 function entry(name: string, engines: readonly string[], digest = UNMATCHED_DIGEST): LockEntry {
-  return { name, version: "1.0.0", engines, entry: "dist/index.mjs", digest, source: "local" };
+  return { name, version: "1.0.0", engines, entry: "dist/index.mjs", digest, source: "local", imports: [] };
 }
 
 /** A lock whose text is the JSON of `value`. */
@@ -334,6 +337,63 @@ describe("the digest the lock pins", () => {
         { "acme-digest": "PROVIDER_DIGEST_MISMATCH digest-differs" },
       ]);
     }
+  });
+
+  test("the digest covers the import record, so a record edited without its files is refused as PROVIDER_DIGEST_MISMATCH", () => {
+    const pkg: FixturePackage = {
+      ...fixture("acme-record"),
+      files: {
+        "dist/index.mjs": 'import { extra } from "./extra.mjs";\nexport default { extra };\n',
+        "dist/extra.mjs": 'import "node:fs";\nexport const extra = 1;\n',
+      },
+    };
+    const providers = freshProviders();
+    writeArtifact(providers, pkg);
+    const locked = lockEntryOf(providers, pkg);
+    expect(locked.imports).toEqual([
+      { from: "dist/extra.mjs", specifier: "node:fs" },
+      { from: "dist/index.mjs", specifier: "./extra.mjs" },
+    ]);
+    writeLock(providers, [locked]);
+    expect(outcomes(providers)).toEqual({ "acme-record": "verified" });
+
+    const edits: [string, LockEntry["imports"]][] = [
+      ["the record emptied", []],
+      ["a pair removed", locked.imports.slice(1)],
+      ["a pair added", [...locked.imports, { from: "dist/index.mjs", specifier: "node:path" }]],
+      [
+        "a specifier changed",
+        [locked.imports[0] as LockEntry["imports"][number], { from: "dist/index.mjs", specifier: "./other.mjs" }],
+      ],
+    ];
+    for (const [label, imports] of edits) {
+      writeLock(providers, [{ ...locked, imports }]);
+      expect([label, outcomes(providers)]).toEqual([
+        label,
+        { "acme-record": "PROVIDER_DIGEST_MISMATCH digest-differs" },
+      ]);
+    }
+    // The record's order is no difference: the serializer and the digest both sort it.
+    writeLockText(providers, serializeProvidersLock([{ ...locked, imports: [...locked.imports].reverse() }]));
+    expect(outcomes(providers)).toEqual({ "acme-record": "verified" });
+  });
+
+  test("a verified package carries its import record as the lock wrote it, frozen", () => {
+    const pkg: FixturePackage = {
+      ...fixture("acme-carried"),
+      files: { "dist/index.mjs": 'import "./b.mjs";\nimport "node:fs";\nexport default {};\n', "dist/b.mjs": "" },
+    };
+    const providers = lockedProviders(pkg);
+    const only = onlyPackage(providers);
+    expect(only.verified).toBe(true);
+    if (!only.verified) return;
+    expect(only.imports).toEqual([
+      { from: "dist/index.mjs", specifier: "./b.mjs" },
+      { from: "dist/index.mjs", specifier: "node:fs" },
+    ]);
+    expect(Object.isFrozen(only.imports)).toBe(true);
+    expect(only.imports.every((pair) => Object.isFrozen(pair))).toBe(true);
+    expect(only.digest).toBe(artifactDigest(only.files, only.imports));
   });
 
   test("a byte changed in any file of an artifact is refused at the next read, and nothing is kept between reads", () => {
@@ -640,6 +700,114 @@ describe("the lock's format", () => {
     );
   });
 
+  test("a lock entry's import record is closed and capped, each pair in its forms and listed once", () => {
+    expect([LOCK_IMPORT_CAP, IMPORT_FROM_FORM.maxLength, IMPORT_SPECIFIER_FORM.maxLength]).toEqual([4096, 1024, 1024]);
+    const providers = freshProviders();
+    const withImports = (imports: unknown): string =>
+      JSON.stringify({ lockVersion: 1, entries: [{ ...VALID_ENTRY, imports }] });
+    const pair = { from: "dist/index.mjs", specifier: "./a.mjs" };
+    const withoutImports = Object.fromEntries(Object.entries(VALID_ENTRY).filter(([key]) => key !== "imports"));
+
+    // The count is checked before any item is read: 4,097 items that are not pairs are refused as too-many.
+    lockOf(providers, { lockVersion: 1, entries: [{ ...VALID_ENTRY, imports: Array(LOCK_IMPORT_CAP + 1).fill(0) }] });
+    expect(lockRefusal(providers)).toEqual({ rule: "too-many", pointer: "/entries/0/imports" });
+    const atCap = Array.from({ length: LOCK_IMPORT_CAP }, (_, index) => ({ from: "a.mjs", specifier: `./${index}` }));
+    lockOf(providers, { lockVersion: 1, entries: [{ ...VALID_ENTRY, imports: atCap }] });
+    expect(readProvidersLock(providers).read).toBe(true);
+
+    const cases: [string, string, Record<string, string>][] = [
+      [
+        "a lock entry without its record, as #2528's command wrote it",
+        JSON.stringify({ lockVersion: 1, entries: [withoutImports] }),
+        { rule: "missing-key", pointer: "/entries/0", key: "imports" },
+      ],
+      ["a record that is not a list", withImports({}), { rule: "wrong-type", pointer: "/entries/0/imports" }],
+      ["an item that is not a pair", withImports(["./a.mjs"]), { rule: "wrong-type", pointer: "/entries/0/imports/0" }],
+      [
+        "an item's unknown key",
+        withImports([{ ...pair, kind: "import-statement" }]),
+        { rule: "unknown-key", pointer: "/entries/0/imports/0", key: "kind" },
+      ],
+      [
+        "an item's missing key",
+        withImports([{ from: pair.from }]),
+        { rule: "missing-key", pointer: "/entries/0/imports/0", key: "specifier" },
+      ],
+      [
+        "a module path not a string",
+        withImports([{ ...pair, from: 7 }]),
+        { rule: "wrong-type", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "a module path over its length",
+        withImports([{ ...pair, from: `${"a/".repeat(511)}abc` }]),
+        { rule: "out-of-range", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "a module path with a parent segment",
+        withImports([{ ...pair, from: "dist/../index.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "a module path with a dot segment",
+        withImports([{ ...pair, from: "./index.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "an absolute module path",
+        withImports([{ ...pair, from: "/index.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "a module path with a backslash",
+        withImports([{ ...pair, from: "dist\\index.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/from" },
+      ],
+      [
+        "a specifier not a string",
+        withImports([{ ...pair, specifier: null }]),
+        { rule: "wrong-type", pointer: "/entries/0/imports/0/specifier" },
+      ],
+      [
+        "an empty specifier",
+        withImports([{ ...pair, specifier: "" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/specifier" },
+      ],
+      [
+        "a specifier with a space",
+        withImports([{ ...pair, specifier: "./a b.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/specifier" },
+      ],
+      [
+        "a specifier outside printable ASCII",
+        withImports([{ ...pair, specifier: "./é.mjs" }]),
+        { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/specifier" },
+      ],
+      [
+        "a specifier over its length",
+        withImports([{ ...pair, specifier: `./${"a".repeat(1023)}` }]),
+        { rule: "out-of-range", pointer: "/entries/0/imports/0/specifier" },
+      ],
+      [
+        "one pair twice",
+        withImports([pair, { from: "dist/index.mjs", specifier: "node:fs" }, pair]),
+        { rule: "duplicate", pointer: "/entries/0/imports/2" },
+      ],
+    ];
+    for (const [label, text, expected] of cases) {
+      writeLockText(providers, text);
+      expect<unknown>([label, lockRefusal(providers)]).toEqual([label, expected]);
+    }
+    for (const fitting of [
+      [{ from: `${"a/".repeat(511)}a`, specifier: `./${"a".repeat(1022)}` }],
+      [pair, { from: pair.from, specifier: "node:fs" }, { from: "dist/a.mjs", specifier: "./a.mjs" }],
+      [{ from: "dist/.hidden.mjs", specifier: "#internal" }],
+    ]) {
+      writeLockText(providers, withImports(fitting));
+      expect([fitting, readProvidersLock(providers).read]).toEqual([fitting, true]);
+    }
+  });
+
   test("a missing providers directory or lock, or one of the wrong kind, is refused as PROVIDER_LOCK_INVALID", () => {
     const parent = freshProviders();
     expect(lockRefusal(path.join(parent, "absent"))).toEqual({ rule: "directory-missing" });
@@ -891,10 +1059,11 @@ describe("what a refusal carries", () => {
           version: "2.1.0",
           engines: ["acmeanswereda", "acmeansweredb"],
           source: "local",
-          digest: artifactDigest(walked.files),
+          digest: artifactDigest(walked.files, []),
           directory,
           entryFile: path.join(directory, "dist", "index.mjs"),
           files: walked.files,
+          imports: [],
         },
       ],
     });

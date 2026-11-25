@@ -19,6 +19,7 @@ import {
   scratchDirectory,
   writeArtifact,
 } from "../../helpers/provider-artifacts";
+import { moduleImports } from "../../../scripts/providers-lock";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
@@ -189,6 +190,134 @@ describe("the lock command", () => {
       ].join("\n"),
     );
     expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+  });
+
+  test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {
+    const providers = freshProviders();
+    const pkg: FixturePackage = {
+      name: "acme-scanned",
+      version: "1.0.0",
+      engines: ["acmescanned"],
+      files: {
+        "dist/index.mjs": [
+          'import { a } from "./a.mjs";',
+          'import "node:fs";',
+          'export * from "./b.mjs";',
+          'export { c } from "./c.cjs";',
+          'const later = () => import("./late.mjs");',
+          "const tagged = () => import(`./template.mjs`);",
+          'import { a as again } from "./a.mjs";',
+          "export default { a, later, tagged, again };",
+          "",
+        ].join("\n"),
+        "dist/c.cjs":
+          'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\n',
+        "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
+        "dist/UPPER.MJS": 'import "./upper.mjs";\n',
+        "bin/run.js": '#!/usr/bin/env node\nimport "./main.js";\n',
+        "dist/notes.txt": 'import "./never.mjs";\n',
+        "dist/data.json": '{"import": "./never.mjs"}\n',
+      },
+    };
+    writeArtifact(providers, pkg);
+
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stderr]).toEqual([0, ""]);
+    const lock = JSON.parse(fs.readFileSync(path.join(providers, LOCK_FILE_NAME), "utf8"));
+    expect(lock.entries[0].imports).toEqual([
+      { from: "bin/run.js", specifier: "./main.js" },
+      { from: "dist/UPPER.MJS", specifier: "./upper.mjs" },
+      { from: "dist/c.cjs", specifier: "./dead.cjs" },
+      { from: "dist/c.cjs", specifier: "fs" },
+      { from: "dist/index.mjs", specifier: "./a.mjs" },
+      { from: "dist/index.mjs", specifier: "./b.mjs" },
+      { from: "dist/index.mjs", specifier: "./c.cjs" },
+      { from: "dist/index.mjs", specifier: "./late.mjs" },
+      { from: "dist/index.mjs", specifier: "./template.mjs" },
+      { from: "dist/index.mjs", specifier: "node:fs" },
+      { from: "dist/types.ts", specifier: "./v" },
+    ]);
+    expect(lock.entries[0]).toEqual({ ...lockEntryOf(providers, pkg), engines: ["acmescanned"] });
+    const read = readProvidersLock(providers);
+    expect(read.read && read.packages.map((verified) => [verified.name, verified.verified])).toEqual([
+      ["acme-scanned", true],
+    ]);
+  });
+
+  test("the command refuses a module file its parser cannot read, a specifier outside its form, too many imports and a lock over its byte limit, writing nothing", () => {
+    const providers = freshProviders();
+    const refused: [FixturePackage, string][] = [
+      [
+        { name: "acme-broken", version: "1.0.0", engines: ["acmebroken"], files: { "dist/index.mjs": "import {\n" } },
+        "providers:lock: acme-broken 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+      ],
+      [
+        {
+          name: "acme-form",
+          version: "1.0.0",
+          engines: ["acmeform"],
+          files: { "dist/index.mjs": 'import "./a b.mjs";\n' },
+        },
+        "providers:lock: acme-form 1.0.0: dist/index.mjs: it imports a specifier outside printable ASCII without spaces, or longer than 1024 characters",
+      ],
+      [
+        {
+          name: "acme-many",
+          version: "1.0.0",
+          engines: ["acmemany"],
+          files: {
+            "dist/index.mjs": Array.from({ length: 4097 }, (_, index) => `import "./${index}.mjs";`).join("\n"),
+          },
+        },
+        "providers:lock: acme-many 1.0.0: its module files hold more than 4096 imports",
+      ],
+    ];
+    for (const [pkg] of refused) writeArtifact(providers, pkg);
+    const latin1 = { name: "acme-latin", version: "1.0.0", engines: ["acmelatin"] };
+    fs.writeFileSync(
+      path.join(writeArtifact(providers, latin1), "dist", "index.mjs"),
+      Buffer.from([0x2f, 0x2f, 0xe9, 0x0a]),
+    );
+
+    const run = runCommand("--dir", providers);
+    expect([run.exitCode, run.stdout]).toEqual([1, ""]);
+    expect(run.stderr).toBe(
+      [
+        refused[0]?.[1],
+        refused[1]?.[1],
+        "providers:lock: acme-latin 1.0.0: dist/index.mjs: its parser cannot read it, or it is not UTF-8",
+        refused[2]?.[1],
+        "providers:lock wrote nothing",
+        "",
+      ].join("\n"),
+    );
+    expect(fs.existsSync(path.join(providers, LOCK_FILE_NAME))).toBe(false);
+
+    // One package of 4,096 imports, each of a 250-character specifier, is a lock over 1 MiB.
+    const large = freshProviders();
+    const longName = "a".repeat(240);
+    writeArtifact(large, {
+      name: "acme-large",
+      version: "1.0.0",
+      engines: ["acmelarge"],
+      files: {
+        "dist/index.mjs": Array.from({ length: 4096 }, (_, index) => `import "./${longName}${index}.mjs";`).join("\n"),
+      },
+    });
+    const over = runCommand("--dir", large);
+    expect([over.exitCode, over.stdout, over.stderr]).toEqual([
+      1,
+      "",
+      "providers:lock: the lock would be over its byte limit of 1048576 bytes\nproviders:lock wrote nothing\n",
+    ]);
+    expect(fs.existsSync(path.join(large, LOCK_FILE_NAME))).toBe(false);
+
+    // A module path over 1,024 characters is refused before the file is read. macOS refuses an absolute path that long,
+    // so the listing is handed to the scanner as it stands, never written to disk.
+    const longPath = `${"a/".repeat(511)}abc.mjs`;
+    expect(moduleImports(large, [{ path: longPath, mode: "644", sha256: "0".repeat(64) }])).toBe(
+      "a module path is longer than 1024 characters",
+    );
   });
 
   test("package.json runs the command as providers:lock", () => {
