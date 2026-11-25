@@ -780,6 +780,10 @@ describe("the import and the record", () => {
       ["a record in place of a list", "record.manifest = { ...manifest, engines: { ...manifest.engines } };"],
       ["a string in place of a record", 'record.manifest = { ...manifest, calls: "calls" };'],
       [
+        "an array with a trailing hole",
+        "record.manifest = { ...manifest, engines: Object.assign([...manifest.engines], { length: manifest.engines.length + 1 }) };",
+      ],
+      [
         "an array-like record",
         "record.manifest = { ...manifest, engines: Object.assign(Object.create(Array.prototype), manifest.engines, { length: 1 }) };",
       ],

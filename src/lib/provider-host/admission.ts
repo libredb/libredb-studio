@@ -307,8 +307,8 @@ function ownData(target: object, key: string): { readonly value: unknown } | und
 
 /**
  * Whether `actual`, read from a package's record, equals `expected`, the JSON value of its manifest file: for a
- * primitive by `Object.is`; for an array, an array no Proxy with `Array.prototype` as its prototype and exactly the
- * indices and `length` as own keys; for an object, no Proxy, of prototype `Object.prototype` or null, with exactly the
+ * primitive by `Object.is`; for an array, an array no Proxy with `Array.prototype` as its prototype, exactly the
+ * indices and `length` as own keys, and the file's `length`, so a trailing hole is a difference; for an object, no Proxy, of prototype `Object.prototype` or null, with exactly the
  * file's keys as own keys, symbols counted; every member a data property equal again. The walk follows `expected`, so
  * it ends however `actual` is built, and no getter or trap runs.
  */
@@ -327,6 +327,7 @@ function equalsFile(expected: unknown, actual: unknown): boolean {
     if (Array.isArray(got) !== wantArray) return false;
     const keys = Object.keys(want);
     if (Reflect.ownKeys(got).length !== keys.length + (wantArray ? 1 : 0)) return false;
+    if (wantArray && (got as unknown[]).length !== (want as unknown[]).length) return false;
     for (const key of keys) {
       const member = ownData(got, key);
       if (member === undefined) return false;
