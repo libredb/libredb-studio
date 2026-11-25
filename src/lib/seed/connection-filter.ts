@@ -1,4 +1,5 @@
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, seedOnlyProjectionRefusal } from "@/lib/db/connection-fields";
+import { GRANTED_SEED_AGENT_CREDENTIAL } from "@/lib/db/claim-grants";
+import { SEED_ONLY_FIELDS, seedOnlyProjectionRefusal } from "@/lib/db/connection-fields";
 import type { DatabaseConnection, DatabaseType, SSLConfig } from "@/lib/types";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import type { SeedConnection, SeedDefaults, ManagedConnection, UnavailableSeedEntry } from "./types";
@@ -64,14 +65,16 @@ function assertAgentCredentialSeedIsManaged(conn: SeedConnection): void {
 
 /**
  * An agent credential beside a field the engine's provider signs in with in preference to a user and password, read
- * from the engine's `SEED_AGENT_CREDENTIAL` row: the agent would run under the connection's own credential. The seed
- * schema refuses it at load; this is the mapper's own gate for a SeedConnection built in memory, and the only check
- * after load, since the factory does not compare the two.
+ * from the engine's `GRANTED_SEED_AGENT_CREDENTIAL` row: the agent would run under the connection's own credential. The
+ * seed schema refuses it at load; this is the mapper's own gate for a SeedConnection built in memory, and the only
+ * check after load, since the factory does not compare the two.
  */
 function assertAgentCredentialNotSuperseded(conn: SeedConnection): void {
   if (conn.agentUser === undefined && conn.agentPassword === undefined) return;
   const fields = conn as Readonly<Record<string, unknown>>;
-  const superseding = SEED_AGENT_CREDENTIAL[conn.type]?.supersededBy.find((field) => fields[field] !== undefined);
+  const superseding = GRANTED_SEED_AGENT_CREDENTIAL[conn.type]?.supersededBy.find(
+    (field) => fields[field] !== undefined,
+  );
   if (superseding === undefined) return;
   throw new Error(
     `Seed connection "${conn.id}" carries an agent credential beside ${superseding}, which the ${conn.type} provider signs in with in preference to a user and password. The seed is refused rather than projected as an agent credential the agent would not sign in with.`,

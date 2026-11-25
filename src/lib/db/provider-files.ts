@@ -7,15 +7,15 @@
  * Studio's, would answer by whatever the process's working directory and environment were then. The provider factory
  * (`createDatabaseProvider` in `./factory`) calls the functions here and hands the provider their outcome.
  *
- * `admittedFileConnection`: the file a SQLite, DuckDB or LibreDB connection names (`OPENS_LOCAL_FILE`), resolved
- * against the working directory when the provider is built and refused, by name, when it is one of Studio's own
- * storage files, compared with the storage location this process took (`storageLocation` in `@/lib/data-dir`). The
- * provider opens the absolute path it is handed under `ADMITTED_FILE` (`@/lib/types`), through `requireAdmittedFile`
- * in `./utils/admitted-file`.
+ * `admittedFileConnection`: the file a SQLite, DuckDB or LibreDB connection names (`GRANTED_OPENS_LOCAL_FILE`),
+ * resolved against the working directory when the provider is built and refused, by name, when it is one of Studio's
+ * own storage files, compared with the storage location this process took (`storageLocation` in `@/lib/data-dir`). The
+ * provider opens the absolute path it is handed under `ADMITTED_FILE` (`@/lib/types`), through `requireAdmittedFile` in
+ * `./utils/admitted-file`.
  *
- * `admittedHostPathConnection`: the files on Studio's host a connection's `HOST_PATH_FIELDS` name (OPC UA's client
- * certificate and private key), admitted the same way and handed to the provider under `ADMITTED_HOST_PATHS`, which it
- * reads through `requireAdmittedHostPath` in `./utils/admitted-file`.
+ * `admittedHostPathConnection`: the files on Studio's host a connection's `GRANTED_HOST_PATH_FIELDS` name (OPC UA's
+ * client certificate and private key), admitted the same way and handed to the provider under `ADMITTED_HOST_PATHS`,
+ * which it reads through `requireAdmittedHostPath` in `./utils/admitted-file`.
  *
  * `opcuaPkiRoot`: OPC UA's PKI root. This module is the only code that reads `LIBREDB_OPCUA_PKI_ROOT`;
  * `tests/unit/lib/db/provider-environment-scan.test.ts` holds it, and holds that no provider module reaches
@@ -30,7 +30,8 @@ import {
   type DatabaseType,
   type HostPathField,
 } from "@/lib/types";
-import { CONNECTION_STRING_ACCEPTED, HOST_PATH_FIELDS, OPENS_LOCAL_FILE } from "./compatibility";
+import { GRANTED_HOST_PATH_FIELDS, GRANTED_OPENS_LOCAL_FILE } from "./claim-grants";
+import { CONNECTION_STRING_ACCEPTED } from "./compatibility";
 import { DatabaseConfigError } from "./errors";
 import { typeIdRow } from "./type-id";
 
@@ -74,7 +75,7 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
 /**
  * The connection a local-file provider is built from: a copy carrying the file core admitted under `ADMITTED_FILE`.
  *
- * 1. An engine `OPENS_LOCAL_FILE` does not mark: the connection itself.
+ * 1. An engine `GRANTED_OPENS_LOCAL_FILE` does not mark: the connection itself.
  * 2. The named file: the connection string, a leading `file:` removed, where the engine accepts one
  *    (`CONNECTION_STRING_ACCEPTED`) and it is not empty; otherwise `database`.
  * 3. Absent or empty: the connection without an admitted file, so the provider's own `validate()` refuses it with its
@@ -96,7 +97,7 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
  * refusal is a `DatabaseConfigError` naming the connection's own type.
  */
 export function admittedFileConnection<T extends DatabaseConnection>(connection: T): T {
-  if (!typeIdRow(OPENS_LOCAL_FILE, connection.type)) return connection;
+  if (!typeIdRow(GRANTED_OPENS_LOCAL_FILE, connection.type)) return connection;
   const file = namedFile(connection);
   if (file === null) return withoutAdmittedFile(connection);
   if (file === IN_MEMORY) return { ...connection, [ADMITTED_FILE]: IN_MEMORY };
@@ -109,11 +110,11 @@ export function admittedFileConnection<T extends DatabaseConnection>(connection:
 }
 
 /**
- * The file a connection of an engine `OPENS_LOCAL_FILE` marks names, as `admittedFileConnection` reads it, steps 2 to 5:
- * the connection string, a leading `file:` removed, where the engine accepts one and it is not empty, otherwise
- * `database`; null when the name is absent or empty. A name that is not text, and a connection string that is `file:`
- * and nothing after it, are refused by name. The admission and `namesInMemoryDatabase` both read the name here, so the
- * two never read it differently.
+ * The file a connection of an engine `GRANTED_OPENS_LOCAL_FILE` marks names, as `admittedFileConnection` reads it,
+ * steps 2 to 5: the connection string, a leading `file:` removed, where the engine accepts one and it is not empty,
+ * otherwise `database`; null when the name is absent or empty. A name that is not text, and a connection string that is
+ * `file:` and nothing after it, are refused by name. The admission and `namesInMemoryDatabase` both read the name here,
+ * so the two never read it differently.
  */
 function namedFile(connection: DatabaseConnection): string | null {
   const fromString = typeIdRow(CONNECTION_STRING_ACCEPTED, connection.type) && connection.connectionString;
@@ -126,14 +127,14 @@ function namedFile(connection: DatabaseConnection): string | null {
 }
 
 /**
- * Whether `connection` names an in-memory database: an engine `OPENS_LOCAL_FILE` marks, whose named file is exactly
- * `:memory:`, the one name `admittedFileConnection` admits as `:memory:`. Every other spelling is a file, as the
- * admission resolves it. An in-memory database is one database per handle, so the host serves such a connection's tree
- * from the editor's session (`sessionCapacity` in `./session-capacity`, docs/providers/CONTRACT.md, clause C-66). A
- * name the admission refuses is refused here by the same sentence.
+ * Whether `connection` names an in-memory database: an engine `GRANTED_OPENS_LOCAL_FILE` marks, whose named file is
+ * exactly `:memory:`, the one name `admittedFileConnection` admits as `:memory:`. Every other spelling is a file, as
+ * the admission resolves it. An in-memory database is one database per handle, so the host serves such a connection's
+ * tree from the editor's session (`sessionCapacity` in `./session-capacity`, docs/providers/CONTRACT.md, clause C-66).
+ * A name the admission refuses is refused here by the same sentence.
  */
 export function namesInMemoryDatabase(connection: DatabaseConnection): boolean {
-  return typeIdRow(OPENS_LOCAL_FILE, connection.type) && namedFile(connection) === IN_MEMORY;
+  return typeIdRow(GRANTED_OPENS_LOCAL_FILE, connection.type) && namedFile(connection) === IN_MEMORY;
 }
 
 /** The connection without admitted host paths: itself when it carries none, otherwise a copy without the caller's. */
@@ -147,8 +148,8 @@ function withoutAdmittedHostPaths<T extends DatabaseConnection>(connection: T): 
 
 /**
  * The connection a provider that reads files on Studio's own host is built from: a copy carrying, under
- * `ADMITTED_HOST_PATHS`, the files core admitted for its `HOST_PATH_FIELDS` (OPC UA's client certificate and private
- * key), on the footing of `admittedFileConnection`.
+ * `ADMITTED_HOST_PATHS`, the files core admitted for its `GRANTED_HOST_PATH_FIELDS` (OPC UA's client certificate and
+ * private key), on the footing of `admittedFileConnection`.
  *
  * 1. An engine whose row names no field: the connection, without an `ADMITTED_HOST_PATHS` a caller set.
  * 2. Each field in row order: absent, `null` or empty is not admitted, so the provider's own rules answer it (OPC UA's
@@ -166,7 +167,7 @@ function withoutAdmittedHostPaths<T extends DatabaseConnection>(connection: T): 
  * never survives. Every refusal is a `DatabaseConfigError` naming the connection's own type.
  */
 export function admittedHostPathConnection<T extends DatabaseConnection>(connection: T): T {
-  const fields = typeIdRow(HOST_PATH_FIELDS, connection.type);
+  const fields = typeIdRow(GRANTED_HOST_PATH_FIELDS, connection.type);
   if (fields.length === 0) return withoutAdmittedHostPaths(connection);
   const admitted: Partial<Record<HostPathField, string>> = {};
   for (const field of fields) {

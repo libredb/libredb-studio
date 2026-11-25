@@ -10758,13 +10758,13 @@ A username another subject takes over on a shared browser keeps the earlier pers
 
 ### GOV6. A governed MySQL, SQL Server or Db2 row without a database is admitted and can never open
 
-Admission skips a row without a `database` only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` in `src/lib/db/compatibility.ts` is true (`src/lib/governance/admission.ts`), which is PostgreSQL alone.
+Admission skips a row without a `database` only where Studio's grant `GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION` in `src/lib/db/claim-grants.ts` is true (`src/lib/governance/admission.ts`), which is PostgreSQL alone.
 The MySQL, SQL Server and Db2 providers refuse to open without one: `validate()` in `src/lib/db/providers/sql/mysql.ts` (skipped when a `connectionString` is set) and in `src/lib/db/providers/sql/mssql.ts`, and `resolveTarget` in `src/lib/db/providers/sql/db2/connection.ts`.
 So such a row is admitted, every user it is granted to sees the connection, and every open fails with a configuration error, while the heartbeat's skipped rows and the admin status report nothing wrong.
 MySQL and SQL Server are among the engines governance admits by default (`GOVERNANCE_ALLOWED_ENGINES`), Db2 only when an operator lists it.
 No privilege boundary is crossed: on these engines the credential's grants bound what a session reaches, not its default database.
 
-**Done when:** admission skips a MySQL, SQL Server or Db2 row whose merged read record has no `database` (and, for MySQL and Db2, no `connectionString`) as `DEFINITION_INVALID` with path `database`, from a record kept beside `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` that a test holds equal to each provider's own refusal, and `docs/GOVERNANCE.md`'s admission steps say so.
+**Done when:** admission skips a MySQL, SQL Server or Db2 row whose merged read record has no `database` (and, for MySQL and Db2, no `connectionString`) as `DEFINITION_INVALID` with path `database`, from a record kept beside `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` and its grant that a test holds equal to each provider's own refusal, and `docs/GOVERNANCE.md`'s admission steps say so.
 
 ### GOV7. A TLS panel without a mode means three different things, depending on the engine
 

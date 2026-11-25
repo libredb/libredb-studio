@@ -15,11 +15,13 @@
  * provider factory, `GRANTED_READS_FILE_ACCESS_POSTURE` by the provider factory and the provider cache key,
  * `GRANTED_SINGLE_WRITER_FILE` by the provider cache key and the provider factory, `GRANTED_AGENT_CREDENTIAL_FORM` by
  * the provider factory, `GRANTED_MASKING_EXEMPT_COLUMNS` by `clientCapabilities` (each Studio's grant of a claim,
- * ./claim-grants), `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` by `catalogChoice`, `CONNECTION_FORM` by
- * `offersSslPanel`, and the destructive vocabulary by its six readers. Other
- * reads are still by bare index, of other per-engine tables and of some of these (the seed schema's
- * `GRANTED_WRITE_REACH` refinement, the VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not
- * covered by this module unless it calls it.
+ * ./claim-grants), as are `GRANTED_OPENS_LOCAL_FILE` by the provider factory's file admission,
+ * `GRANTED_HOST_PATH_FIELDS` by its host path admission, `GRANTED_SSH_TUNNEL_REFUSAL` by core's tunnel decision, the
+ * provider's fields and the connection dialog, and `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE` by `catalogChoice`;
+ * `CONNECTION_FORM` by `offersSslPanel`, and the destructive vocabulary by its six readers. Other reads are still by
+ * bare index, of other per-engine tables and of some of these (the seed schema's `GRANTED_WRITE_REACH` refinement, the
+ * VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module unless it calls
+ * it.
  *
  * `compatibility.ts` never imports this module: the set below is built from `SHIPPED_DATABASE_TYPES` as this module
  * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. So no checked

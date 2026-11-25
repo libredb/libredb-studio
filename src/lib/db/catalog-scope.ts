@@ -1,4 +1,4 @@
-import { OPENS_SERVER_LEVEL_WITHOUT_DATABASE } from "@/lib/db/compatibility";
+import { GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE } from "@/lib/db/claim-grants";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
@@ -10,17 +10,17 @@ type CatalogChoice = "honoured" | "not-declared" | "engine-not-recorded" | "name
 /**
  * Whether Studio honours a caller's choice of database on `connection` (M-57). A provider answers `catalogSessions`
  * per connection, so no record replaces its answer; Studio bounds it instead. The answer is honoured only where the
- * provider declares it, Studio's review record `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds the engine, and the
- * connection names no database and no connection string, the record's own condition. Read by `scopeToCatalog` (so by
- * every editor route, the VS Code backend and MCP through it), by `providerInDatabase` and by the agent runs route;
- * `assertNotWholeServer` reads the provider's own answer, since there it refuses more (docs/providers/CONTRACT.md,
- * clause M-57).
+ * provider declares it, Studio's grant at the choice of database, `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE`, holds
+ * the engine, and the connection names no database and no connection string, the claim's own condition. Read by
+ * `scopeToCatalog` (so by every editor route, the VS Code backend and MCP through it), by `providerInDatabase` and by
+ * the agent runs route; `assertNotWholeServer` reads the provider's own answer, since there it refuses more
+ * (docs/providers/CONTRACT.md, clause M-57).
  *
  * @throws {UnknownProviderError} When the provider declares catalog sessions and `connection.type` is not a type id.
  */
 export function catalogChoice(connection: DatabaseConnection, capabilities: ProviderCapabilities): CatalogChoice {
   if (capabilities.catalogSessions !== true) return "not-declared";
-  if (!typeIdRow(OPENS_SERVER_LEVEL_WITHOUT_DATABASE, connection.type)) return "engine-not-recorded";
+  if (!typeIdRow(GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE, connection.type)) return "engine-not-recorded";
   if (connection.database || connection.connectionString) return "names-database";
   return "honoured";
 }

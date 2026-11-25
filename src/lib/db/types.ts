@@ -1733,7 +1733,7 @@ export interface ProviderCapabilities {
    * The connection reaches a whole server and names no catalog (#1530): each request runs in the
    * catalog the caller picks through `forCatalog()`. Absent means requests run where it points.
    *
-   * Studio honours it only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds the engine and the
+   * Studio honours it only where `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE` holds the engine and the
    * connection names no database and no connection string (`catalogChoice` in
    * `src/lib/db/catalog-scope.ts`, docs/providers/CONTRACT.md clause M-57), and elsewhere refuses a
    * caller's catalog by name; `assertNotWholeServer` reads it as declared.
@@ -2255,8 +2255,9 @@ export interface DatabaseProvider {
    * The connection this provider was built from, as `providerConnection` (./provider-connection) hands it to a provider:
    * a copy of the caller's record holding only the fields its engine declares (`providerFields`) and core's markers, the
    * tunnel's route under `TUNNEL_ROUTE` (@/lib/types) for a record that carries a tunnel. A local-file
-   * engine's connection (`OPENS_LOCAL_FILE`) also carries `ADMITTED_FILE` (@/lib/types), the file the factory admitted,
-   * and an engine whose `HOST_PATH_FIELDS` row names fields carries `ADMITTED_HOST_PATHS`, the files it admitted for them.
+   * engine's connection (`GRANTED_OPENS_LOCAL_FILE`) also carries `ADMITTED_FILE` (@/lib/types), the file the factory
+   * admitted, and an engine whose `GRANTED_HOST_PATH_FIELDS` row names fields carries `ADMITTED_HOST_PATHS`, the files
+   * it admitted for them.
    */
   readonly config: DatabaseConnection;
 

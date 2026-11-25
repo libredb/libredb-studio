@@ -9,10 +9,10 @@
  * 1. `connection_id` has the published format, and no other row has the same id. Every row of a repeated id is
  *    skipped, because Studio cannot tell which one the control plane meant.
  * 2. The engine names a provider this Studio has (`isDatabaseType`, the one check of a type id), opens no file on
- *    Studio's host (`OPENS_LOCAL_FILE`), and `GOVERNANCE_ALLOWED_ENGINES` names it, skipped in that order as
+ *    Studio's host (`GRANTED_OPENS_LOCAL_FILE`), and `GOVERNANCE_ALLOWED_ENGINES` names it, skipped in that order as
  *    PROVIDER_UNKNOWN, ENGINE_UNSUPPORTED and ENGINE_NOT_ALLOWED.
- * 3. An engine whose provider reaches the whole server without a database (`OPENS_SERVER_LEVEL_WITHOUT_DATABASE`) has
- *    one, because a server-level connection opens a session to every database its credential reaches.
+ * 3. An engine whose provider reaches the whole server without a database (`GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION`)
+ *    has one, because a server-level connection opens a session to every database its credential reaches.
  * 4. The definition holds only keys of the contract's allowlist, each with a value in its domain: `DEFINITION_ALLOWLIST`,
  *    which the manifest publishes, so a control plane that builds its connection form from it never writes a row
  *    Studio skips. A credential in the definition is told apart from any other key, because it belongs in an envelope.
@@ -34,9 +34,10 @@ import type { z } from "zod";
 import {
   GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
   GRANTED_MCP_EXPOSABLE,
+  GRANTED_OPENS_LOCAL_FILE,
+  GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
   GRANTED_READ_ROOTS_REQUIRED,
 } from "@/lib/db/claim-grants";
-import { OPENS_LOCAL_FILE, OPENS_SERVER_LEVEL_WITHOUT_DATABASE } from "@/lib/db/compatibility";
 import { isDatabaseType } from "@/lib/db/type-id";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { type ManagedConnection, SeedConnectionSchema } from "@/lib/seed/types";
@@ -321,12 +322,12 @@ function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: A
   }
   const engine = row.engine;
   if (!isDatabaseType(engine)) return skipOf(id, { code: "PROVIDER_UNKNOWN" });
-  if (OPENS_LOCAL_FILE[engine]) return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
+  if (GRANTED_OPENS_LOCAL_FILE[engine]) return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
   if (!options.allowedEngines.includes(engine)) return skipOf(id, { code: "ENGINE_NOT_ALLOWED" });
   const definition = row.definition;
   if (!isPlainObject(definition)) return skipOf(id, { path: "definition", code: "DEFINITION_INVALID" });
   // The provider's own rule (`serverLevel` in providers/sql/postgres.ts): an empty or absent database is the server.
-  if (OPENS_SERVER_LEVEL_WITHOUT_DATABASE[engine] && !definition.database) {
+  if (GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION[engine] && !definition.database) {
     return skipOf(id, { path: "database", code: "SERVER_LEVEL_NOT_ALLOWED" });
   }
   const fault = definitionFault(definition);

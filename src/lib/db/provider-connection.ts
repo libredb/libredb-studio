@@ -8,7 +8,8 @@ import type {
   WithTunnelFarEnd,
   WithTunnelRoute,
 } from "@/lib/types";
-import { CONNECTION_STRING_ACCEPTED, SSH_TUNNEL_REFUSAL } from "./compatibility";
+import { GRANTED_SSH_TUNNEL_REFUSAL } from "./claim-grants";
+import { CONNECTION_STRING_ACCEPTED } from "./compatibility";
 import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
 import { offersSslPanel } from "./connection-form";
 import { tunnelRoute } from "./connection-fingerprint";
@@ -39,16 +40,17 @@ export const PROVIDER_CORE_FIELDS = Object.freeze([
 /**
  * The connection fields a provider of `type` receives (FND-2 slice 6, docs/SECURITY.md control 3.41), composed from
  * the contract rows that declare them, each read through `typeIdRow`. The first four are projections of the engine's
- * declaration (docs/providers/CONTRACT.md, clauses M-71 and M-72), the fifth is Studio's own review record of the
- * engine's tunnel claim, and the sixth is Studio's:
+ * declaration (docs/providers/CONTRACT.md, clauses M-71 and M-72), the fifth is Studio's grant of the engine's tunnel
+ * claim (clause M-83), and the sixth is Studio's:
  * 1. `CONNECTION_FIELDS`, the fields its connection dialog draws, its `connection.fields`;
  * 2. the fields of its `SEED_ONLY_FIELDS` row, the fields only its provider reads and only a seed names, its
  *    `connection.seedOnly`;
  * 3. `connectionString` where `CONNECTION_STRING_ACCEPTED` answers true, the URI a seed or an embedder may hand it, its
  *    `connection.connectionString.accepted`;
  * 4. `ssl` where the dialog offers the TLS panel (`offersSslPanel` in ./connection-form), its `connection.tls`;
- * 5. `host` and `port` where the engine takes an SSH tunnel (`SSH_TUNNEL_REFUSAL` is null), because core writes the
- *    tunnel's local endpoint there;
+ * 5. `host` and `port` where the engine takes an SSH tunnel (`GRANTED_SSH_TUNNEL_REFUSAL` is null), because core
+ *    writes the tunnel's local endpoint there; an engine whose tunnel the grant refuses has no tunnel, so nothing it
+ *    receives is a tunnel's endpoint;
  * 6. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
  * Each field once, in that order. The answer is frozen. A field its engine refuses by name (`REFUSED_CONNECTION_FIELDS`)
  * is in none of those rows, so no provider receives one: core refuses a connection to be built to connect that sets one
@@ -62,7 +64,7 @@ export function providerFields(type: DatabaseType): readonly (keyof DatabaseConn
     ...(typeIdRow(SEED_ONLY_FIELDS, type)?.fields ?? []),
     ...(typeIdRow(CONNECTION_STRING_ACCEPTED, type) ? (["connectionString"] as const) : []),
     ...(offersSslPanel(type) ? (["ssl"] as const) : []),
-    ...(typeIdRow(SSH_TUNNEL_REFUSAL, type) === null ? (["host", "port"] as const) : []),
+    ...(typeIdRow(GRANTED_SSH_TUNNEL_REFUSAL, type) === null ? (["host", "port"] as const) : []),
     ...PROVIDER_CORE_FIELDS,
   ];
   return Object.freeze([...new Set(fields)]);

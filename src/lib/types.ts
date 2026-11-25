@@ -451,14 +451,14 @@ export interface WithAdmittedFile {
   readonly [ADMITTED_FILE]?: string;
 }
 
-/** A connection field that names a file on Studio's own host which the provider reads (`HOST_PATH_FIELDS`). */
+/** A connection field that names a file on Studio's own host which the provider reads (`GRANTED_HOST_PATH_FIELDS`). */
 export type HostPathField = "clientCertificatePath" | "clientPrivateKeyPath";
 
 /**
- * The files on Studio's own host a connection's `HOST_PATH_FIELDS` name, as Studio's provider factory admitted them: an
- * absolute path per field the connection sets, resolved against the working directory when the provider was built and
- * checked against Studio's own storage files there, so the provider reads them and resolves nothing itself. A field
- * the connection leaves absent, `null` or empty has no entry.
+ * The files on Studio's own host a connection's `GRANTED_HOST_PATH_FIELDS` name, as Studio's provider factory admitted
+ * them: an absolute path per field the connection sets, resolved against the working directory when the provider was
+ * built and checked against Studio's own storage files there, so the provider reads them and resolves nothing itself.
+ * A field the connection leaves absent, `null` or empty has no entry.
  *
  * Set in one place, `admittedHostPathConnection` in `src/lib/db/provider-files.ts`, which replaces any value a caller
  * set; read through `requireAdmittedHostPath` in `src/lib/db/utils/admitted-file.ts`, which refuses a connection that

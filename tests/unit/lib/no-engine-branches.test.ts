@@ -121,6 +121,12 @@ export const REGISTRIES: readonly Listed[] = [
     "GRANTED_MCP_STATEMENT_READ",
     "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
     "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED",
+    "GRANTED_OPENS_LOCAL_FILE",
+    "GRANTED_HOST_PATH_FIELDS",
+    "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION",
+    "GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE",
+    "GRANTED_SSH_TUNNEL_REFUSAL",
+    "GRANTED_SEED_AGENT_CREDENTIAL",
     "READ_ONLY_ENFORCED",
     "UNGRANTED_CLAIM_REFUSALS",
   ].map((declaration) => ({
@@ -474,7 +480,7 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     path: "src/lib/seed/types.ts",
     declaration: "refuseInvalidAgentCredential",
     count: 1,
-    reason: "the parameter type of the `SEED_AGENT_CREDENTIAL` table it is handed, which holds no row here",
+    reason: "the parameter type of the `GRANTED_SEED_AGENT_CREDENTIAL` grant it is handed, which holds no row here",
   },
   {
     path: "src/lib/seed/types.ts",
