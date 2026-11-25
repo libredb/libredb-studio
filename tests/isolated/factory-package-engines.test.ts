@@ -7,6 +7,7 @@
  * Each connection here carries no id and an SSH tunnel that is on, so a check that ran after the type check would
  * answer another refusal (the id's, the tunnel's), and the callback a tunnel scope runs records its call.
  */
+// oxlint-disable no-await-in-loop -- each entry point runs after the one before, so the cache is read after each.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { DatabaseConfigError, PackageEngineUnsupportedError, ProviderUnavailableError } from "@/lib/db/errors";
 import {

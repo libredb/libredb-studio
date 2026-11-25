@@ -116,6 +116,7 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
     );
     for (const pkg of verified) {
       // One at a time, in the lock's order: each deadline is its own package's, and the log follows the lock.
+      // oxlint-disable-next-line no-await-in-loop -- each import runs after the one before, on purpose (C-105).
       const answer = await admission.admitPackage(pkg, {
         validator,
         deadlineMs,

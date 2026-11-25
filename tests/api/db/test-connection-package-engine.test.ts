@@ -6,6 +6,7 @@
  * not serve for a package engine yet; a refused package's engine answers `PROVIDER_UNAVAILABLE` naming the code. The
  * factory is stood in for and never reached on either path.
  */
+// oxlint-disable no-await-in-loop -- each post runs after the one before, on one rate limiter cleared per post.
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { clearRateLimitState } from "@/lib/api/rate-limit";

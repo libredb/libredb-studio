@@ -5,6 +5,7 @@
  * before any Vault reference is read; an admitted package's engine is refused by name on a route that does not serve
  * package engines, and resolved by the package-aware resolve, which only Test Connection calls in this Studio.
  */
+// oxlint-disable no-await-in-loop -- each case resolves after the one before, so a failure names its case.
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
