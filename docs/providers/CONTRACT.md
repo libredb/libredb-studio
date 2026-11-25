@@ -280,13 +280,13 @@ A module-level typed array is listed by file and name: the codec's two lookup ta
 
 ### M-20 (informative): Studio never reads `vendor`
 
-`vendor` is the package's own, and Studio reads none of it.
-No manifest reader exists in Studio yet, so nothing checks this.
+`vendor` is the package's own, and no step of Studio reads a vendor key.
+Admission compares the whole manifest with the record's and freezes it, vendor included, C-98 and C-104, and nothing reads what it holds.
 
 ### M-21 (informative): How a host admits a contract
 
-The version rule under "Contract version" is applied by the loader's admission, which does not exist yet.
-Until it does, the validator serves exactly one contract, the one its schema names, and refuses every other.
+Admission applies the version rule under "Contract version" while the major is 0, C-98: a manifest built against any contract but Studio's own is refused before the schema is applied.
+The rule for major 1 and later is applied by the first host of a contract 1.x; until then the validator serves exactly one contract, the one its schema names, and refuses every other.
 
 ### M-22 (normative): How a package reads its declared environment
 
@@ -1891,7 +1891,8 @@ Studio compiles each type pattern once, when it composes the engine's row, M-79.
 
 Studio composes each engine's SQL writing row from its declaration, M-79, binding each function it names through Studio's own table.
 Studio runs these functions in the browser, in the inline editor, the result export, the test data generator, the data import and the pivot table, and on its server.
-M-32 says no package function runs in a browser, so how a package's SQL writing functions are called, and whether a declaration may choose a shared building block by name, is decided with the first package that fills a slot.
+M-32 says no package function runs in a browser.
+The first package that fills a slot is admitted with its names read for their form only, C-99, and Studio composes no SQL writing row for its engine; how a package's SQL writing functions are called, and whether a declaration may choose a shared building block by name, is decided in a later milestone.
 
 ### S-17 (normative): The migration DDL segment
 
@@ -4164,6 +4165,8 @@ A name outside that set, or more files or levels, is refused as `PROVIDER_DIGEST
 The lock pins each package by its digest: `sha256:` and the hex SHA-256 of a listing with one line per regular file, sorted by path, `<mode> <hex SHA-256 of the file> <path>` and a newline, the path relative to the package's directory with `/` between names.
 The mode is `755` when the file's owner execute bit is set and `644` otherwise, so the group and other bits and the umask of whoever copied the files change nothing, and empty directories are not listed.
 Windows reports no execute bit, so every file reads `644` there, and a package holding an executable file has another digest on Windows than on Linux and macOS: write the lock on the platform that reads it.
+The lock's digest of a package also covers its import record, C-102: after the file lines comes one line per recorded import, sorted by the module file's path and then by specifier, `import <path of the module file> <specifier>` and a newline, so a record edited without its files is refused as `PROVIDER_DIGEST_MISMATCH` like any changed file.
+A package whose modules import nothing has the digest of its files alone.
 The digest is computed at every read and nothing is kept between reads, so any changed, added, removed or renamed file is refused as `PROVIDER_DIGEST_MISMATCH` at the next read, and so is a package whose directory is missing or cannot be read.
 
 - test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the digest is SHA-256 over each file's mode, SHA-256 and path, one line each in path order"
@@ -4174,6 +4177,8 @@ The digest is computed at every read and nothing is kept between reads, so any c
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact whose files differ from the lock digest is refused as PROVIDER_DIGEST_MISMATCH"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "a byte changed in any file of an artifact is refused at the next read, and nothing is kept between reads"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "a missing or unreadable artifact is refused as PROVIDER_DIGEST_MISMATCH, naming why"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the digest lists each import after the files, one line each in order, and an empty record leaves the files' digest"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the digest covers the import record, so a record edited without its files is refused as PROVIDER_DIGEST_MISMATCH"
 
 ### C-94 (normative): A package's identity is its package.json and its manifest, as its lock entry names them
 
@@ -4197,13 +4202,113 @@ Both are read from the lock alone, before any file of the package is read.
 
 ### C-96 (normative): A refusal names the package and nothing it holds
 
-Every refusal carries one code of one closed list, `PROVIDER_LOCK_INVALID`, `PROVIDER_PATH_OUTSIDE`, `PROVIDER_DIGEST_MISMATCH`, `PROVIDER_IDENTITY_MISMATCH` and `PROVIDER_ID_COLLISION`, and one rule of that code's closed list, in a sentence on one line.
+Every refusal carries one code of one closed list, `PROVIDER_LOCK_INVALID`, `PROVIDER_PATH_OUTSIDE`, `PROVIDER_DIGEST_MISMATCH`, `PROVIDER_IDENTITY_MISMATCH`, `PROVIDER_ID_COLLISION`, `PROVIDER_CONTRACT_UNSUPPORTED`, `PROVIDER_SCHEMA_INVALID`, `PROVIDER_MODULE_FORMAT`, `PROVIDER_LOAD_FAILED`, `PROVIDER_NATIVE_UNSUPPORTED` and `PROVIDER_RECORD_INVALID`, and one rule of that code's closed list, in a sentence on one line.
+The rules of `PROVIDER_SCHEMA_INVALID` and `PROVIDER_RECORD_INVALID` are the SDK's own lists, and admission's refusal names the first one, with the manifest pointer for a schema rule, and how many more there are, never a key the package chose.
 A package's refusal names the package by the name and version its lock entry gives, and never carries a file name inside its directory, a value of its `package.json` or its manifest, or an engine id.
-No step of the read imports or runs a package's code.
+No step of the lock's read imports or runs a package's code, and admission imports it only after the checks C-97 orders.
 
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "no refusal carries a value read from the package beyond its name and version"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "the refusal codes are one closed list, and every refusal names a code and a rule of its lists"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "reading and writing a lock run no code of a package"
+- test `tests/unit/lib/provider-host/admission.test.ts` "no refusal carries a value read from the package beyond its name and version"
+- test `tests/unit/lib/provider-host/admission.test.ts` "the admission codes join the closed list, each with its closed rules, and the loader's reasons are the loader's"
+
+### C-97 (normative): A locked package is admitted in a fixed order, and none of its code runs before its manifest, format, closure and native checks pass
+
+A package that passed its lock is admitted in this order, and its first refusal ends it: its manifest's bytes and their binding to the lock's listing, its contract, the schema and the SDK's rules, C-98; the engine ids it serves, C-100; its entry's module format, C-101; its import closure, C-102; native addons, C-103; then its import and its record, C-104.
+A package refused before its import is never imported, so none of its code runs.
+A package refused after its import has run its top level, is never registered and serves no engine.
+The entry module is read by the runtime's loader, not by admission, so a change to it after the lock's read is not seen; the providers directory must be writable only by the operator, C-93.
+Admission grants no claim: a package carries no grant in this contract, so every claim of its engines is read as M-54 reads a claim with neither a record nor a grant, at its restrictive value, whatever the manifest requests.
+A package passing every step is registered once, under its name.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest for another contract major is refused before the schema validator runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest"
+- test `tests/unit/lib/provider-host/admission.test.ts` "admission refuses no claim request and grants none"
+
+### C-98 (normative): The manifest is read as bytes, for Studio's contract, by the SDK's validator
+
+Admission reads `libredb-provider.json` as bytes within 2 MiB, never by importing it, and its SHA-256 must be the one the lock's listing holds, or the package is refused as `PROVIDER_DIGEST_MISMATCH`.
+A contract of the envelope's form other than Studio's, `0.1`, is refused as `PROVIDER_CONTRACT_UNSUPPORTED` before the schema is applied, and the refusal names Studio's contract, not the manifest's.
+The SDK's validator then applies the schema and its code rules, the same rules Studio's generator admits its own engine declarations by, and a refusal is `PROVIDER_SCHEMA_INVALID`.
+The manifest admitted is deep-frozen.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest for another contract major is refused before the schema validator runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "the admitted manifest is deep-frozen"
+- test `tests/unit/lib/provider-host/admission.test.ts` "HOST_CONTRACT is the contract the schema serves and the SDK's PROVIDER_CONTRACT"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a validator for another contract is a host defect, refused before any file is read"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest the schema refuses is refused as PROVIDER_SCHEMA_INVALID, naming the first rule and its pointer and never a key"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest or package.json changed after the lock read is refused as PROVIDER_DIGEST_MISMATCH before any import"
+- test `tests/unit/lib/provider-host/admission.test.ts` "an unreadable manifest is refused naming its errno, and an error without one is raised"
+
+### C-99 (normative): A package's named functions are read for their form only
+
+Admission binds no function name through any of Studio's function tables and reads no table keyed by an engine id, so an engine Studio does not ship is never refused because such a table lacks its id.
+Its SQL writing names are read for their form, and Studio composes no SQL writing row for its engine, S-16.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a package naming functions in every slot, none of which Studio's tables hold, is admitted"
+- test `tests/unit/lib/provider-host/admission.test.ts` "admission reads no table of Studio's keyed by engine id"
+
+### C-100 (normative): A package serves no engine another serves, in Studio's catalog or in this process
+
+A package is refused as `PROVIDER_ID_COLLISION` when it serves an engine id Studio's bundled catalog serves, an engine id a package admitted earlier in the same process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was admitted earlier in the process.
+Each names its own rule.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "an engine id already served is refused"
+
+### C-101 (normative): The entry is an ES module
+
+The entry is an ES module when its name ends in `.mjs`, or in `.js` and the nearest `package.json` from its directory up to the package's root declares `"type": "module"`.
+Any other entry is refused as `PROVIDER_MODULE_FORMAT` before the import, and so is one whose nearest `package.json` is over 1 MiB or not a JSON object.
+A module's syntax is never read to decide.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "an .mjs entry and a .js entry under a package.json of type module are admitted"
+
+### C-102 (normative): Every module of a package imports only what its own directory holds or a built-in
+
+The lock command records, with Bun's transpiler, every static import of every file of the package whose name ends in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts` in any letter case: import declarations, re-exports, and `import()` and `require()` of a string.
+The record is in the lock, covered by its digest, C-93, and the command refuses a module file it cannot parse or that is not UTF-8, a specifier outside printable ASCII without spaces or over 1,024 characters, more than 4,096 imports in a package, and a lock over 1 MiB.
+Before the import, admission requires each recorded import to be a built-in of the runtime that imports the package, a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, or a package whose folder a `node_modules` directory of the package holds on the way up from the importing file.
+Anything else, an absolute path, a URL, another scheme or a subpath import among them, is refused as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`.
+The limits: a computed `import()` or `require()` is not recorded; a package's `main` or `exports` is not read; a package importing itself by its own name without a `node_modules` folder of that name is refused; a type-only import of a TypeScript file is not recorded; on a case-insensitive filesystem a specifier spelled in another case than its folder is refused.
+The check keeps a package from depending on modules outside its directory, Studio's own `node_modules` among them; it is no sandbox, since an admitted package runs in Studio's process.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a built-in, a relative file inside the artifact and a package its own node_modules holds are inside"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a relative import that leaves the artifact, or holds %, ?, # or a backslash, is outside"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a package found only above the artifact, or only in a node_modules directory directly under another, is outside"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "an absolute path, a URL, another scheme and a subpath import are outside"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a package subpath with a . or .. segment is outside, and a scoped package is found by its two segments"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "the answer reads only the record and the listing, so it is the same on every platform"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock entry's import record is closed and capped, each pair in its forms and listed once"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a verified package carries its import record as the lock wrote it, frozen"
+- test `tests/unit/scripts/providers-lock.test.ts` "the command records every static import of each module file, sorted and once each, and Studio's read admits the lock"
+- test `tests/unit/scripts/providers-lock.test.ts` "the command refuses a module file its parser cannot read, a specifier outside its form, too many imports and a lock over its byte limit, writing nothing"
+
+### C-103 (normative): A native addon is not admitted in this contract yet
+
+A package holding a file whose name ends in `.node`, in any letter case, or whose manifest declares `runtime.native`, is refused as `PROVIDER_NATIVE_UNSUPPORTED` before the import.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest declaring native packages is refused as PROVIDER_NATIVE_UNSUPPORTED"
+
+### C-104 (normative): The record a package exports is the manifest it declared
+
+A loader refusal is the package's `PROVIDER_LOAD_FAILED` with the loader's reason as its rule, and the value an entry threw is kept for the host's log only, never in the refusal.
+The record's manifest must equal the manifest file, compared by the own data properties of plain objects and arrays, key order aside, without calling a getter or reading a Proxy, or the package is refused as `PROVIDER_RECORD_INVALID`.
+An implementation or one of its segments that is a Proxy is refused as `PROVIDER_RECORD_INVALID` before the SDK's check, which would run its traps.
+The SDK's `checkProviderModule`, Studio's copy, then checks the record, and a refusal is `PROVIDER_RECORD_INVALID` naming its rule.
+Studio then freezes the implementation and its segments and registers its own record of them with the manifest it validated.
+
+- test `tests/unit/lib/provider-host/admission.test.ts` "a record whose manifest differs from its file is refused"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a record the SDK's check refuses is refused as PROVIDER_RECORD_INVALID, naming the rule"
+- test `tests/unit/lib/provider-host/admission.test.ts` "an implementation or a segment that is a Proxy is refused, and none of its traps runs"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a loader refusal is the package's PROVIDER_LOAD_FAILED with the loader's reason, its cause kept out of the sentence"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest"
 
 ## Not yet in this contract
 

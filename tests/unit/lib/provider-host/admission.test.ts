@@ -567,7 +567,7 @@ describe("the host contract", () => {
 });
 
 describe("the import and the record", () => {
-  test('an .mjs entry and a .js entry under "type": "module" are admitted', async () => {
+  test("an .mjs entry and a .js entry under a package.json of type module are admitted", async () => {
     const mjs = write();
     expect(await outcome(verified(mjs))).toBe("admitted");
     expect(fs.existsSync(mjs.sentinel)).toBe(true);
