@@ -172,7 +172,7 @@ export function serverEngine(value: unknown): ServerEngine {
 }
 
 /** The refusal of a request for an admitted package's engine `id` on the path `need`. */
-export function packageEngineRefusal(id: string, need: EngineNeed): PackageEngineUnsupportedError {
+function packageEngineRefusal(id: string, need: EngineNeed): PackageEngineUnsupportedError {
   return new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], id);
 }
 
