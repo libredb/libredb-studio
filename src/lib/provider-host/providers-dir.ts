@@ -103,8 +103,8 @@ export function providersDirectoryCheck(
   const directory = providersDirectory();
   if (directory === null) return () => false;
   const lock = path.join(directory, LOCK_FILE_NAME);
-  const lockKeys = new Set([lock, canonicalize(lock)].map(foldPathKey));
-  const directoryKeys = [...new Set([directory, canonicalize(directory)].map(foldPathKey))];
+  const lockKeys = new Set([lock, canonicalize(lock)].map((key) => foldPathKey(key)));
+  const directoryKeys = [...new Set([directory, canonicalize(directory)].map((key) => foldPathKey(key)))];
   const directoryIdentity = identityOf(directory);
   const lockIdentity = identityOf(lock);
   return (candidate) => {
