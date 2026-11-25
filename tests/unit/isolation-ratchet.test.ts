@@ -194,7 +194,8 @@ describe("generated and legacy provider files", () => {
     const after = gate({ "src/lib/db/providers/stream/kafka.ts": 'export const ID = "kafka";\n' });
 
     expect(after["legacyProviders.files"]).toBe(before["legacyProviders.files"] + 1);
-    expect({ ...after, "legacyProviders.files": before["legacyProviders.files"] }).toEqual(before);
+    const expected: Record<string, number> = { ...after, "legacyProviders.files": before["legacyProviders.files"] };
+    expect(expected).toEqual(before);
   });
 
   test("a file without a final newline counts its last line, and an empty file counts none", () => {
