@@ -2062,7 +2062,7 @@ So is an engine list, and an engine's maintenance, maintenance specs and agent r
 The loader reads only the entry's `default` export, C-87.
 Admission runs `checkProviderModule` on that record with the host's copy of the SDK, so a record another copy of the SDK built is checked by the host's copy.
 Admission also validates the manifest against the schema the host holds.
-Admission does not exist yet, so nothing checks this.
+Admission checks both at boot: C-98 validates the manifest with the host's validator, C-104 runs the host's `checkProviderModule` on the record, and C-105 runs admission for each locked package.
 
 ### C-3 (normative): The mandatory calls
 
