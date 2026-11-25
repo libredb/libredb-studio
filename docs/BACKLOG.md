@@ -5099,6 +5099,16 @@ Found 2026-11-25 while moving run_read_query's paging onto the host core.
 
 **Done when:** the provider kit checks that a provider sent a non-zero offset it cannot apply refuses `offset-unsupported` before sending anything, or the paged read-only execute refuses a page answered not applied for a non-zero offset as a contract breach, with a test either way.
 
+### D960. The data profile skips its sample silently on any failure, and answers a column refusal for an error that is no database error
+
+`POST` in `src/app/api/db/profile/route.ts` reads the sample inside an empty `catch`, so a lost connection, an engine's timeout, Studio's own read deadline, a request that left and a defect of Studio's provider bridge all leave `sampleValues` out with no word in the answer or the server log.
+`reasonOf` in the same route answers "Could not profile this column" for any error that is not a `DatabaseError`, so a refusal only a defect of Studio's bridge can cause (`HOST_DEFECT_PREFIX` in `src/lib/provider-host/access.ts`) or a `TypeError` in Studio's code reads as a column the engine refused.
+It is not new with the host core: the sample has been skipped silently since the profiler existed, and the column fallback predates the move.
+
+Found 2026-11-25 while moving the data profile's reads onto the host core.
+
+**Done when:** a failed sample is said in the answer, a field or a warning naming its reason through the connection's scrub, or ends the profile where `ENDS_PROFILE` would, an error Studio cannot attribute to the engine answers 500 with its cause in the server log, and tests pin each.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound

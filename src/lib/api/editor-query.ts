@@ -91,7 +91,8 @@ function validQueryTimeout(value: unknown): boolean {
 
 /**
  * Why a connection's statement timeout `value` is refused, or null when the host can wait on it. Read by
- * `checkEditorQuery` and by `POST /api/db/multi-query`, whose units each wait on it.
+ * `checkEditorQuery`, by `POST /api/db/multi-query`, whose units each wait on it, and by `POST /api/db/profile`, whose
+ * reads each wait on it.
  */
 export function queryTimeoutError(value: unknown): string | null {
   return validQueryTimeout(value) ? null : QUERY_TIMEOUT_REFUSAL;

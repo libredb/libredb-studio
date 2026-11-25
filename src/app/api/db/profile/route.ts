@@ -10,18 +10,32 @@ import {
   QueryCancelledError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { type DatabaseProvider, offersColumnProfiling } from "@/lib/db/types";
+import { offersColumnProfiling } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
+import { openWithinCall, queryTimeoutError } from "@/lib/api/editor-query";
+import { openProfileReads, type ProfileReads } from "@/lib/api/profile-reads";
 import { jsonCommandAddress, outermostFieldPaths } from "@/lib/db/providers/document/mongodb/generators";
 import { objectSegment, quoteIdentifier, quoteObjectPath } from "@/lib/query-generators";
 import type { ColumnProfile } from "@/lib/export/data-profile";
 import { renderValue } from "@/lib/export/csv";
 import { type RecordedUnit, runRecorded } from "@/lib/query-events/recorded-run";
+
+/*
+ * THE DATA PROFILE ON THE PROVIDER HOST CORE (docs/providers/CONTRACT.md, clause C-86).
+ *
+ * Every read this route sends is one host core execute through the profile's reads (`openProfileReads`,
+ * src/lib/api/profile-reads.ts): each statement the route composes on a composed statement session, exactly as
+ * written, and the SQL sample on the console session asking a page of five, each under a deadline of its own and the
+ * request's signal. The route calls no provider statement member. The connection opens within its engine's connect
+ * budget and while the request stays (`openWithinCall`), and a statement timeout the host cannot wait on is refused
+ * before the open. A read past its deadline or a request that leaves answers a `TimeoutError` or a
+ * `QueryCancelledError`, so it ends the profile as `ENDS_PROFILE` ends it.
+ */
 
 /** The most columns one profile reads: each one costs the engine a scan of the table. */
 const PROFILED_COLUMN_LIMIT = 20;
@@ -114,7 +128,7 @@ function refusalOf(scrub: ProviderTextScrub, error: unknown): string {
  * the engine's reason, instead of the whole column reading as 0 % null and 0 distinct.
  */
 async function profileSqlColumn(
-  provider: DatabaseProvider,
+  reads: ProfileReads,
   scrub: ProviderTextScrub,
   table: string,
   name: string,
@@ -124,7 +138,7 @@ async function profileSqlColumn(
   const counts = `COUNT(*) AS total_count, COUNT(${column}) AS non_null_count`;
   const distinct = `COUNT(DISTINCT ${column}) AS distinct_count`;
   const range = `MIN(${column}) AS min_value, MAX(${column}) AS max_value`;
-  const read = async (projection: string) => (await provider.query(`SELECT ${projection} FROM ${table}`)).rows[0] ?? {};
+  const read = async (projection: string) => (await reads.composed(`SELECT ${projection} FROM ${table}`)).rows[0] ?? {};
 
   let row: Record<string, unknown>;
   const warnings: string[] = [];
@@ -143,7 +157,7 @@ async function profileSqlColumn(
       // reason rather than sent to be refused again.
       let nulls: Record<string, unknown> | undefined;
       try {
-        nulls = (await provider.query(`SELECT COUNT(*) AS null_count FROM ${table} WHERE ${column} IS NULL`)).rows[0];
+        nulls = (await reads.composed(`SELECT COUNT(*) AS null_count FROM ${table} WHERE ${column} IS NULL`)).rows[0];
       } catch (nullError) {
         return { name, totalRows, error: refusalOf(scrub, nullError) };
       }
@@ -222,11 +236,19 @@ export async function POST(req: NextRequest) {
     if (columns !== undefined && (!Array.isArray(columns) || columns.some((c) => typeof c !== "string"))) {
       return NextResponse.json({ error: "columns must be a list of column names" }, { status: 400 });
     }
+    // Every read waits on the connection's statement timeout, so one the host cannot wait on is refused before the
+    // open, in the query route's sentence: inside a measure's refusal it would read as every column's.
+    const timeoutError = queryTimeoutError(connection.queryTimeout);
+    if (timeoutError !== null) return NextResponse.json({ error: timeoutError }, { status: 400 });
     const path = tablePath as string[];
     // The LABEL, for the response alone: the profiler names its export after it.
     const tableName = objectSegment(path);
 
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The open is waited for within its engine's connect budget and while the request stays: a wait that ends answers
+    // 504 or 499, not-sent, and the open goes on for the next request.
+    const provider = await openWithinCall(req.signal, connection.type, (wait) =>
+      editorProvider(guard.session, connection, requestCatalog(body), wait),
+    );
     // One `profile` event per run: a profile reads aggregates of user data, so it is a SELECT whatever engine runs it.
     const profileUnit = (statement: string): RecordedUnit => ({
       source: "profile",
@@ -270,6 +292,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "No columns to profile" }, { status: 400 });
       }
 
+      // The host core is read once here, before any read and outside every measure's refusal, so a profile run before
+      // its install fails by name and sends nothing.
+      const reads = openProfileReads(provider, req.signal, "api/db/profile");
+
       if (!isSQL) {
         // MongoDB profiling. The database rides as its own key: the connected database is
         // not the collection's database in general, and without the key both reads went to
@@ -288,8 +314,8 @@ export async function POST(req: NextRequest) {
         // The run is recorded with the address as the route writes it into both reads
         // (docs/GOVERNANCE.md#query-events).
         return await runRecorded(profileUnit(JSON.stringify(address)), async () => {
-          const sampleResult = await provider.query(profileQuery);
-          const totalCountResult = await provider.query(
+          const sampleResult = await reads.composed(profileQuery);
+          const totalCountResult = await reads.composed(
             JSON.stringify({
               ...address,
               // `count`, the operation MongoDBProvider dispatches (it calls the
@@ -337,7 +363,7 @@ export async function POST(req: NextRequest) {
       // The run is recorded with the quoted path as its statement, never the reads Studio built around it
       // (docs/GOVERNANCE.md#query-events).
       return await runRecorded(profileUnit(safeTable), async () => {
-        const countResult = await provider.query(`SELECT COUNT(*) AS total FROM ${safeTable}`);
+        const countResult = await reads.composed(`SELECT COUNT(*) AS total FROM ${safeTable}`);
         const totalRows = Number(field(countResult.rows[0], "total") ?? 0);
 
         const profiled = colList.slice(0, PROFILED_COLUMN_LIMIT);
@@ -347,7 +373,7 @@ export async function POST(req: NextRequest) {
         for (const col of profiled) {
           columnProfiles.push(
             await profileSqlColumn(
-              provider,
+              reads,
               connectionScrub,
               safeTable,
               col,
@@ -357,19 +383,18 @@ export async function POST(req: NextRequest) {
           );
         }
 
-        // Sample values for the first five columns. The bound is the provider's own spelling,
-        // through the same limiter the editor's statements go through: `LIMIT 5` written here
-        // was a syntax error on Oracle, SQL Server and Db2.
+        // Sample values for the first five columns. The bound is the provider's own spelling, through
+        // the console session's page of five: `LIMIT 5` written here was a syntax error on Oracle,
+        // SQL Server and Db2. The provider is asked one row past the page, and five are kept.
         const topCols = profiled.slice(0, 5);
         const safeCols = topCols
           .map((c) => quoteIdentifier(c, provider.type, capabilities, { always: true }))
           .join(", ");
         try {
-          const sample = provider.prepareQuery(`SELECT ${safeCols} FROM ${safeTable}`, { limit: 5 });
-          const sampleResult = await provider.query(sample.query);
+          const sampleRows = await reads.sample(`SELECT ${safeCols} FROM ${safeTable}`, 5);
           for (const profile of columnProfiles) {
             if (topCols.includes(profile.name)) {
-              profile.sampleValues = sampleResult.rows
+              profile.sampleValues = sampleRows
                 .map((r) => field(r, profile.name))
                 .map((v) => (v === null || v === undefined ? "NULL" : renderValue(v)))
                 .slice(0, 5);

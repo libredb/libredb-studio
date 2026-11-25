@@ -1,7 +1,9 @@
-import { deadlineSignal, type ExecuteRequest } from "@libredb/provider-sdk/calls";
+import { type CallContext, deadlineSignal, type ExecuteRequest } from "@libredb/provider-sdk/calls";
 import { contextOn, hostPorts } from "@/lib/api/editor-query";
 import { type BudgetGrant, budgetGrantEnd } from "@/lib/api/provider-monitoring";
 import type { DatabaseProvider } from "@/lib/db/types";
+import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
+import type { HostCore } from "@/lib/provider-host/core/host-core";
 import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedComposedStatements } from "@/lib/provider-host/legacy-bridge";
 import type { QueryResult } from "@/lib/types";
@@ -15,6 +17,9 @@ import type { QueryResult } from "@/lib/types";
  * estimates. The operations profile opens no read-only statement path, and the console session's prepare would append
  * a page bound to the statement on both dialects, so it runs on the legacy bridge's composed statement session
  * (`bridgedComposedStatements`, clause C-50), whose execute sends the provider's plain `query` the statement alone.
+ * `composedStatementOn` is the one opener of that session, read by this facade and by the data profile's reads
+ * (`openProfileReads`, src/lib/api/profile-reads.ts, clause C-86), each of which builds its own context and reads its
+ * own end of a call that answered no page.
  *
  * The process's host core is read and the session built when this is called, synchronously, so a call made before the
  * install throws `HostCoreBootOrderError` before any promise and is never taken for a provider's failure. The call is
@@ -46,19 +51,47 @@ export interface ComposedStatementCall extends BudgetGrant {
  * same object.
  */
 export function runComposedStatement(provider: DatabaseProvider, call: ComposedStatementCall): Promise<QueryResult> {
-  const core = hostCore();
+  return composedStatementOn(hostCore(), provider, {
+    statement: call.statement,
+    context: contextOn(call.deadline, deadlineSignal(call.deadline)),
+    route: call.route,
+    end: (record) => budgetGrantEnd(record, call),
+  });
+}
+
+/** One composed statement on a host core: its context, the route its late failures are logged under, and its end. */
+export interface ComposedStatementOn {
+  /** The statement exactly as Studio composed it. */
+  readonly statement: string;
+  /** The call's context, built by its facade. */
+  readonly context: CallContext;
+  /** The route a failure after the stop is logged under, by kind and code. */
+  readonly route: string;
+  /** The error a call that answered no page throws, in its facade's own reading. */
+  readonly end: (record: RefusedRecord | StoppedRecord) => Error;
+}
+
+/**
+ * Runs `call.statement` on `provider`'s plain query path through `core`, exactly as composed: the one opener of the
+ * composed statement session (`bridgedComposedStatements`), read by both its facades, `runComposedStatement` and the
+ * data profile's reads (`openProfileReads`, src/lib/api/profile-reads.ts; clause C-86). The session is built when
+ * this is called, synchronously; the call is one host core execute of a fresh request of the statement and every row
+ * as its page, on `call.context`.
+ *
+ * @returns A promise of the provider's result by reference, the page record released in a `finally`; it rejects with
+ * `call.end(record)` for a call that answered no page, and with the provider's error as the same object.
+ */
+export function composedStatementOn(
+  core: HostCore,
+  provider: DatabaseProvider,
+  call: ComposedStatementOn,
+): Promise<QueryResult> {
   const bridged = bridgedComposedStatements(provider);
   const request: ExecuteRequest = { statement: call.statement, page: { unlimited: true } };
   return core
-    .executeCall(
-      bridged.session,
-      request,
-      contextOn(call.deadline, deadlineSignal(call.deadline)),
-      bridged.pumpLimits,
-      hostPorts(call.route),
-    )
+    .executeCall(bridged.session, request, call.context, bridged.pumpLimits, hostPorts(call.route))
     .then((record) => {
-      if (record.kind !== "page") throw budgetGrantEnd(record, call);
+      if (record.kind !== "page") throw call.end(record);
       try {
         return bridged.answered();
       } finally {
