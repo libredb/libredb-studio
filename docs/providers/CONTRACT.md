@@ -925,7 +925,7 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 
 ### C-43 (normative): A provider depends on no load order
 
-The order of the lock's entries decides only the order Studio admits and logs packages in (C-105), no outcome depends on it, and no provider is required for Studio to start.
+The order of the lock's entries carries no meaning, and no provider is required for Studio to start.
 The lock's read and the catalog boot composes answer the same for every order of the same packages (C-106).
 With no providers directory set, no package is read.
 
@@ -1152,7 +1152,7 @@ Studio then freezes the implementation and its segments and keeps its own record
 
 ### C-105 (normative): Boot admits each locked package once, after the host core and before anything is served
 
-On the standalone server the providers directory's packages are admitted once per process, when the server starts and before anything is served, one at a time in the lock's order, each import under a deadline of 10 s, and no outcome depends on that order (C-43).
+On the standalone server the providers directory's packages are admitted once per process, when the server starts and before anything is served, one at a time in package-name order, each import under a deadline of 10 s, and no outcome depends on that order (C-43).
 A lock refused as a whole, a set directory that does not exist among them, stops the boot with exit 1 and a line naming the lock and the rule.
 Only the packages the catalog's set rules keep (C-106) are registered, each refused package, one whose import settles after its deadline included, is logged once and serves nothing, and a synchronous hang at import blocks the boot (C-37).
 
