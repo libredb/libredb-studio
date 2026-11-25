@@ -17,12 +17,17 @@
  * client certificate and private key), admitted the same way and handed to the provider under `ADMITTED_HOST_PATHS`,
  * which it reads through `requireAdmittedHostPath` in `./utils/admitted-file`.
  *
+ * Both admissions also refuse, by name, a path in the server's providers directory (`providersDirectoryCheck` in
+ * `@/lib/provider-host/providers-dir`): the directory, anything in it and its lock, from which Studio reads the provider
+ * packages it may load.
+ *
  * `opcuaPkiRoot`: OPC UA's PKI root. This module is the only code that reads `LIBREDB_OPCUA_PKI_ROOT`;
  * `tests/unit/lib/db/provider-environment-scan.test.ts` holds it, and holds that no provider module reaches
  * `@/lib/data-dir`.
  */
 import * as path from "path";
 import { reservedStorageCheck, storageLocation } from "@/lib/data-dir";
+import { providersDirectoryCheck } from "@/lib/provider-host/providers-dir";
 import {
   ADMITTED_FILE,
   ADMITTED_HOST_PATHS,
@@ -38,6 +43,10 @@ import { typeIdRow } from "./type-id";
 /** The refusal of a connection that names one of Studio's own storage files. */
 export const RESERVED_STORAGE_PATH =
   "This path is reserved for the server's own storage and cannot be opened as a connection";
+
+/** The refusal of a connection that names the server's providers directory, a path in it or its lock. */
+export const RESERVED_PROVIDERS_PATH =
+  "This path is in the server's providers directory and cannot be opened as a connection";
 
 /** The refusal of a file name holding a NUL byte, which no filesystem path holds. */
 export const NUL_IN_DATABASE_PATH = "Invalid database path: NUL bytes are not allowed";
@@ -86,10 +95,11 @@ function withoutAdmittedFile<T extends DatabaseConnection>(connection: T): T {
  * 6. Exactly `:memory:`: admitted as `:memory:`.
  * 7. Holding a NUL byte: refused by name (`NUL_IN_DATABASE_PATH`), before anything is resolved.
  * 8. Resolved against the working directory now; one of Studio's own storage files (`reservedStorageCheck`) is refused
- *    by name (`RESERVED_STORAGE_PATH`). A path the check cannot read, where the filesystem answers anything but "no
+ *    by name (`RESERVED_STORAGE_PATH`), and then a path in the providers directory (`providersDirectoryCheck`) by its
+ *    own name (`RESERVED_PROVIDERS_PATH`). A path the check cannot read, where the filesystem answers anything but "no
  *    such file" (a path through a regular file, a symbolic link loop, a directory the server cannot search), is refused
  *    by name too (`PATH_NOT_CHECKED`, followed by the filesystem's message, the original error kept as `cause`).
- *    An error reading Studio's own storage files is the server's, and is raised as it is.
+ *    An error reading Studio's own storage files or the providers directory is the server's, and is raised as it is.
  * 9. Otherwise admitted as that absolute path.
  *
  * The copy is an object spread, so every other marker survives, and `database` and `connectionString` stay as the
@@ -103,9 +113,8 @@ export function admittedFileConnection<T extends DatabaseConnection>(connection:
   if (file === IN_MEMORY) return { ...connection, [ADMITTED_FILE]: IN_MEMORY };
   if (file.includes("\0")) throw new DatabaseConfigError(NUL_IN_DATABASE_PATH, connection.type);
   const absolute = path.resolve(file);
-  if (reservedOrUnchecked(absolute, connection.type, "")) {
-    throw new DatabaseConfigError(RESERVED_STORAGE_PATH, connection.type);
-  }
+  const reserved = reservedOrUnchecked(absolute, connection.type, "");
+  if (reserved !== null) throw new DatabaseConfigError(reserved, connection.type);
   return { ...connection, [ADMITTED_FILE]: absolute };
 }
 
@@ -157,9 +166,10 @@ function withoutAdmittedHostPaths<T extends DatabaseConnection>(connection: T): 
  * 3. Not text: refused by name (`Invalid <field>: the file it names must be text`).
  * 4. Holding a NUL byte: refused by name (`Invalid <field>: NUL bytes are not allowed`), before anything is resolved.
  * 5. Resolved against the working directory now; one of Studio's own storage files (`reservedStorageCheck`) is refused
- *    by name (`<field>: ` and `RESERVED_STORAGE_PATH`), and a path the check cannot read is refused by name too
+ *    by name (`<field>: ` and `RESERVED_STORAGE_PATH`), a path in the providers directory (`providersDirectoryCheck`)
+ *    by its own name (`<field>: ` and `RESERVED_PROVIDERS_PATH`), and a path the check cannot read is refused by name too
  *    (`<field>: ` and `PATH_NOT_CHECKED`, followed by the filesystem's message, the original error kept as `cause`).
- *    An error reading Studio's own storage files is the server's, and is raised as it is.
+ *    An error reading Studio's own storage files or the providers directory is the server's, and is raised as it is.
  * 6. Otherwise admitted as that absolute path; text of spaces only is a path, as the library would be handed it.
  *
  * The admitted paths are a frozen record on an object spread of the connection, so every other marker survives and the
@@ -179,26 +189,32 @@ export function admittedHostPathConnection<T extends DatabaseConnection>(connect
     if (named.includes("\0"))
       throw new DatabaseConfigError(`Invalid ${field}: NUL bytes are not allowed`, connection.type);
     const absolute = path.resolve(named);
-    if (reservedOrUnchecked(absolute, connection.type, `${field}: `)) {
-      throw new DatabaseConfigError(`${field}: ${RESERVED_STORAGE_PATH}`, connection.type);
-    }
+    const reserved = reservedOrUnchecked(absolute, connection.type, `${field}: `);
+    if (reserved !== null) throw new DatabaseConfigError(`${field}: ${reserved}`, connection.type);
     admitted[field] = absolute;
   }
   return { ...connection, [ADMITTED_HOST_PATHS]: Object.freeze(admitted) };
 }
 
 /**
- * Whether `absolute` is one of Studio's own storage files (`reservedStorageCheck`). An error reading Studio's own files
- * is raised as it is, since it is the server's fault and not the connection's. A filesystem error the check raises on
- * the connection's path, one that carries an error code, is raised again as a `DatabaseConfigError` naming `type`, with
- * `prefix` (the field's name, for a host path field), then the filesystem's message after `PATH_NOT_CHECKED`, and the
- * original as `cause`: the connection is refused either way, and the caller is told why. Any other error is raised as
- * it is.
+ * The refusal of `absolute` when it is one of Studio's own storage files (`reservedStorageCheck`, `RESERVED_STORAGE_PATH`)
+ * or a path in the providers directory (`providersDirectoryCheck`, `RESERVED_PROVIDERS_PATH`), in that order; null when
+ * it is neither. An error reading Studio's own files or the providers directory is raised as it is, since it is the
+ * server's fault and not the connection's. A filesystem error either check raises on the connection's path, one that
+ * carries an error code, is raised again as a `DatabaseConfigError` naming `type`, with `prefix` (the field's name, for a
+ * host path field), then the filesystem's message after `PATH_NOT_CHECKED`, and the original as `cause`: the connection
+ * is refused either way, and the caller is told why. Any other error is raised as it is.
  */
-function reservedOrUnchecked(absolute: string, type: DatabaseType, prefix: string): boolean {
-  const isReserved = reservedStorageCheck();
+function reservedOrUnchecked(
+  absolute: string,
+  type: DatabaseType,
+  prefix: string,
+): typeof RESERVED_STORAGE_PATH | typeof RESERVED_PROVIDERS_PATH | null {
+  const isStorage = reservedStorageCheck();
+  const isProviders = providersDirectoryCheck();
   try {
-    return isReserved(absolute);
+    if (isStorage(absolute)) return RESERVED_STORAGE_PATH;
+    return isProviders(absolute) ? RESERVED_PROVIDERS_PATH : null;
   } catch (error) {
     if (typeof (error as NodeJS.ErrnoException).code !== "string") throw error;
     const refusal = new DatabaseConfigError(`${prefix}${PATH_NOT_CHECKED}: ${(error as Error).message}`, type);

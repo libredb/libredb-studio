@@ -18,11 +18,13 @@ import {
   OPCUA_PKI_ROOT_ENV,
   opcuaPkiRoot,
   PATH_NOT_CHECKED,
+  RESERVED_PROVIDERS_PATH,
   RESERVED_STORAGE_PATH,
 } from "@/lib/db/provider-files";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { holdsSecretForm, secretForms } from "@/lib/db/utils/server-text";
 import { logger } from "@/lib/logger";
+import { forgetProvidersDirectory, LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
 import {
   ADMITTED_FILE,
   ADMITTED_HOST_PATHS,
@@ -599,5 +601,99 @@ describe("core decides OPC UA's PKI root (FND-2 slice 3)", () => {
         "resolve against whatever directory the server happened to start in.",
     );
     expect((refused as DatabaseConfigError).provider).toBe("opcua");
+  });
+});
+
+/**
+ * The providers directory (`LIBREDB_PROVIDERS_DIR`, src/lib/provider-host/providers-dir.ts) holds the packages Studio
+ * may load and their lock, so no connection's file or host path names it, a path in it or its lock: each is refused by
+ * name, after the storage check, before any provider is built.
+ */
+describe("core refuses a connection naming the providers directory", () => {
+  const originalProviders = process.env.LIBREDB_PROVIDERS_DIR;
+
+  afterEach(() => {
+    if (originalProviders === undefined) delete process.env.LIBREDB_PROVIDERS_DIR;
+    else process.env.LIBREDB_PROVIDERS_DIR = originalProviders;
+    forgetProvidersDirectory();
+  });
+
+  test("a file or host path naming the providers directory, a path in it or its lock is refused by name before any provider is built", async () => {
+    const providers = path.join(scratch, "providers-reserved", "providers");
+    const artifactFile = path.join(providers, "acme-provider", "1.0.0", "dist", "index.mjs");
+    fs.mkdirSync(path.dirname(artifactFile), { recursive: true });
+    fs.writeFileSync(artifactFile, "export default {};\n");
+    fs.writeFileSync(path.join(providers, LOCK_FILE_NAME), "{}\n");
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    forgetProvidersDirectory();
+    const named = [providers, artifactFile, path.join(providers, "later.db"), path.join(providers, LOCK_FILE_NAME)];
+
+    const fileTypes = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+    expect(fileTypes.length).toBeGreaterThan(0);
+    for (const type of fileTypes) {
+      for (const file of named) {
+        // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+        const refused = await createDatabaseProvider(connection(type, { database: file })).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        expect([type, file, refused instanceof DatabaseConfigError]).toEqual([type, file, true]);
+        expect((refused as DatabaseConfigError).message).toBe(RESERVED_PROVIDERS_PATH);
+        expect((refused as DatabaseConfigError).provider).toBe(type);
+      }
+    }
+
+    const hostPathTypes = (Object.keys(HOST_PATH_FIELDS) as DatabaseType[]).filter(
+      (type) => HOST_PATH_FIELDS[type].length > 0,
+    );
+    expect(hostPathTypes.length).toBeGreaterThan(0);
+    for (const type of hostPathTypes) {
+      for (const field of HOST_PATH_FIELDS[type]) {
+        for (const file of named) {
+          // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
+          const refused = await createDatabaseProvider(connection(type, { [field]: file })).then(
+            () => null,
+            (error: unknown) => error,
+          );
+          expect([type, field, file, refused instanceof DatabaseConfigError]).toEqual([type, field, file, true]);
+          expect((refused as DatabaseConfigError).message).toBe(`${field}: ${RESERVED_PROVIDERS_PATH}`);
+          expect((refused as DatabaseConfigError).provider).toBe(type);
+        }
+      }
+    }
+
+    // A sibling of the providers directory is a file like any other.
+    const sibling = admittedFileConnection(
+      connection(fileTypes[0] as DatabaseType, { database: `${providers}-old.db` }),
+    );
+    expect(admitted(sibling)).toBe(`${providers}-old.db`);
+  });
+
+  test("a candidate the providers check cannot read is refused as not checked, naming the field", () => {
+    const providers = path.join(scratch, "providers-unchecked", "providers");
+    fs.mkdirSync(providers, { recursive: true });
+    process.env.LIBREDB_PROVIDERS_DIR = providers;
+    forgetProvidersDirectory();
+    const candidate = path.join(scratch, "providers-unchecked", "free.db");
+    const fault = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    const realStat = fs.statSync;
+    // The providers check reads identities as bigint stats, the storage check as plain ones, so only the former fails.
+    const stat = spyOn(fs, "statSync").mockImplementation(((target: fs.PathLike, options?: fs.StatSyncOptions) => {
+      if (target === candidate && options?.bigint === true) throw fault;
+      return realStat(target, options);
+    }) as typeof fs.statSync);
+    let refused: unknown = null;
+    try {
+      admittedHostPathConnection(connection("opcua", { clientCertificatePath: candidate }));
+    } catch (error) {
+      refused = error;
+    } finally {
+      stat.mockRestore();
+    }
+    expect(refused).toBeInstanceOf(DatabaseConfigError);
+    expect((refused as DatabaseConfigError).message).toBe(
+      `clientCertificatePath: ${PATH_NOT_CHECKED}: EACCES: permission denied`,
+    );
+    expect((refused as DatabaseConfigError).cause).toBe(fault);
   });
 });
