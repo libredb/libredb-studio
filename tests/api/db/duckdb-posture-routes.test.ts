@@ -346,8 +346,10 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
         body: { ...body, connections: [connection] },
       }) as never,
     );
-    expect(mockGetOrCreateProvider.mock.calls.length).toBe(1);
-    return mockGetOrCreateProvider.mock.calls[0]?.[2];
+    // Each row reads on the connection's metadata session, never the editor's provider.
+    expect(mockGetOrCreateProvider.mock.calls.length).toBe(0);
+    expect(mockGetOrCreateMetadataProvider.mock.calls.length).toBe(1);
+    return mockGetOrCreateMetadataProvider.mock.calls[0]?.[2];
   }
 
   test("an inline DuckDB connection keeps the admin's full reach", async () => {
@@ -396,6 +398,7 @@ describe("POST /api/admin/fleet-health passes the same posture for each connecti
     expect(results[0].status).toBe("error");
     expect(results[0].error).toMatch(/not found/i);
     expect(mockGetOrCreateProvider.mock.calls.length).toBe(0);
+    expect(mockGetOrCreateMetadataProvider.mock.calls.length).toBe(0);
   });
 
   test("a forged posture on the request or on a managed seed is ignored", async () => {

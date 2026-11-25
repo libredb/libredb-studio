@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
+import { getOrCreateMetadataProvider, readProviderDeclarations } from "@/lib/db";
 import type { DatabaseConnection } from "@/lib/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
@@ -111,9 +111,11 @@ export async function POST(request: Request) {
               latencyMs: 0,
             };
           }
-          const provider = await getOrCreateProvider(resolved, {}, execution);
-          // Health and the overview are read through the monitoring facade and the host core (clause C-75), each
+          // Health and the overview are read on the connection's metadata session (docs/providers/CONTRACT.md, clause
+          // C-66), opened under the posture the declarations were read with, so a row never waits for a connection the
+          // editor's statements hold; each read goes through the monitoring facade and the host core (clause C-75)
           // under its own deadline, the statement timeout plus 10 s, and the request's signal.
+          const provider = await getOrCreateMetadataProvider(resolved, {}, execution);
           const monitoring = providerMonitoring(provider, request.signal, "api/admin/fleet-health");
           const health = await monitoring.readHealth();
           const latencyMs = Date.now() - start;

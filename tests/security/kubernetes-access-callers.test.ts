@@ -224,7 +224,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
   },
   getOrCreateProvider: {
-    "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/cancel/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/multi-query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
@@ -236,6 +235,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
       "handleObjectRequest builds only after resolving the request's connection through resolveConnection",
   },
   getOrCreateMetadataProvider: {
+    "src/app/api/admin/fleet-health/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/api/editor-provider.ts":
       "metadataProvider builds for the connection its caller hands it, and every caller is a route listed under metadataProvider here, which resolved it through resolveConnection first",
     "src/lib/api/object-route.ts":

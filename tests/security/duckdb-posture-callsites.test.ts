@@ -28,11 +28,12 @@ const SRC_DIR = join(import.meta.dir, "..", "..", "src");
 
 /**
  * The factory functions that build a provider under an execution context (src/lib/db/factory.ts), each with the
- * number of arguments a call passes once it passes the context: the third for the two that hand out a provider, the
+ * number of arguments a call passes once it passes the context: the third for the three that hand out a provider, the
  * second for `readProviderDeclarations`, which builds one to read its declarations (FND-2 slice 5).
  */
 const FACTORY_CONTEXT_ARGUMENT = {
   getOrCreateProvider: 3,
+  getOrCreateMetadataProvider: 3,
   createDatabaseProvider: 3,
   readProviderDeclarations: 2,
 } as const;
@@ -173,6 +174,7 @@ describe("the census detector, proven in both directions on scratch sources", ()
     ],
     ["a call through a module object", "const p = await factory.getOrCreateProvider(connection, {});"],
     ["a declarations read with no context", "const d = await readProviderDeclarations(connection);"],
+    ["a metadata session open without the context", "const p = await getOrCreateMetadataProvider(connection, {});"],
     [
       "a call after a URL string on the same line",
       'const docs = "https://example.test/x"; const p = await getOrCreateProvider(connection);',
