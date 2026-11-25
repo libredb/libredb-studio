@@ -114,7 +114,7 @@ Three properties frame everything below, and each of them is load-bearing rather
   A run reaching the drive another way, one opened by an earlier build included, ends `engine-unsupported` inside `driveAgentRun()` ([`runtime.ts`](../src/lib/agent/runtime.ts)) on either refusal.
   `tests/unit/lib/agent/engine-support.test.ts` holds the shipped providers to the record in both directions, and `tests/security/agent-mcp-statement-review.test.ts` drops one engine from it and shows every gate refusing that engine.
   Surfaces that must *state* that reach, the login hero among them since #425, read the same record.
-  It is client-safe by construction (its module imports only types), and it does not decide whether plan mode, which runs no statement of the model's anywhere, or `operations`, which sends none, opens: plan mode opens on every engine, and `operations` on every engine whose `ENGINE_FACETS` row offers the agent a curated reading (`agentReadings`), which leaves out MQTT, Sparkplug B, OPC UA and MTConnect.
+  It is client-safe by construction (its module imports only types), and it does not decide whether plan mode, which runs no statement of the model's anywhere, or `operations`, which sends none, opens: plan mode opens on every engine, and `operations` on every engine Studio grants a curated reading (`GRANTED_AGENT_READINGS`, the intersection of the engine declaration's `facets.agentReadings` and its `ENGINE_FACETS` row's `agentReadings`), which leaves out MQTT, Sparkplug B, OPC UA and MTConnect.
   It does reach their grounding: on an engine whose catalog read is a composed statement (its overlay's `catalogCapture`), that read is sent under `agent-read-only`, so on such an engine off the record the acquisition is refused `PROFILE_ENGINE_NOT_REVIEWED` and both run ungrounded, rather than the statement being sent under `agent-operations`.
   The restriction is a property of the **execution profile**, not
   of the factory: `agent-read-only` sends model-authored statements and is served only where the
@@ -1554,6 +1554,7 @@ Over the legacy bridge each panel is still read through the provider's own membe
 
 **A run is offered only the kinds its engine offers agent mode.**
 Each engine's `ENGINE_FACETS` row declares them as `agentReadings`: the kind of each monitoring panel the row offers whose read the agent handle answers, and `health` unless the agent handle withholds it.
+That row is Studio's review record of the claim the engine declaration authors as `facets.agentReadings`, and a run is offered Studio's grant of it, `GRANTED_AGENT_READINGS` in `src/lib/db/claim-grants.ts`, the intersection of the two in the row's order.
 `selectAgentTools` builds `inspect_operations` from the run's recorded engine (`AgentRunRecord.engine`), so its `kind` enum and its description list exactly those kinds, and its description names `schema` only where a table or index reading is offered.
 A call naming any other kind is refused by name, `unavailable` with `READING_NOT_OFFERED`, before a provider is acquired, the budget is charged or the repair ledger records anything, and the step settles as a `not-sent` refusal whose detail names the kind and the readings the engine offers.
 The handler parses with the six-kind contract on purpose: a native call whose kind fails the per-engine enum still reaches it, so the model hears that refusal rather than a generic `INVALID_TOOL_INPUT`.
@@ -3112,7 +3113,7 @@ The tone and the headline are `src/lib/agent/posture.ts`'s, derived from the arm
 | --- | --- | --- | --- |
 | plan | plan mode, on every engine | `safe` | *Executes nothing it drafts* |
 | unresolved | agent mode with no connection | `blocked` | *Cannot execute yet* |
-| unsupported | the engine has no statement language in `AGENT_STATEMENT_LANGUAGE` | `blocked` | *Cannot execute on `<engine>`* |
+| unsupported | Studio grants the engine no statement language (`GRANTED_AGENT_STATEMENT_LANGUAGE`) | `blocked` | *Cannot execute on `<engine>`* |
 | not reviewed | the engine has a language and `AGENT_EXECUTION_ENGINES` does not list it | `blocked` | *Cannot execute on `<engine>`* |
 | refused | the last run on this connection was refused for the connection itself | `blocked` | *Refused on this connection* |
 | widened | the hand-over is ticked and some variant of the language hands a statement over | `widened` | *Reads only, and one statement in your editor* |
@@ -3132,7 +3133,7 @@ An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that send
 
 **How to add an engine to a statement-language family.**
 
-1. Map the type-id onto its statement language in `AGENT_STATEMENT_LANGUAGE` in `agent-manifest.ts`.
+1. Map the type-id onto its statement language in `AGENT_STATEMENT_LANGUAGE` in `src/lib/db/compatibility.ts`, and author the same language as `agent.statementLanguage` in its engine declaration; every agent mode gate reads Studio's grant of it, `GRANTED_AGENT_STATEMENT_LANGUAGE`.
 2. Add the engine's review row to `AGENT_EXECUTION_ENGINES` in `src/lib/db/compatibility.ts` once its read-only statement path is reviewed; every agent and MCP statement gate reads that record, and `agent-manifest.test.ts` fails while an engine has a language the record does not list.
 3. Write `languages/<statement-language>/engines/<type-id>.ts`, its server overlay declared `satisfies AgentEngineServerOverlay<...>`, with every dialect-bound member supplied or `"unsupported"`.
 4. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.
