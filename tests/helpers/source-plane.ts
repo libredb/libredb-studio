@@ -103,7 +103,7 @@ export function builtArtifactImports(root: string): string[] {
         : name === rootName || (packageNames.has(name) && specifier.slice(name.length).split("/").includes("dist"));
       if (!built) continue;
       failures.push(
-        `${relativeFile} imports "${specifier}", a built artifact: a test resolves source, and bun run lib:load is the only check of the build.`,
+        `${relativeFile} imports "${specifier}", a built artifact: a test resolves source, and the only checks of a build are bun run lib:load and the SDK's pack test, which builds what it reads.`,
       );
     }
   }

@@ -146,6 +146,7 @@
     "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16 --exclude-entrypoints styles.css",
     "lib:closure": "node scripts/check-lib-closure.mjs",
     "lib:load": "node scripts/check-lib-load.mjs",
+    "sdk:pack": "bun scripts/sdk-pack.ts",
     "prepublishOnly": "bun run build:lib && bun run attw",
     "start": "node scripts/next-with-seed-assets.mjs start",
     "format": "biome format .",
