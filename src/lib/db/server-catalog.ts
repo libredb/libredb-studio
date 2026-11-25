@@ -21,8 +21,9 @@
  * tool answer before any open, reads `bundledEngineRefusal`'s message. A refused package's engine is refused there as
  * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection serves an admitted
- * engine in this Studio, through `resolvePackageAwareConnection`, which validates its connection against the engine's
- * field rules and then refuses at the open.
+ * engine in this Studio: it resolves its connection through `resolveConnection` with `engines` `bundled-and-package`,
+ * then `testPackageConnection` (src/lib/api/test-connection.ts) validates it against the engine's field rules and
+ * refuses at the open.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged:
  * server code that holds an admitted engine's id holds a `PackageEngineId`, never a `DatabaseType`.

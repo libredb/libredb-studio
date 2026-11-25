@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { resolvePackageAwareConnection } from "@/lib/seed/resolve-connection";
+import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { testConnection, testPackageConnection } from "@/lib/api/test-connection";
@@ -24,14 +24,15 @@ export async function POST(req: NextRequest) {
     }
 
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. The one route
-    // that serves an engine of an admitted provider package: its connection is read by the engine's field rules, then
-    // refused at the open (docs/providers/CONTRACT.md, clause C-107).
-    const resolved = await resolvePackageAwareConnection(
+    // that serves an engine of an admitted provider package: its connection is resolved with every guard of every
+    // route, then read by the engine's field rules and refused at the open (docs/providers/CONTRACT.md, clause C-107).
+    const connection = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
+      undefined,
+      "bundled-and-package",
     );
-    if (resolved.kind === "package") testPackageConnection(resolved.connection, resolved.engine);
-    const { connection } = resolved;
+    testPackageConnection(connection);
     scrub = providerTextScrub(connection, "any");
 
     if (!connection.type) {

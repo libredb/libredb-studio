@@ -62,19 +62,13 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  const resolveConnection = async (body: Record<string, unknown>) => {
-    if (!body.connection && !body.connectionId) {
-      throw new SeedConnectionError("Either connection or connectionId is required", 400);
-    }
-    return body.connection;
-  };
   return {
-    resolveConnection: mock(resolveConnection),
-    // The route's resolve: every connection here is of a bundled engine.
-    resolvePackageAwareConnection: mock(async (body: Record<string, unknown>) => ({
-      kind: "bundled",
-      connection: await resolveConnection(body),
-    })),
+    resolveConnection: mock(async (body: Record<string, unknown>) => {
+      if (!body.connection && !body.connectionId) {
+        throw new SeedConnectionError("Either connection or connectionId is required", 400);
+      }
+      return body.connection;
+    }),
     SeedConnectionError,
   };
 });

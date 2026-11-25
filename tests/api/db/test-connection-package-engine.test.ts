@@ -1,6 +1,6 @@
 /**
  * `POST /api/db/test-connection` for an engine a provider package serves (docs/providers/CONTRACT.md, clause C-107),
- * through the real `resolvePackageAwareConnection` and a server catalog installed by the composer: an admitted engine's
+ * through the real `resolveConnection` and a server catalog installed by the composer: an admitted engine's
  * connection is validated against its declaration's field rules, each refusal the declared sentence as a configuration
  * error whose statement was not sent, and a connection that passes them is refused at the open, which this Studio does
  * not serve for a package engine yet; a refused package's engine answers `PROVIDER_UNAVAILABLE` naming the code. The

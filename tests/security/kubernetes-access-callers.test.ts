@@ -43,7 +43,7 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/seed/kubernetes-discovery-export.ts": ["parseKubernetesDiscoveryExport"],
   "src/lib/seed/kubernetes-discovery-contract.ts": ["mapKubernetesDatabase"],
   "src/lib/governance/visible.ts": ["visibleConnections", "visibleConnectionById"],
-  "src/lib/seed/resolve-connection.ts": ["resolveConnection", "resolvePackageAwareConnection"],
+  "src/lib/seed/resolve-connection.ts": ["resolveConnection"],
   "src/lib/kubernetes-access/gate.ts": [
     "connectionsUnderAccessReview",
     "connectionUnderAccessReview",
@@ -138,6 +138,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/provider-meta/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/query/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/statement/analyze/route.ts": RESOLVED_BY_THE_ROUTE,
+    "src/app/api/db/test-connection/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/db/transaction/route.ts": RESOLVED_BY_THE_ROUTE,
     "src/app/api/agent/classify/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
     "src/app/api/agent/runs/[runId]/handover/route.ts": RESOLVED_BY_THE_AGENT_ROUTE,
@@ -145,10 +146,6 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
     "src/lib/api/object-route.ts":
       "handleObjectRequest, the shared body of every db/objects route and db/keys/scan, resolves the request's connection here before it builds",
-  },
-  resolvePackageAwareConnection: {
-    "src/app/api/db/test-connection/route.ts":
-      "resolves the request's connection through resolvePackageAwareConnection, resolveConnection's body with an engine of an admitted provider package admitted too, which opens a seed id only through visibleConnectionById and so through the review, and answers every miss with the uniform 404 (tests/security/kubernetes-access-review.test.ts)",
   },
   connectionsUnderAccessReview: {
     "src/lib/governance/visible.ts":
@@ -224,7 +221,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   createDatabaseProvider: {
     "src/lib/api/test-connection.ts":
-      "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolvePackageAwareConnection first",
+      "testConnection builds for the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
   },
   getOrCreateProvider: {
     "src/app/api/agent/runs/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
@@ -253,7 +250,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   withOneShotTunnel: {
     "src/lib/api/test-connection.ts":
-      "testConnection opens the tunnel of the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolvePackageAwareConnection first",
+      "testConnection opens the tunnel of the connection its caller hands it, and its one caller, POST /api/db/test-connection, resolved it through resolveConnection first",
   },
   findCachedProvider: {
     "src/lib/api/editor-provider.ts":
@@ -292,7 +289,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   testConnection: {
     "src/app/api/db/test-connection/route.ts":
-      "the Test Connection route resolves its body through resolvePackageAwareConnection before it hands the connection to testConnection",
+      "the Test Connection route resolves its body through resolveConnection before it hands the connection to testConnection",
   },
 };
 

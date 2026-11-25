@@ -16,7 +16,7 @@ import {
   withheldProviderError,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
-import { type PackageConnection, type PackageEngine, packageEngineRefusal } from "@/lib/db/server-catalog";
+import { type PackageConnection, packageEngineRefusal, serverEngine } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
@@ -98,23 +98,30 @@ function testDeadlineSentence(budgetMs: number): string {
 }
 
 /**
- * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-107): first,
- * as for a bundled engine, `connection` is read by the engine's own field rules, composed from its declaration
- * (`engine.fieldRules`), and a refusal rejects with a `DatabaseConfigError` carrying the declared sentence, marked
- * `not-sent`; a connection the rules pass is refused at the open with `PackageEngineUnsupportedError`, since this
- * Studio opens no session on a package's engine yet. Nothing is built, no tunnel opens and the factory is not called.
+ * Test Connection's step for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-107),
+ * run on the connection `resolveConnection` answered with `engines` `bundled-and-package`. A connection of any other
+ * engine returns untouched, as the bundled connection it is, for `testConnection`. A package engine's connection is
+ * first, as for a bundled engine, read by the engine's own field rules, composed from its declaration
+ * (`fieldRules` of its `PackageEngine`), and a refusal throws a `DatabaseConfigError` carrying the declared sentence,
+ * marked `not-sent`; a connection the rules pass is refused at the open with `PackageEngineUnsupportedError`, since
+ * this Studio opens no session on a package's engine yet. Nothing is built, no tunnel opens and the factory is not
+ * called.
  *
- * @throws {DatabaseConfigError} When a field rule refuses the connection.
- * @throws {PackageEngineUnsupportedError} Otherwise, at the open.
+ * @throws {DatabaseConfigError} When a field rule refuses a package engine's connection.
+ * @throws {PackageEngineUnsupportedError} Otherwise for a package engine's connection, at the open.
  */
-export function testPackageConnection(connection: PackageConnection, engine: PackageEngine): never {
-  const refusal = connectionFieldRefusal(engine.fieldRules, connection as unknown as DatabaseConnection);
+export function testPackageConnection(
+  connection: DatabaseConnection | PackageConnection,
+): asserts connection is DatabaseConnection {
+  const engine = serverEngine(connection.type);
+  if (engine.kind !== "package") return;
+  const refusal = connectionFieldRefusal(engine.engine.fieldRules, connection as unknown as DatabaseConnection);
   if (refusal !== undefined) {
     const refused = new DatabaseConfigError(refusal);
     markNotSent(refused);
     throw refused;
   }
-  throw packageEngineRefusal(engine.id, "open");
+  throw packageEngineRefusal(engine.engine.id, "open");
 }
 
 /**
