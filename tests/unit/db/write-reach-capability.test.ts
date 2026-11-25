@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
 import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { createDatabaseProvider } from "@/lib/db/factory";

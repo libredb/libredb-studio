@@ -10,15 +10,16 @@
  * contract registry lookups and the query generators' SQL engine rows (through `typeIdRow`) and the migration's dialect
  * header, and the published
  * `QuerySafetyDialog`, `TestDataGenerator`, `QueryEditor` and `ResultsGrid`, the components that read a per-engine fact
- * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `WRITE_REACH` by the
- * read-only marker and the connection form hook, `READ_ONLY_ENFORCED` by the provider factory,
- * `READS_FILE_ACCESS_POSTURE` by the provider factory and the provider cache key, `SINGLE_WRITER_FILE` by the provider
- * cache key and the provider factory, `AGENT_CREDENTIAL_FORM` by the provider factory, `MASKING_EXEMPT_COLUMNS` by
- * `clientCapabilities`, `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` by `catalogChoice`, `CONNECTION_FORM` by
+ * with a type a host hands them. The capability tables are read through `typeIdRow` as well: `GRANTED_WRITE_REACH` by
+ * the read-only marker and the connection form hook, `READ_ONLY_ENFORCED` and `UNGRANTED_CLAIM_REFUSALS` by the
+ * provider factory, `GRANTED_READS_FILE_ACCESS_POSTURE` by the provider factory and the provider cache key,
+ * `GRANTED_SINGLE_WRITER_FILE` by the provider cache key and the provider factory, `GRANTED_AGENT_CREDENTIAL_FORM` by
+ * the provider factory, `GRANTED_MASKING_EXEMPT_COLUMNS` by `clientCapabilities` (each Studio's grant of a claim,
+ * ./claim-grants), `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` by `catalogChoice`, `CONNECTION_FORM` by
  * `offersSslPanel`, and the destructive vocabulary by its six readers. Other
- * reads are still by bare index, of other per-engine tables and of some of these (the seed schema's `WRITE_REACH`
- * refinement, the VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not covered by this module
- * unless it calls it.
+ * reads are still by bare index, of other per-engine tables and of some of these (the seed schema's
+ * `GRANTED_WRITE_REACH` refinement, the VS Code backend's `CONNECTION_FORM` reads), so a new per-engine lookup is not
+ * covered by this module unless it calls it.
  *
  * `compatibility.ts` never imports this module: the set below is built from `SHIPPED_DATABASE_TYPES` as this module
  * loads, so a value import back would throw a `ReferenceError` whenever `compatibility.ts` loads first. So no checked

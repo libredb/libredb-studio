@@ -1,5 +1,5 @@
 import { connectionFingerprint } from "./connection-fingerprint";
-import { READS_FILE_ACCESS_POSTURE, SINGLE_WRITER_FILE } from "./compatibility";
+import { GRANTED_READS_FILE_ACCESS_POSTURE, GRANTED_SINGLE_WRITER_FILE } from "./claim-grants";
 import { typeIdRow } from "./type-id";
 import {
   type DatabaseConnection,
@@ -48,7 +48,7 @@ import {
  *   `credentialDigest` or the fingerprint, whose rules are as whom a connection authenticates and
  *   which server it reaches, and the mode changes neither.
  * - The file-access posture (the non-admin DuckDB file-access change), for an engine that opens its
- *   editor handle under one: `READS_FILE_ACCESS_POSTURE` in `./compatibility.ts` answers which, so
+ *   editor handle under one: `GRANTED_READS_FILE_ACCESS_POSTURE` in `./claim-grants.ts` answers which, so
  *   this is not a `connection.type` branch (CLAUDE.md), and today DuckDB and SQLite answer true. A denied
  *   editor handle opens with `enable_external_access: 'false'` and a full-reach one without it, so the
  *   two must never share a cached handle: a caller of one posture would otherwise be handed the
@@ -100,7 +100,7 @@ export async function providerCacheKey(
   owner?: string,
 ): Promise<string> {
   // Read before either digest, so a type outside the union is refused by name before anything is framed.
-  const readsPosture = typeIdRow(READS_FILE_ACCESS_POSTURE, connection.type);
+  const readsPosture = typeIdRow(GRANTED_READS_FILE_ACCESS_POSTURE, connection.type);
   const keyedOwner = providerOwner(connection, owner);
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
@@ -110,7 +110,7 @@ export async function providerCacheKey(
   // keeps every other engine's key unchanged. A denied handle must not be shared with a full-reach one
   // on the same connection, so its key carries this extra segment (the non-admin DuckDB file-access
   // change), on the profiled key too, which always passes a definite posture. The
-  // engine is read from `READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
+  // engine is read from `GRANTED_READS_FILE_ACCESS_POSTURE`, not a `connection.type` branch (CLAUDE.md).
   if (readsPosture && allowExternalFileAccess === false) {
     parts.push(`${connection.type}-deny-file-access`);
   }
@@ -127,7 +127,7 @@ export async function providerCacheKey(
  * file.
  *
  * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
- * the first one's committed rows and LibreDB refuses, so `SINGLE_WRITER_FILE` decides it before any provider
+ * the first one's committed rows and LibreDB refuses, so `GRANTED_SINGLE_WRITER_FILE` decides it before any provider
  * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
  * (`OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
  * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
@@ -138,7 +138,7 @@ export async function providerCacheKey(
  * @throws {UnknownProviderError} When the connection's type is absent, not text, or names no provider.
  */
 export function providerOwner(connection: DatabaseConnection, owner: string | undefined): string | undefined {
-  return typeIdRow(SINGLE_WRITER_FILE, connection.type) ? undefined : owner;
+  return typeIdRow(GRANTED_SINGLE_WRITER_FILE, connection.type) ? undefined : owner;
 }
 
 /**

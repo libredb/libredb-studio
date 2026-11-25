@@ -9,29 +9,29 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
  * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
- * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`, `migrationDdl` and `sqlGenerators`), are
- * written in the declaration itself: this script reads them from the committed file of the engine in
- * src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
+ * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`,
+ * `mcp` and `safeguards`), are written in the declaration itself: this script reads them from the committed file of
+ * the engine in src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
  * (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id` is not its file name,
  * and writes them back unchanged. Every other member is built from the tables. The engine catalog, the connection
  * tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab
- * type editors and editor languages, the SQL text, the SQL writing, the migration DDL and the SQL generator forms
- * (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80 and M-81) project
- * the authored members, and `bun run engines:generate` runs that command's `--write` first and its `--check` last: this
- * script builds every provider through the factory, which builds only an engine the catalog holds, and `--check` admits
- * every declaration this script wrote, with the SDK validator's rules, which refuse by name, among others, a dialog
- * entry or a field rule for a field the engine does not take and a placeable field with no placement. A new engine's
- * declaration therefore starts as a copy of another engine's file with its authored members written for the new engine;
- * the catalog generator projects it, this script writes every other member, and the catalog generator then admits it.
+ * type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms and the
+ * claim requests (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80,
+ * M-81 and M-82) project the authored members, and `bun run engines:generate` runs that command's `--write` first and
+ * its `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
+ * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
+ * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with
+ * no placement. A new engine's declaration therefore starts as a copy of another engine's file with its authored
+ * members written for the new engine; the catalog generator projects it, this script writes every other member, and
+ * the catalog generator then admits it.
  *
  * Each file is a `#/$defs/engineDeclaration` of the provider manifest schema
  * (packages/provider-sdk/src/manifest/manifest.schema.json): the engine's identity, its connection facts, its facets,
  * the statement language agent mode sends it, its editor facts that are data with the language its tabs are written and
- * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts, its SQL generator forms, and its
- * policy and MCP claims. A full
- * manifest also states the package's runtime and the products it was measured against, facts no provider in
- * `src/lib/db/providers/` has yet, so they are written when a provider moves into a package of its own, from this
- * declaration.
+ * rendered in, its SQL text facts, its SQL writing facts, its migration DDL facts, its SQL generator forms, its
+ * policy and MCP claims and its safeguards. A full manifest also states the package's runtime and the products it was
+ * measured against, facts no provider in `src/lib/db/providers/` has yet, so they are written when a provider moves
+ * into a package of its own, from this declaration.
  *
  * The files are committed and never edited by hand outside their authored members, so a change to any table they
  * come from lands with its declaration diff. tests/unit/db/engine-declarations.test.ts rebuilds each in memory and
@@ -86,18 +86,16 @@
  * src/lib/db/query-generators/index.ts, and the count expression, `COUNT(*)` where the engine's is the shared one.
  * `boundSegments` binds every name through that table too.
  *
- * The policy and MCP claims come from the claim tables of `src/lib/db/compatibility.ts`, one member each: `policy` from
- * `WRITE_REACH`, `READS_FILE_ACCESS_POSTURE`, `REFUSES_DENIED_FILE_ACCESS`, `SINGLE_WRITER_FILE` and
- * `READ_ROOTS_REQUIRED`, and `mcp` from `MCP_EXPOSABLE`, `MCP_STATEMENT_READ`, `MCP_METADATA_READ_CHANGES_STATE` and
- * `MCP_AGENT_CREDENTIAL_REQUIRED`. Each table is Studio's review record of its claim, which every gate reads, and a
- * member is a request, never a fact Studio believes as declared (docs/providers/CONTRACT.md, clause M-52), so the
- * declaration states each shipped engine's request as its record's row. `READ_ONLY_ENFORCED` has no member, since Studio
- * derives it from the write reach, and `connection.readsTrustMaterial`, which is no claim, is authored.
- * The claims of the connection, facets, agent and SQL text segments are written the same way: each is the row of the
- * review record docs/providers/CONTRACT.md, clause M-53, names for it.
- * Two more policy claims come from records of their own: `agentCredentialForm` from `AGENT_CREDENTIAL_FORM`, whose null
- * row, the user and password together, is written `pair`, and `maskingExemptColumns` from `MASKING_EXEMPT_COLUMNS`
- * (clauses M-58 and M-59).
+ * The policy and MCP claims are authored, written back as the committed file states them: each member is a request,
+ * never a fact Studio believes as declared, and the catalog generator projects them into
+ * src/lib/db/engine-catalog/claims.generated.ts, which only Studio's grant reader, src/lib/db/claim-grants.ts, reads,
+ * granting each request no further than Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54
+ * and M-82). The census holds each shipped engine's request equal to its record's row, so a record changed without its
+ * declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
+ * member, since Studio derives it from the granted write reach, and `connection.readsTrustMaterial`, which is no claim,
+ * is authored too.
+ * The claims of the connection, facets, agent and SQL text segments are written from Studio's records: each is the row
+ * of the review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
  * (clause M-67): null where the engine speaks no statement language; otherwise its dialect, null where the overlay holds
@@ -118,12 +116,10 @@
  * a preview it leaves out written false. The generator refuses by name a listed operation with no spec and a spec for an
  * operation the list does not name.
  *
- * The safeguards are no claims but the provider's own statements of what its code does, so they come from its
- * capabilities, read as the editor facts are (clause M-60): `writePaths` from `writeReach`, path by path in the order
- * of `WRITE_PATHS` (`src/lib/db/write-reach.ts`) with a proof the provider names none of written null, and every path
- * open where the provider declares no write reach, the reading Studio gives that absence; `metadataOnly` from
- * `metadataOnly`, one entry per operation in the capability's key order; and `inlineEditRefusedColumns` from
- * `inlineEditRefusedColumns`. The last two are null where the provider declares none.
+ * The safeguards are no claims but the provider's own statements of what its code does, authored with the policy
+ * claims, since the write reach request must be their summary (clause M-61), and written back as the committed file
+ * states them; no gate reads them, so no projection holds them, and the census reads each back to the provider's
+ * capabilities (clause M-60).
  *
  * The editor's commit keyword, consent deadline, fence aliases, dialect and language are authored, written back as the
  * committed file states them; the explain format comes from each engine's capabilities. The capabilities are read as
@@ -162,10 +158,8 @@ import type {
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
-  Safeguards,
   SqlDialect,
   StatisticsReading,
-  WritePathEvidence,
 } from "@libredb/provider-sdk/manifest";
 import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../src/lib/agent/composed-sql-primitives";
@@ -176,23 +170,12 @@ import type { AgentStatisticsReading } from "../src/lib/agent/schema-stats";
 import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import {
   HOST_PATH_FIELDS,
-  MASKING_EXEMPT_COLUMNS,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_METADATA_READ_CHANGES_STATE,
-  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
-  REFUSES_DENIED_FILE_ACCESS,
   SHIPPED_DATABASE_TYPES,
-  SINGLE_WRITER_FILE,
   SSH_TUNNEL_REFUSAL,
-  WRITE_REACH,
 } from "../src/lib/db/compatibility";
 import {
-  AGENT_CREDENTIAL_FORM,
   CONNECTION_FIELD_DESCRIPTORS,
   SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
@@ -201,7 +184,7 @@ import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
 import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
-import type { MaintenanceOperation, ProviderCapabilities, WritePath, WritePathReach } from "../src/lib/db/types";
+import type { MaintenanceOperation, ProviderCapabilities } from "../src/lib/db/types";
 import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
@@ -509,53 +492,6 @@ export function buildAgentOverlay(
   };
 }
 
-/** One write path's answer as the provider declares it, in the declaration's form: a proof the provider names none of null. */
-function writePathEvidence(path: WritePathReach): WritePathEvidence {
-  if (path.reach === "gated") return { reach: "gated", gate: { module: path.gate.module, symbol: path.gate.symbol } };
-  if (path.reach === "open") return { reach: "open" };
-  return {
-    reach: "absent",
-    proof: path.proof === undefined ? null : { module: path.proof.module, symbol: path.proof.symbol },
-  };
-}
-
-/**
- * One engine's safeguards, read from its provider's capabilities: the write paths in `WRITE_PATHS` order, every path
- * open where the provider declares no write reach, the reading Studio gives that absence, and a declared write reach
- * that misses a path refused by name; the metadata-only answer as
- * one entry per operation in the capability's key order, each column in its order, or null; and the inline edit
- * refusal or null.
- */
-function buildSafeguards(type: DatabaseType, capabilities: ProviderCapabilities): Safeguards {
-  const { writeReach, metadataOnly, inlineEditRefusedColumns } = capabilities;
-  const evidence = (path: WritePath): WritePathEvidence => {
-    if (writeReach === undefined) return { reach: "open" };
-    const declared: WritePathReach | undefined = writeReach[path];
-    if (declared === undefined) throw new Error(`${type}: the provider declares a write reach with no ${path} path`);
-    return writePathEvidence(declared);
-  };
-  return {
-    // Written out path by path, in WRITE_PATHS order, so a path the schema and Studio disagree on fails to compile here.
-    writePaths: {
-      editor: evidence("editor"),
-      objectEdit: evidence("objectEdit"),
-      maintenance: evidence("maintenance"),
-      transaction: evidence("transaction"),
-    },
-    metadataOnly:
-      metadataOnly === undefined
-        ? null
-        : Object.entries(metadataOnly).map(([operation, columns]) => ({
-            operation,
-            columns: columns.map(({ column, kind }) => ({ column, kind })),
-          })),
-    inlineEditRefusedColumns:
-      inlineEditRefusedColumns === undefined
-        ? null
-        : { type: inlineEditRefusedColumns.type, reason: inlineEditRefusedColumns.reason },
-  };
-}
-
 /**
  * One engine's maintenance specs, read from its provider's capabilities: one per operation of the engine's
  * `ENGINE_FACETS` maintenance list, in that order, each member the provider leaves out written at the reading Studio
@@ -588,12 +524,6 @@ function buildMaintenanceSpecs(type: DatabaseType, capabilities: ProviderCapabil
       kinds: spec.kinds === undefined ? null : [...spec.kinds],
     };
   });
-}
-
-/** The engine's masking exemption, `MASKING_EXEMPT_COLUMNS`'s row as its column pattern and reason, or null. */
-function maskingExemption(type: DatabaseType): EngineDeclaration["policy"]["maskingExemptColumns"] {
-  const row = MASKING_EXEMPT_COLUMNS[type];
-  return row === null ? null : { column: row.column, reason: row.reason };
 }
 
 /**
@@ -671,22 +601,9 @@ export function buildEngineDeclaration(
     sqlWriting: authored.sqlWriting,
     migrationDdl: bound.migrationDdl,
     sqlGenerators: bound.sqlGenerators,
-    policy: {
-      writeReach: WRITE_REACH[type],
-      readsFileAccessPosture: READS_FILE_ACCESS_POSTURE[type],
-      deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS[type],
-      singleWriterFile: SINGLE_WRITER_FILE[type],
-      readRootsRequired: READ_ROOTS_REQUIRED[type],
-      agentCredentialForm: AGENT_CREDENTIAL_FORM[type] ?? "pair",
-      maskingExemptColumns: maskingExemption(type),
-    },
-    mcp: {
-      exposable: MCP_EXPOSABLE[type],
-      statementRead: MCP_STATEMENT_READ[type],
-      metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE[type],
-      agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED[type],
-    },
-    safeguards: buildSafeguards(type, capabilities),
+    policy: authored.policy,
+    mcp: authored.mcp,
+    safeguards: authored.safeguards,
   };
 }
 

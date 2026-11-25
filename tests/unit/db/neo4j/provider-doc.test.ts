@@ -16,13 +16,8 @@ import path from "node:path";
 import { parse as parseYAML } from "yaml";
 import { MAX_GRAPH_NODES, capNotice, droppedNotice, graphAriaLabel } from "@/components/results-graph/graph-canvas";
 import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
-import {
-  AGENT_EXECUTION_ENGINES,
-  MCP_EXPOSABLE,
-  MCP_STATEMENT_READ,
-  READ_ONLY_ENFORCED,
-  WRITE_REACH,
-} from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, WRITE_REACH } from "@/lib/db/compatibility";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";

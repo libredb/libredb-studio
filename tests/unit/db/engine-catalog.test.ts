@@ -34,6 +34,7 @@ import {
   admittedDeclarations,
   authoredDeclarations,
   ENGINE_CATALOG_MODULE,
+  ENGINE_CLAIMS_MODULE,
   ENGINE_CONNECTION_FLAGS_MODULE,
   ENGINE_CONNECTION_FORM_MODULE,
   ENGINE_CONNECTION_MODULE,
@@ -46,6 +47,7 @@ import {
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
   renderCatalog,
+  renderClaimRequests,
   renderConnectionFlags,
   renderConnectionForms,
   renderConnectionStrings,
@@ -59,6 +61,7 @@ import {
 } from "../../../scripts/generate-engine-catalog";
 import { EXTERNAL_DATABASE_TYPES, isExternalDatabaseType, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BUNDLED_CATALOG } from "@/lib/db/engine-catalog/catalog.generated";
+import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import {
   BUNDLED_CONNECTION_FIELDS,
   BUNDLED_CREDENTIAL_WARNINGS,
@@ -88,6 +91,7 @@ import {
   type ConnectionStringEntry,
   type ConnectionTables,
   projectCatalog,
+  projectClaimRequests,
   projectConnectionForms,
   projectConnectionStrings,
   projectConnectionTables,
@@ -209,6 +213,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectSqlWriting(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectMigrationDdl(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectSqlGenerators(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectClaimRequests(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -965,6 +970,63 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.policy)).toBeGreaterThan(0);
   });
 
+  test("projectClaimRequests answers each declaration's policy and MCP claims as it authors them, frozen, in ascending id order", () => {
+    const set = ["sqlite", "modbus", "etcd", "s3"].map(admitted);
+    const requests = projectClaimRequests(set);
+
+    expect(Object.keys(requests)).toEqual(["etcd", "modbus", "s3", "sqlite"]);
+    for (const declaration of set) {
+      expect(requests[declaration.id]).toEqual({ policy: declaration.policy, mcp: declaration.mcp });
+      // Each member in the declaration's order, every key its own property.
+      expect(JSON.stringify(requests[declaration.id])).toBe(
+        JSON.stringify({ policy: declaration.policy, mcp: declaration.mcp }),
+      );
+      expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp"]);
+    }
+    // The declaration's vocabulary: a pair agent credential is `pair`, a refusal its sentence, an exemption its
+    // pattern and reason.
+    expect(requests.etcd?.policy.agentCredentialForm).toBe("pair");
+    expect(requests.etcd?.policy.writeReach).toBe("guarded");
+    expect(requests.sqlite?.policy.deniedFileAccessRefusal).toEqual(expect.any(String));
+    expect(requests.modbus?.policy.maskingExemptColumns).toEqual({
+      column: expect.any(String),
+      reason: expect.any(String),
+    });
+    expect(requests.s3?.mcp.agentCredentialRequired).toBe(true);
+    // The same answer for the set reversed, and for every committed declaration in any order.
+    expect(JSON.stringify(projectClaimRequests([...set].reverse()))).toBe(JSON.stringify(requests));
+    expect(JSON.stringify(projectClaimRequests([...ADMITTED].reverse()))).toBe(
+      JSON.stringify(projectClaimRequests(ADMITTED)),
+    );
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(requests)).toBe(true);
+    const modbus = structuredClone(admitted("modbus"));
+    const copied = projectClaimRequests([modbus]);
+    (modbus.policy as { writeReach: string }).writeReach = "open";
+    (modbus.policy.maskingExemptColumns as { column: string }).column = "^x$";
+    expect(copied.modbus?.policy.writeReach).toBe(admitted("modbus").policy.writeReach);
+    expect(copied.modbus?.policy.maskingExemptColumns).toEqual(admitted("modbus").policy.maskingExemptColumns);
+  });
+
+  test("the claim requests read only the members a declaration authors", () => {
+    // Every member but the authored policy and MCP segments replaced with postgres's: the requests the generator writes
+    // first, before the declaration generator rewrites the other members, are therefore already the final ones, and the
+    // authored safeguards, which no gate reads, are not read either.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...postgres, id: d.id, policy: d.policy, mcp: d.mcp }));
+
+    expect(projectClaimRequests(replaced)).toEqual(projectClaimRequests(ADMITTED));
+    // Vacuity: the replacement changed members the claim requests would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.safeguards)).toBeGreaterThan(0);
+    expect(differs((d) => d.facets)).toBeGreaterThan(0);
+    expect(differs((d) => d.connection)).toBeGreaterThan(0);
+    expect(differs((d) => d.agent)).toBeGreaterThan(0);
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -1284,6 +1346,30 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_SQL_GENERATORS)).toBe(true);
   });
 
+  test("the committed claim requests module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_CLAIMS_MODULE), "utf8");
+    const requests = projectClaimRequests(ADMITTED);
+
+    expect(committed).toBe(renderClaimRequests(requests));
+    expect<unknown>(BUNDLED_CLAIM_REQUESTS).toEqual(requests);
+    expect(Object.keys(BUNDLED_CLAIM_REQUESTS)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_CLAIM_REQUESTS",
+    ]);
+    // Each engine's request as its declaration words it: a pair agent credential as `pair`.
+    expect(committed).toContain('agentCredentialForm: "pair"');
+    expect(committed).toContain('writeReach: "guarded"');
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_CLAIM_REQUESTS)).toBe(true);
+  });
+
   test("the renderer writes a line feed as its escape and refuses every other character it does not quote", () => {
     const writings = projectSqlWriting(ADMITTED);
     const cassandra = writings.cassandra as NonNullable<(typeof writings)["cassandra"]>;
@@ -1456,8 +1542,9 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const sqlWriting = path.join(dir, "sql-writing.generated.ts");
       const migrationDdl = path.join(dir, "migration-ddl.generated.ts");
       const sqlGenerators = path.join(dir, "sql-generators.generated.ts");
+      const claims = path.join(dir, "claims.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\nWrote ${migrationDdl}\nWrote ${sqlGenerators}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\nWrote ${migrationDdl}\nWrote ${sqlGenerators}\nWrote ${claims}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -1465,7 +1552,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n${migrationDdl} is up to date\n${sqlGenerators} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n${migrationDdl} is up to date\n${sqlGenerators} is up to date\n${claims} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -1585,6 +1672,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_SQL_WRITING_MODULE,
         ENGINE_MIGRATION_DDL_MODULE,
         ENGINE_SQL_GENERATORS_MODULE,
+        ENGINE_CLAIMS_MODULE,
       ]) {
         expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1699,6 +1787,45 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       );
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(sqlGenerators, "utf8")).toBe(sqlGeneratorsText);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    // Each run admits every declaration, a fraction of a second; well inside ten times that.
+  }, 20000);
+
+  test("--check names a stale claim requests module, and --write writes every projected module", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "engine-claims-module-"));
+    const run = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    try {
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      const claims = path.join(dir, "claims.generated.ts");
+      const text = readFileSync(claims, "utf8");
+      expect(text).toBe(readFileSync(path.join(ROOT, ENGINE_CLAIMS_MODULE), "utf8"));
+
+      // etcd's write reach request edited by hand in the generated module is named, and only that module.
+      const etcdEntry = /^ {2}etcd: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(text)?.[0] ?? "";
+      expect(etcdEntry).toContain('writeReach: "guarded",');
+      writeFileSync(
+        claims,
+        text.replace(etcdEntry, etcdEntry.replace('writeReach: "guarded",', 'writeReach: "none",')),
+      );
+      const stale = run("--check", "--out", dir);
+      expect(stale.exitCode).toBe(1);
+      expect(stale.stderr.toString()).toBe(
+        `${claims} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      rmSync(claims);
+      const missing = run("--check", "--out", dir);
+      expect(missing.exitCode).toBe(1);
+      expect(missing.stderr.toString()).toBe(
+        `${claims} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(claims, "utf8")).toBe(text);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -2244,6 +2371,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_QUERY_EDITOR_MODULE,
         ENGINE_SQL_TEXT_MODULE,
         ENGINE_SQL_WRITING_MODULE,
+        ENGINE_CLAIMS_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -2251,6 +2379,64 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       }
       // Every other declaration is the committed one, byte for byte.
       for (const declaration of ADMITTED.filter((d) => !["mysql", "mssql"].includes(d.id))) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored policy, MCP and safeguards change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const file = path.join(directory, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      expect(committed.policy.writeReach).toBe("open");
+      // etcd's guarded write reach with its gated write paths, the summary the validator holds the request to, and MCP
+      // closed: the requests an engine's own declaration states, whatever Studio's records hold.
+      const etcd = admitted("etcd");
+      expect(etcd.policy.writeReach).toBe("guarded");
+      const mysql: EngineDeclaration = {
+        ...committed,
+        policy: { ...committed.policy, writeReach: "guarded" },
+        mcp: { ...committed.mcp, exposable: false, statementRead: false },
+        safeguards: { ...committed.safeguards, writePaths: etcd.safeguards.writePaths },
+      };
+      writeFileSync(file, `${JSON.stringify(mysql, null, 2)}\n`);
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      // The declaration generator writes the authored members back unchanged.
+      expect(regenerated.find((d) => d.id === "mysql")).toEqual(mysql);
+      expect(readFileSync(file, "utf8")).toBe(`${JSON.stringify(mysql, null, 2)}\n`);
+      const claimsModule = readFileSync(path.join(copy.root, ENGINE_CLAIMS_MODULE), "utf8");
+      expect(claimsModule).toBe(renderClaimRequests(projectClaimRequests(regenerated)));
+      expect(projectClaimRequests(regenerated).mysql).toEqual({ policy: mysql.policy, mcp: mysql.mcp });
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
+        ENGINE_SQL_WRITING_MODULE,
+        ENGINE_MIGRATION_DDL_MODULE,
+        ENGINE_SQL_GENERATORS_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "mysql")) {
         const name = `${declaration.id}.json`;
         expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
       }

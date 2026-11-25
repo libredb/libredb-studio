@@ -9,6 +9,7 @@
  * enforcement mechanism for that rule, moved out of a policy sentence and into CI.
  */
 import { describe, test, expect } from "bun:test";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
   WIRE_COMPATIBLE_ENGINES,
@@ -24,7 +25,6 @@ import {
   HOST_PATH_FIELDS,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ONLY_ENFORCED,
   READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
   SERVES_ONE_SESSION,

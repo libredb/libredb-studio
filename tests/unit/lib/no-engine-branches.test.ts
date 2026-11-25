@@ -109,6 +109,34 @@ export const REGISTRIES: readonly Listed[] = [
     count: 1,
     reason: FIELDS,
   })),
+  ...[
+    "GRANTED_WRITE_REACH",
+    "GRANTED_READS_FILE_ACCESS_POSTURE",
+    "GRANTED_DENIED_FILE_ACCESS_REFUSAL",
+    "GRANTED_SINGLE_WRITER_FILE",
+    "GRANTED_READ_ROOTS_REQUIRED",
+    "GRANTED_AGENT_CREDENTIAL_FORM",
+    "GRANTED_MASKING_EXEMPT_COLUMNS",
+    "GRANTED_MCP_EXPOSABLE",
+    "GRANTED_MCP_STATEMENT_READ",
+    "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
+    "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED",
+    "READ_ONLY_ENFORCED",
+    "UNGRANTED_CLAIM_REFUSALS",
+  ].map((declaration) => ({
+    path: "src/lib/db/claim-grants.ts",
+    declaration,
+    count: 1,
+    reason:
+      "Studio's grant of a policy or MCP claim, computed from each engine's request and Studio's review record and typed over the type-id union",
+  })),
+  {
+    path: "src/lib/db/engine-catalog/claims.generated.ts",
+    declaration: "BUNDLED_CLAIM_REQUESTS",
+    count: 1,
+    reason:
+      "each engine's policy and MCP claim requests, generated from the declarations and compile-enforced over the type-id union",
+  },
   {
     path: "src/lib/db/engine-catalog/catalog.generated.ts",
     declaration: "BUNDLED_CATALOG",
@@ -431,10 +459,16 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     reason: "the PostgreSQL image's default role name `postgres`, when POSTGRES_USER is unset",
   },
   {
+    path: "src/lib/db/factory.ts",
+    declaration: "assertClaimsGranted",
+    count: 1,
+    reason: "the parameter type of the `UNGRANTED_CLAIM_REFUSALS` grant it is handed, which holds no row here",
+  },
+  {
     path: "src/lib/seed/types.ts",
     declaration: "refuseMcpWhereNotOffered",
     count: 1,
-    reason: "the parameter type of the `MCP_EXPOSABLE` registry it is handed, which holds no row here",
+    reason: "the parameter type of the `GRANTED_MCP_EXPOSABLE` grant it is handed, which holds no row here",
   },
   {
     path: "src/lib/seed/types.ts",
@@ -446,19 +480,20 @@ export const FALSE_POSITIVES: readonly Listed[] = [
     path: "src/lib/seed/types.ts",
     declaration: "refuseMcpWithoutAgentCredential",
     count: 1,
-    reason: "the parameter type of the `MCP_AGENT_CREDENTIAL_REQUIRED` registry it is handed, which holds no row here",
+    reason:
+      "the parameter type of the `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` grant it is handed, which holds no row here",
   },
   {
     path: "src/lib/seed/types.ts",
     declaration: "refuseMcpWithoutReadRoots",
     count: 1,
-    reason: "the parameter type of the `READ_ROOTS_REQUIRED` registry it is handed, which holds no row here",
+    reason: "the parameter type of the `GRANTED_READ_ROOTS_REQUIRED` grant it is handed, which holds no row here",
   },
   {
     path: "src/lib/seed/types.ts",
     declaration: "refuseReadOnlyWhereOpen",
     count: 1,
-    reason: "the parameter type of the `WRITE_REACH` registry it is handed, which holds no row here",
+    reason: "the parameter type of the `GRANTED_WRITE_REACH` grant it is handed, which holds no row here",
   },
   { path: "src/lib/languages/oxiacli/commands.ts", declaration: "afterOxia", count: 1, reason: OXIA_PROGRAM },
   { path: "src/lib/languages/oxiacli/lexer.ts", declaration: "leadAndVerb", count: 1, reason: OXIA_PROGRAM },

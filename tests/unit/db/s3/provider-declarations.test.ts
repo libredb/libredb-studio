@@ -3,7 +3,7 @@
  * `prepareQuery`, and a construction that touches no transport.
  */
 import { describe, expect, test } from "bun:test";
-import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";

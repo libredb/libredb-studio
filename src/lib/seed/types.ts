@@ -1,12 +1,11 @@
 import { z } from "zod";
 import {
-  CONNECTION_STRING_ACCEPTED,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  READ_ROOTS_REQUIRED,
-  SHIPPED_DATABASE_TYPES,
-  WRITE_REACH,
-} from "@/lib/db/compatibility";
+  GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
+  GRANTED_MCP_EXPOSABLE,
+  GRANTED_READ_ROOTS_REQUIRED,
+  GRANTED_WRITE_REACH,
+} from "@/lib/db/claim-grants";
+import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { isDatabaseType } from "@/lib/db/type-id";
 import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
@@ -80,7 +79,7 @@ function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.Refi
 
 /**
  * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from the record
- * it is handed, `MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
+ * it is handed, `GRANTED_MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
  * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
  * that asks for something the product will not do. A factory over the record, the way
  * `readOnlyControl` takes its engine's answer, so the refusal is tested before any shipped engine
@@ -101,7 +100,8 @@ export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType
  * The load's refusal of `readOnly: true` on an engine whose write reach is `open` (#1089): some path there sends a
  * write no Studio gate refuses, so the seed would be listed as read-only and still write. Accepted wherever the reach
  * is `guarded` or `none`; on a `none` engine the flag changes no write, and a policy that marks every seed read-only
- * still loads. Read from the record it is handed, `WRITE_REACH` in `SeedConnectionSchema`, never a type-id branch,
+ * still loads. Read from the record it is handed, `GRANTED_WRITE_REACH` in `SeedConnectionSchema`, never a type-id
+ * branch,
  * and a factory over it for the reason `refuseMcpWhereNotOffered` gives. The credential refusal and the `managed`
  * refusal below apply on every engine this admits, `none` included, because a read-only seed promises a boundary on
  * the host as well as in Studio's code.
@@ -220,7 +220,8 @@ export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType
 
 /**
  * The load's refusal of an MCP opt-in without an agent credential on an engine MCP reads only under one, read from
- * the record it is handed, `MCP_AGENT_CREDENTIAL_REQUIRED` in `SeedConnectionSchema`, never a type-id branch. The MCP
+ * the record it is handed, `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` in `SeedConnectionSchema`, never a type-id branch.
+ * The MCP
  * context refuses the same connection again at open (`assertAgentCredentialWhereRequired` in src/lib/mcp/context.ts).
  * A factory over the record for the reason `refuseMcpWhereNotOffered` is one: no shipped engine answers true yet.
  */
@@ -238,7 +239,8 @@ export function refuseMcpWithoutAgentCredential(required: Readonly<Record<Databa
 
 /**
  * The load's refusal of an MCP opt-in without read roots on an engine MCP reads only beneath roots its seed declares,
- * read from the record it is handed, `READ_ROOTS_REQUIRED` in `SeedConnectionSchema`, never a type-id branch. The MCP
+ * read from the record it is handed, `GRANTED_READ_ROOTS_REQUIRED` in `SeedConnectionSchema`, never a type-id branch.
+ * The MCP
  * context refuses the same connection again at open (`assertReadRootsWhereRequired` in src/lib/mcp/context.ts).
  */
 export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType, boolean>>) {
@@ -488,17 +490,17 @@ export const SeedConnectionSchema = z
       });
     }
   })
-  // An MCP opt-in on an engine MCP is not offered for (#1089), read from MCP_EXPOSABLE.
-  .superRefine(refuseMcpWhereNotOffered(MCP_EXPOSABLE))
+  // An MCP opt-in on an engine MCP is not offered for (#1089), read from Studio's grant, GRANTED_MCP_EXPOSABLE.
+  .superRefine(refuseMcpWhereNotOffered(GRANTED_MCP_EXPOSABLE))
   // An MCP opt-in without an agent credential on an engine MCP reads only under one, read from
-  // MCP_AGENT_CREDENTIAL_REQUIRED.
-  .superRefine(refuseMcpWithoutAgentCredential(MCP_AGENT_CREDENTIAL_REQUIRED))
-  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from READ_ROOTS_REQUIRED.
-  .superRefine(refuseMcpWithoutReadRoots(READ_ROOTS_REQUIRED))
+  // GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED.
+  .superRefine(refuseMcpWithoutAgentCredential(GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED))
+  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from GRANTED_READ_ROOTS_REQUIRED.
+  .superRefine(refuseMcpWithoutReadRoots(GRANTED_READ_ROOTS_REQUIRED))
   // An agent credential the engine's row does not take, read from SEED_AGENT_CREDENTIAL.
   .superRefine(refuseInvalidAgentCredential(SEED_AGENT_CREDENTIAL))
-  // A read-only mode on an engine Studio can write unguarded, read from WRITE_REACH.
-  .superRefine(refuseReadOnlyWhereOpen(WRITE_REACH))
+  // A read-only mode on an engine Studio can write unguarded, read from GRANTED_WRITE_REACH.
+  .superRefine(refuseReadOnlyWhereOpen(GRANTED_WRITE_REACH))
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
   // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
   // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in

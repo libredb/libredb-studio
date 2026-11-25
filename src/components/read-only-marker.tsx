@@ -1,10 +1,10 @@
 import { LockKeyhole } from "lucide-react";
-import { WRITE_REACH } from "@/lib/db/compatibility";
+import { GRANTED_WRITE_REACH } from "@/lib/db/claim-grants";
 import { typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseConnection } from "@/lib/types";
 
 /**
- * Whether a connection carries the marker: its `readOnly` is true, or its engine's `WRITE_REACH` is
+ * Whether a connection carries the marker: its `readOnly` is true, or its engine's `GRANTED_WRITE_REACH` is
  * `none`, where Studio has no write path at all. The connection form does not write `readOnly` on such
  * an engine, so the record answers for it, and no engine is named here.
  *
@@ -14,7 +14,7 @@ import type { DatabaseConnection } from "@/lib/types";
  * @throws {UnknownProviderError} When the type is absent, not text, or names no provider.
  */
 export function showsReadOnlyMarker(connection: Pick<DatabaseConnection, "type" | "readOnly">): boolean {
-  const reach = typeIdRow(WRITE_REACH, connection.type);
+  const reach = typeIdRow(GRANTED_WRITE_REACH, connection.type);
   return connection.readOnly === true || reach === "none";
 }
 

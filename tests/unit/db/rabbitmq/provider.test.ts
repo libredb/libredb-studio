@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
-import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { AMQP_PORT_EMPTY_CAUTION } from "@/lib/db/providers/stream/rabbitmq/errors";
 import {

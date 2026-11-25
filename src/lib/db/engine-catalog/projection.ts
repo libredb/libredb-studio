@@ -1,8 +1,9 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
- * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, and each engine's
- * SQL text, SQL writing, migration DDL and SQL generator forms as projections of a set of admitted engine declarations
- * (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80 and M-81).
+ * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, each engine's
+ * SQL text, SQL writing, migration DDL and SQL generator forms, and each engine's policy and MCP claim requests as
+ * projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
+ * M-75, M-77, M-78, M-79, M-80, M-81 and M-82).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -63,10 +64,18 @@
  * composes each SQL engine's generator row. The segment holds no claim, and no generator fact is shared between
  * engines, so nothing is refused across the set but a second declaration of one id.
  *
+ * The claim requests answer, per engine, its whole `policy` and `mcp` segments as the declaration states them, each
+ * member its own property, an agent credential form in the declaration's vocabulary, `pair` included, and a masking
+ * exemption as its column pattern and reason. Every member is a claim: a request, which only Studio's grant reader,
+ * src/lib/db/claim-grants.ts, reads, granting each against Studio's review record of the claim (clause M-54), so no
+ * gate reads a request as declared. The `safeguards` segment, the evidence the write reach request summarizes, is
+ * authored with them and never projected: no gate reads it.
+ *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
- * confirmation gate's two, `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where
- * Studio's review record lists them (docs/providers/CONTRACT.md, clause S-8). Each
+ * policy and MCP claims, which only the grant reader reads, and the confirmation gate's two, `sqlText.readsSqlText` and
+ * an exempt form of the grammar, which the gate counts only where Studio's review record lists them
+ * (docs/providers/CONTRACT.md, clause S-8). Each
  * takes `AuthoredDeclaration`, those members alone: an admitted `EngineDeclaration` is one, and so are the authored
  * members the catalog generator's `--write` reads from a file whose generated members are not yet rewritten.
  *
@@ -78,9 +87,10 @@
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members here and renders the
  * results into `catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
  * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`, `query-editor.generated.ts`,
- * `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts` and `sql-generators.generated.ts`,
- * the modules Studio's readers read, and holds each module to the projection of the set it admits through the SDK's
- * validator. A loader that admits a provider package at run time projects its set through these same functions.
+ * `sql-text.generated.ts`, `sql-writing.generated.ts`, `migration-ddl.generated.ts`, `sql-generators.generated.ts` and
+ * `claims.generated.ts`, the modules Studio's readers read, and holds each module to the projection of the set it
+ * admits through the SDK's validator. A loader that admits a provider package at run time projects its set through
+ * these same functions.
  */
 import type {
   ConnectBudget,
@@ -91,10 +101,13 @@ import type {
   EngineLocation,
   FieldName,
   HistoryMask,
+  McpClaims,
   MigrationDdl,
   MonacoLanguageId,
+  PolicyClaims,
   QueryDialect,
   QueryLanguage,
+  Safeguards,
   SqlGenerators,
   SqlText,
   SqlWriting,
@@ -143,6 +156,9 @@ export interface AuthoredDeclaration {
   readonly sqlWriting: SqlWriting;
   readonly migrationDdl: MigrationDdl;
   readonly sqlGenerators: SqlGenerators;
+  readonly policy: PolicyClaims;
+  readonly mcp: McpClaims;
+  readonly safeguards: Safeguards;
 }
 
 /**
@@ -186,6 +202,18 @@ export type SqlGeneratorsEntry = SqlGenerators;
 
 /** The SQL generator forms: one frozen entry per engine id, null included, keyed in ascending code-unit order. */
 export type SqlGeneratorForms = Readonly<Record<string, SqlGeneratorsEntry>>;
+
+/**
+ * One engine's claim requests as its declaration authors them: its `policy` and `mcp` segments, every member a claim
+ * Studio grants only through its grant reader, src/lib/db/claim-grants.ts.
+ */
+export interface ClaimRequestEntry {
+  readonly policy: PolicyClaims;
+  readonly mcp: McpClaims;
+}
+
+/** The claim requests: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
+export type ClaimRequests = Readonly<Record<string, ClaimRequestEntry>>;
 
 /** One engine's catalog entry: where the engine lives and its connect budget, null for the host's default. */
 export interface CatalogEntry {
@@ -647,4 +675,15 @@ export function projectMigrationDdl(declarations: readonly AuthoredDeclaration[]
  */
 export function projectSqlGenerators(declarations: readonly AuthoredDeclaration[]): SqlGeneratorForms {
   return recordOf(inIdOrder(declarations), ({ sqlGenerators }) => frozenCopy<SqlGeneratorsEntry>(sqlGenerators));
+}
+
+/**
+ * The policy and MCP claim requests of `declarations`, each entry the declaration's `policy` and `mcp` segments as it
+ * states them, members every declaration authors, in its own member order at every level. No other member is read: the
+ * authored `safeguards`, which no gate reads, included.
+ *
+ * @throws {Error} When two declarations state the same `id`, naming it.
+ */
+export function projectClaimRequests(declarations: readonly AuthoredDeclaration[]): ClaimRequests {
+  return recordOf(inIdOrder(declarations), ({ policy, mcp }) => frozenCopy<ClaimRequestEntry>({ policy, mcp }));
 }

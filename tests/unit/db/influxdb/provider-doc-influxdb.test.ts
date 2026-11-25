@@ -22,7 +22,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import type { InfluxAnswer, InfluxClientFactory, InfluxRequest } from "@/lib/db/providers/timeseries/influxdb/client";
 import {
