@@ -7,13 +7,15 @@
  *
  * The import record (clause C-102) holds every static import of every module file of the package: each regular file
  * whose name ends in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts` in any letter case, reached by the entry or not,
- * read as strict UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports` (loader `ts` for the three
- * TypeScript extensions, `js` otherwise), after a leading `#!` line is removed, since the scanner refuses one. It
- * reports import declarations, side-effect imports, re-exports, `import()` of a string or a template without
- * substitution and `require()` of a string, in dead branches too; not `require.resolve` or `import.meta.resolve`, which
- * load nothing, and not a type-only import of a TypeScript file. Each import is recorded with its kind, `importKind`:
- * `require` for a `require()` call, `import` for the rest. The command records; Studio's admission judges the record
- * (src/lib/provider-host/provider-closure.ts).
+ * except a declaration file, `.d.ts`, `.d.mts` or `.d.cts`, which is no module file and whose imports are neither
+ * scanned nor recorded. Each is read as strict UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports`
+ * (loader `ts` for the three TypeScript extensions, `js` otherwise), after a leading `#!` line is removed, since the
+ * scanner refuses one. It reports import declarations, side-effect imports, re-exports, `import()` of a string or a
+ * template without substitution and `require()` of a string, in dead branches too; not `require.resolve` or
+ * `import.meta.resolve`, which load nothing, and not a type-only import of a TypeScript file, which is why admission
+ * refuses a TypeScript module file. Each import is recorded with its kind, `importKind`: `require` for a `require()`
+ * call, `import` for the rest. The command records; Studio's admission judges the record
+ * (src/lib/provider-host/admission.ts and src/lib/provider-host/provider-closure.ts).
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
@@ -93,8 +95,12 @@ function sorted(names: readonly string[]): string[] {
   return [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/** A module file by its extension, in any letter case; the three TypeScript ones are scanned as TypeScript. */
+/**
+ * A module file by its extension, in any letter case; the three TypeScript ones are scanned as TypeScript. A
+ * declaration file is no module file.
+ */
 const MODULE_FILE = /\.[mc]?[jt]s$/i;
+const DECLARATION_FILE = /\.d\.[mc]?ts$/i;
 const TYPESCRIPT_FILE = /\.[mc]?ts$/i;
 const SCAN_JAVASCRIPT = new Bun.Transpiler({ loader: "js" });
 const SCAN_TYPESCRIPT = new Bun.Transpiler({ loader: "ts" });
@@ -141,7 +147,7 @@ function scanned(bytes: Buffer, typescript: boolean): { specifier: string; kind:
 export function moduleImports(directory: string, files: readonly ArtifactFile[]): ModuleImport[] | string {
   const pairs = new Map<string, ModuleImport>();
   for (const file of files) {
-    if (!MODULE_FILE.test(file.path)) continue;
+    if (!MODULE_FILE.test(file.path) || DECLARATION_FILE.test(file.path)) continue;
     if (!inForm(file.path, IMPORT_FROM_FORM)) return "a module path is longer than 1024 characters";
     const found = scanned(
       fs.readFileSync(path.join(directory, ...file.path.split("/"))),

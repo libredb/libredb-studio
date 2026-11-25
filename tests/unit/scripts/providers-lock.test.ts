@@ -193,6 +193,7 @@ describe("the lock command", () => {
   });
 
   test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {
+    // A declaration file, .d.ts, .d.mts or .d.cts in any letter case, is no module file: its imports are not recorded.
     const providers = freshProviders();
     const pkg: FixturePackage = {
       name: "acme-scanned",
@@ -214,6 +215,9 @@ describe("the lock command", () => {
         "dist/c.cjs":
           'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\n',
         "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
+        "dist/types.d.ts": 'export * from "acme-typings";\nimport type { T } from "./t";\n',
+        "dist/esm.D.MTS": 'export * from "acme-typings";\n',
+        "dist/cjs.d.cts": 'import x = require("acme-typings");\nexport = x;\n',
         "dist/UPPER.MJS": 'import "./upper.mjs";\n',
         "bin/run.js": '#!/usr/bin/env node\nimport "./main.js";\n',
         "dist/notes.txt": 'import "./never.mjs";\n',

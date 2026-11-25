@@ -100,7 +100,7 @@ export const PROVIDER_REFUSAL_RULES = Object.freeze({
   ] as const),
   PROVIDER_CONTRACT_UNSUPPORTED: Object.freeze(["contract-not-served"] as const),
   PROVIDER_SCHEMA_INVALID: SCHEMA_REFUSAL_RULES,
-  PROVIDER_MODULE_FORMAT: Object.freeze(["entry-commonjs", "package-scope-unreadable"] as const),
+  PROVIDER_MODULE_FORMAT: Object.freeze(["entry-commonjs", "package-scope-unreadable", "typescript-module"] as const),
   PROVIDER_LOAD_FAILED: Object.freeze(["closure-outside", ...LOADER_REFUSAL_REASONS] as const),
   PROVIDER_NATIVE_UNSUPPORTED: Object.freeze(["native-file", "native-declared"] as const),
   PROVIDER_RECORD_INVALID: Object.freeze([...DEFINITION_REFUSAL_RULES, "record-proxy", "manifest-differs"] as const),
@@ -195,6 +195,8 @@ const ADMISSION_SENTENCES: Readonly<Record<string, Readonly<Record<string, strin
   PROVIDER_MODULE_FORMAT: {
     "entry-commonjs": 'its entry is a .js file whose nearest package.json does not declare "type": "module"',
     "package-scope-unreadable": "the package.json nearest its entry is over its byte limit or not a JSON object",
+    "typescript-module":
+      "a module of it is a TypeScript file, or imports one, whose type-only imports admission cannot judge",
   },
   PROVIDER_LOAD_FAILED: {
     "closure-outside":

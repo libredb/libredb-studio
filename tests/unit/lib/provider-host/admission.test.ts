@@ -395,6 +395,92 @@ describe("before the import", () => {
     expect(fs.existsSync(outsideSentinel)).toBe(true);
   });
 
+  test("a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it", async () => {
+    // The package holds node_modules/<dep>/ without the subpath its entry imports. Bun's ES module resolver then moves on
+    // to the next node_modules directory up, outside the package, where a planted subpath runs; Node.js's fails at the
+    // folder found first. Admission refuses every bare specifier, whichever runtime imports the package.
+    const own = names();
+    const dep = `acme-esm-fallthrough-${counter}`;
+    const outsideSentinel = path.join(scratch, `esm-fallthrough-${counter}-${randomUUID()}`);
+    const outsideDirectory = path.join(scratch, "node_modules", dep);
+    fs.mkdirSync(outsideDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(outsideDirectory, "sub.mjs"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(outsideSentinel)}, "ran");\n`,
+    );
+    const manifest = manifestFor(own.id);
+    const written = write({
+      name: own.name,
+      id: own.id,
+      manifest,
+      source: `import ${JSON.stringify(`${dep}/sub.mjs`)};\n${entrySource(manifest, own.sentinel)}`,
+      files: {
+        [`node_modules/${dep}/package.json`]: JSON.stringify({ name: dep, version: "1.0.0", type: "module" }),
+        [`node_modules/${dep}/index.mjs`]: "export default {};\n",
+      },
+    });
+    const pkg = verified(written);
+    expect(pkg.imports).toContainEqual({ from: "dist/index.mjs", specifier: `${dep}/sub.mjs`, kind: "import" });
+
+    const refusal = refusalOf(await admit(pkg));
+    expect([refusal.code, refusal.rule]).toEqual(["PROVIDER_LOAD_FAILED", "closure-outside"]);
+    expect(fs.existsSync(outsideSentinel)).toBe(false);
+    expect(fs.existsSync(written.sentinel)).toBe(false);
+
+    // The control: the loader alone, on the same artifact and under Bun, runs the module outside the package.
+    const loaded = await loadPackage(pkg.entryFile, { deadlineMs: DEADLINE_MS, onLateSettle: () => undefined });
+    expect(loaded.loaded).toBe(true);
+    expect(fs.existsSync(outsideSentinel)).toBe(true);
+  });
+
+  test("a TypeScript module file, or a module importing a TypeScript file, is refused as PROVIDER_MODULE_FORMAT", async () => {
+    // Bun's scanner drops a type-only import of a TypeScript file, `import { type B } from "y"`, while Node.js's type
+    // stripping keeps it as `import {} from "y"` and loads y, so the record cannot hold every import such a file makes.
+    // A declaration file a module names is loaded the same way by Node.js, so naming one is refused too.
+    for (const file of ["dist/mod.ts", "dist/mod.mts", "dist/mod.cts", "dist/MOD.TS", "lib/deep/mod.Mts"]) {
+      const written = write({ files: { [file]: "export const x = 1;\n" } });
+      const refusal = refusalOf(await admit(verified(written)));
+      expect([file, refusal.code, refusal.rule]).toEqual([file, "PROVIDER_MODULE_FORMAT", "typescript-module"]);
+      expect(refusal.sentence).toBe(
+        `PROVIDER_MODULE_FORMAT: ${written.name} 1.0.0: a module of it is a TypeScript file, or imports one, whose type-only imports admission cannot judge`,
+      );
+      expect(fs.existsSync(written.sentinel)).toBe(false);
+    }
+    for (const specifier of ["./types.d.ts", "./types.d.mts", "./TYPES.D.CTS", "./mod.ts"]) {
+      const own = names();
+      const manifest = manifestFor(own.id);
+      const written = write({
+        name: own.name,
+        id: own.id,
+        manifest,
+        source: `import ${JSON.stringify(specifier)};\n${entrySource(manifest, own.sentinel)}`,
+        files: { [`dist/${specifier.slice(2)}`]: "export declare const x: number;\n" },
+      });
+      const pkg = verified(written);
+      const refusal = refusalOf(await admit(pkg));
+      expect([specifier, refusal.code, refusal.rule]).toEqual([
+        specifier,
+        "PROVIDER_MODULE_FORMAT",
+        "typescript-module",
+      ]);
+      expect(fs.existsSync(written.sentinel)).toBe(false);
+    }
+  });
+
+  test("a declaration file is no module file: its imports are not recorded and a package shipping typings is admitted", async () => {
+    const typings = {
+      "types/index.d.ts":
+        'import type { A } from "acme-absent";\nimport { type B } from "other-absent";\nexport declare const x: A & B;\n',
+      "types/esm.d.mts": 'export * from "acme-absent";\n',
+      "types/cjs.D.CTS": 'import x = require("acme-absent");\nexport = x;\n',
+    };
+    const written = write({ files: typings });
+    const pkg = verified(written);
+    expect(pkg.imports.filter((found) => found.from.startsWith("types/"))).toEqual([]);
+    expect(await outcome(pkg)).toBe("admitted");
+    expect(fs.existsSync(written.sentinel)).toBe(true);
+  });
+
   test("a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED", async () => {
     for (const addon of ["build/Release/addon.node", "lib/ADDON.NODE"]) {
       const written = write({ files: { [addon]: "not really an addon" } });
@@ -972,6 +1058,11 @@ describe("what admission carries and reaches", () => {
       "registered-engine",
       "registered-package",
       "inherited-name",
+    ]);
+    expect(PROVIDER_REFUSAL_RULES.PROVIDER_MODULE_FORMAT).toEqual([
+      "entry-commonjs",
+      "package-scope-unreadable",
+      "typescript-module",
     ]);
     expect(PROVIDER_REFUSAL_RULES.PROVIDER_LOAD_FAILED).toEqual(["closure-outside", ...LOADER_REFUSAL_REASONS]);
     // The loader's declared reasons and this list are the same set, held both ways by the type checker.

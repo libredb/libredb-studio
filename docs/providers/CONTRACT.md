@@ -4215,7 +4215,7 @@ No step of the lock's read imports or runs a package's code, and admission impor
 
 ### C-97 (normative): A locked package is admitted in a fixed order, and none of its code runs before its manifest, format, closure and native checks pass
 
-A package that passed its lock is admitted in this order, and its first refusal ends it: its manifest's bytes and their binding to the lock's listing, its contract, the schema and the SDK's rules, C-98; the engine ids it serves, C-100; its entry's module format, C-101; its import closure, C-102; native addons, C-103; then its import and its record, C-104.
+A package that passed its lock is admitted in this order, and its first refusal ends it: its manifest's bytes and their binding to the lock's listing, its contract, the schema and the SDK's rules, C-98; the engine ids it serves, C-100; its entry's module format, C-101; its TypeScript modules and its import closure, C-102; native addons, C-103; then its import and its record, C-104.
 A package refused before its import is never imported, so none of its code runs.
 A package refused after its import has run its top level, is never registered and serves no engine.
 The entry module is read by the runtime's loader, not by admission, so a change to it after the lock's read is not seen; the providers directory must be writable only by the operator, C-93.
@@ -4226,6 +4226,8 @@ A package passing every step is registered once, under its name.
 - test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a bare require is refused as closure-outside even when the package's own node_modules holds the folder, since the resolver moves on past it"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a TypeScript module file, or a module importing a TypeScript file, is refused as PROVIDER_MODULE_FORMAT"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest"
 - test `tests/unit/lib/provider-host/admission.test.ts` "admission refuses no claim request and grants none"
@@ -4275,23 +4277,29 @@ A module's syntax is never read to decide.
 ### C-102 (normative): Every module of a package imports only what its own directory holds or a built-in
 
 The lock command records, with Bun's transpiler, every static import of every file of the package whose name ends in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts` in any letter case: import declarations, re-exports, and `import()` and `require()` of a string.
+A declaration file, one whose name ends in `.d.ts`, `.d.mts` or `.d.cts` in any letter case, is no module file: the command neither scans nor records its imports, and a package may ship typings that import types from a bare name.
 Each import is recorded with its kind: `require` for a `require()` call, `import` for the rest.
 The record is in the lock, covered by its digest, C-93, and the command refuses a module file it cannot parse or that is not UTF-8, a specifier outside printable ASCII without spaces or over 1,024 characters, more than 4,096 imports in a package, and a lock over 1 MiB.
-Before the import, admission requires each recorded import to be a built-in of the runtime that imports the package, a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash, or, named by an `import`, a package whose folder a `node_modules` directory of the package holds on the way up from the importing file.
-A bare package a `require` names is refused wherever the package holds its folder, because Node.js's CommonJS resolver, and Bun's, move on to the next `node_modules` directory up, outside the package, when the folder found first lacks the file.
+Before the import, admission refuses as `PROVIDER_MODULE_FORMAT` with the rule `typescript-module` a package holding a TypeScript module file, one whose name ends in `.ts`, `.mts` or `.cts` in any letter case and that is no declaration file, and a package one of whose recorded imports names a TypeScript file, a declaration file among them.
+Bun's transpiler drops a type-only import, `import { type B } from "y"`, which Node.js's type stripping keeps as `import {} from "y"` and loads, so the record cannot hold every import such a module makes.
+Admission then requires each recorded import to be a built-in of the runtime that imports the package, or a relative path that stays inside the package's directory and holds no `%`, `?`, `#` or backslash.
+Every bare specifier is refused, whether an `import` or a `require` names it and whatever `node_modules` folder the package holds, because Node.js's CommonJS resolver, Bun's, and Bun's ES module resolver move on to the next `node_modules` directory up, outside the package, when the folder found first lacks the file.
+A package of this contract is a bundle whose static imports are relative paths inside it or built-ins, and bare specifiers are refused until a later milestone designs dependency resolution for packages.
 Anything else, an absolute path, a URL, another scheme or a subpath import among them, is refused as `PROVIDER_LOAD_FAILED` with the rule `closure-outside`.
-The limits: a computed `import()` or `require()` is not recorded; a package's `main` or `exports` is not read; a package importing itself by its own name without a `node_modules` folder of that name is refused; a type-only import of a TypeScript file is not recorded; on a case-insensitive filesystem a specifier spelled in another case than its folder is refused.
+The kind of each import stays in the record, as what the scanner saw, and no rule of admission reads it.
+The limits: a computed `import()` or `require()` is not recorded; the `main` of a package.json, which a `require` of a directory reads, is not read; a file a module loads by another extension is not scanned, such as a `.txt` or extensionless file a `require` names, which Node.js's CommonJS loader runs as JavaScript, or a `.wasm` module.
 The check keeps a package from depending on modules outside its directory, Studio's own `node_modules` among them; it is no sandbox, since an admitted package runs in Studio's process.
 
 - test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a bare require is refused as closure-outside even when the package's own node_modules holds the folder, since the resolver moves on past it"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a built-in, a relative file inside the artifact and a package its own node_modules holds are inside"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a TypeScript module file, or a module importing a TypeScript file, is refused as PROVIDER_MODULE_FORMAT"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a declaration file is no module file: its imports are not recorded and a package shipping typings is admitted"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a built-in and a relative file inside the artifact are inside, named by an import or a require"
 - test `tests/unit/lib/provider-host/provider-closure.test.ts` "a relative import that leaves the artifact, or holds %, ?, # or a backslash, is outside"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a package found only above the artifact, or only in a node_modules directory directly under another, is outside"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a bare package a require names is outside wherever the package holds it, and a built-in or relative require is judged like an import"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "every bare specifier, named by an import or a require, is outside whatever node_modules folder the package holds"
 - test `tests/unit/lib/provider-host/provider-closure.test.ts` "an absolute path, a URL, another scheme and a subpath import are outside"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a package subpath with a . or .. segment is outside, and a scoped package is found by its two segments"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "the answer reads only the record and the listing, so it is the same on every platform"
+- test `tests/unit/lib/provider-host/provider-closure.test.ts` "the answer reads only the record, so it is the same on every platform"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock entry's import record is closed and capped, each import in its forms and listed once"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "a verified package carries its import record as the lock wrote it, frozen"
 - test `tests/unit/scripts/providers-lock.test.ts` "the command records every static import of each module file, sorted and once each, and Studio's read admits the lock"
