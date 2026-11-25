@@ -84,7 +84,9 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  PackageEngineUnsupportedError,
   PoolExhaustedError,
+  ProviderUnavailableError,
   QueryError,
   RefusedBeforeSendError,
   StudioTimeoutRefusal,
@@ -1474,7 +1476,15 @@ function auditDeadlineRefusal(
  * text. Anything that later renders one toward a model owes it `fenceUntrustedContent`,
  * which is otherwise applied to every engine message this module emits.
  */
-const ENVIRONMENT_FAILURES = [ConnectionError, PoolExhaustedError, DatabaseConfigError] as const;
+const ENVIRONMENT_FAILURES = [
+  ConnectionError,
+  PoolExhaustedError,
+  DatabaseConfigError,
+  // The engine's provider package was refused when the server started (a `DatabaseConfigError` too, named for the
+  // record), or this Studio opens no session on a package's engine yet (docs/providers/CONTRACT.md, clause C-107).
+  ProviderUnavailableError,
+  PackageEngineUnsupportedError,
+] as const;
 
 /**
  * A failure the STATEMENT caused, which a rewrite may fix.
