@@ -25,8 +25,10 @@
  * owner execute bit (0o100) of the descriptor's mode is set and `644` otherwise (git's rule), because the group and
  * other bits follow the umask of whoever copied the files. Node.js and Bun read modes through libuv, whose Windows stat
  * never sets an execute bit, so every file reads `644` there, and an artifact holding an executable file has another
- * digest on Windows than on Linux and macOS; write the lock on the platform that reads it. The digest is computed at
- * every read; nothing is kept between reads.
+ * digest on Windows than on Linux and macOS; write the lock on the platform that reads it. After the file lines come
+ * the lock entry's import record's lines, one per import sorted by module path, then specifier, then kind,
+ * `import <module path> <specifier> <kind>\n`; a file line starts with its mode, so the two never meet, and an empty
+ * record adds nothing. The digest is computed at every read; nothing is kept between reads.
  *
  * The identity. `package.json` and `libredb-provider.json` at the artifact's root, each read like the lock (opened
  * without waiting, a regular file, at most its byte cap, UTF-8 JSON without a byte order mark, an object): from
@@ -41,7 +43,14 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ArtifactFault } from "./provider-refusals";
-import { ENGINE_ID_FORM, ENTRY_FORM, LOCK_ENGINE_CAP, type StringForm } from "./providers-lock-format";
+import {
+  ENGINE_ID_FORM,
+  ENTRY_FORM,
+  LOCK_ENGINE_CAP,
+  type ModuleImport,
+  type StringForm,
+  sortImports,
+} from "./providers-lock-format";
 
 /** The manifest's file name at an artifact's root. */
 export const MANIFEST_FILE_NAME = "libredb-provider.json";
@@ -228,13 +237,18 @@ export function walkArtifact(
   }
 }
 
-/** The artifact digest of `files`, in any order. */
-export function artifactDigest(files: readonly ArtifactFile[]): string {
+/** The artifact digest of `files` and the import record `imports`, each in any order. */
+export function artifactDigest(files: readonly ArtifactFile[], imports: readonly ModuleImport[]): string {
   const listing = [...files]
     .sort((a, b) => byCodeUnits(a.path, b.path))
     .map((file) => `${file.mode} ${file.sha256} ${file.path}\n`)
     .join("");
-  return `sha256:${createHash("sha256").update(listing).digest("hex")}`;
+  const record = sortImports(imports)
+    .map((pair) => `import ${pair.from} ${pair.specifier} ${pair.kind}\n`)
+    .join("");
+  return `sha256:${createHash("sha256")
+    .update(listing + record)
+    .digest("hex")}`;
 }
 
 /** Why a bounded read did not answer bytes. */

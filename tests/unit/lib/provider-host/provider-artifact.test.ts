@@ -80,9 +80,9 @@ describe("the artifact digest", () => {
       `644 ${sha256("deep\n")} a/c/d.txt\n`,
       `644 ${sha256("last\n")} z.txt\n`,
     ].join("");
-    expect(artifactDigest(files)).toBe(`sha256:${sha256(listing)}`);
+    expect(artifactDigest(files, [])).toBe(`sha256:${sha256(listing)}`);
     // The order of the files handed in decides nothing.
-    expect(artifactDigest([...files].reverse())).toBe(artifactDigest(files));
+    expect(artifactDigest([...files].reverse(), [])).toBe(artifactDigest(files, []));
     expect(Object.isFrozen(files)).toBe(true);
     expect(files.every((file) => Object.isFrozen(file))).toBe(true);
   });
@@ -90,7 +90,31 @@ describe("the artifact digest", () => {
   test("a fixed artifact has the same digest on every platform", () => {
     const directory = freshDirectory();
     writeTree(directory, GOLDEN_TREE);
-    expect(artifactDigest(walked(directory))).toBe(GOLDEN_DIGEST);
+    expect(artifactDigest(walked(directory), [])).toBe(GOLDEN_DIGEST);
+  });
+
+  test("the digest lists each import after the files, one line each in order, and an empty record leaves the files' digest", () => {
+    const directory = freshDirectory();
+    writeTree(directory, { "a.mjs": 'import "./b.mjs";\n', "b.mjs": "export {};\n" });
+    const files = walked(directory);
+    const fileLines = [`644 ${sha256('import "./b.mjs";\n')} a.mjs\n`, `644 ${sha256("export {};\n")} b.mjs\n`].join(
+      "",
+    );
+    expect(artifactDigest(files, [])).toBe(`sha256:${sha256(fileLines)}`);
+
+    const imports = [
+      { from: "b.mjs", specifier: "node:fs", kind: "import" },
+      { from: "a.mjs", specifier: "./b.mjs", kind: "require" },
+      { from: "a.mjs", specifier: "./b.mjs", kind: "import" },
+      { from: "a.mjs", specifier: "./a.mjs", kind: "import" },
+    ] as const;
+    const importLines =
+      "import a.mjs ./a.mjs import\nimport a.mjs ./b.mjs import\nimport a.mjs ./b.mjs require\nimport b.mjs node:fs import\n";
+    expect(artifactDigest(files, imports)).toBe(`sha256:${sha256(fileLines + importLines)}`);
+    // The record's order decides nothing; one import more or less, or another kind, moves the digest.
+    expect(artifactDigest(files, [...imports].reverse())).toBe(artifactDigest(files, imports));
+    expect(artifactDigest(files, imports.slice(1))).not.toBe(artifactDigest(files, imports));
+    expect(artifactDigest(files, [{ ...imports[0], kind: "require" }])).not.toBe(artifactDigest(files, [imports[0]]));
   });
 
   test("a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise", () => {
@@ -108,7 +132,7 @@ describe("the artifact digest", () => {
       const file = path.join(directory, "file.txt");
       const digestAt = (mode: number): string => {
         fs.chmodSync(file, mode);
-        return artifactDigest(walked(directory));
+        return artifactDigest(walked(directory), []);
       };
       const base = digestAt(0o644);
       for (const mode of [0o600, 0o640, 0o664, 0o666, 0o604, 0o674, 0o677]) {
@@ -126,9 +150,9 @@ describe("the artifact digest", () => {
   test("an empty directory moves no digest", () => {
     const directory = freshDirectory();
     writeTree(directory, { "a.txt": "a\n" });
-    const before = artifactDigest(walked(directory));
+    const before = artifactDigest(walked(directory), []);
     fs.mkdirSync(path.join(directory, "empty", "nested"), { recursive: true });
-    expect(artifactDigest(walked(directory))).toBe(before);
+    expect(artifactDigest(walked(directory), [])).toBe(before);
   });
 });
 

@@ -2,16 +2,19 @@
  * The providers lock's format, `providers.lock.json` (docs/providers/CONTRACT.md, clause C-91): closed at both levels,
  * capped, and read without walking any value it does not name.
  *
- *     { "lockVersion": 1, "entries": [ { "name", "version", "engines", "entry", "digest", "source" } ] }
+ *     { "lockVersion": 1, "entries": [ { "name", "version", "engines", "entry", "digest", "source", "imports" } ] }
  *
  * - `name`: an npm package name, `version`: an exact version, `engines`: 1 to 64 distinct engine ids, `entry`: the
  *   package-relative path of its ES module entry, each the form the SDK's manifest schema gives it, so a lock entry
  *   says nothing a package cannot declare; `digest`: `sha256:` and 64 lower-case hex digits (`artifactDigest` in
- *   `./provider-artifact`); `source`: `"local"`, the only source of milestone 1.
+ *   `./provider-artifact`); `source`: `"local"`, the only source of milestone 1; `imports`: the import record (clause
+ *   C-102), each static import of each module file of the package as `{ "from", "specifier" }`, the module file's path
+ *   in the package and the specifier as written, each pair once, at most `LOCK_IMPORT_CAP` pairs. The lock command
+ *   records it and the entry's digest covers it, so the record is the package's as much as its files are.
  * - Caps, checked before any value is walked: `LOCK_BYTE_CAP` bytes (the reader's, `./providers-lock`),
- *   `LOCK_ENTRY_CAP` entries, `LOCK_ENGINE_CAP` engine ids an entry, and each string's length before its pattern. A lock
- *   of 256 entries, each at every longest value, is 912,426 bytes written by `serializeProvidersLock`, so every lock
- *   within the entry limits fits the byte cap.
+ *   `LOCK_ENTRY_CAP` entries, `LOCK_ENGINE_CAP` engine ids and `LOCK_IMPORT_CAP` imports an entry, and each string's
+ *   length before its pattern. The byte cap binds first: a lock of entries at their longest import records is many times
+ *   over it, so the lock command refuses to write a lock over the byte cap, and the reader refuses one as `lock-over-cap`.
  * - The check reads only the keys of the format at their depths, with `Object.keys` on the two objects it reads, and
  *   answers values built from the primitives it checked, so a deep value under an unknown key or in place of an engine
  *   id is refused without being walked. `JSON.parse` keeps the last of two equal keys, so a duplicate key cannot be
@@ -70,6 +73,40 @@ export const ENTRY_FORM: StringForm = Object.freeze({
 /** An artifact digest. */
 export const DIGEST_FORM: StringForm = Object.freeze({ pattern: /^sha256:[0-9a-f]{64}$/, maxLength: 71 });
 
+/** At most 4,096 imports an entry. */
+export const LOCK_IMPORT_CAP = 4096;
+
+/**
+ * A module file's path in its package: names of the artifact's portable set (`ARTIFACT_NAME` in `./provider-artifact`)
+ * joined by `/`, no name `.` or `..`, at most 1,024 characters.
+ */
+export const IMPORT_FROM_FORM: StringForm = Object.freeze({
+  pattern: /^(?!\.\.?(?:\/|$))[A-Za-z0-9._@+~-]+(?:\/(?!\.\.?(?:\/|$))[A-Za-z0-9._@+~-]+)*$/,
+  maxLength: 1024,
+});
+
+/** A specifier as written: 1 to 1,024 printable ASCII characters and no space, so a digest line is unambiguous. */
+export const IMPORT_SPECIFIER_FORM: StringForm = Object.freeze({ pattern: /^[\x21-\x7e]+$/, maxLength: 1024 });
+
+/**
+ * How a module reaches an import: `require` for a `require()` call, which Node.js's CommonJS resolver resolves, and
+ * `import` for an import declaration, a re-export or an `import()`, which its ES module resolver resolves.
+ */
+export const IMPORT_KINDS = ["import", "require"] as const;
+
+/** One of `IMPORT_KINDS`. */
+export type ImportKind = (typeof IMPORT_KINDS)[number];
+
+/** One static import of a module file of a package. */
+export interface ModuleImport {
+  /** The module file's path in the package, `/` between names. */
+  readonly from: string;
+  /** The specifier as the module writes it. */
+  readonly specifier: string;
+  /** How the module reaches it. */
+  readonly kind: ImportKind;
+}
+
 /** One entry of the lock. */
 export interface LockEntry {
   readonly name: string;
@@ -78,6 +115,8 @@ export interface LockEntry {
   readonly entry: string;
   readonly digest: string;
   readonly source: typeof LOCAL_SOURCE;
+  /** Its import record, in any order: the serializer and the digest sort it. */
+  readonly imports: readonly ModuleImport[];
 }
 
 /** The lock's checked entries, or its refusal. */
@@ -86,7 +125,8 @@ export type LockCheck =
   | { readonly ok: false; readonly refusal: LockRefusal };
 
 const TOP_KEYS: readonly string[] = ["lockVersion", "entries"];
-const ENTRY_KEYS: readonly string[] = ["name", "version", "engines", "entry", "digest", "source"];
+const ENTRY_KEYS: readonly string[] = ["name", "version", "engines", "entry", "digest", "source", "imports"];
+const IMPORT_KEYS: readonly string[] = ["from", "specifier", "kind"];
 
 /** A shape violation found while checking. */
 class ShapeViolation {
@@ -132,6 +172,36 @@ function checkEngines(value: unknown, pointer: string): string[] {
   return engines;
 }
 
+/** An entry's import record, in the lock's order: at most `LOCK_IMPORT_CAP` distinct imports, the count checked first. */
+function checkImports(value: unknown, pointer: string): ModuleImport[] {
+  if (!Array.isArray(value)) throw new ShapeViolation("wrong-type", pointer);
+  if (value.length > LOCK_IMPORT_CAP) throw new ShapeViolation("too-many", pointer);
+  const imports: ModuleImport[] = [];
+  const seen = new Set<string>();
+  value.forEach((item: unknown, index) => {
+    const at = `${pointer}/${index}`;
+    if (!isObject(item)) throw new ShapeViolation("wrong-type", at);
+    checkKeys(item, IMPORT_KEYS, at);
+    const from = checkString(item.from, IMPORT_FROM_FORM, `${at}/from`);
+    const specifier = checkString(item.specifier, IMPORT_SPECIFIER_FORM, `${at}/specifier`);
+    const kind = checkKind(item.kind, `${at}/kind`);
+    // Neither form admits a space, so the import's line is one key.
+    const key = `${from} ${specifier} ${kind}`;
+    if (seen.has(key)) throw new ShapeViolation("duplicate", at);
+    seen.add(key);
+    imports.push(Object.freeze({ from, specifier, kind }));
+  });
+  return imports;
+}
+
+/** `value` as one of `IMPORT_KINDS`, or the violation. */
+function checkKind(value: unknown, pointer: string): ImportKind {
+  if (typeof value !== "string") throw new ShapeViolation("wrong-type", pointer);
+  const kind = IMPORT_KINDS.find((known) => known === value);
+  if (kind === undefined) throw new ShapeViolation("value-not-allowed", pointer);
+  return kind;
+}
+
 /** One entry, built from its checked values. */
 function checkEntry(value: unknown, pointer: string): LockEntry {
   if (!isObject(value)) throw new ShapeViolation("wrong-type", pointer);
@@ -143,7 +213,16 @@ function checkEntry(value: unknown, pointer: string): LockEntry {
   const digest = checkString(value.digest, DIGEST_FORM, `${pointer}/digest`);
   if (typeof value.source !== "string") throw new ShapeViolation("wrong-type", `${pointer}/source`);
   if (value.source !== LOCAL_SOURCE) throw new ShapeViolation("value-not-allowed", `${pointer}/source`);
-  return Object.freeze({ name, version, engines: Object.freeze(engines), entry, digest, source: LOCAL_SOURCE });
+  const imports = checkImports(value.imports, `${pointer}/imports`);
+  return Object.freeze({
+    name,
+    version,
+    engines: Object.freeze(engines),
+    entry,
+    digest,
+    source: LOCAL_SOURCE,
+    imports: Object.freeze(imports),
+  });
 }
 
 /** The lock's entries, in the lock's order; any violation is thrown. */
@@ -185,8 +264,18 @@ function byCodeUnits(a: string, b: string): number {
 }
 
 /**
- * The lock's text for `entries`: entries by name and each entry's engine ids in ascending order, two-space JSON and
- * one final newline, so the same entries in any order give the same bytes.
+ * `imports` sorted by module path, then by specifier, then by kind, in code-unit order: the order of the lock and of
+ * the digest.
+ */
+export function sortImports(imports: readonly ModuleImport[]): ModuleImport[] {
+  return [...imports].sort(
+    (a, b) => byCodeUnits(a.from, b.from) || byCodeUnits(a.specifier, b.specifier) || byCodeUnits(a.kind, b.kind),
+  );
+}
+
+/**
+ * The lock's text for `entries`: entries by name, each entry's engine ids in ascending order and its imports by
+ * `sortImports`, two-space JSON and one final newline, so the same entries in any order give the same bytes.
  */
 export function serializeProvidersLock(entries: readonly LockEntry[]): string {
   const sorted = [...entries]
@@ -198,6 +287,11 @@ export function serializeProvidersLock(entries: readonly LockEntry[]): string {
       entry: entry.entry,
       digest: entry.digest,
       source: entry.source,
+      imports: sortImports(entry.imports).map((pair) => ({
+        from: pair.from,
+        specifier: pair.specifier,
+        kind: pair.kind,
+      })),
     }));
   return `${JSON.stringify({ lockVersion: LOCK_VERSION, entries: sorted }, null, 2)}\n`;
 }

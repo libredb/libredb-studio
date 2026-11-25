@@ -2,7 +2,8 @@
  * Fixture provider packages for the tests of the providers directory and its lock
  * (src/lib/provider-host/providers-lock.ts): a scratch providers directory, an artifact written as
  * `<name>/<version>/` with its package.json, a minimal libredb-provider.json (its engines' ids and its runtime entry)
- * and its entry file, and a lock written with Studio's own serializer and digest.
+ * and its entry file, and a lock written with Studio's own serializer and digest, its import record scanned by the lock
+ * command's own scanner (`moduleImports` in scripts/providers-lock.ts).
  *
  * Engine ids here are fixture ids, never one the bundled catalog serves; a test that needs a bundled id takes it from
  * `SHIPPED_DATABASE_TYPES`.
@@ -13,6 +14,7 @@ import path from "node:path";
 import { artifactDigest, MANIFEST_FILE_NAME, walkArtifact } from "@/lib/provider-host/provider-artifact";
 import { type LockEntry, serializeProvidersLock } from "@/lib/provider-host/providers-lock-format";
 import { LOCK_FILE_NAME } from "@/lib/provider-host/providers-dir";
+import { moduleImports } from "../../scripts/providers-lock";
 
 /** A package as a test writes it. */
 export interface FixturePackage {
@@ -65,17 +67,24 @@ export function writeArtifact(providers: string, pkg: FixturePackage): string {
   return directory;
 }
 
-/** The lock entry of a package as its artifact stands now, its digest computed by Studio's own walk. */
+/**
+ * The lock entry of a package as its artifact stands now: its import record scanned by the lock command's scanner, its
+ * digest computed by Studio's own walk.
+ */
 export function lockEntryOf(providers: string, pkg: FixturePackage): LockEntry {
-  const walked = walkArtifact(artifactDirectoryOf(providers, pkg));
+  const directory = artifactDirectoryOf(providers, pkg);
+  const walked = walkArtifact(directory);
   if (!walked.ok) throw new Error(`the fixture ${pkg.name} ${pkg.version} does not walk: ${walked.fault.rule}`);
+  const imports = moduleImports(directory, walked.files);
+  if (typeof imports === "string") throw new Error(`the fixture ${pkg.name} ${pkg.version} does not scan: ${imports}`);
   return {
     name: pkg.name,
     version: pkg.version,
     engines: [...pkg.engines],
     entry: pkg.entry ?? FIXTURE_ENTRY,
-    digest: artifactDigest(walked.files),
+    digest: artifactDigest(walked.files, imports),
     source: "local",
+    imports,
   };
 }
 

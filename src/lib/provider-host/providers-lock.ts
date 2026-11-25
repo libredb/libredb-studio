@@ -15,7 +15,7 @@
  *    one of its engine ids, every claimant refused and naming the others;
  * 2. the directory `<name>/<version>/`, resolved inside the providers directory by real path (`resolveArtifactDirectory`);
  * 3. the walk of its files (`walkArtifact`);
- * 4. the digest of its files against the lock's (`digest-differs`);
+ * 4. the digest of its files and its entry's import record against the lock's (`digest-differs`);
  * 5. its package.json and manifest (`readArtifactIdentity`), then each field against the entry (`compareIdentity`);
  * 6. the entry file, a regular file of the listing (`checkEntryFile`).
  *
@@ -63,6 +63,8 @@ export interface VerifiedPackage {
   readonly entryFile: string;
   /** Its listing, sorted by path. */
   readonly files: readonly ArtifactFile[];
+  /** The import record its lock entry gives, which the digest covers, frozen. */
+  readonly imports: LockEntry["imports"];
 }
 
 /** A package its lock refused. */
@@ -119,7 +121,7 @@ function readPackage(providers: string, entry: LockEntry): VerifiedPackage | Ref
   if (!resolved.ok) return refuse(resolved.fault);
   const walked = walkArtifact(resolved.directory);
   if (!walked.ok) return refuse(walked.fault);
-  if (artifactDigest(walked.files) !== entry.digest) {
+  if (artifactDigest(walked.files, entry.imports) !== entry.digest) {
     return refuse({ code: "PROVIDER_DIGEST_MISMATCH", rule: "digest-differs" });
   }
   const identity = readArtifactIdentity(resolved.directory);
@@ -136,6 +138,7 @@ function readPackage(providers: string, entry: LockEntry): VerifiedPackage | Ref
     directory: resolved.directory,
     entryFile: path.join(resolved.directory, ...entry.entry.split("/")),
     files: walked.files,
+    imports: entry.imports,
   });
 }
 
