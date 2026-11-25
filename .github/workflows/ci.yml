@@ -75,6 +75,13 @@ jobs:
         # verifying it.
         run: bun run security:check
 
+      - name: Isolation ratchet counters (report only)
+        # Prints every counter of provider knowledge in core, so a milestone
+        # review reads them from this log. The gate is
+        # tests/unit/isolation-ratchet.test.ts inside bun run test, whose
+        # output the runner prints only when it fails.
+        run: bun scripts/isolation-ratchet.ts
+
       - name: Check formatting (Biome)
         run: bun run format
 
