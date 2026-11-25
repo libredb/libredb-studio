@@ -462,7 +462,17 @@ describe("each projection of the admitted declarations, built with and without a
     const shipped = projectClaimRequests(ADMITTED);
     const withFixture = projectClaimRequests([...ADMITTED, FIXTURE]);
     // The fixture states postgres's requests, so its entry is postgres's under its own id.
-    expect(withFixture.acmefoo).toEqual({ policy: POSTGRES.policy, mcp: POSTGRES.mcp });
+    expect(withFixture.acmefoo).toEqual({
+      policy: POSTGRES.policy,
+      mcp: POSTGRES.mcp,
+      connection: {
+        sshTunnel: POSTGRES.connection.sshTunnel,
+        hostPathFields: POSTGRES.connection.hostPathFields,
+        opensLocalFile: POSTGRES.connection.opensLocalFile,
+        serverLevelWithoutDatabase: POSTGRES.connection.serverLevelWithoutDatabase,
+        agentCredential: POSTGRES.connection.agentCredential,
+      },
+    });
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
 
     const removed = projectClaimRequests([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));

@@ -958,7 +958,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -983,6 +983,11 @@ describe("the committed declarations", () => {
       "connection.hostIdentity",
       "connection.import",
       "connection.connectBudgetMs",
+      "connection.sshTunnel",
+      "connection.hostPathFields",
+      "connection.opensLocalFile",
+      "connection.serverLevelWithoutDatabase",
+      "connection.agentCredential",
       "editor.commitKeyword",
       "editor.consentDeadline",
       "editor.fenceAliases",
@@ -1019,6 +1024,11 @@ describe("the committed declarations", () => {
         },
         tls: { modes: [] },
         readsTrustMaterial: false,
+        sshTunnel: bigquery.connection.sshTunnel,
+        hostPathFields: [],
+        opensLocalFile: false,
+        serverLevelWithoutDatabase: false,
+        agentCredential: { form: "secret", supersededBy: [] },
         dialog: bigquery.connection.dialog,
         hostUriSchemes: [],
         credentialWarnings: [],
@@ -1061,6 +1071,18 @@ describe("the committed declarations", () => {
     expect(authored("etcd").policy.writeReach).toBe("guarded");
     expect(authored("etcd").safeguards).toEqual(declared("etcd").safeguards);
     expect(authored("s3").mcp.agentCredentialRequired).toBe(true);
+    // The connection claims are requests an engine states in its declaration: every connection gate reads Studio's
+    // grant of each, never the request.
+    expect(bigquery.connection.sshTunnel.offered).toBe(false);
+    expect(authored("postgres").connection.sshTunnel).toEqual({ offered: true });
+    expect(authored("postgres").connection.serverLevelWithoutDatabase).toBe(true);
+    expect(authored("sqlite").connection.opensLocalFile).toBe(true);
+    expect(authored("opcua").connection.hostPathFields).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(authored("elasticsearch").connection.agentCredential).toEqual({
+      form: "pair",
+      supersededBy: ["apiKeyId", "apiKeySecret"],
+    });
+    expect(authored("libredb").connection.agentCredential).toBeNull();
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
     // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
@@ -1128,6 +1150,13 @@ describe("the committed declarations", () => {
       hostHint: "hostHint",
       hostIdentity: "hostIdentity",
       import: { label: "Edited by hand", importer: "importer" },
+      // The connection claims are authored: a request edited by hand is kept, whatever Studio's records say, and only
+      // Studio's grant of it reaches a gate.
+      sshTunnel: { offered: false as const, refusal: "Edited by hand." },
+      hostPathFields: ["clientCertificatePath" as const],
+      opensLocalFile: true,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
     };
     const editor = {
       ...committed.editor,
@@ -1158,7 +1187,7 @@ describe("the committed declarations", () => {
       ...committed,
       displayName: "Edited by hand",
       location: "embedded",
-      connection: { ...connection, sshTunnel: { offered: false, refusal: "Edited by hand." } },
+      connection,
       editor: { ...editor, explainFormat: null },
       sqlText: { ...sqlText, redaction: { kind: "none" } },
       sqlWriting,
@@ -1190,7 +1219,8 @@ describe("the committed declarations", () => {
     expect(
       buildEngineDeclaration("kafka", CAPABILITIES.kafka, authoredMembersOf(counting, "kafka.json")).editor.dialect,
     ).toEqual({ ...kafkaDialect, offersCountQuery: true });
-    expect(built.connection.sshTunnel).toEqual(committed.connection.sshTunnel);
+    expect(built.connection.sshTunnel).toEqual({ offered: false, refusal: "Edited by hand." });
+    expect(built.editor.explainFormat).toEqual(committed.editor.explainFormat);
     expect(() =>
       buildEngineDeclaration("postgres", CAPABILITIES.postgres, { ...authored("postgres"), id: "mysql" }),
     ).toThrow('postgres: the authored members given name the engine id "mysql"');

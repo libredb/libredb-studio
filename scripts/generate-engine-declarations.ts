@@ -7,7 +7,8 @@
  * A declaration's authored members, `AUTHORED_MEMBERS` (`id`, `displayName`, `location`, and of `connection` its
  * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
- * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, of `editor` its
+ * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
+ * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `editor` its
  * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
  * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`,
  * `mcp` and `safeguards`), are written in the declaration itself: this script reads them from the committed file of
@@ -17,7 +18,7 @@
  * tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab
  * type editors and editor languages, the SQL text, the SQL writing, the migration DDL, the SQL generator forms and the
  * claim requests (scripts/generate-engine-catalog.ts, clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80,
- * M-81 and M-82) project the authored members, and `bun run engines:generate` runs that command's `--write` first and
+ * M-81, M-82 and M-83) project the authored members, and `bun run engines:generate` runs that command's `--write` first and
  * its `--check` last: this script builds every provider through the factory, which builds only an engine the catalog
  * holds, and `--check` admits every declaration this script wrote, with the SDK validator's rules, which refuse by
  * name, among others, a dialog entry or a field rule for a field the engine does not take and a placeable field with
@@ -86,16 +87,16 @@
  * src/lib/db/query-generators/index.ts, and the count expression, `COUNT(*)` where the engine's is the shared one.
  * `boundSegments` binds every name through that table too.
  *
- * The policy and MCP claims are authored, written back as the committed file states them: each member is a request,
- * never a fact Studio believes as declared, and the catalog generator projects them into
+ * The policy, MCP and connection claims are authored, written back as the committed file states them: each member is a
+ * request, never a fact Studio believes as declared, and the catalog generator projects them into
  * src/lib/db/engine-catalog/claims.generated.ts, which only Studio's grant reader, src/lib/db/claim-grants.ts, reads,
- * granting each request no further than Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54
- * and M-82). The census holds each shipped engine's request equal to its record's row, so a record changed without its
- * declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
+ * granting each request no further than Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54,
+ * M-82 and M-83). The census holds each shipped engine's request equal to its record's row, so a record changed without
+ * its declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
  * member, since Studio derives it from the granted write reach, and `connection.readsTrustMaterial`, which is no claim,
  * is authored too.
- * The claims of the connection, facets, agent and SQL text segments are written from Studio's records: each is the row
- * of the review record docs/providers/CONTRACT.md, clause M-53, names for it.
+ * The claims of the facets, agent and SQL text segments are written from Studio's records: each is the row of the
+ * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
  * (clause M-67): null where the engine speaks no statement language; otherwise its dialect, null where the overlay holds
@@ -153,7 +154,6 @@ import type {
   CatalogRead,
   Editor,
   EngineDeclaration,
-  FieldName,
   MaintenanceSpec,
   PlanEstimate,
   ProfileComposition,
@@ -168,18 +168,7 @@ import type { AgentEngineServerDialect, Unsupported } from "../src/lib/agent/lan
 import type { AgentCatalogCapture } from "../src/lib/agent/catalog-rows";
 import type { AgentStatisticsReading } from "../src/lib/agent/schema-stats";
 import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
-import {
-  HOST_PATH_FIELDS,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  SHIPPED_DATABASE_TYPES,
-  SSH_TUNNEL_REFUSAL,
-} from "../src/lib/db/compatibility";
-import {
-  CONNECTION_FIELD_DESCRIPTORS,
-  SEED_AGENT_CREDENTIAL,
-  SEED_ONLY_FIELD_NAMES,
-} from "../src/lib/db/connection-fields";
+import { SHIPPED_DATABASE_TYPES } from "../src/lib/db/compatibility";
 import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
@@ -207,18 +196,6 @@ function committedAuthoredMembers(type: DatabaseType): AuthoredMembers {
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const WRITE_COMMAND = "bun run engines:generate";
 const USAGE = "Usage: bun scripts/generate-engine-declarations.ts --write | --check [--out <directory>]";
-
-/** The contract's field names, the same vocabulary the schema's `fieldName` lists. */
-const FIELD_NAMES: ReadonlySet<string> = new Set([
-  ...Object.keys(CONNECTION_FIELD_DESCRIPTORS),
-  ...SEED_ONLY_FIELD_NAMES,
-]);
-
-/** A field name of a table as a contract field name, or a thrown error naming it where the vocabulary lacks it. */
-function fieldName(name: string, type: DatabaseType): FieldName {
-  if (!FIELD_NAMES.has(name)) throw new Error(`${type}: "${name}" is not a field name of the provider contract`);
-  return name as FieldName;
-}
 
 /**
  * The environment the capability read runs in: none of the variables of the environment the generator runs in, so a
@@ -540,8 +517,6 @@ export function buildEngineDeclaration(
   if (authored.id !== type) {
     throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
   }
-  const credential = SEED_AGENT_CREDENTIAL[type];
-  const sshRefusal = SSH_TUNNEL_REFUSAL[type];
   const facets = ENGINE_FACETS[type];
   const bound = boundSegments(type, authored);
   return {
@@ -556,14 +531,11 @@ export function buildEngineDeclaration(
       connectionString: authored.connection.connectionString,
       tls: authored.connection.tls,
       readsTrustMaterial: authored.connection.readsTrustMaterial,
-      sshTunnel: sshRefusal === null ? { offered: true } : { offered: false, refusal: sshRefusal },
-      hostPathFields: [...HOST_PATH_FIELDS[type]],
-      opensLocalFile: OPENS_LOCAL_FILE[type],
-      serverLevelWithoutDatabase: OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type],
-      agentCredential:
-        credential === null
-          ? null
-          : { form: credential.form, supersededBy: credential.supersededBy.map((field) => fieldName(field, type)) },
+      sshTunnel: authored.connection.sshTunnel,
+      hostPathFields: authored.connection.hostPathFields,
+      opensLocalFile: authored.connection.opensLocalFile,
+      serverLevelWithoutDatabase: authored.connection.serverLevelWithoutDatabase,
+      agentCredential: authored.connection.agentCredential,
       dialog: authored.connection.dialog,
       hostUriSchemes: authored.connection.hostUriSchemes,
       credentialWarnings: authored.connection.credentialWarnings,

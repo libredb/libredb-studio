@@ -39,7 +39,7 @@ const BASE: ClaimRequestEntry = BUNDLED_CLAIM_REQUESTS.postgres;
 
 /** One engine's requests: postgres's with `policy` and `mcp` members changed. */
 function request(policy: Partial<PolicyClaims> = {}, mcp: Partial<McpClaims> = {}): ClaimRequestEntry {
-  return { policy: { ...BASE.policy, ...policy }, mcp: { ...BASE.mcp, ...mcp } };
+  return { ...BASE, policy: { ...BASE.policy, ...policy }, mcp: { ...BASE.mcp, ...mcp } };
 }
 
 /** Studio's records with one row of each named record set for `engine`, every other row as shipped. */
