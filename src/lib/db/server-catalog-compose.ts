@@ -226,6 +226,15 @@ export function composeServerCatalog(
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
         grants: Object.freeze(Object.fromEntries(members.map((member) => [member, grants[member][id]]))),
+        // What the host core checks each call of the engine's sessions against (src/lib/db/package-sessions.ts).
+        session: Object.freeze({
+          calls: pkg.manifest.calls,
+          maintenance: Object.freeze({
+            maintenance: engine.facets.maintenance,
+            maintenanceSpecs: engine.facets.maintenanceSpecs,
+          }),
+          panels: engine.facets.monitoring,
+        }),
       }) as PackageEngine,
     );
   }

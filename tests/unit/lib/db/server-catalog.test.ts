@@ -95,7 +95,7 @@ describe("the accessor", () => {
     );
     const open = thrown(() => assertBundledEngine("acmeserved", "open"));
     expect((open as Error).message).toBe(
-      "This LibreDB Studio opens no session on an engine of a provider package yet.",
+      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
     expect((open as PackageEngineUnsupportedError).code).toBe("PACKAGE_ENGINE_UNSUPPORTED");
     expect((open as PackageEngineUnsupportedError).typeId).toBe("acmeserved");
@@ -206,7 +206,15 @@ describe("what the catalog composes", () => {
     const answer = serverEngine("acmekeys");
     if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
     const { engine } = answer;
-    expect(Object.keys(engine).sort()).toEqual(["catalog", "connection", "fieldRules", "grants", "id", "package"]);
+    expect(Object.keys(engine).sort()).toEqual([
+      "catalog",
+      "connection",
+      "fieldRules",
+      "grants",
+      "id",
+      "package",
+      "session",
+    ]);
     expect(Object.keys(engine.fieldRules).sort()).toEqual(["connectionFields"]);
     expect(Object.keys(engine.connection).sort()).toEqual([
       "connectionStringAccepted",

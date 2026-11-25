@@ -58,9 +58,11 @@ import {
 import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
 import { requiredSecretRefusal } from "./connection-field-rules";
+import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
 import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertBundledEngine } from "./server-catalog";
+import { closePackageSessions, removePackageSessions } from "./package-sessions";
 import { typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -1576,11 +1578,6 @@ async function teardownProvider(
   return (outcome.rollback === "none" || outcome.rollback === "done") && outcome.close === "done";
 }
 
-/** Idle timeout: evict providers unused for 30 minutes */
-const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
-/** Sweep interval: check for idle providers every 5 minutes */
-const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
-
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -2527,6 +2524,8 @@ export async function removeProvider(
   discardFlights(editorFlights, (flight) => removes(flight.meta, flight.key === scopedKey), "removeProvider");
   discardFlights(profiledFlights, (flight) => removes(flight.meta, profiledKeys.has(flight.key)), "removeProvider");
   discardFlights(metadataFlights, (flight) => removes(flight.meta, flight.key === metadataKey), "removeProvider");
+  // The sessions of a provider package's engine the scope names, in their own cache, removed beside these (C-110).
+  const packageSessions = removePackageSessions(connectionId, scope);
 
   /**
    * Disconnects `entry`, which every caller shares, a failed disconnect logged by `noun` through the entry's scrub, and
@@ -2570,7 +2569,7 @@ export async function removeProvider(
   removeEntries(providerCache, "provider", (key) => key === scopedKey);
   removeEntries(profiledProviderCache, "profiled provider", (key) => profiledKeys.has(key));
   removeEntries(metadataProviderCache, "metadata provider", (key) => key === metadataKey);
-  await Promise.all([...teardowns, ...disconnects]);
+  await Promise.all([...teardowns, ...disconnects, packageSessions]);
 
   // The entries the scope left, another owner's or another record's, keep the tunnel they reach the connection through.
   if (scope !== undefined && connectionStillServed(connectionId)) return;
@@ -2660,7 +2659,10 @@ async function closeEveryProvider(): Promise<string[]> {
     closes.push(teardownProvider(metadataProviderCache, key, entry, "metadata provider").then(notClosed(entry)));
   }
 
-  return (await Promise.all(closes)).filter((id): id is string => id !== null);
+  // The sessions of provider packages' engines, in their own cache, under the same deadlines (C-110).
+  const packageSessions = closePackageSessions();
+  const names = (await Promise.all(closes)).filter((id): id is string => id !== null);
+  return [...names, ...(await packageSessions)];
 }
 
 /**

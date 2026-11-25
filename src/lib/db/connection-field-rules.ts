@@ -114,7 +114,16 @@ export function fieldRuleRefusal(type: DatabaseType, connection: DatabaseConnect
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
 export function requiredSecretRefusal(type: DatabaseType, connection: DatabaseConnection): string | undefined {
-  const config = typeIdRow(CONNECTION_FORM, type);
+  return requiredSecretOf(typeIdRow(CONNECTION_FORM, type), connection);
+}
+
+/**
+ * `requiredSecretRefusal`'s reading over `config`, a bundled engine's form entry or the field rules of a provider
+ * package's engine (`packageFieldRules` in ./connection-form): the sentence of the first required secret it declares
+ * that `connection` shows and leaves blank, or `undefined`. The package session's open checks read it
+ * (src/lib/db/package-sessions.ts).
+ */
+export function requiredSecretOf(config: FieldRuleSpec, connection: DatabaseConnection): string | undefined {
   const values = connection as Partial<Record<ConnectionField, unknown>>;
   for (const field of config.connectionFields) {
     const required = config.fieldRules?.[field]?.required;

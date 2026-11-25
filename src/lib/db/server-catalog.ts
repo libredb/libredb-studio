@@ -41,6 +41,7 @@
 import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
 import type { ClaimGrants } from "@/lib/db/claim-grants";
 import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
+import type { DeclaredSession } from "@/lib/provider-host/core/contract-session";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -59,6 +60,13 @@ export type PackageEngineId = string & { readonly [PACKAGE_ENGINE]: true };
 
 /** A connection of an engine an admitted provider package serves. */
 export type PackageConnection = Omit<DatabaseConnection, "type"> & { readonly type: PackageEngineId };
+
+/**
+ * A connection of any engine the server knows, bundled or served by a provider package, its type read as text: what the
+ * engine-neutral readers of a connection's fields take (the cache key's frame, the connection fingerprint), which frame
+ * the type as text and read no row keyed by it.
+ */
+export type EngineConnection = Omit<DatabaseConnection, "type"> & { readonly type: string };
 
 /** Studio's grant of each claim of one engine, read through the grant reader (./claim-grants): one value per member. */
 export type PackageGrants = { readonly [Member in keyof ClaimGrants<string>]: ClaimGrants<string>[Member][string] };
@@ -90,7 +98,7 @@ export interface ServingPackage {
 
 /**
  * Studio's composed record of one engine an admitted package serves: the declaration's catalog entry, its connection
- * tables, its field rules and Studio's grant of each claim, and nothing else, so no SQL writing, connection form,
+ * tables, its field rules, Studio's grant of each claim and what its sessions are declared to answer, and nothing else, so no SQL writing, connection form,
  * connection string, grammar, migration DDL or generator row exists for it.
  */
 export interface PackageEngine {
@@ -100,6 +108,8 @@ export interface PackageEngine {
   readonly connection: PackageConnectionTables;
   readonly fieldRules: FieldRuleSpec;
   readonly grants: PackageGrants;
+  /** What a session of the engine is declared to answer: the package's calls, its maintenance and monitoring panels. */
+  readonly session: DeclaredSession;
 }
 
 /** The composed catalog: the engines admitted packages serve, and the codes of the refused packages naming the others. */
@@ -140,7 +150,7 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog };
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
     "This request is served for an engine of a provider package only by Test Connection in this LibreDB Studio, and this is another request.",
-  open: "This LibreDB Studio opens no session on an engine of a provider package yet.",
+  open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 
 /** The installed catalog, or undefined. */

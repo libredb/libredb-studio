@@ -847,7 +847,7 @@ describe("a connection of an engine a provider package serves or a refused packa
       }
       expect(served).toBeInstanceOf(PackageEngineUnsupportedError);
       expect((served as Error).message).toBe(
-        "This LibreDB Studio opens no session on an engine of a provider package yet.",
+        "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
       );
     }
   });

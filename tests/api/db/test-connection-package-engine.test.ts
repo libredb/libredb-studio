@@ -104,7 +104,7 @@ describe("POST /api/db/test-connection for a provider package's engine", () => {
       expect([status, body.code, body.error]).toEqual([
         501,
         "PACKAGE_ENGINE_UNSUPPORTED",
-        "This LibreDB Studio opens no session on an engine of a provider package yet.",
+        "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
       ]);
     }
     expect(factoryCalls).toEqual([]);
