@@ -48,9 +48,6 @@ declare const PACKAGE_ENGINE: unique symbol;
 /** The id of an engine an admitted provider package serves: a type brand, with no value at run time. */
 export type PackageEngineId = string & { readonly [PACKAGE_ENGINE]: true };
 
-/** An engine id the server knows: a bundled one, or one an admitted package serves. */
-export type EngineId = DatabaseType | PackageEngineId;
-
 /** A connection of an engine an admitted provider package serves. */
 export type PackageConnection = Omit<DatabaseConnection, "type"> & { readonly type: PackageEngineId };
 

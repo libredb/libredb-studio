@@ -376,7 +376,7 @@ export function composeConnectionForm(
  * connection the check would read is not sent rather than sent unchecked. The field is a name of Studio's own field
  * vocabulary, never a value the package chose.
  */
-export function unboundCheckSentence(field: ConnectionField): string {
+function unboundCheckSentence(field: ConnectionField): string {
   return `This LibreDB Studio cannot run the check the provider package declares for the field ${field}, so it does not send this connection.`;
 }
 
