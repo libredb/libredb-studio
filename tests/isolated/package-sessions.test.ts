@@ -1,6 +1,6 @@
 /**
  * The sessions of an admitted provider package's engine (src/lib/db/package-sessions.ts; docs/providers/CONTRACT.md,
- * clauses C-109 to C-111): opened through the package's own `open` with the context core builds, never through a
+ * clauses C-109 and C-111): opened through the package's own `open` with the context core builds, never through a
  * legacy provider class, once per key, torn down under the teardown's deadlines, and refused before the open by every
  * check core holds for what it cannot hand a package.
  *

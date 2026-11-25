@@ -1,7 +1,16 @@
 /**
- * The editor query on a session of an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause
- * C-113): the steps of `runEditorQuery` (./editor-query) over the package's contract session rather than a legacy
- * provider's bridged one, which `POST /api/db/query` runs for such an engine.
+ * The editor query on a session of an engine an admitted provider package serves: the steps of `runEditorQuery`
+ * (./editor-query) over the package's contract session rather than a legacy provider's bridged one, which
+ * `POST /api/db/query` runs for such an engine.
+ *
+ * Before the run, the route reads the page bounds and the statement timeout as for any engine and holds no console
+ * text bound, which is a row of Studio's keyed by engine. It refuses a plan, a key-space `database`, a server-level
+ * `catalog` and an unbounded page by name, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, before any open, a malformed field
+ * keeping its 400. The confirmation gate reads the statement under the grammar the declaration states, composed once
+ * into the server catalog's record of the engine, with every claim that loosens the gate uncounted
+ * (`gatePackageRun` in ./run-confirmation; docs/providers/CONTRACT.md, clause S-8). The statement runs on the engine's
+ * cached session (`getOrCreatePackageSession` in src/lib/db/package-sessions.ts), opened within the engine's connect
+ * budget while the request stays, and the session counts the run while its call runs, so the idle sweep keeps it.
  *
  * The run goes through the host core the process's composition root installed (`hostCore`), with the session's handle
  * bound and the package's declared environment in every call's context. The execute is asked for one row past the page
@@ -13,8 +22,10 @@
  * The answer is today's body: the page's rows as records keyed by their column names, each cell in the value codec's
  * wire form (plain JSON values as themselves), its fields, the declared types of the columns that state one, and its
  * pagination. A next page is offered only where the session honours `offset`, since Studio can ask for no other page
- * otherwise. The package's warnings reach the client only as Studio's sentence naming their count, each logged once
- * through core's scrub of the connection (`packageWarnings` in ./package-errors).
+ * otherwise. The package's warnings reach the client only as Studio's sentence naming their count, and an error of its
+ * open or its execute only as Studio's sentence naming its code, each logged once through core's scrub of the
+ * connection (`packageWarnings` and `packageCallError` in ./package-errors; docs/providers/CONTRACT.md, clause C-112).
+ * A query event of such an engine keeps no statement and no error text (clause S-7).
  */
 import {
   BATCH_MAX_BYTES,

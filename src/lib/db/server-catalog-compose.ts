@@ -237,7 +237,7 @@ export function composeServerCatalog(
           panels: engine.facets.monitoring,
         }),
         // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
-        // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause C-113).
+        // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),
       }) as PackageEngine,
     );

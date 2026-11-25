@@ -89,7 +89,7 @@ export type ConnectionBody = { connection?: DatabaseConnection; connectionId?: s
 /**
  * Which engines a route serves: Studio's bundled engines alone, every route's default, or those and the engines of
  * admitted provider packages, which only Test Connection and the query route serve in this Studio
- * (docs/providers/CONTRACT.md, clauses C-112 and C-113).
+ * (docs/providers/CONTRACT.md, clause C-107).
  */
 export type ServedEngines = "bundled" | "bundled-and-package";
 

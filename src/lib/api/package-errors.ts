@@ -1,6 +1,5 @@
 /**
- * A provider package's own errors and warnings as Studio answers them (docs/providers/CONTRACT.md, clauses C-112 and
- * C-113).
+ * A provider package's own errors and warnings as Studio answers them (docs/providers/CONTRACT.md, clause C-112).
  *
  * The client never receives a package's own words in this Studio: a package's error is answered with Studio's sentence
  * naming its code, and the error itself is logged once under the route, its words through core's scrub of the

@@ -2524,7 +2524,8 @@ export async function removeProvider(
   discardFlights(editorFlights, (flight) => removes(flight.meta, flight.key === scopedKey), "removeProvider");
   discardFlights(profiledFlights, (flight) => removes(flight.meta, profiledKeys.has(flight.key)), "removeProvider");
   discardFlights(metadataFlights, (flight) => removes(flight.meta, flight.key === metadataKey), "removeProvider");
-  // The sessions of a provider package's engine the scope names, in their own cache, removed beside these (C-110).
+  // The sessions of a provider package's engine the scope names, in their own cache (./package-sessions), removed
+  // beside these.
   const packageSessions = removePackageSessions(connectionId, scope);
 
   /**
@@ -2659,7 +2660,7 @@ async function closeEveryProvider(): Promise<string[]> {
     closes.push(teardownProvider(metadataProviderCache, key, entry, "metadata provider").then(notClosed(entry)));
   }
 
-  // The sessions of provider packages' engines, in their own cache, under the same deadlines (C-110).
+  // The sessions of provider packages' engines, in their own cache, under the same deadlines (./package-sessions).
   const packageSessions = closePackageSessions();
   const names = (await Promise.all(closes)).filter((id): id is string => id !== null);
   return [...names, ...(await packageSessions)];

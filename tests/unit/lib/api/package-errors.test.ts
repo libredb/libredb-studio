@@ -1,6 +1,6 @@
 /**
- * How the query route answers an error of a provider package's call (docs/providers/CONTRACT.md, clauses C-112 and
- * C-113, `packageCallError` in src/lib/api/package-errors.ts): a refusal the host core raises about Studio's own
+ * How the query route answers an error of a provider package's call (docs/providers/CONTRACT.md, clause C-112,
+ * `packageCallError` in src/lib/api/package-errors.ts): a refusal the host core raises about Studio's own
  * request is Studio's defect, answered and logged as Studio's internal error, while a refusal of what the package
  * answered, and any other value the package rejects with, is the package's failure, answered with Studio's sentence
  * naming its code. A package's warnings reach the client only as Studio's sentence naming their count. The refused

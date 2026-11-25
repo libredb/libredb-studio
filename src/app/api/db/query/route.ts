@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
-    // An engine of an admitted provider package is served too (docs/providers/CONTRACT.md, clause C-113): its connection
+    // An engine of an admitted provider package is served too (src/lib/api/package-editor-query.ts): its connection
     // resolves with every guard of every route, the server catalog's record of its engine is read after the resolve, and
     // it runs on the package's session below.
     const named = await resolveConnection(body, guard.session, undefined, "bundled-and-package");
@@ -147,10 +147,10 @@ export async function POST(req: NextRequest) {
     }
 
     if (served.kind === "package") {
-      // THE QUERY ON A PACKAGE'S ENGINE (clause C-113): the page bounds and the statement timeout as for any engine, no
-      // console text bound (a row of Studio's keyed by engine, which a package has none of); the fields it does not serve
-      // refused by name; the gate over the package's declared grammar; then the package's session, cached per key, and
-      // the run through the host core.
+      // THE QUERY ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the page bounds and the statement
+      // timeout as for any engine, no console text bound (a row of Studio's keyed by engine, which a package has none
+      // of); the fields it does not serve refused by name; the gate over the package's declared grammar; then the
+      // package's session, cached per key, and the run through the host core.
       const { engine } = served;
       const packaged = named as PackageConnection;
       const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);

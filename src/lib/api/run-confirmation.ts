@@ -29,7 +29,7 @@
  * connection type and the error's name, never the statement.
  *
  * `gatePackageRun` is the same gate for a connection of an engine a provider package serves (docs/providers/CONTRACT.md,
- * clause C-113): its verdict is `packageConfirmationVerdict`, the statement read under the grammar the package's
+ * clause S-8): its verdict is `packageConfirmationVerdict`, the statement read under the grammar the package's
  * declaration states, with every claim that loosens the gate uncounted, and the token binds the connection by its
  * fields, as it binds any connection.
  */

@@ -1,5 +1,5 @@
 /**
- * `POST /api/db/query` on an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-113),
+ * `POST /api/db/query` on an engine an admitted provider package serves (src/lib/api/package-editor-query.ts),
  * through the real `resolveConnection`, the real package session cache, the real confirmation gate and the
  * real host core: the statement is read under the grammar the package declares, with every claim that loosens the gate
  * uncounted; the session opens once per key through the package; the run answers the package's rows keyed by column

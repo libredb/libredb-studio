@@ -231,7 +231,7 @@ export function confirmationVerdict(
 
 /**
  * The confirmation verdict of `statement` on an engine a provider package serves, read under `grammar`, the grammar its
- * declaration states (docs/providers/CONTRACT.md, clause C-113): `confirmationVerdict`'s answer, with the reading
+ * declaration states (docs/providers/CONTRACT.md, clause S-8): `confirmationVerdict`'s answer, with the reading
  * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`. No vocabulary row of
  * Studio's applies to such an engine, so no typed ask comes from one; on a production connection the connection's name
  * is asked (`escalatedAsk`), and refused where it has none.

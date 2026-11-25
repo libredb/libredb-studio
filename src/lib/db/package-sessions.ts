@@ -1,5 +1,5 @@
 /**
- * The sessions of the engines admitted provider packages serve (docs/providers/CONTRACT.md, clauses C-109 and C-110):
+ * The sessions of the engines admitted provider packages serve (docs/providers/CONTRACT.md, clause C-109):
  * opened through the package's own `open`, never through a legacy provider class, and kept in a cache of their own.
  *
  * The provider factory's entry points (./factory) answer a `DatabaseProvider`, which a contract session is not, so each

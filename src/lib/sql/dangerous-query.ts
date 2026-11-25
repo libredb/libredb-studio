@@ -857,8 +857,8 @@ export function packageUnreadableRun(text: string, grammar: SqlGrammar): boolean
 /**
  * Whether the confirmation gate asks about `statement` on an engine a provider package serves, read under `grammar`,
  * the grammar its declaration states, composed into the server catalog's record of the engine
- * (docs/providers/CONTRACT.md, clause C-113). Every claim that would loosen the gate is read at its restrictive value,
- * since Studio's review record holds no row for such an engine (S-8): the text is read as SQL, and no exempt form is
+ * (docs/providers/CONTRACT.md, clause S-8). Every claim that would loosen the gate is read at its restrictive value,
+ * since Studio's review record holds no row for such an engine: the text is read as SQL, and no exempt form is
  * counted. `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other
  * runs: true asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about
  * `EXPLAIN UPDATE t SET x = 1`, which true reads as a plan. So the statement is read under both values, and asks where

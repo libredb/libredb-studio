@@ -638,7 +638,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it",
         "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment",
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar and the server catalog's composition, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
       ],
       "tests/unit/mcp/served-engines.test.ts": [
         "an engine agent mode does not execute on is not served, whatever its rows say",
@@ -1219,6 +1219,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/query-events/redact.test.ts": [
         "the vectors hold every literal form for postgres, mysql, mssql and oracle, and MongoDB and Redis commands",
       ],
+      "tests/unit/lib/query-events/build.test.ts": [
+        "an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER",
+      ],
     },
     schema: ["/$defs/statementRedaction", "/$defs/nameQuote"],
   },
@@ -1236,7 +1239,15 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine",
       ],
       "tests/unit/db/engine-declaration-readers.test.ts": [
-        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+        "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar and the server catalog's composition, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW",
+      ],
+      "tests/unit/lib/api/run-confirmation.test.ts": [
+        "a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name",
+        "a package's loosening claims are not counted: text-not-SQL and an exempt form still ask",
+        "a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares",
+      ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "the statement is read under the package's declared grammar, and a write asks for a confirmation",
       ],
     },
   },
@@ -1967,6 +1978,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers",
         "query/cancel with a token already cancelled calls nothing",
       ],
+      "tests/isolated/package-sessions.test.ts": [
+        "two concurrent first opens open one session",
+        "a caller whose wait ends stops waiting, and an open no caller waits for is admitted once",
+        "a removal or a cache clear closes an open it overtook, once, and caches nothing",
+      ],
     },
   },
   "C-45": {
@@ -1989,6 +2005,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the providers not closed at shutdown are named with their author and Studio's version",
         "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed",
         "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed",
+      ],
+      "tests/isolated/package-sessions.test.ts": [
+        "teardown cuts a close that never settles at the deadline",
+        "teardown cuts a close that never settles at the deadline, in a child with its own heap and timeout",
       ],
     },
   },
@@ -2433,7 +2453,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "Studio's refusal of an offset is Studio's, and a provider's OffsetUnsupportedError is not",
       ],
       "tests/unit/db/operations/provider-text-census.test.ts": [
-        "only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does",
+        "only the legacy bridge's read-only paging and the accessor's refusal of a package session's offset construct a StudioOffsetRefusal, and no provider module does",
       ],
       "tests/unit/lib/api/read-only-execute.test.ts": [
         "a paged read-only execute sends its page through one host core execute call and answers whether the provider applied it",
@@ -2732,12 +2752,12 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an admitted engine's connection is refused on a route that does not serve package engines, by name, and accepted by the package-aware resolve",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
-        "Test Connection accepts an admitted engine's connection and validates it against its declared field rules, then refuses at the open, building nothing",
+        "Test Connection opens an admitted engine's session through its package, reads its health and closes it",
         "Test Connection answers PROVIDER_UNAVAILABLE naming the refusal code for a refused package's engine",
       ],
       "tests/isolated/factory-package-engines.test.ts": [
         "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build",
-        "an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet",
+        "an admitted package's engine is refused at each factory entry point, its session opening through its package",
       ],
       "tests/unit/lib/api/error-body.test.ts": [
         "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501",
@@ -2750,6 +2770,73 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/integration/mcp/context.test.ts": [
         "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it",
+      ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "a query on an admitted engine answers the package's rows through the host core",
+        "a refused package's engine and an unknown type answer as the server catalog answers them",
+      ],
+    },
+  },
+  "C-109": {
+    tests: {
+      "tests/isolated/package-sessions.test.ts": [
+        "an engine an admitted package serves opens through the package's open with core's context, and no legacy class is built",
+        "each open check refuses before the package's open is called and before any file is read",
+        "a refinement the host refuses fails the open as the package's defect, and Test Connection's one open is never cached",
+      ],
+      "tests/unit/lib/provider-host/open-context.test.ts": [
+        "the open context carries the deadline, the connect budget and only the fields the declaration admits",
+        "a field value outside the contract's value forms is refused by field, never by value",
+        "tls is the connection's ssl only for a mode the declaration lists, and refused by name otherwise",
+        "trust material is read only for a declaration that reads it, and egress is core's decision",
+        "the environment reader answers a declared name from the process and refuses any other by name, never reading it",
+        "the pool is core's default for a shared session and the owner's share for an owned one",
+      ],
+      "tests/unit/lib/provider-host/core/contract-session.test.ts": [
+        "a refinement narrows the calls and the maintenance; a widening one is refused and the handle is closed under a cleanup context",
+        "an open answer with no handle throws by name, and one that arrives after the stop is closed once and never answered",
+        "a close of a handle Studio does not admit that fails or is cut reaches the late port, and the open still answers",
+        "an open refused at its start calls nothing",
+      ],
+      "tests/api/db/test-connection-package-engine.test.ts": ["the open checks refuse before the budget starts"],
+    },
+  },
+  "C-111": {
+    tests: {
+      "tests/unit/lib/provider-host/core/contract-session.test.ts": [
+        "an open answer becomes a session whose members are exactly the calls it offers, each calling the package with its handle first",
+        "the host core's execute, cancel, endScope, tree, panel, pool statistics and health run on the session unchanged",
+      ],
+      "tests/isolated/package-sessions.test.ts": [
+        "a call the package does not offer is refused before the call",
+        "a console execute on a package session answers the package's rows through the host core",
+      ],
+      "tests/unit/lib/provider-host/access.test.ts": [
+        "a refused offset of a session that refuses it is Studio's own offset refusal, not-sent",
+        "refused params of a session that refuses them are FacetNotOfferedError, not-sent",
+        "a facet the session does not offer is FacetNotOfferedError naming the call, not-sent",
+      ],
+      "tests/api/db/query-package-engine.test.ts": [
+        "bound params and an offset the package does not honour are refused before the call, not-sent",
+        "a query whose caller leaves sends the package's cancel through the host core",
+      ],
+    },
+  },
+  "C-112": {
+    tests: {
+      "tests/api/db/query-package-engine.test.ts": [
+        "a package's error answers Studio's sentence naming its code, and its words go to the log only",
+        "a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub",
+      ],
+      "tests/api/db/test-connection-package-engine.test.ts": [
+        "a health failure answers the degraded success with Studio's sentence naming its code, and the session is still closed",
+        "an open that fails answers Studio's sentence naming its code, not-sent, and a close that fails does not change the answer",
+      ],
+      "tests/unit/lib/api/package-errors.test.ts": [
+        "a refusal of what the package answered is the package's failure, answered with Studio's sentence",
+        "the log line of a refusal of what the package answered names the package as its author, never Studio",
+        "a value the package rejects with is the package's failure, whatever its message says",
+        "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
       ],
     },
   },
@@ -2801,4 +2888,6 @@ export const REMOVED_CLAUSES: Readonly<Record<string, string>> = {
   "C-86": "src/app/api/db/profile/route.ts",
   "C-90": "src/lib/provider-loader/index.cjs",
   "C-108": "src/lib/uncaught-exception.ts",
+  "C-110": "src/lib/db/package-sessions.ts",
+  "C-113": "src/lib/api/package-editor-query.ts",
 };
