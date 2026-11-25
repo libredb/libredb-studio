@@ -1,8 +1,9 @@
 /**
  * Boot admission (src/lib/provider-host/boot.ts; docs/providers/CONTRACT.md, clause C-105): the providers lock is read
- * once per process, each package it verified is admitted in the lock's order, one at a time, under the import deadline,
- * the catalog's set rules run over every admitted package, only the packages they keep are registered, and the server's
- * engine catalog is installed; a refused package is logged once by its sentence and its engines answer as unavailable.
+ * once per process, each package it verified is admitted in package-name order, the order the lock's read answers, one
+ * at a time, under the import deadline, the catalog's set rules run over every admitted package, only the packages they
+ * keep are registered, and the server's engine catalog is installed; a refused package is logged once by its sentence
+ * and its engines answer as unavailable.
  * A lock that cannot be read stops the boot with exit 1 and a named line; an unset directory reads nothing.
  *
  * Every package is written by the test into a scratch directory under the system's temporary directory, each case with
