@@ -27,6 +27,11 @@
  * A reader that throws is the gate asking: the verdict is `confirm` with `classificationFailed`, asking for the
  * connection's name on a production connection (refused where it has none), and one error line names the route, the
  * connection type and the error's name, never the statement.
+ *
+ * `gatePackageRun` is the same gate for a connection of an engine a provider package serves (docs/providers/CONTRACT.md,
+ * clause S-8): its verdict is `packageConfirmationVerdict`, the statement read under the grammar the package's
+ * declaration states, with every claim that loosens the gate uncounted, and the token binds the connection by its
+ * fields, as it binds any connection.
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import {
@@ -38,9 +43,13 @@ import {
   verifyRunConfirmation,
 } from "@/lib/api/run-confirmation-token";
 import { runConfirmationMode } from "@/lib/config/run-confirmation";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import {
+  type ConfirmationVerdict,
   confirmationVerdict,
   escalatedAsk,
+  packageConfirmationVerdict,
   resolvedTypedConfirmation,
   TYPED_NAME_MISSING_REFUSAL,
 } from "@/lib/editor/statement-analysis";
@@ -133,11 +142,25 @@ function readConfirmationField(value: unknown): ConfirmationField | null {
   return { kind: "token", token, typed: typed as string | undefined };
 }
 
+/**
+ * A run request on a connection of an engine a provider package serves, with the grammar its declaration states, as the
+ * server catalog's record of the engine holds it (`PackageEngine.statementGrammar`).
+ */
+export interface PackageRunGateRequest extends Omit<RunGateRequest, "connection"> {
+  readonly connection: EngineConnection;
+  readonly grammar: SqlGrammar;
+}
+
+/** What the gate reads: a request of either kind, and the reader of its verdict. */
+interface GateRequest extends Omit<RunGateRequest, "connection"> {
+  readonly connection: EngineConnection;
+  readonly verdict: () => ConfirmationVerdict;
+}
+
 /** The verdict, with a reader that throws read as the gate asking. */
-function classify(request: RunGateRequest): RunVerdict | { readonly decision: "refuse"; readonly refusal: string } {
+function classify(request: GateRequest): RunVerdict | { readonly decision: "refuse"; readonly refusal: string } {
   try {
-    const { type, name, environment } = request.connection;
-    const verdict = confirmationVerdict(request.sql, type, name, environment);
+    const verdict = request.verdict();
     return verdict.decision === "confirm" ? { ...verdict, classificationFailed: false } : verdict;
   } catch (error) {
     logger.error("The confirmation gate could not read a statement, so it asks for a confirmation", undefined, {
@@ -156,7 +179,29 @@ function classify(request: RunGateRequest): RunVerdict | { readonly decision: "r
 }
 
 /** Decides what a run request gets; throws the mode's `DatabaseConfigError` when the setting cannot be read. */
-export async function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
+export function gateRun(request: RunGateRequest, clock: () => number = Date.now): Promise<RunGateDecision> {
+  const { type, name, environment } = request.connection;
+  return gate({ ...request, verdict: () => confirmationVerdict(request.sql, type, name, environment) }, clock);
+}
+
+/**
+ * Decides what a run request on an engine a provider package serves gets, as `gateRun` decides it, with the statement
+ * read under the package's declared grammar (`packageConfirmationVerdict`); throws the mode's `DatabaseConfigError` when
+ * the setting cannot be read.
+ */
+export function gatePackageRun(
+  request: PackageRunGateRequest,
+  clock: () => number = Date.now,
+): Promise<RunGateDecision> {
+  const { name, environment } = request.connection;
+  return gate(
+    { ...request, verdict: () => packageConfirmationVerdict(request.sql, request.grammar, name, environment) },
+    clock,
+  );
+}
+
+/** The gate of both: what `request` gets, by its field, the mode and its verdict. */
+async function gate(request: GateRequest, clock: () => number): Promise<RunGateDecision> {
   const field = readConfirmationField(request.confirmation);
   if (field === null) return { kind: "answer", status: 400, body: { error: CONFIRMATION_FIELD_MESSAGE } };
   const mode = runConfirmationMode();
@@ -222,7 +267,7 @@ function invalid(reason: string): RunGateDecision {
 }
 
 /** Advisory mode sparing a caller that did not ask: the statement runs, and the answer and one warning say so. */
-function ranUnconfirmed(request: RunGateRequest): RunGateDecision {
+function ranUnconfirmed(request: GateRequest): RunGateDecision {
   logger.warn("A statement that needs a confirmation ran without one", {
     route: ROUTE_LOG_LABELS[request.route],
     type: request.connection.type,

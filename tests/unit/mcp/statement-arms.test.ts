@@ -1549,7 +1549,8 @@ describe("list_connections on a connection of an engine a provider package serve
           name: "Acme Store",
           engine: "acmelistserved",
           read_tool: null,
-          unavailable: "This LibreDB Studio opens no session on an engine of a provider package yet.",
+          unavailable:
+            "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
         },
       ],
       total_connections: 2,

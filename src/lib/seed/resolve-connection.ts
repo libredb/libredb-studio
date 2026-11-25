@@ -88,8 +88,8 @@ export type ConnectionBody = { connection?: DatabaseConnection; connectionId?: s
 
 /**
  * Which engines a route serves: Studio's bundled engines alone, every route's default, or those and the engines of
- * admitted provider packages, which only Test Connection serves in this Studio (docs/providers/CONTRACT.md, clause
- * C-107).
+ * admitted provider packages, which only Test Connection and the query route serve in this Studio
+ * (docs/providers/CONTRACT.md, clause C-107).
  */
 export type ServedEngines = "bundled" | "bundled-and-package";
 
@@ -109,7 +109,7 @@ function admitPackageEngine(type: unknown): void {
  *
  * With `engines` `bundled-and-package`, an admitted package's engine passes the check instead, and its connection is
  * answered as a `PackageConnection`, which the caller tells apart by `serverEngine`; every other guard runs exactly as
- * for `bundled`. Only Test Connection passes it in this Studio.
+ * for `bundled`. Only Test Connection and the query route pass it in this Studio.
  *
  * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
  * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's

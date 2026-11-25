@@ -5,6 +5,7 @@ import {
   cleanupContext,
   deadlineSignal,
   type EndScopeAnswer,
+  type EnvReader,
   envReader,
   type ExecuteRequest,
   type PageBound,
@@ -178,7 +179,16 @@ export function statementTimeout(provider: Pick<DatabaseProvider, "config">): nu
  * `EXECUTE_SLACK_MS`, capped at the longest a timer waits.
  */
 export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now: number): number {
-  return now + Math.min(statementTimeout(provider) + EXECUTE_SLACK_MS, TIMER_MAX_MS);
+  return executeDeadlineFor(statementTimeout(provider), now);
+}
+
+/**
+ * When the execute call of a run that starts at `now` under the statement timeout `timeout` must have answered: the
+ * body of `executeDeadline`, which a provider package's run reads with its connection's own timeout
+ * (src/lib/api/package-editor-query.ts).
+ */
+export function executeDeadlineFor(timeout: number, now: number): number {
+  return now + Math.min(timeout + EXECUTE_SLACK_MS, TIMER_MAX_MS);
 }
 
 /**
@@ -194,13 +204,25 @@ export function executeDeadline(provider: Pick<DatabaseProvider, "config">, now:
  * open's start (clause C-55), answers the same class and sentence. The execute keeps its own deadline, which starts
  * once the provider resolved.
  */
-export async function openWithinCall<T>(
+export function openWithinCall<T>(
   caller: AbortSignal,
   type: DatabaseType,
   open: (wait: OpenWait) => Promise<T>,
   now: number = Date.now(),
 ): Promise<T> {
-  const budget = connectBudgetFor(type);
+  return openWithinBudget(caller, connectBudgetFor(type), open, now);
+}
+
+/**
+ * `openWithinCall` with the allowance `budget` in milliseconds rather than read by type: the query route reads an
+ * engine a provider package serves at its declared connect budget (`packageConnectBudget`).
+ */
+export async function openWithinBudget<T>(
+  caller: AbortSignal,
+  budget: number,
+  open: (wait: OpenWait) => Promise<T>,
+  now: number = Date.now(),
+): Promise<T> {
   const wait: OpenWait = { signal: deadlineSignal(now + budget, caller) };
   try {
     return await open(wait);
@@ -244,15 +266,16 @@ export function hostPorts(route: string, cancelSent: () => boolean = () => false
 
 /**
  * A call's context on a wait the caller already holds: `deadline`, and `signal` itself, by reference, so a caller that
- * holds a deadline signal of its own keeps one deadline and no second timer races it.
+ * holds a deadline signal of its own keeps one deadline and no second timer races it. `env` is the environment the
+ * session's calls are given: none for a legacy provider, the declared one for a provider package's session.
  */
-export function contextOn(deadline: number, signal: AbortSignal): CallContext {
-  return { deadline, signal, env: NO_ENVIRONMENT };
+export function contextOn(deadline: number, signal: AbortSignal, env: EnvReader = NO_ENVIRONMENT): CallContext {
+  return { deadline, signal, env };
 }
 
-/** A call's context: `deadline`, and a signal that aborts at it or when `caller` aborts first. */
-export function callContext(deadline: number, caller: AbortSignal): CallContext {
-  return contextOn(deadline, deadlineSignal(deadline, caller));
+/** A call's context: `deadline`, and a signal that aborts at it or when `caller` aborts first; `env` as `contextOn`. */
+export function callContext(deadline: number, caller: AbortSignal, env: EnvReader = NO_ENVIRONMENT): CallContext {
+  return contextOn(deadline, deadlineSignal(deadline, caller), env);
 }
 
 /*
@@ -293,24 +316,29 @@ export interface ExecuteViews {
 
 /** The views of an execute on `provider` for `caller`, each naming the statement timeout and the host's slack. */
 export function executeViews(provider: Pick<DatabaseProvider, "config">, caller: AbortSignal): ExecuteViews {
+  return executeViewsFor(statementTimeout(provider), caller);
+}
+
+/** The views of an execute under the statement timeout `timeout` for `caller`: the body of `executeViews`. */
+export function executeViewsFor(timeout: number, caller: AbortSignal): ExecuteViews {
   const view: CallerView = {
     caller,
-    deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
+    deadlineSentence: `The statement did not answer within its timeout of ${waitedSeconds(timeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more for the engine's own answer, so Studio stopped waiting for it.`,
   };
   // The statement answered, but its page waited for the core's large-page slot until the deadline (clause C-54).
   const slotView: CallerView = {
     caller,
-    deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
+    deadlineSentence: `The statement answered, but its page waited for another large page to be answered past its timeout of ${waitedSeconds(timeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for it.`,
   };
   // The statement answered, but its page was still being read at the deadline (clause C-48).
   const pageView: CallerView = {
     caller,
-    deadlineSentence: `The statement answered, but Studio did not finish reading its page within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so it stopped waiting for it.`,
+    deadlineSentence: `The statement answered, but Studio did not finish reading its page within its timeout of ${waitedSeconds(timeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so it stopped waiting for it.`,
   };
   // The statement answered and its page was read, but its other results were still being closed (clause C-48).
   const otherResultsView: CallerView = {
     caller,
-    deadlineSentence: `The statement answered and Studio read its page, but closing its other results did not finish within its timeout of ${waitedSeconds(statementTimeout(provider))} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for them.`,
+    deadlineSentence: `The statement answered and Studio read its page, but closing its other results did not finish within its timeout of ${waitedSeconds(timeout)} and ${waitedSeconds(EXECUTE_SLACK_MS)} more, so Studio stopped waiting for them.`,
   };
   const stopViews: Readonly<Record<NonNullable<StoppedRecord["waitingFor"]>, CallerView>> = {
     "large-page-slot": slotView,
@@ -436,14 +464,18 @@ export function lateScopeEnd(route: string): (failure: unknown) => void {
     });
 }
 
-/** Ends `scope` on `session` through the host core's endScope call, under a cleanup context of its own. */
+/**
+ * Ends `scope` on `session` through the host core's endScope call, under a cleanup context of its own with `env`, the
+ * environment the session's calls are given.
+ */
 function endScopeRecord(
   core: HostCore,
   session: ConsoleSession,
   scope: string,
   route: string,
+  env: EnvReader = NO_ENVIRONMENT,
 ): Promise<EndScopeRecord> {
-  return core.endScopeCall(session, { scope }, cleanupContext(NO_ENVIRONMENT), { late: lateScopeEnd(route) });
+  return core.endScopeCall(session, { scope }, cleanupContext(env), { late: lateScopeEnd(route) });
 }
 
 /**
@@ -459,15 +491,19 @@ function endedScope(record: EndScopeRecord, caller: AbortSignal): EndScopeAnswer
   throw refusalError(record, view);
 }
 
-/** Ends the run's `scope`, when it has one, and answers the outcome; see `endedScope` for what it throws. */
-async function endRunScope(
+/**
+ * Ends the run's `scope`, when it has one, and answers the outcome; see `endedScope` for what it throws. `env` is the
+ * environment the session's calls are given, a provider package's declared one for its session.
+ */
+export async function endRunScope(
   core: HostCore,
   session: ConsoleSession,
   scope: string | undefined,
-  run: EditorQueryRun,
+  run: Pick<EditorQueryRun, "route" | "signal">,
+  env: EnvReader = NO_ENVIRONMENT,
 ): Promise<EndScopeAnswer["openTransaction"]> {
   if (scope === undefined) return "none";
-  return endedScope(await endScopeRecord(core, session, scope, run.route), run.signal);
+  return endedScope(await endScopeRecord(core, session, scope, run.route, env), run.signal);
 }
 
 /**
@@ -476,7 +512,7 @@ async function endRunScope(
  * settled for a stop, its failure logged, since the stop is answered at once; and not at all for a refusal before the
  * call, which ran nothing.
  */
-async function endAfterRun(
+export async function endAfterRun(
   record: ExecuteRecord,
   end: () => Promise<EndScopeAnswer["openTransaction"]>,
   route: string,

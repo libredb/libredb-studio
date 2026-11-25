@@ -1,7 +1,13 @@
 import { consoleTextByteLimit, statementRefusal, vocabularyTypedConfirmation } from "@/lib/db/destructive-commands";
 import type { ProviderCapabilities, TypedConfirmationAsk } from "@/lib/db/types";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
-import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
+import {
+  hasUnreadableRun,
+  isDangerousQuery,
+  packageStatementAsks,
+  packageUnreadableRun,
+} from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type RunTargetRange, runnableTarget } from "@/lib/sql/run-target";
 import { isMultiStatement } from "@/lib/sql/statement-splitter";
@@ -221,6 +227,25 @@ export function confirmationVerdict(
   const typedConfirmation = typedConfirmationFor(statement, databaseType, connectionName, connectionEnvironment);
   if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
   return { decision: "confirm", unreadable: hasUnreadableRun(statement, databaseType), typedConfirmation };
+}
+
+/**
+ * The confirmation verdict of `statement` on an engine a provider package serves, read under `grammar`, the grammar its
+ * declaration states (docs/providers/CONTRACT.md, clause S-8): `confirmationVerdict`'s answer, with the reading
+ * `packageStatementAsks` for whether the gate asks and `packageUnreadableRun` for `unreadable`. No vocabulary row of
+ * Studio's applies to such an engine, so no typed ask comes from one; on a production connection the connection's name
+ * is asked (`escalatedAsk`), and refused where it has none.
+ */
+export function packageConfirmationVerdict(
+  statement: string,
+  grammar: SqlGrammar,
+  connectionName: string | undefined,
+  connectionEnvironment: ConnectionEnvironment | undefined,
+): ConfirmationVerdict {
+  if (!packageStatementAsks(statement, grammar)) return { decision: "run" };
+  const typedConfirmation = resolvedTypedConfirmation(escalatedAsk(undefined, connectionEnvironment), connectionName);
+  if (typedConfirmation === undefined) return { decision: "refuse", refusal: TYPED_NAME_MISSING_REFUSAL };
+  return { decision: "confirm", unreadable: packageUnreadableRun(statement, grammar), typedConfirmation };
 }
 
 /**

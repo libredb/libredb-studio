@@ -11,8 +11,10 @@ import { CALL_REFUSAL_RULES, type CallRefusal, callRefusalSentence } from "@libr
 import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   DatabaseError,
+  FacetNotOfferedError,
   QueryCancelledError,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   TimeoutError,
@@ -101,13 +103,64 @@ describe("the accessor", () => {
     expect(errorOutcome(error)).toBe("unknown");
   });
 
+  test("a refused offset of a session that refuses it is Studio's own offset refusal, not-sent", () => {
+    const refusal: CallRefusal = { rule: "request-field-not-honoured", pointer: "/page/offset", name: "offset" };
+    const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
+
+    // Studio wrote the sentence, so the error is the class only core constructs, never a provider's plain one.
+    expect(error).toBeInstanceOf(StudioOffsetRefusal);
+    expect(errorKind(error)).toBe("studio-offset-refusal");
+    expect(error.message).toBe(
+      "This connection's provider package does not take an offset, so Studio asks for no page after the first.",
+    );
+    expect(errorOutcome(error)).toBe("not-sent");
+  });
+
+  test("refused params of a session that refuses them are FacetNotOfferedError, not-sent", () => {
+    const refusal: CallRefusal = { rule: "request-field-not-honoured", pointer: "/params", name: "params" };
+    const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
+
+    expect(error).toBeInstanceOf(FacetNotOfferedError);
+    expect([(error as FacetNotOfferedError).code, error.message, errorOutcome(error)]).toEqual([
+      "FACET_NOT_OFFERED",
+      "This connection's provider package takes no bound parameters, so Studio sent nothing.",
+      "not-sent",
+    ]);
+    expect([(error as FacetNotOfferedError).facet, (error as FacetNotOfferedError).operation]).toEqual([
+      "console",
+      "params",
+    ]);
+  });
+
+  test("a facet the session does not offer is FacetNotOfferedError naming the call, not-sent", () => {
+    for (const [name, facet, operation] of [
+      ["objects.tree", "objects", "tree"],
+      ["console.cancel", "console", "cancel"],
+      ["monitoring.poolStats", "monitoring", "poolStats"],
+      ["maintenance.run", "maintenance", "run"],
+    ] as const) {
+      const refusal: CallRefusal = { rule: "facet-not-offered", pointer: `/${name.replace(".", "/")}`, name };
+      const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
+      expect(error).toBeInstanceOf(FacetNotOfferedError);
+      expect([error.message, errorOutcome(error)]).toEqual([
+        `This connection's provider package does not offer ${name}, so Studio did not call it.`,
+        "not-sent",
+      ]);
+      expect([(error as FacetNotOfferedError).facet, (error as FacetNotOfferedError).operation]).toEqual([
+        facet,
+        operation,
+      ]);
+    }
+  });
+
   test("any other refusal is a host defect named by its rule", () => {
     const view = { caller: callerOf(), deadlineSentence };
-    const handled = new Set(["call-signal-aborted", "call-deadline-passed", "row-over-page"]);
+    const handled = new Set(["call-signal-aborted", "call-deadline-passed", "row-over-page", "facet-not-offered"]);
     const others = CALL_REFUSAL_RULES.filter((rule) => !handled.has(rule));
 
     for (const rule of others) {
-      const refusal: CallRefusal = { rule, pointer: "/x", name: "params", limit: 1, size: 2 };
+      // A field the rows of a refusing session do not read: only offset and params are answered by name.
+      const refusal: CallRefusal = { rule, pointer: "/x", name: "readOnly", limit: 1, size: 2 };
       const error = refusalError(refused([refusal, refusal], false), view);
       expect(error).not.toBeInstanceOf(DatabaseError);
       expect(error.name).toBe("Error");
@@ -117,7 +170,7 @@ describe("the accessor", () => {
       expect(Object.hasOwn(error, "outcome")).toBe(false);
       expect(errorKind(error)).toBe("internal");
     }
-    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 3);
+    expect(others).toHaveLength(CALL_REFUSAL_RULES.length - 4);
   });
 
   test("a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal", () => {

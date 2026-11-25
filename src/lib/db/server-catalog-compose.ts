@@ -25,6 +25,7 @@
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { grantPackageClaims } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
+import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
 import {
   projectCatalog,
@@ -219,12 +220,25 @@ export function composeServerCatalog(
           refused: tables.refused[id],
           // The projection holds a row only for an engine that declares a warning.
           credentialWarnings: tables.credentialWarnings[id] ?? Object.freeze([]),
+          tlsModes: Object.freeze([...engine.connection.tls.modes]),
           readsTrustMaterial: tables.readsTrustMaterial[id],
           connectionStringAccepted: tables.connectionStringAccepted[id],
           dialogOffersUri: tables.dialogOffersUri[id],
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
         grants: Object.freeze(Object.fromEntries(members.map((member) => [member, grants[member][id]]))),
+        // What the host core checks each call of the engine's sessions against (src/lib/db/package-sessions.ts).
+        session: Object.freeze({
+          calls: pkg.manifest.calls,
+          maintenance: Object.freeze({
+            maintenance: engine.facets.maintenance,
+            maintenanceSpecs: engine.facets.maintenanceSpecs,
+          }),
+          panels: engine.facets.monitoring,
+        }),
+        // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
+        // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
+        statementGrammar: grammarFromFacts(engine.sqlText.grammar),
       }) as PackageEngine,
     );
   }

@@ -29,7 +29,7 @@ import type { UserPayload } from "@/lib/auth";
 import { getJwtSecret } from "@/lib/config/auth-env";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import type { TypedConfirmation } from "@/lib/editor/statement-analysis";
-import type { DatabaseConnection } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import { sha256Hex } from "@/lib/api/utf16-digest";
 
 /**
@@ -121,8 +121,11 @@ export type RunVerdict =
 export interface RunConfirmationBinding {
   /** Who mints and checks the token: its secret and the session it binds. */
   readonly issuer: RunConfirmationIssuer;
-  /** The connection this request resolved, after any override the route applies: its server, never its id. */
-  readonly connection: DatabaseConnection;
+  /**
+   * The connection this request resolved, after any override the route applies, of an engine Studio ships or one a
+   * provider package serves: its server, never its id.
+   */
+  readonly connection: EngineConnection;
   /** The database a server-level connection runs the statement in (`requestCatalog`), or undefined. */
   readonly catalog: string | undefined;
   readonly route: RunConfirmationRoute;
@@ -237,7 +240,7 @@ function frame(value: string): string {
  */
 async function connectionDigest(
   issuer: RunConfirmationIssuer,
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   catalog: string | undefined,
 ): Promise<string> {
   const server = await connectionFingerprint(connection);

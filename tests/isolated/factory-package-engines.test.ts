@@ -79,13 +79,13 @@ describe("the factory and a provider package's engine", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet", async () => {
+  test("an admitted package's engine is refused at each factory entry point, its session opening through its package", async () => {
     const { errors, ran } = await refusals("acmefactory");
     for (const error of errors) {
       expect(error).toBeInstanceOf(PackageEngineUnsupportedError);
       expect(error).not.toBeInstanceOf(DatabaseConfigError);
       expect((error as Error).message).toBe(
-        "This LibreDB Studio opens no session on an engine of a provider package yet.",
+        "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
       );
     }
     expect(ran).toBe(0);

@@ -63,7 +63,7 @@ import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { types } from "node:util";
 import { admitted, type LateSettle, loadPackage, registerAdmitted } from "@libredb/provider-loader";
-import { checkProviderModule, PROVIDER_CONTRACT } from "@libredb/provider-sdk/calls";
+import { checkProviderModule, PROVIDER_CONTRACT, type ProviderImpl } from "@libredb/provider-sdk/calls";
 import {
   compileManifestValidator,
   type ManifestValidator,
@@ -127,7 +127,8 @@ export interface AdmissionOptions {
 export interface AdmittedProviderRecord {
   readonly contract: typeof PROVIDER_CONTRACT;
   readonly manifest: ProviderManifest;
-  readonly impl: object;
+  /** The implementation `checkProviderModule` proved, the one every session of the package opens on. */
+  readonly impl: ProviderImpl<unknown>;
 }
 
 /** A package admitted, or refused with its first refusal. */
@@ -394,7 +395,8 @@ async function admit(pkg: VerifiedPackage, options: AdmissionOptions): Promise<A
   return Object.freeze({
     contract: PROVIDER_CONTRACT,
     manifest,
-    impl: Object.freeze(impl as object),
+    // `checkProviderModule` proved it a `ProviderImpl` above: the one place its type is read.
+    impl: Object.freeze(impl as ProviderImpl<unknown>),
   });
 }
 

@@ -516,7 +516,8 @@ describe("runEditorQuery", () => {
       endScopeCall: async () => ({
         kind: "refused",
         called: false,
-        refusals: [{ rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" }],
+        // A rule none of the accessor's rows for a refusing package session reads (clause C-111).
+        refusals: [{ rule: "request-field-empty", pointer: "/console/endScope", name: "console.endScope" }],
       }),
     };
 

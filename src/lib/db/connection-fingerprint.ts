@@ -1,5 +1,6 @@
 import { TUNNEL_FAR_END, TUNNEL_ROUTE } from "@/lib/types";
-import type { DatabaseConnection, SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
+import type { SSHTunnelConfig, WithTunnelFarEnd, WithTunnelRoute } from "@/lib/types";
 
 /**
  * The bastion's ROUTE, length-framed inside its own field so a tunnel's four values cannot slide
@@ -159,7 +160,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  * both. The provider cache key and the run-confirmation token frame the record itself, on one side only.
  */
 export async function connectionFingerprint(
-  connection: DatabaseConnection & WithTunnelFarEnd & WithTunnelRoute,
+  connection: EngineConnection & WithTunnelFarEnd & WithTunnelRoute,
 ): Promise<string> {
   // The address this connection actually reaches: the tunnel's far end when the factory
   // rewrote the record, and the record's own otherwise. See the X23 paragraph above.

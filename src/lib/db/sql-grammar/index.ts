@@ -123,9 +123,11 @@ function clausesOf(clauses: SqlTextEntry["grammar"]["trailingLimitClauses"]): Sq
 /**
  * The grammar `facts` declare, in their member order: each fact at the reading its absence has left out, the script
  * and the clauses read by `scriptOf` and `clausesOf`, and every other fact as declared. The facts are the SDK's
- * `GrammarFacts`, one member per member of `SqlGrammar`, so the record built here is a `SqlGrammar`.
+ * `GrammarFacts`, one member per member of `SqlGrammar`, so the record built here is a `SqlGrammar`. It reads no row
+ * keyed by an engine, so the server catalog composes an admitted package's engine's grammar with it too
+ * (src/lib/db/server-catalog-compose.ts).
  */
-function grammarOf(facts: SqlTextEntry["grammar"]): SqlGrammar {
+export function grammarFromFacts(facts: SqlTextEntry["grammar"]): SqlGrammar {
   const grammar: Record<string, unknown> = {};
   for (const [fact, value] of Object.entries(facts)) {
     if (fact === "script") grammar.script = scriptOf(facts.script);
@@ -154,7 +156,7 @@ function redactionOf(id: DatabaseType, record: StatementRedaction, functions: Sq
 
 /**
  * Engine `id`'s grammar row, composed from `entry`, its projected SQL text, `redaction`, the row of Studio's record of
- * its redaction, and `functions`: the grammar by `grammarOf`; `readsSqlText` as declared; the update target's flag and
+ * its redaction, and `functions`: the grammar by `grammarFromFacts`; `readsSqlText` as declared; the update target's flag and
  * its two word lists as sets in the declared order; each completion reader bound through `functions` or null; and the
  * redaction `redaction` grants, never anything `entry` holds. The row and every record in it are frozen, a trailing
  * limit clause apart, whose `lastIndex` is the engine's to write.
@@ -170,7 +172,7 @@ export function composeSqlGrammar(
 ): SqlGrammarSpec {
   const { updateTarget, completion } = entry;
   return Object.freeze({
-    grammar: grammarOf(entry.grammar),
+    grammar: grammarFromFacts(entry.grammar),
     readsSqlText: entry.readsSqlText,
     redaction: redactionOf(id, redaction, functions),
     updateTarget: Object.freeze({

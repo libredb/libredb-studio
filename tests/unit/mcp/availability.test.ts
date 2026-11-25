@@ -85,7 +85,7 @@ describe("mcpConnectionUnavailable", () => {
       'The connection type "acmeavailgone" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_LOAD_FAILED), so no provider can open it; the server\'s log names the package and why.',
     );
     expect(mcpConnectionUnavailable(USER, listed("acmeavailserved"))).toBe(
-      "This LibreDB Studio opens no session on an engine of a provider package yet.",
+      "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
     );
   });
 

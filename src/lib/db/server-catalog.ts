@@ -20,10 +20,12 @@
  * (src/lib/mcp/context.ts); MCP's availability (src/lib/mcp/availability.ts), which `list_connections` and every MCP
  * tool answer before any open, reads `bundledEngineRefusal`'s message. A refused package's engine is refused there as
  * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
- * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection serves an admitted
- * engine in this Studio: it resolves its connection through `resolveConnection` with `engines` `bundled-and-package`,
- * then `testPackageConnection` (src/lib/api/test-connection.ts) validates it against the engine's field rules and
- * refuses at the open.
+ * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection and the query route
+ * serve an admitted engine in this Studio: each resolves its connection through `resolveConnection` with `engines`
+ * `bundled-and-package`; Test Connection then validates the connection against the engine's field rules and opens one
+ * session through the package (`testPackageConnection` in src/lib/api/test-connection.ts), and the query route runs a
+ * statement on the engine's cached session (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over
+ * src/lib/db/package-sessions.ts.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged:
  * server code that holds an admitted engine's id holds a `PackageEngineId`, never a `DatabaseType`.
@@ -38,8 +40,11 @@
  * nothing. It is not a fallback for a failed boot: a boot whose admission cannot compose a catalog exits before it
  * serves (src/lib/provider-host/boot.ts).
  */
-import type { CredentialWarning, FieldName, ProviderManifest } from "@libredb/provider-sdk/manifest";
+import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { ClaimGrants } from "@/lib/db/claim-grants";
+import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
+import type { DeclaredSession } from "@/lib/provider-host/core/contract-session";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -59,6 +64,13 @@ export type PackageEngineId = string & { readonly [PACKAGE_ENGINE]: true };
 /** A connection of an engine an admitted provider package serves. */
 export type PackageConnection = Omit<DatabaseConnection, "type"> & { readonly type: PackageEngineId };
 
+/**
+ * A connection of any engine the server knows, bundled or served by a provider package, its type read as text: what the
+ * engine-neutral readers of a connection's fields take (the cache key's frame, the connection fingerprint), which frame
+ * the type as text and read no row keyed by it.
+ */
+export type EngineConnection = Omit<DatabaseConnection, "type"> & { readonly type: string };
+
 /** Studio's grant of each claim of one engine, read through the grant reader (./claim-grants): one value per member. */
 export type PackageGrants = { readonly [Member in keyof ClaimGrants<string>]: ClaimGrants<string>[Member][string] };
 
@@ -68,6 +80,8 @@ export interface PackageConnectionTables {
   readonly seedOnly: SeedOnlyTemplate | null;
   readonly refused: Readonly<Partial<Record<FieldName, string>>>;
   readonly credentialWarnings: readonly CredentialWarning[];
+  /** The TLS modes the engine takes, the declaration's `connection.tls.modes`, which its open context reads. */
+  readonly tlsModes: readonly TlsMode[];
   readonly readsTrustMaterial: boolean;
   readonly connectionStringAccepted: boolean;
   readonly dialogOffersUri: boolean;
@@ -81,13 +95,13 @@ export interface ServingPackage {
   readonly directory: string;
   /** The manifest admission validated and froze. */
   readonly manifest: ProviderManifest;
-  /** Studio's record of the package, the one registered in the loader's registry. */
-  readonly record: object;
+  /** Studio's record of the package, the one registered in the loader's registry, whose `impl` its sessions open on. */
+  readonly record: AdmittedProviderRecord;
 }
 
 /**
  * Studio's composed record of one engine an admitted package serves: the declaration's catalog entry, its connection
- * tables, its field rules and Studio's grant of each claim, and nothing else, so no SQL writing, connection form,
+ * tables, its field rules, Studio's grant of each claim and what its sessions are declared to answer, and nothing else, so no SQL writing, connection form,
  * connection string, grammar, migration DDL or generator row exists for it.
  */
 export interface PackageEngine {
@@ -97,6 +111,15 @@ export interface PackageEngine {
   readonly connection: PackageConnectionTables;
   readonly fieldRules: FieldRuleSpec;
   readonly grants: PackageGrants;
+  /** What a session of the engine is declared to answer: the package's calls, its maintenance and monitoring panels. */
+  readonly session: DeclaredSession;
+  /**
+   * The grammar the declaration states its statements in (`sqlText.grammar`), composed once by `grammarFromFacts`
+   * (./sql-grammar), which the confirmation gate reads them under with every claim that loosens it uncounted
+   * (`packageStatementAsks` in src/lib/sql/dangerous-query.ts). The package's own data, never a row of Studio's grammar
+   * table.
+   */
+  readonly statementGrammar: SqlGrammar;
 }
 
 /** The composed catalog: the engines admitted packages serve, and the codes of the refused packages naming the others. */
@@ -136,8 +159,8 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog };
 /** The refusal of a package engine, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
-    "This request is served for an engine of a provider package only by Test Connection in this LibreDB Studio, and this is another request.",
-  open: "This LibreDB Studio opens no session on an engine of a provider package yet.",
+    "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
+  open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 
 /** The installed catalog, or undefined. */
@@ -159,7 +182,7 @@ export function serverEngine(value: unknown): ServerEngine {
 }
 
 /** The refusal of a request for an admitted package's engine `id` on the path `need`. */
-export function packageEngineRefusal(id: string, need: EngineNeed): PackageEngineUnsupportedError {
+function packageEngineRefusal(id: string, need: EngineNeed): PackageEngineUnsupportedError {
   return new PackageEngineUnsupportedError(UNSUPPORTED_SENTENCES[need], id);
 }
 

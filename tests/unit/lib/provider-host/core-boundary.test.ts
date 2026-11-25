@@ -113,6 +113,7 @@ describe("the host core's boundary", () => {
   test("the host core imports only the SDK, Node built-ins and itself", () => {
     expect(files.map(({ file }) => path.relative(CORE_DIRECTORY, file)).sort()).toEqual([
       "console.ts",
+      "contract-session.ts",
       "host-core.ts",
       "maintenance.ts",
       "monitoring.ts",

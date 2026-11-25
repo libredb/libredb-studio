@@ -7,6 +7,7 @@ import {
   confirmationVerdict,
   escalatedAsk,
   type OffsetRange,
+  packageConfirmationVerdict,
   runsAsScript,
   type StatementAnalysis,
   type StatementAnalysisInput,
@@ -22,7 +23,10 @@ import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { cursorTarget, RunTargetRangeError, selectionTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import type { DatabaseType } from "@/lib/types";
+import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
+import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { admittedManifest } from "../../helpers/package-catalog";
 
 /**
  * One row per acceptance case of #2204, section 5 (the HTTP rows aside), with its expected answer as the issue states
@@ -819,5 +823,60 @@ describe("the connection's environment", () => {
     expect(typedConfirmationFor("del /a /b", "etcd", name, undefined)).toStrictEqual({ type: "text", expected: "/a" });
     expect(typedConfirmationFor("DELETE FROM t", "postgres", "", "production")).toBeUndefined();
     expect(typedConfirmationFor(ETCD_EVERY_KEY, "etcd", undefined, "development")).toBeUndefined();
+  });
+});
+
+describe("packageConfirmationVerdict", () => {
+  /** The grammar the minimal manifest declares, composed as the server catalog composes a package engine's. */
+  const grammar = grammarFromFacts(
+    (admittedManifest("acmeverdict").engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar,
+  );
+
+  test("packageConfirmationVerdict answers run, confirm with unreadable, and refuse for a nameless production connection", () => {
+    expect(packageConfirmationVerdict("SELECT 1", grammar, "Keys", undefined)).toStrictEqual({ decision: "run" });
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, "Keys", "development")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: null,
+    });
+    // A write in a later statement asks, as the split the multi-statement route runs reads it.
+    expect(packageConfirmationVerdict("SELECT 1; DROP TABLE x", grammar, "Keys", undefined)).toMatchObject({
+      decision: "confirm",
+      unreadable: false,
+    });
+    expect(packageConfirmationVerdict("SELECT 'a", grammar, "Keys", undefined)).toStrictEqual({
+      decision: "confirm",
+      unreadable: true,
+      typedConfirmation: null,
+    });
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, "Keys", "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
+    });
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, undefined, "production")).toStrictEqual({
+      decision: "refuse",
+      refusal: TYPED_NAME_MISSING_REFUSAL,
+    });
+    // An exempt form the declaration states is not counted: the gate reads it as the shared keyword asks.
+    const exempting = { ...grammar, confirmExemptForms: [["ALTER", "SESSION", "SET"]] };
+    expect(packageConfirmationVerdict("ALTER SESSION SET x = 1", exempting, "Keys", undefined)).toMatchObject({
+      decision: "confirm",
+    });
+    // The explain claim is read both ways: an analyzed write asks under a declaration of false, a planned write
+    // under a declaration of true, and an analyzed read runs under either.
+    for (const explainExecutesWithAnalyze of [false, true]) {
+      const explaining = { ...grammar, explainExecutesWithAnalyze };
+      for (const sql of ["EXPLAIN ANALYZE DELETE FROM t", "EXPLAIN UPDATE t SET x = 1"]) {
+        expect([
+          explainExecutesWithAnalyze,
+          sql,
+          packageConfirmationVerdict(sql, explaining, "Keys", undefined),
+        ]).toMatchObject([explainExecutesWithAnalyze, sql, { decision: "confirm" }]);
+      }
+      expect(packageConfirmationVerdict("EXPLAIN ANALYZE SELECT 1", explaining, "Keys", undefined)).toStrictEqual({
+        decision: "run",
+      });
+    }
   });
 });

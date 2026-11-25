@@ -364,7 +364,8 @@ describe("providerMaintenance", () => {
         }),
         maintenancePreviewCall: async (): Promise<MaintenancePreviewRecord> => ({
           ...refusal,
-          refusals: [{ rule: "facet-not-offered", pointer: "/maintenance/preview", name: "maintenance.preview" }],
+          // A rule none of the accessor's rows for a refusing package session reads (clause C-111).
+          refusals: [{ rule: "request-field-empty", pointer: "/maintenance/preview", name: "maintenance.preview" }],
         }),
       }),
       async () => {

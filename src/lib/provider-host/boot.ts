@@ -16,10 +16,11 @@
  * `bootAdmission(directory, deadlineMs)` reads the lock (`readProvidersLock`), logs each package the lock refused, and,
  * when at least one package passed it, records the directory of each such package for the uncaught-exception line
  * (./package-directories, clause C-108), compiles the manifest validator once from the SDK's schema text, whose digest
- * the validator checks, then admits each verified package in the lock's order, one at a time, each import under
- * `deadlineMs` (`admitPackage`, ./admission). The catalog's set rules (`catalogConflicts`) then run over every admitted
- * package, each package they refuse is logged with `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are
- * registered (`registerAdmission`), so the loader's registry and the server's catalog name the same packages.
+ * the validator checks, then admits each verified package in package-name order, the order the lock's read answers,
+ * one at a time, each import under `deadlineMs` (`admitPackage`, ./admission). The catalog's set rules
+ * (`catalogConflicts`) then run over every admitted package, each package they refuse is logged with
+ * `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are registered (`registerAdmission`), so the loader's
+ * registry and the server's catalog name the same packages.
  *
  * Every refused package is logged once, by its refusal's one-line sentence: at warn, or at error with the value the
  * entry threw as the logged error for `import-threw`, so the thrown value is never in the sentence. An admitted package
@@ -115,7 +116,8 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
       new TextEncoder().encode(MANIFEST_SCHEMA_TEXT),
     );
     for (const pkg of verified) {
-      // One at a time, in the lock's order: each deadline is its own package's, and the log follows the lock.
+      // One at a time, in package-name order, the order the lock's read answers: each deadline is its own package's, and
+      // the log follows that order.
       // oxlint-disable-next-line no-await-in-loop -- each import runs after the one before, on purpose (C-105).
       const answer = await admission.admitPackage(pkg, {
         validator,

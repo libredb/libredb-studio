@@ -156,19 +156,25 @@ export class PackageEngineUnsupportedError extends DatabaseError {
   }
 }
 
-/** A facet of an engine's `ENGINE_FACETS` row that a request can name a member of; only maintenance is refused today. */
-export type DeclaredFacet = "maintenance";
+/**
+ * A facet a request can name a member of: a maintenance operation of an engine's `ENGINE_FACETS` row, or a call group of
+ * the provider contract a provider package's session does not offer (`console`, `objects`, `monitoring`), whose member
+ * is the call or the request field (docs/providers/CONTRACT.md, clause C-51).
+ */
+export type DeclaredFacet = "maintenance" | "console" | "objects" | "monitoring";
 
 /**
  * A request names a member of a facet the connection's engine does not offer: before any provider is built, an
- * operation its `ENGINE_FACETS` row does not list, or, after connect, one the connected server does not accept.
- * Answered 400 `FACET_NOT_OFFERED` with its sentence, which names the member and the engine. A `DatabaseError` and not
- * a `DatabaseConfigError`: no setting of the connection is wrong, so a configuration error's remedy does not apply.
+ * operation its `ENGINE_FACETS` row does not list, or, after connect, one the connected server does not accept; or,
+ * before a call is made, a call or a request field a provider package's session does not offer (clause C-51).
+ * Answered 400 `FACET_NOT_OFFERED` with its sentence, which names the member. A `DatabaseError` and not a
+ * `DatabaseConfigError`: no setting of the connection is wrong, so a configuration error's remedy does not apply.
+ * `provider` is undefined for a provider package's engine, whose id is no `DatabaseType`.
  */
 export class FacetNotOfferedError extends DatabaseError {
   constructor(
     message: string,
-    provider: DatabaseType,
+    provider: DatabaseType | undefined,
     readonly facet: DeclaredFacet,
     readonly operation: string,
   ) {

@@ -569,10 +569,13 @@ An engine's redaction says what the query event log keeps of a statement:
 - `none`: nothing of the text is kept;
 - `command`: a named pure reader answers, from the statement's text, the text the log keeps.
 
+An engine a provider package serves has no redaction in Studio's review record, so its query events keep no statement and no error text in any capture mode, and read the statement's kind as `OTHER`.
+
 ### S-8 (normative): A claim that loosens the confirmation gate
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
 The gate counts such a claim only where Studio's review record lists it, and every other reader reads it as declared.
+The record holds no row for an engine a provider package serves, so the gate reads its statements as SQL under its declared grammar, counts no exempt form, and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
 
 ### S-9 (normative): Update target words and completion quoting
 
@@ -938,7 +941,7 @@ An open that settles after every caller left is admitted exactly once, and an op
 
 When the host closes its sessions, at a shutdown or when its caches are cleared, it tears each one down under fixed deadlines: an open transaction is rolled back first, waited for at most 5 s, then the session is closed, waited for at most 10 s.
 A step that fails or is cut is logged, the next step still runs, and the teardown itself never fails.
-Each provider still open at a cut is named, by its connection, its author and Studio's version.
+Each provider still open at a cut is named, by its connection, its author and Studio's version, and a provider package's session by its connection and its package's name and version.
 
 ### C-47 (normative): A cleanup call runs under a context of its own
 
@@ -1165,8 +1168,33 @@ The set rules over every admitted package, engine id, fence alias, query dialect
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, before any cache, tunnel or build.
-An admitted package's engine is served by Test Connection, which validates its connection against the engine's field rules, and is refused on every other request, and at the open of a session, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+An admitted package's engine is served by Test Connection and by the query route, its session opening through its package (C-109), and is refused on every other request, and at every entry point of the provider factory, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
 Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported` (E-1).
+
+### C-109 (normative): A package's open receives only the context core builds
+
+An admitted package's engine opens through the package's own `open`, never through a legacy provider, and `open` receives only the context core builds from the connection, the server catalog's record of the engine and the caller's execution context:
+
+- the engine's id and the connection's id;
+- for each field the declaration names, the connection's own value where it sets one, and no other field, no SSH tunnel and no agent credential;
+- the connection's TLS settings, for a mode the declaration lists;
+- core's egress decision, and core's trust material where the declaration reads it, an empty list otherwise;
+- the open policy, core's pool defaults or the owner's share, and a deadline of the open's start plus the engine's connect budget (M-51);
+- the package's declared environment (M-22), which every later call of the session is given too.
+
+Before `open` is called, core refuses by name, never by value and with outcome not-sent, a connection it cannot hand a package whole, among them a field value outside the contract's value forms, a TLS mode the declaration does not list, a field the declaration refuses, a required secret left blank, an SSH tunnel that is on, a host path field, a read-only connection, a claim its grants leave refused, and a connection or an execution context that is not plain data.
+An answer with no handle is the package's defect, a widening refinement (C-10) is refused with the handle closed under a cleanup context (C-47), and a handle answered after the open's deadline or stop is closed and never used.
+
+### C-111 (normative): Core calls a package's session only for what it offers
+
+A session of a package's engine has a member exactly for each call it offers after its refinement, and each member calls the package's function with the session's handle first.
+Core never calls a package for a call its session does not offer, nor with a request field it does not honour, bound params or a non-zero offset among them: each is refused before the call, outcome not-sent.
+The host core's execute, cancel on a stop, end of a scope, tree, maintenance, monitoring and health calls run on such a session as on any other.
+
+### C-112 (normative): The client receives no word a package wrote
+
+A package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
+The package's own words go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered, a malformed batch or row among them, is logged as the package's defect.
 
 ## Not yet in this contract
 

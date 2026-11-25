@@ -1,6 +1,7 @@
 import { connectionFingerprint } from "./connection-fingerprint";
 import { GRANTED_READS_FILE_ACCESS_POSTURE, GRANTED_SINGLE_WRITER_FILE } from "./claim-grants";
 import { typeIdRow } from "./type-id";
+import type { EngineConnection } from "./server-catalog";
 import {
   type DatabaseConnection,
   LITERAL_SEED_FILE,
@@ -101,7 +102,30 @@ export async function providerCacheKey(
 ): Promise<string> {
   // Read before either digest, so a type outside the union is refused by name before anything is framed.
   const readsPosture = typeIdRow(GRANTED_READS_FILE_ACCESS_POSTURE, connection.type);
-  const keyedOwner = providerOwner(connection, owner);
+  return frameCacheKey(connection, { readsPosture, allowExternalFileAccess, owner: providerOwner(connection, owner) });
+}
+
+/** What a cache key frames beside the connection: the engine's posture grant, the posture, and the keyed owner. */
+export interface KeyFrame {
+  /** Whether the connection's engine opens its handle under a file-access posture, Studio's grant of the claim. */
+  readonly readsPosture: boolean;
+  readonly allowExternalFileAccess?: boolean;
+  /** The owner the key frames, already decided for the engine (`providerOwner`), or undefined for a shared one. */
+  readonly owner?: string;
+}
+
+/**
+ * The key {@link providerCacheKey} answers, from the engine's facts as `frame` states them rather than from Studio's
+ * rows keyed by the connection's type: the id, the server, the credentials and the mode, the deny posture's segment
+ * for an engine that reads one, and the owner, length-framed. Engine-neutral: the package session cache
+ * (src/lib/db/package-sessions.ts) frames a provider package's engine with it, its facts read from Studio's grant of its
+ * claims.
+ */
+export async function frameCacheKey(
+  connection: EngineConnection & WithTunnelFarEnd & WithLiteralSeedFile,
+  frame: KeyFrame,
+): Promise<string> {
+  const { readsPosture, allowExternalFileAccess, owner: keyedOwner } = frame;
   const [server, credentials] = await Promise.all([connectionFingerprint(connection), credentialDigest(connection)]);
   const mode = connection.readOnly === true ? "read-only" : "read-write";
   const parts = [connection.id, server, credentials, mode];
@@ -221,7 +245,7 @@ export function providerOwner(connection: DatabaseConnection, owner: string | un
  *   (`tests/api/db/literal-seed-server-identity.test.ts`). Framed after `managed` and only when set, so every other
  *   connection keeps the key it had.
  */
-async function credentialDigest(connection: DatabaseConnection & WithLiteralSeedFile): Promise<string> {
+async function credentialDigest(connection: EngineConnection & WithLiteralSeedFile): Promise<string> {
   const ssl = connection.ssl;
   const tunnel = connection.sshTunnel;
   const framed = [

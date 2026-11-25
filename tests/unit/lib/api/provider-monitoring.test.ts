@@ -380,7 +380,8 @@ describe("providerMonitoring", () => {
         poolStatsCall: async (): Promise<PoolStatsRecord> => ({
           kind: "refused",
           called: false,
-          refusals: [{ rule: "facet-not-offered", pointer: "/monitoring/poolStats", name: "monitoring.poolStats" }],
+          // A rule none of the accessor's rows for a refusing package session reads (clause C-111).
+          refusals: [{ rule: "request-field-empty", pointer: "/monitoring/poolStats", name: "monitoring.poolStats" }],
         }),
       }),
       async () => {

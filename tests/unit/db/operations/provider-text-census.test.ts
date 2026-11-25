@@ -365,9 +365,12 @@ describe("who wrote a refusal", () => {
     expect(constructed("OffsetUnsupportedError", (file) => !file.provider)).toEqual([]);
   });
 
-  test("only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does", () => {
+  test("only the legacy bridge's read-only paging and the accessor's refusal of a package session's offset construct a StudioOffsetRefusal, and no provider module does", () => {
     expect(constructed("StudioOffsetRefusal", (file) => file.provider)).toEqual([]);
-    expect(constructed("StudioOffsetRefusal", () => true)).toEqual([`${LEGACY_BRIDGE}: pagedReadOnlyStatement`]);
+    expect(constructed("StudioOffsetRefusal", () => true).sort()).toEqual([
+      `${providerHost("access.ts")}: notOfferedError`,
+      `${LEGACY_BRIDGE}: pagedReadOnlyStatement`,
+    ]);
   });
 
   test("no provider module constructs a Studio budget refusal or StudioTimeoutRefusal", () => {
