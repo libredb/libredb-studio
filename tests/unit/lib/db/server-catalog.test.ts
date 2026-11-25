@@ -10,6 +10,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFieldRefusal } from "@/lib/db/connection-field-rules";
+import { BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
 import {
   DatabaseConfigError,
   PackageEngineUnsupportedError,
@@ -320,6 +321,17 @@ describe("the set rules", () => {
     );
     expect(named([bundledAliasOnly, quiet])).toEqual(["acme-bundled-alias 1.0.0 fence-alias"]);
     expect(named([quiet])).toEqual([]);
+  });
+
+  test("an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines", () => {
+    const quiet = admittedFor("acme-quiet", admittedManifest("acmequiet"));
+    const aliases = Object.keys(BUNDLED_FENCE_ALIASES);
+    expect(aliases.length).toBeGreaterThan(0);
+    for (const alias of aliases) {
+      const claimant = admittedFor("acme-alias-id", admittedManifest(alias));
+      expect(named([claimant, quiet])).toEqual(["acme-alias-id 1.0.0 engine-id"]);
+      expect(() => composeServerCatalog([claimant], [])).toThrow("the admitted packages still conflict");
+    }
   });
 
   test("an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both", () => {

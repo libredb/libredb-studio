@@ -4364,6 +4364,7 @@ For a package's engine the catalog holds its catalog entry, its connection table
 Its field rules are composed from its declaration, and a rule naming a check refuses a field holding a value with core's sentence naming the field, since Studio binds no function of a package, C-99.
 Every claim is granted by Studio's grant reader against Studio's record, which holds no row for a package's engine, so each claim is at its restrictive value, M-53 and M-54.
 The set rules over the whole set, the engine id, the fence alias, the query dialect, the tab type and the editor language, refuse every admitted claimant as `PROVIDER_CATALOG_CONFLICT`, whatever the order, with Studio's bundled value the reference, and the refusal names the package and the rule and no value of its declaration.
+An engine id that is one of Studio's bundled fence aliases is refused under the engine id rule, so no fence tag names a bundled engine and a package's engine.
 A package so refused is never registered and serves nothing.
 A process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
 The published `DatabaseType` and `isDatabaseType` are unchanged.
@@ -4377,6 +4378,7 @@ The published `DatabaseType` and `isDatabaseType` are unchanged.
 - test `tests/unit/lib/db/server-catalog.test.ts` "composing a set that still conflicts, or an engine both served and unavailable, is a host defect"
 - test `tests/unit/lib/db/server-catalog.test.ts` "a field rule naming a check refuses a value with core's sentence naming the field, and passes an empty field"
 - test `tests/unit/lib/db/server-catalog.test.ts` "a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order"
+- test `tests/unit/lib/db/server-catalog.test.ts` "an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines"
 - test `tests/unit/lib/db/server-catalog.test.ts` "an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both"
 - test `tests/unit/lib/db/server-catalog.test.ts` "a set rule refusal carries the package's name, version and rule and no value of its declaration"
 - test `tests/unit/lib/provider-host/boot.test.ts` "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines"

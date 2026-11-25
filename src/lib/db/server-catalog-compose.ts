@@ -6,7 +6,7 @@
  * `catalogConflicts(admitted)` reads the rules across the whole set that admitting each package on its own cannot see,
  * over Studio's bundled catalog and every admitted declaration at once, and answers every admitted claimant of each
  * rule, so the answer is the same for every order of the packages:
- * - `engine-id`: an engine id the bundled catalog or another admitted package serves;
+ * - `engine-id`: an engine id the bundled catalog serves or states as a fence alias, or another admitted package serves;
  * - `fence-alias`: a fence alias that is a bundled alias or engine id, another admitted package's alias, or another
  *   admitted package's engine id, the package serving that engine a claimant too;
  * - `query-dialect`, `tab-type` and `editor-language`: a query dialect row, a tab type's editor language or an editor
@@ -142,7 +142,9 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
     found.set(`${pkg.name}\u0000${rule}`, Object.freeze({ name: pkg.name, version: pkg.version, rule }));
   };
   for (const { pkg, engine } of claims) {
-    if (isDatabaseType(engine.id) || another(ids.get(engine.id), pkg)) refuse(pkg, "engine-id");
+    // A bundled fence alias is refused as an engine id too, so no fence tag names a bundled engine and a package's.
+    const bundledId = isDatabaseType(engine.id) || Object.hasOwn(BUNDLED_FENCE_ALIASES, engine.id);
+    if (bundledId || another(ids.get(engine.id), pkg)) refuse(pkg, "engine-id");
     for (const alias of engine.editor.fenceAliases) {
       const bundled = Object.hasOwn(BUNDLED_FENCE_ALIASES, alias) || isDatabaseType(alias);
       const servedElsewhere = ids.get(alias);
