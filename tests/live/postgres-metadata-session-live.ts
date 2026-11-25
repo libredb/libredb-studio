@@ -17,6 +17,14 @@
  * session's own backend is still there, and exactly one holder ended by the administrator's command while the rest ran
  * out.
  *
+ * Last, on hold rounds of their own, it reads a dashboard and a health check as POST /api/db/monitoring and POST
+ * /api/db/health read them: on the metadata session (`metadataProvider`), through `providerMonitoring` and the host
+ * core, while editor statements hold every connection of the editor's pool, once on the pinned connection's shared pool
+ * of 10 ("monitoring, pinned") and once in the catalog `postgres` of the server-level copy, its editor catalog session
+ * of 3 held ("monitoring, catalog"). Each fails unless the editor's pool statistics show the pool full and idle at
+ * none, the dashboard and the health check each answer within 1,000 ms, and, once the holders end, a dashboard read on
+ * the editor's provider answers the same panel states and both providers declare the same maintenance.
+ *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * It needs Docker and nothing else:
  *
@@ -31,6 +39,7 @@ import { randomBytes } from "node:crypto";
 import { editorProvider, metadataProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { providerMaintenance } from "@/lib/api/provider-maintenance";
+import { providerMonitoring } from "@/lib/api/provider-monitoring";
 import {
   clearProviderCache,
   getOrCreateMetadataProvider,
@@ -40,7 +49,7 @@ import {
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { installHostCore } from "@/lib/provider-host/instance";
-import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
+import type { DatabaseProvider, EditorExecutionContext, MonitoringData } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb-live-metadata-session-pg"}-${randomBytes(4).toString("hex")}`;
@@ -258,6 +267,79 @@ async function heldEditorKill(
   }
 }
 
+/** The dashboard's panel states: the panels answered, the panels failed and the panels not offered. */
+function panelStates(data: MonitoringData): string {
+  const answered = ["overview", "performance", "slowQueries", "activeSessions", "tables", "indexes", "storage"].filter(
+    (panel) => data[panel as keyof MonitoringData] !== undefined,
+  );
+  return JSON.stringify({
+    answered,
+    failed: Object.keys(data.errors ?? {}).sort(),
+    notOffered: data.notOffered ?? [],
+  });
+}
+
+/** Milliseconds `read` took to answer, with its answer. */
+async function timedRead<T>(read: () => Promise<T>): Promise<{ ms: number; answer: T }> {
+  const started = performance.now();
+  const answer = await read();
+  return { ms: Math.round(performance.now() - started), answer };
+}
+
+/**
+ * A dashboard and a health check on the metadata session, composed as POST /api/db/monitoring and POST /api/db/health
+ * compose them, while `size` editor statements hold every connection of the editor's pool in `catalog`.
+ */
+async function heldEditorMonitoring(
+  label: string,
+  connection: DatabaseConnection,
+  catalog: string | undefined,
+  size: number,
+) {
+  const session = { role: "admin" };
+  const editor = await editorProvider(session, connection, catalog);
+  const metadata = await metadataProvider(session, connection, catalog);
+  if (metadata === editor) throw new Error(`${label}: the metadata session is the editor's provider`);
+  if (!(editor instanceof PostgresProvider)) throw new Error(`${label}: the editor's provider is not a PostgreSQL one`);
+
+  const tag = `held_${randomBytes(4).toString("hex")}`;
+  const holders = Array.from({ length: size }, (_, index) =>
+    editor.query(`SELECT pg_sleep(${HOLD_SECONDS}) AS ${tag}_${index}`),
+  );
+  await taggedHoldersArrived(tag, size);
+  // Vacuity: every connection of the editor's pool is held, as the editor's own pool statistics describe it.
+  const held = editor.getPoolStats();
+  if (held.total !== held.max || held.idle !== 0) {
+    throw new Error(`${label}: the editor's pool is not held: ${JSON.stringify(held)}`);
+  }
+
+  const monitoring = providerMonitoring(metadata, new AbortController().signal, "live");
+  const dashboard = await timedRead(() => monitoring.readDashboard({}));
+  const health = await timedRead(() => monitoring.readHealth());
+  await Promise.all(holders);
+  const onEditor = await providerMonitoring(editor, new AbortController().signal, "live").readDashboard({});
+
+  const states = panelStates(dashboard.answer);
+  console.log(
+    `${label}: editor pool held ${JSON.stringify(held)}; dashboard in ${dashboard.ms} ms, panels ${states}; health in ${health.ms} ms`,
+  );
+  if (dashboard.ms > METADATA_BOUND_MS) {
+    throw new Error(`${label}: the dashboard took ${dashboard.ms} ms, over ${METADATA_BOUND_MS} ms`);
+  }
+  if (health.ms > METADATA_BOUND_MS) {
+    throw new Error(`${label}: the health check took ${health.ms} ms, over ${METADATA_BOUND_MS} ms`);
+  }
+  if (panelStates(onEditor) !== states) {
+    throw new Error(`${label}: the editor's dashboard answers other panel states: ${panelStates(onEditor)}`);
+  }
+  const maintenance = (provider: DatabaseProvider) => JSON.stringify(provider.getCapabilities().maintenanceOperations);
+  if (maintenance(metadata) !== maintenance(editor)) {
+    throw new Error(
+      `${label}: the two sessions declare other maintenance: ${maintenance(metadata)}, ${maintenance(editor)}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   try {
     const port = await startPostgres();
@@ -288,6 +370,14 @@ async function main(): Promise<void> {
     await heldEditorKill("kill, pinned", connection, undefined, SHARED_POOL);
     await heldEditorKill(
       "kill, catalog",
+      { ...connection, id: "live-pg-metadata-session-server", database: "" },
+      "postgres",
+      CATALOG_POOL,
+    );
+    // The dashboard and the health check, as the monitoring and health routes read them, on hold rounds of their own.
+    await heldEditorMonitoring("monitoring, pinned", connection, undefined, SHARED_POOL);
+    await heldEditorMonitoring(
+      "monitoring, catalog",
       { ...connection, id: "live-pg-metadata-session-server", database: "" },
       "postgres",
       CATALOG_POOL,
