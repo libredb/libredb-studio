@@ -21,10 +21,10 @@ The schema, the generated types and the constants the SDK exports are the source
 ## How to read this document
 
 Every clause has a stable id and says whether it is normative or informative.
-A normative clause states a rule, and names what enforces it: a test, by its file and exact title, or a location in the manifest schema, by a JSON Pointer into the schema file.
+A normative clause states a rule, and what enforces it is listed under its id in `tests/unit/provider-contract-enforcers.ts`: a test, by its file and exact title, or a location in the manifest schema, by a JSON Pointer into the schema file.
 An informative clause states a limit or an intention that nothing checks yet, and says so.
 A clause is normative only when its enforcer exists, so this document never promises what nothing checks.
-`tests/unit/provider-contract-clauses.test.ts` fails on a normative clause with no enforcer, on an enforcer that names a missing file, a missing title or a pointer that resolves to nothing, and on a clause id used twice.
+`tests/unit/provider-contract-clauses.test.ts` fails on a normative clause with no enforcer, on an enforcer that names a missing file, a missing title or a pointer that resolves to nothing, on an enforcer id that is not a clause of this document, on an enforcer listed in this document rather than in the map, and on a clause id used twice.
 
 ## Contract version
 
@@ -47,37 +47,22 @@ The manifest schema is one file, and `MANIFEST_SCHEMA_SHA256` in the generated t
 So a host, the kit and a test validate against exactly the schema the SDK was built with.
 The repository checks the file out with LF line endings on every platform, so the digest is the same on every checkout.
 
-- test `packages/provider-sdk/tests/manifest/digest.test.ts` "MANIFEST_SCHEMA_SHA256 is the SHA-256 of the schema file's bytes"
-- test `packages/provider-sdk/tests/manifest/digest.test.ts` "a schema whose bytes differ is refused before it is parsed, naming both digests"
-
 ### M-2 (normative): The types are generated from the schema
 
 The manifest's TypeScript types are rendered from the schema by `scripts/generate-manifest-types.ts` and never written by hand.
 The generator reads a closed subset of JSON Schema and refuses any other keyword by name, so a type is never wider than the schema it comes from.
 After a schema change, `bun run manifest:types` writes the types again.
 
-- test `tests/unit/provider-sdk/manifest-types.test.ts` "the generated manifest types are what the schema renders"
-- test `tests/unit/provider-sdk/manifest-types.test.ts` "rendering refuses a keyword it does not read, naming it"
-
 ### M-3 (normative): The schema is closed
 
 Every object the schema defines refuses a key it does not name.
 The two exceptions are `vendor`, which holds the package's own keys, and the envelope, which a host reads before it knows which schema applies.
-
-- schema `/additionalProperties`
-- schema `/properties/vendor`
-- test `packages/provider-sdk/tests/manifest/schema.test.ts` "every object schema is closed except vendor and the envelope"
 
 ### M-4 (normative): The envelope is read first
 
 A host reads a manifest's envelope, `{ contract }`, before anything else, and the envelope keeps its shape in every contract.
 A manifest whose contract is in the form but is not one the host serves is refused as `PROVIDER_CONTRACT_UNSUPPORTED`, naming the contract it declares, and nothing else of it is read.
 A manifest with no contract, or one not in the form, is refused with the schema refusal that says so.
-
-- schema `/$defs/envelope/properties/contract/pattern`
-- schema `/properties/contract/const`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a manifest built against another contract is refused as PROVIDER_CONTRACT_UNSUPPORTED without schema refusals"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the envelope is read first: a missing contract is the only refusal"
 
 ### M-5 (normative): Every failure is a named refusal, and no refusal carries a value of the manifest beyond its contract
 
@@ -89,13 +74,6 @@ No refusal and no sentence carries a value of the manifest, except `PROVIDER_CON
 A sentence quotes a key's name as a JSON string, so a name with a line break or a quote stays one line.
 So a refusal can be logged and shown without leaking what a package wrote.
 
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "no refusal carries a value of the manifest"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a failed variant is one no-variant refusal and nothing under it"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "several failures are each refused, ordered by pointer"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "words each rule in one sentence naming the pointer, and the key where there is one"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "quotes an unknown key as a JSON string, so a key with a line break stays on one line"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "names the contract a manifest declares that the host does not serve"
-
 ### M-6 (normative): A package's identity is its package.json
 
 The manifest declares no package name, version, licence or publisher, and no driver list.
@@ -103,26 +81,15 @@ Name, version, licence and the Node range are the package's `package.json`, and 
 The publisher is computed from verified provenance and is never declared.
 The drivers are the package's `package.json` dependencies and its notices file.
 
-- schema `/additionalProperties`
-- test `packages/provider-sdk/tests/manifest/schema.test.ts` "package, name, version and publisher are unknown keys"
-
 ### M-7 (normative): Engine ids
 
 An engine id is a lower-case letter followed by up to 31 lower-case letters or digits, and a manifest declares each of its engines once.
-
-- schema `/$defs/engineId/pattern`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two engines with one id are refused as engine-id-duplicate at the second"
 
 ### M-8 (normative): Every engine fact is required
 
 Every fact of an engine declaration is a required key, written as `null`, `false` or an empty list where the engine has none.
 So a declaration cannot leave a fact out by omission, and no fact has a default a host fills in.
 The connection defaults are the one object whose keys are optional, because each is a value the connection dialog fills in, absent where it fills in nothing.
-
-- schema `/$defs/engineDeclaration/required`
-- schema `/$defs/connection/required`
-- schema `/$defs/monitoringPanels/required`
-- schema `/$defs/facets/required`
 
 ### M-9 (normative): Connection fields are the contract's vocabulary, and so are their classes
 
@@ -131,19 +98,10 @@ Each name is in exactly one class, secret, identity or public, and the class is 
 So no manifest can call a secret field public.
 A field name a package needs and the vocabulary lacks is added by a later contract minor, which also states its class.
 
-- schema `/$defs/fieldName`
-- schema `/$defs/secretFieldName`
-- schema `/$defs/identityFieldName`
-- schema `/$defs/publicFieldName`
-- test `tests/unit/db/engine-declarations.test.ts` "the schema's field names are the connection fields and the seed-only fields"
-- test `tests/unit/db/engine-declarations.test.ts` "the schema's secret, identity and public lists are the storage layer's classes of those fields"
-
 ### M-10 (normative): Every secret field moves the provider cache key
 
 Studio keys the providers it keeps open by the connection, and every field of the secret class is part of that key, whatever a manifest declares.
 So a connection whose secret changed is never handed a provider opened under the old one.
-
-- test `tests/unit/lib/db/provider-cache-key.test.ts` "changing any one of them alone changes the key"
 
 ### M-11 (normative): The rules of an engine's connection
 
@@ -151,21 +109,11 @@ A refused field is never also one of the engine's fields.
 A seed-only field is one of the engine's fields or a seed-only field name of the vocabulary.
 A host path field is one of the engine's seed-only fields.
 
-- schema `/$defs/seedOnlyFieldName`
-- schema `/$defs/hostPathField`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a refused field that is also declared is refused as refused-field-declared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a seed-only field neither declared nor a seed-only name is refused as seed-only-field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a host path field that is not a seed-only field of its engine is refused as host-path-field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration is held to the rules of its own connection"
-
 ### M-12 (normative): A host path field is admitted by core
 
 A host path field names a file on the host Studio runs on.
 Core resolves it and refuses one that names Studio's own storage files before the provider is built, and the provider reads only the absolute path core hands it.
 Credential material itself never travels as a path field: a path names where the operator keeps it.
-
-- test `tests/unit/lib/db/provider-files.test.ts` "either path naming one of Studio's own storage files is refused by name, with the field and the connection's type, before any provider is built"
-- test `tests/unit/lib/db/provider-files.test.ts` "every field HOST_PATH_FIELDS names is a seed-only field, so only an operator's seed file or an embedder's own code names one"
 
 ### M-13 (normative): The runtime segment
 
@@ -173,22 +121,12 @@ Credential material itself never travels as a path field: a path names where the
 A native package is pinned to one exact version, with the platforms it serves, in npm's os, cpu and libc vocabulary, and the Node-API version it is built for.
 An environment variable the package reads is declared by name, with the reason it reads it.
 
-- schema `/$defs/runtime/properties/entry/pattern`
-- schema `/$defs/nativePackage/properties/version/pattern`
-- schema `/$defs/envDeclaration/properties/name/pattern`
-
 ### M-14 (normative): Compatibility is a measured claim
 
 A manifest lists the products it was measured against, one entry per product, each naming an engine the manifest declares.
 Every declared engine has at least one entry.
 An entry claims a range of versions, a list of versions, or a hosted service measured on a date, and lists the versions its tests ran against, each with the image they ran where one exists, pinned by its full SHA-256 digest.
 Both ends of a range are tested versions.
-
-- schema `/properties/compatibility`
-- schema `/$defs/imageReference/properties/digest/pattern`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine with no compatibility entry is refused as compatibility-engine-missing"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a compatibility entry for an undeclared engine is refused as compatibility-engine-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a range endpoint missing from the tested versions is refused as compatibility-endpoint-untested"
 
 ### M-15 (normative): Every shipped engine has a declaration, its authored members written in it and the rest generated from Studio's tables
 
@@ -207,46 +145,12 @@ A function name Studio holds no function for stops the run earlier, at the decla
 A new engine's declaration starts as a copy of another engine's file with its authored members written for the new engine, and `bun run engines:generate` then projects it into the catalog, writes every other member and admits it.
 A declaration is not a full manifest: the runtime and compatibility segments describe a package and its measurements, which a provider gains when it moves into a package of its own.
 
-- test `tests/unit/db/engine-declarations.test.ts` "the directory holds exactly one declaration per shipped type-id"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration is what the generator builds from its authored members and Studio's tables"
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
-- test `tests/unit/db/engine-declarations.test.ts` "a declaration's authored members are its committed file's, and every other member is the tables'"
-- test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection.fields and connection.dialog change in one run: a placeable field added and a placed one removed"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 with the validator's refusal when Studio's tables do not follow an authored change"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 with the validator's refusal when an authored change leaves a placeable field unplaced"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection string change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a connection string function Studio holds none for"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored execution UI and fence alias change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored dialect row and editor language change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored SQL text change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a SQL grammar function Studio holds none for"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored policy, MCP and safeguards change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection claim change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored agent readings change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "the catalog reads only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection tables read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection forms read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection strings read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the execution UI and the fence aliases read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the query editor facts read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the SQL text reads only the members a declaration authors"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration is admitted by the schema's engine declaration and its rules"
-- test `tests/unit/db/engine-declarations.test.ts` "the census"
-- test `tests/unit/db/engine-declarations.test.ts` "the generated unions are Studio's own types"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored migration DDL and SQL generator change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a migration DDL function Studio holds none for"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a SQL generator function Studio holds none for"
-
 ### M-16 (normative): Every per-engine table is accounted for
 
 Every per-engine table in Studio's source, outside the provider directory, is either read into the engine declarations or listed with the contract segment it is planned for or the reason Studio keeps it.
 A per-engine table here is a module-level variable whose type, written on its declaration or in its initializer (a `satisfies` or `as` type, or the type arguments of `new Map<...>()`), is a `Record`, a mapped type or a `Map` keyed by `DatabaseType`.
 A table written as an array of rows, or as an object whose type is only inferred, is outside this clause.
 The list is `tests/unit/db/engine-declarations/inventory.ts`.
-
-- test `tests/unit/db/engine-table-inventory.test.ts` "every per-engine table in src is in the inventory"
-- test `tests/unit/db/engine-table-inventory.test.ts` "every inventory entry exists"
 
 ### M-17 (normative): A package imports only what it declares
 
@@ -255,28 +159,16 @@ No package imports a path into Studio's own source or out of its own directory, 
 Studio reaches a package only by its package name, never by a path into `packages/`.
 A package depends on no other provider package, C-42.
 
-- test `tests/unit/package-imports.test.ts` "the repository's packages import only what they declare"
-- test `tests/unit/package-imports.test.ts` "core reaches no workspace package by path"
-
 ### M-18 (normative): Package source reads no environment
 
 The source of a provider package, and of the SDK, reads no environment variable, no working directory and no process-global state, and writes nothing to the console.
 A provider takes every value from the connection and from what the host passes it.
-
-- test `tests/unit/provider-source-coupling-lint.test.ts` "process.env is refused in provider source, in each form a provider reads it today"
-- test `tests/unit/provider-source-coupling-lint.test.ts` "the SDK's source is covered"
 
 ### M-19 (normative): The SDK keeps no process-global state
 
 The SDK is loaded once into Studio's process and shared by every provider, so its source declares no module-level `let` or `var`, creates no module-level collection, and never reads `process`.
 Each call that compiles a validator builds its own, and two validators share nothing.
 A module-level typed array is listed by file and name: the codec's two lookup tables, which nothing writes after load, and its encode buffer, which each call writes before it reads, so no call reads what another left.
-
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source declares no top-level let or var"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source creates no top-level Map, Set, WeakMap or WeakSet"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source never reads process"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source's module-level typed arrays are the codec's lookup tables and its encode buffer"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "two validators compiled from the same bytes are independent objects"
 
 ### M-20 (informative): Studio never reads `vendor`
 
@@ -295,10 +187,6 @@ It reads one only through `ctx.env.get`, which `envReader` builds over the decla
 A declared name answers what the host's function reads; any other name is refused by name with an `UndeclaredEnvironmentError`, and the host's function is never called for it.
 There is no denylist and no grant: a package reads what Studio's own process reads.
 
-- test `packages/provider-sdk/tests/calls/env.test.ts` "a declared name is read through the host's reader"
-- test `packages/provider-sdk/tests/calls/env.test.ts` "an undeclared name is refused by name and never read"
-- test `packages/provider-sdk/tests/calls/env.test.ts` "a package that declares no environment reads none"
-
 ### M-23 (informative): The validator compiles code
 
 ajv compiles a schema into a JavaScript function, built with `new Function`.
@@ -311,13 +199,6 @@ A field with no entry keeps Studio's own word: its own label, no hint, and its o
 An empty placeholder means the field shows no example, which is not the same as having no entry.
 Each entry names a field the engine takes, and a list names a field at most once.
 
-- schema `/$defs/connectionDialog`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an empty placeholder is admitted: it means the field shows no example"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "%s for a field the engine does not take is refused as field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two entries of one list naming one field are refused as dialog-entry-duplicate at the second"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's dialog is held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.dialog.labels, hints and placeholders are the form's"
-
 ### M-25 (normative): A field shown under a condition
 
 A field may be drawn only while one other field equals one value, never a list of values or a combination of conditions.
@@ -326,72 +207,31 @@ Where the field read is a select, the value is one of its choices.
 A field hidden by its condition is neither drawn nor saved, and core does not require it.
 A connection that leaves the field a condition reads absent is read as that field's absent value, which every select a condition reads declares, and an absent value is declared only for a field a condition reads.
 
-- schema `/$defs/fieldCondition`
-- schema `/$defs/fieldAbsentValue`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition with a second key is refused as unknown-key"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition on, or reading, a field the engine does not take is refused as field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition reading a field that has a condition of its own is refused as shown-when-chained"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a condition on a select naming a value none of its choices is refused as shown-when-value-not-an-option"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent value that is none of its field's choices is refused as absent-value-not-an-option"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent value for a field no condition reads is refused as absent-value-unread"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a select field a condition reads with no absent value is refused as absent-value-missing"
-- test `tests/unit/db/engine-declarations.test.ts` "a form read from the declaration shows the same fields as the connection form for every value of each controlling field"
-- test `tests/unit/lib/db-ui-config.test.ts` "the dialog refuses exactly what core refuses of a required secret"
-
 ### M-26 (normative): Where a placeable field is drawn
 
 Every placeable field an engine takes is placed, `open` with the other fields or `advanced` behind Advanced, and only a placeable field is placed.
 The placeable fields are the contract's vocabulary, `placeableFieldName` in the schema.
-
-- schema `/$defs/placeableFieldName`
-- schema `/$defs/fieldPlacement`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a placement for a field that is not placeable is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a placeable field the engine takes with no placement is refused as placement-missing"
-- test `tests/unit/db/engine-declarations.test.ts` "the placeable fields are PLACEABLE_FIELDS and the select fields are those the descriptors draw as a select"
-- test `tests/unit/lib/db-ui-config-placement.test.ts` "each engine declares a placement for exactly the placeable fields it takes, and no other"
 
 ### M-27 (normative): A select's choices
 
 Every select field an engine takes declares its choices, in the order the dialog lists them, each with the value saved and the label drawn, and no two choices of a field share a value.
 Only a select field declares choices, and the select fields are the contract's vocabulary, `selectFieldName` in the schema.
 
-- schema `/$defs/selectFieldName`
-- schema `/$defs/fieldOptions`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "choices for a field that is not a select are refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a select field the engine takes with no options is refused as options-missing"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two choices of one field with one value are refused as option-value-duplicate at the second"
-- test `tests/unit/db/engine-declarations.test.ts` "the placeable fields are PLACEABLE_FIELDS and the select fields are those the descriptors draw as a select"
-
 ### M-28 (normative): The dialog's order
 
 An engine may state the order the dialog draws its fields in, naming each field once and only fields it takes.
 The fields the order leaves out are drawn after it, and `null` keeps the dialog's own order.
-
-- schema `/$defs/connectionDialog/properties/order`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an order item naming a field the engine does not take is refused as field-undeclared"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.dialog.order is the form's dialogOrder"
 
 ### M-29 (normative): The Host box's URI schemes
 
 An engine may let its Host box take a pasted `http` or `https` address, which the dialog splits into its host and port.
 `connection.hostUriSchemes` lists the schemes in the order the box's refusal names them, and only an engine that takes a `host` field lists any.
 
-- schema `/$defs/hostUriScheme`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "URI schemes on an engine without a host field are refused as host-uri-schemes-without-host"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.hostUriSchemes is the form's hostAcceptsUri, in order"
-
 ### M-30 (normative): Credential warnings
 
 An engine may warn about a credential in three kinds: `pair`, a published default user and password; `jwt`, a token in the password field that declares no expiry or an access claim named; and `no-secret`, a server that accepts a connection with no password.
 Studio frames each warning's sentence with its own words, and reads one record of them both in the connection dialog and when it loads a seed file, where a read-only seed with a declared pair, or without a password where a `no-secret` warning is declared, is refused.
 An engine declares at most one `no-secret` warning, and each warning reads only fields the engine takes.
-
-- schema `/$defs/credentialWarning`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the three credential warning kinds are admitted, a pair with an empty password among them"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a credential warning on a field the engine does not take is refused as credential-warning-field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a second no-secret warning is refused as no-secret-warning-duplicate"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.credentialWarnings is the engine's CREDENTIAL_WARNINGS row, and the form reads that same row"
-- test `tests/unit/lib/db/credential-warnings.test.ts` "refuses the declared pair with the dialog's own sentence"
 
 ### M-31 (normative): A function is named, never carried
 
@@ -405,30 +245,6 @@ A name in an engine's connection string is bound the same way by Studio's connec
 A name in an engine's SQL writing is bound the same way by Studio's SQL writing function table, `SQL_WRITING_FUNCTIONS` in `src/lib/db/sql-writing/index.ts`, M-79, one table per slot, which holds exactly the names the committed declarations give.
 A name in an engine's migration DDL is bound the same way by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS` in `src/lib/db/migration-ddl/index.ts`, M-80, and a name in its SQL generator forms by `SQL_GENERATOR_FUNCTIONS` in `src/lib/db/query-generators/index.ts`, M-81, one table per slot, each holding exactly the names the committed declarations give.
 Every such table looks a name up through one helper, `src/lib/db/function-table.ts`, so each refuses a name it holds no function for in one sentence.
-
-- schema `/$defs/functionName`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an importer named in another form is refused as pattern-mismatch"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
-- test `tests/unit/db/engine-declarations.test.ts` "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else"
-- test `tests/unit/lib/db/connection-form.test.ts` "Studio's function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/db/connection-string/compose.test.ts` "Studio's connection string function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/lib/db/function-table.test.ts` "a name the table holds for the engine is bound, and any other name is refused by name, an inherited one included"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is named by its engine's declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL writing declaration states is its member's slot, and Studio's SQL writing function table binds it there to the function the engine's row runs"
-- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
-- test `tests/unit/db/sql-writing/compose.test.ts` "Studio's SQL writing function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/lib/db/function-table.test.ts` "a slot's table holds each engine's function under the slot's name, and nothing else"
-- test `tests/unit/db/engine-declarations.test.ts` "every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a migration DDL row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs"
-- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "Studio's migration DDL function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/lib/query-generators-compose.test.ts` "Studio's SQL generator function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an agent overlay declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own overlay module exports there"
-- test `tests/unit/db/engine-declarations.test.ts` "every function an engine's server overlay holds is named at its slot by its engine's declaration, and no slot the overlay leaves empty is named"
 
 ### M-32 (informative): How a package's named functions are found and called
 
@@ -456,37 +272,12 @@ One core module evaluates the rules: the connection dialog before Test Connectio
 A rule takes every value its engine's provider takes, so Test Connection never refuses a connection the editor opens.
 Core refuses a connection that leaves a shown required secret blank before it builds a provider, with that rule's sentence, and the provider checks again when it connects, because a seed opened in the editor, an agent's or MCP's connection and an API call never pass the dialog or the test-connection path.
 
-- schema `/$defs/fieldRule`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule for a field the engine does not take is refused as field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two field rules naming one field are refused as field-rule-duplicate at the second"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule that states nothing is refused as field-rule-empty"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a character range whose minimum exceeds its maximum is refused as char-range-inverted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's field rules and host readers are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.fieldRules are the form's fieldRules, each pattern by its source and flags"
-- test `tests/unit/db/engine-declarations.test.ts` "a form whose rules are read from the declaration refuses exactly what the connection form refuses"
-- test `tests/unit/lib/db-ui-config.test.ts` "connectionFieldRefusal checks charRange after format"
-- test `tests/unit/lib/db-ui-config.test.ts` "the dialog refuses exactly what core refuses of a required secret"
-- test `tests/unit/lib/db/connection-field-rules.test.ts` "its run-time graph reaches no React, component, provider or Node built-in module"
-- test `tests/unit/lib/db/connection-field-rules.test.ts` "fieldRuleRefusal answers what connectionFieldRefusal answers on the engine's form entry, and refuses a type outside the union by name"
-- test `tests/unit/lib/db/connection-field-rules.test.ts` "a field holding null holds no value: its required rule refuses it and no other check reads it"
-- test `tests/unit/db/connection-field-rules/provider-acceptance.test.ts` "every connection the shared field rules refuse, its engine's provider refuses before it opens a socket"
-- test `tests/unit/db/connection-field-rules/provider-acceptance.test.ts` "each engine's base connection passes its provider's checks and reaches the loopback socket"
-- test `tests/api/db/test-connection-field-rules.test.ts` "Test Connection's route refuses exactly the connections the dialog refuses, with the dialog's sentence, over every engine's field rules"
-- test `tests/api/db/test-connection-field-rules.test.ts` "every connection the dialog lets through reaches the tunnel and the build on Test Connection's route"
-- test `tests/unit/lib/api/test-connection.test.ts` "a connection its engine's field rules refuse is refused with the rule's sentence before the tunnel opens or anything is built, and its statement was not sent"
-
 ### M-34 (normative): A bounded pattern
 
 A field rule's format is a bounded pattern: a regular expression's `source`, of 1 to 512 characters, and its `flags`, the empty string or `u`.
 The pattern compiles as JavaScript's `RegExp` reads it, with its flags.
 A value is tested with `RegExp.prototype.test`, which matches anywhere in it, so a pattern that must match the whole value writes `^` and `$` itself.
 The flags `g` and `y` are left out because they make `test` remember where it stopped.
-
-- schema `/$defs/boundedPattern`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule's pattern longer than 512 characters is refused as out-of-range"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a field rule's pattern with a flag other than u is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a pattern that does not compile is refused as pattern-invalid"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.fieldRules are the form's fieldRules, each pattern by its source and flags"
 
 ### M-35 (informative): Backtracking is not checked yet
 
@@ -500,28 +291,11 @@ An engine may name a host hint, `connection.hostHint`, which answers from the te
 An engine may name a host identity, `connection.hostIdentity`, which answers the server a Host text names, so the dialog tells whether a pasted connection string names the server already in the box or another one, whose credentials it then drops.
 Only an engine that takes a `host` field names either.
 
-- schema `/$defs/connection/properties/hostHint`
-- schema `/$defs/connection/properties/hostIdentity`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a host hint named in another form is one no-variant refusal"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a host reader on an engine without a host field is refused as host-reader-without-host"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.hostHint, hostIdentity and import are the form's, the import with its label"
-- test `tests/components/ConnectionModal.test.tsx` "draws no Port box, lets the Account span the row, and shows the host Studio connects to"
-- test `tests/components/ConnectionModal-snowflake.test.tsx` "a second paste naming another account drops the first account's token, database and schema"
-
 ### M-37 (normative): The connection import
 
 An engine may offer an import, `connection.import`: the label of the dialog's import action and an importer, a named function that reads a pasted text into entries, one of which fills the form.
 The importer never throws, and none of its sentences quotes the text it reads.
 The dialog offers the import only for a new connection, never while it edits a saved one.
-
-- schema `/$defs/connectionImport`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an import without its importer is refused as missing-key, and a label longer than 128 characters as out-of-range"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a declaration names is, through the census's own resolver, the very function the connection form runs"
-- test `tests/components/ConnectionModal-kubeconfig.test.tsx` "the entry declares it, and its loader resolves to the browser importer itself"
-- test `tests/unit/lib/connection-import-declaration.test.ts` "is declared by exactly the listed entries"
-- test `tests/unit/lib/kubernetes/kubeconfig-import.test.ts` "never throws, whatever the text"
-- test `tests/unit/lib/kubernetes/kubeconfig-import.test.ts` "a context that cannot be imported is refused by its place, never by a value"
 
 ### M-38 (normative): A refused field's sentence
 
@@ -529,25 +303,11 @@ Each entry of `connection.refused` names a field the engine refuses and the sent
 Core refuses a connection that sets a refused field before it builds any provider, with the sentence of the first such field in the order of the list, so no provider receives one.
 A field is set when the connection holds it with a value other than nothing, null and the empty string, and a list names a field at most once.
 
-- schema `/$defs/refusedField`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a refused entry without its sentence is refused as missing-key"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "two refused entries naming one field are refused as refused-field-duplicate at the second"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them"
-- test `tests/unit/db/engine-declarations.test.ts` "core refuses a connection that sets a refused field with the sentence its declaration states"
-- test `tests/unit/lib/db/provider-connection.test.ts` "the first set field in the row's order answers its sentence"
-
 ### M-39 (normative): A connection string's scheme
 
 An engine may state, in `connection.connectionString.scheme`, the one URI scheme shown for it, written in lower case as a URI scheme.
 Only an engine whose connection string names a paste reader states a scheme, so every scheme shown is one a paste of it reads.
 Studio's map of engine schemes is the schemes the declarations state.
-
-- schema `/$defs/connectionStringOffer/properties/scheme`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connection string scheme that is not a lower-case URI scheme is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a scheme on an engine whose connection string names no paste reader is refused as scheme-without-paste"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.connectionString.scheme is the row's scheme"
-- test `tests/unit/db/engine-declarations.test.ts` "ENGINE_URI_SCHEMES is the scheme of each declaration that states one"
-- test `tests/components/ConnectionSignature.test.tsx` "shows only schemes parseConnectionString accepts, one per engine that has one"
 
 ### M-40 (normative): The paste reader
 
@@ -560,30 +320,12 @@ The paste states whether its reader is a catch-all, one that claims generic tran
 The paste states the formats the Paste URL box names for the engine, at least one and each once, and only forms `parse` connects with.
 The box lists the formats of every engine in the order the engine picker lists the engines.
 
-- schema `/$defs/connectionStringPaste`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste reader named in another form is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste with no format is refused as too-few, and one naming a format twice as duplicate"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste format longer than 128 characters is refused as out-of-range"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a paste without its catch-all flag is refused as missing-key"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.connectionString names a URL TLS reader, a paste reader and a seed check exactly where the row has one, the paste with its catch-all and formats in order"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/db/connection-string/census.test.ts` "each row is its declaration's connection string composed with Studio's function table"
-- test `tests/unit/db/engine-declarations.test.ts` "a parser walking core's paste order over the readers the declarations name parses and detects as the parser does"
-- test `tests/unit/db/engine-declarations.test.ts` "the Paste URL box's formats are the declarations' formats in the engine picker's order"
-- test `tests/unit/db/connection-string/paste.test.ts` "every row that reads a paste names at least one format"
-- test `tests/unit/db/connection-string/paste.test.ts` "the box's list is the rows' formats in the order the engine picker lists them, and nothing else"
-
 ### M-41 (normative): The order between paste readers is Studio's
 
 Studio offers a paste to the paste readers in one order it keeps, and the first reader that claims the paste parses it.
 Every catch-all reader comes after every other reader.
 Studio declares each pair of readers that may both claim a text, with a text both claim, and the order decides which of the two reads it.
 A manifest states no order and no pair: one package's claim about another package's spelling is not its to make.
-
-- test `tests/unit/db/connection-string/paste.test.ts` "a catch-all row comes after every row that claims its own spellings"
-- test `tests/unit/db/connection-string/paste.test.ts` "each declared overlap names two rows in the order, the first walked first, and its text is claimed by both"
-- test `tests/unit/db/connection-string/paste.test.ts` "every pasted fixture has one claimant or a declared pair, and the first is the engine it parsed as"
-- test `tests/unit/db/engine-declarations.test.ts` "core's paste order walks exactly the engines whose declaration names a paste reader, every catch-all after the rest"
 
 ### M-42 (normative): The URL TLS reader
 
@@ -592,17 +334,6 @@ It reads the query into a TLS mode the connection form can hold, or keeps the pa
 It never answers a weaker mode than the engine's own driver applies to the same URL, and never falls to `disable` on a value it does not recognise.
 Only an engine whose connection string names a paste reader names one, and that paste reader is what calls it.
 
-- schema `/$defs/connectionStringOffer/properties/urlTls`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a URL TLS reader or a seed check named in another form is one no-variant refusal"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a URL TLS reader on an engine whose connection string names no paste reader is refused as url-tls-without-paste"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's connection string is held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/db/connection-string/census.test.ts` "each row is its declaration's connection string composed with Studio's function table"
-- test `tests/unit/lib/connection-string-parser.test.ts` "an unrecognised sslmode does not become disable"
-- test `tests/unit/lib/connection-string-parser.test.ts` "maps the JDBC/Heroku ssl=true form to verify-system, not to require"
-- test `tests/unit/lib/connection-string-parser.test.ts` "refuses to map ssl-mode=PREFERRED"
-- test `tests/unit/lib/connection-string-parser.test.ts` "an unrecognised Encrypt does not become disable"
-
 ### M-43 (normative): The seed check
 
 An engine may name, in `connection.connectionString.seedCheck`, a check Studio runs when it loads a seed file.
@@ -610,37 +341,15 @@ Studio runs it on the fields the file writes for a connection of the engine, bef
 The check leaves a field written as a reference unjudged.
 Each refusal it answers names a field and a sentence that never quotes the field's value, and Studio refuses the file naming the connection and the field.
 
-- schema `/$defs/connectionStringOffer/properties/seedCheck`
-- test `tests/unit/db/engine-declarations.test.ts` "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/db/connection-string/census.test.ts` "each row is its declaration's connection string composed with Studio's function table"
-- test `tests/unit/seed/types.test.ts` "refuses an account connect() refuses, naming the entry and the field and never the value"
-- test `tests/unit/seed/types.test.ts` "leaves root, and a user written as a reference, to the editor and to the check at open"
-- test `tests/unit/seed/types.test.ts` "refuses anything but a list of strings in the table's words, not zod's"
-
 ### M-44 (normative): The commit keyword
 
 An engine states, in `editor.commitKeyword`, the one word that keeps an open transaction on it.
 When a statement left a transaction open and Studio rolled it back, the notice Studio shows names this keyword, so it tells the user a command their engine has.
 
-- schema `/$defs/editor/properties/commitKeyword`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a commit keyword that is not one word is refused as pattern-mismatch"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.commitKeyword and editor.consentDeadline are the engine's EXECUTION_UI row"
-- test `tests/unit/db/engine-declarations.test.ts` "executionUiFor answers, for every engine, the spec its declaration states"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of an execution UI row has its member in the declaration"
-- test `tests/unit/db/execution-ui/census.test.ts` "each row is its declaration's commit keyword and consent deadline, read from the generated execution UI record"
-- test `tests/unit/db/execution-ui/shared.test.ts` "the postgres golden names it in the rolled-back notice"
-
 ### M-45 (normative): The consent deadline
 
 An engine whose long read ends differently from the others states, in `editor.consentDeadline`, the chip and the sentence the agent's consent card shows for it, and every other engine states null.
 The chip is a label in the card's bounds row, and the sentence is the paragraph under the card's box.
-
-- schema `/$defs/consentDeadline`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a consent deadline chip longer than 128 characters or a sentence longer than 2000 is refused as out-of-range"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.commitKeyword and editor.consentDeadline are the engine's EXECUTION_UI row"
-- test `tests/unit/db/engine-declarations.test.ts` "executionUiFor answers, for every engine, the spec its declaration states"
-- test `tests/unit/db/execution-ui/census.test.ts` "the commit keyword and consent deadline rows are the ones today's code has"
-- test `tests/unit/db/execution-ui/census.test.ts` "each row is its declaration's commit keyword and consent deadline, read from the generated execution UI record"
 
 ### M-46 (normative): Fence tags
 
@@ -650,20 +359,6 @@ An engine lists its other tags in `editor.fenceAliases`.
 A tag names at most one engine: an alias is never an engine id of its manifest and is never declared by two of its engines, and across the admitted set Studio's projection refuses the same, M-75.
 A generic fence tag is the tag of a language several engines speak; the schema's `genericFenceTag` lists them, and an alias is never one.
 An untagged fence and a generic tag hold a query and name no engine, so neither contradicts a connection.
-
-- schema `/$defs/fenceTag`
-- schema `/$defs/genericFenceTag`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a fence alias that is not a lower-case tag is refused as pattern-mismatch, one listed twice as duplicate, and a seventeenth as too-many"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a fence alias equal to an engine id of the manifest is refused as fence-alias-engine-id"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a fence alias an earlier engine declares is refused as fence-alias-duplicate at the later"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a generic fence tag declared as an alias is refused as fence-alias-generic"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's fence aliases are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.fenceAliases are the aliases ALIAS_ENGINES maps to the engine"
-- test `tests/unit/db/engine-declarations.test.ts` "ALIAS_ENGINES and QUERY_FENCE_ALIASES are the declarations' aliases and the schema's generic fence tags"
-- test `tests/unit/db/engine-declarations.test.ts` "a reader built from the declarations names and admits every fence tag as fenceTagEngine and isQueryFenceTag do"
-- test `tests/unit/lib/sql/fence-tags.test.ts` "an alias names the engine it is an alias for"
-- test `tests/unit/lib/sql/fence-tags.test.ts` "a generic tag and an absent one name no engine, so they contradict none"
-- test `tests/unit/db/engine-catalog.test.ts` "an alias two declarations state, or one equal to another admitted engine id, is refused by name"
 
 ### M-47 (informative): Fence tags across packages
 
@@ -677,15 +372,6 @@ The format stated is the one the provider declares for a connection it has not c
 Studio's generator reads it in an empty environment with no `.env` file loaded, so a variable that changes what a provider declares, such as `FIRESTORE_EMULATOR_HOST`, never changes a committed declaration.
 Studio reads a plan with that format's strategy.
 
-- schema `/$defs/explainFormat`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an explain format outside Studio's strategies is one refusal at the editor's explain format"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.explainFormat is the format the engine's unconnected provider declares, null exactly where it supports no explain"
-- test `tests/unit/db/engine-declarations.test.ts` "a variable a provider reads before it connects, set where the generator runs, changes no declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "the census reads each provider's capabilities in its stated environment, so a variable set where it runs changes none"
-- test `tests/unit/db/engine-declarations.test.ts` "every declared explain format has Studio's strategy for it"
-- test `tests/unit/db/engine-declarations.test.ts` "the explain formats, the query dialects and the generic fence tags are Studio's"
-- test `tests/unit/lib/explain/registry.test.ts` "returns null for undefined (provider without explain support)"
-
 ### M-49 (informative): A format measured at connect
 
 A provider may answer another format of the vocabulary, or none, for a connection it measures at connect or configures otherwise, such as a server whose grammar lacks the declared form or an emulator.
@@ -697,19 +383,6 @@ An engine states, in `editor.dialect`, null or one of Studio's query dialects wi
 The editor opens the engine's tabs under the dialect's name, so a manifest states the name once.
 Studio's dialect rows are the projection of the declarations' rows, M-77, every declaration of one dialect stating one row.
 
-- schema `/$defs/queryDialectRow`
-- schema `/$defs/historyMask`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a dialect outside Studio's dialects is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a history mask with no flag is refused as too-few, and a flag that is not a long option as pattern-mismatch"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.dialect is the provider's query dialect with its QUERY_DIALECTS row"
-- test `tests/unit/db/engine-declarations.test.ts` "QUERY_DIALECTS is the dialect rows the declarations state, one per dialect, each opening tabs of its own name"
-- test `tests/unit/db/engine-declarations.test.ts` "history keeps no value of a flag the declarations name, as it keeps none of the registry's"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of a dialect row has its member in the declaration"
-- test `tests/unit/lib/history-mask.test.ts` "a registered dialect answers its record's mask"
-- test `tests/unit/db/kubernetes/history-mask.test.ts` "the dialect declares exactly the console's credential flags"
-- test `tests/unit/editor/tab-language-registry.test.ts` "resolveTabType answers the registry record's tabType before reading the language"
-- test `tests/unit/db/dialect-gates-registry.test.ts` "a record that offers profiling, code generation and a count is offered all three"
-
 ### M-51 (normative): The connect budget
 
 An engine states, in `connection.connectBudgetMs`, how long the host waits for an open of the engine and for its Test connection, in milliseconds from the open's start.
@@ -717,19 +390,6 @@ The budget is a whole number from 30,000 to 300,000, or null where the engine ta
 The minimum is an SSH tunnel's 20 s handshake bound plus 10 s for the connect, so no budget ends an open before a legitimate tunnel could open; the maximum bounds the longest any caller waits for an open to five minutes.
 An engine states a budget of its own when its own connect bound at Studio's default statement timeout, plus 10 s for its answer to arrive, is longer than the default, so a provider that bounds its connect answers in its own words before the host does.
 Studio's budget for each engine it ships is authored in the engine's declaration, M-15, and read through the engine catalog, M-70.
-
-- schema `/$defs/connectBudget`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget of null or within 30,000 to 300,000 ms is admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget below 30,000 ms or above 300,000 ms is refused as out-of-range at the connection's connectBudgetMs"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connect budget that is not a whole number is refused as wrong-type"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a connection without connectBudgetMs is refused as missing-key"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's default connect budget is 70 s, inside the bounds the schema gives a declared one"
-- test `tests/unit/db/engine-declarations.test.ts` "connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null"
-- test `tests/unit/db/connect-budget.test.ts` "the host's default is the pools' 60 s acquire bound plus 10 s"
-- test `tests/unit/db/connect-budget.test.ts` "only BigQuery and Snowflake declare a connect budget of their own"
-- test `tests/unit/db/connect-budget.test.ts` "the document of each engine that declares a connect budget states it in seconds, and no other provider document states one"
-- test `tests/unit/db/bigquery/connect-budget.test.ts` "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s"
-- test `tests/unit/db/snowflake/connect-budget.test.ts` "Snowflake's connect budget covers its connect's two Studio statements at their deadline, plus 10 s"
 
 ### M-52 (normative): Claims are requests
 
@@ -747,24 +407,6 @@ Only the modules `tests/unit/db/engine-declaration-readers.test.ts` lists read a
 For every engine Studio ships, each request is its record's row.
 Read-only enforcement is no member: Studio keeps a connection's read-only mode wherever the write reach is not `open`.
 The engines agent and MCP statements run on are Studio's record alone, C-39, and S-8 applies the same rule to the confirmation gate's claims.
-
-- schema `/$defs/policyClaims`
-- schema `/$defs/mcpClaims`
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
-- test `tests/unit/db/engine-declarations.test.ts` "each claim the census reads back is a member of the schema's engine declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it"
-- test `tests/unit/db/engine-declarations.test.ts` "READ_ONLY_ENFORCED is true exactly where the declaration's write reach is not open"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration's policy and MCP segments hold exactly the claims Studio keeps a review record of"
-- test `tests/unit/db/engine-declarations.test.ts` "MCP serves statements on exactly the engines the declarations' claims and Studio's agent execution record give it"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "only the modules DECLARATION_READERS lists read an engine declaration or a projection of the declarations"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "the scan finds each way a module could read a declaration or a projection, and passes over a backticked path in a comment"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW"
-- test `tests/unit/mcp/served-engines.test.ts` "an engine agent mode does not execute on is not served, whatever its rows say"
-- test `tests/unit/db/claim-record-readers.test.ts` "every policy, MCP, connection and agent mode claim record is read only by the grant reader"
-- test `tests/unit/db/write-reach-capability.test.ts` "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries"
 
 ### M-53 (normative): The restrictive value of each claim
 
@@ -790,35 +432,6 @@ Each claim has a restrictive value, the answer under which the gates that read i
 `agent.overlay.dialect.catalogRead.commandShaped`: false, so the statement fence admits no composed catalog command and refuses it as it refuses the model's; its record is the engine's server overlay in Studio's agent overlay registry.
 Every restrictive value is a request the schema admits.
 
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine whose connection, facets, agent and SQL text claims are at their restrictive values is admitted"
-- test `tests/unit/seed/types.test.ts` "refuses readOnly: true on every engine whose write reach is open, naming the type and the field"
-- test `tests/isolated/factory.test.ts` "a databend connection with readOnly: true is refused before anything is built (Databend design 5.7)"
-- test `tests/unit/lib/db/provider-cache-key.test.ts` "a non-admin (deny) DuckDB handle keys apart from an admin (allow) one, so they never share a handle"
-- test `tests/unit/db/refuses-denied-file-access.test.ts` "SQLite refuses a handle opened with file access denied, and DuckDB confines one"
-- test `tests/unit/lib/db/provider-cache-key.test.ts` "an owner appends a framed segment, no owner is byte-identical, and duckdb and libredb ignore the owner"
-- test `tests/unit/seed/types.test.ts` "refuses mcp: true without read roots, at the mcp field, and loads it with them"
-- test `tests/api/agent/runs.test.ts` "an OPC UA run that sends statements is refused on a connection without read roots, before a run exists"
-- test `tests/unit/seed/types.test.ts` "refuses only the engine the record answers false for"
-- test `tests/unit/mcp/served-engines.test.ts` "an engine MCP is not offered for is not served, whatever its MCP read row says"
-- test `tests/unit/mcp/served-engines.test.ts` "an agent engine whose MCP read row is false is not served, though every other record lets it through"
-- test `tests/unit/mcp/annotations.test.ts` "answers not read-only and not destructive, closed-world, for a reach holding an engine whose row is true"
-- test `tests/unit/seed/types.test.ts` "fails a seed with mcp: true and no agent key, naming mcp and the type"
-- test `tests/integration/mcp/context.test.ts` "refuses a connection with no agent credential in Studio's words, naming the connection"
-- test `tests/unit/lib/governance/admission.test.ts` "every engine that opens a local file stays ENGINE_UNSUPPORTED, named in GOVERNANCE_ALLOWED_ENGINES or not"
-- test `tests/unit/lib/db/provider-files.test.ts` "one of Studio's own files is refused by name with the reserved sentence and the connection's own type"
-- test `tests/unit/lib/db/provider-files.test.ts` "either path naming one of Studio's own storage files is refused by name, with the field and the connection's type, before any provider is built"
-- test `tests/unit/lib/governance/admission.test.ts` "a postgres definition without database is skipped as SERVER_LEVEL_NOT_ALLOWED"
-- test `tests/unit/lib/db/tunnel-decision.test.ts` "%s: a tunnel that is on is refused exactly when its row names a reason"
-- test `tests/unit/seed/types.test.ts` "refuses either field on a %s seed, which takes no agent credential"
-- test `tests/unit/lib/agent/agent-manifest.test.ts` "%s opens operations and planning, and refuses a statement workflow in agent mode"
-- test `tests/unit/lib/agent/agent-manifest.test.ts` "the operations arm refuses an engine the tables leave out of the agent-readings requirement"
-- test `tests/unit/lib/query-events/redact.test.ts` "every redaction vector produces its redacted text and fingerprint"
-- test `tests/isolated/factory.test.ts` "libredb takes no agent credential and refuses %s before it connects"
-- test `tests/unit/components/results-grid-masking-exemption.test.ts` "the rules themselves are untouched: with no declaration the same column is still masked"
-- test `tests/unit/lib/agent/composed-catalog-admission-drive.test.ts` "an overlay that does not declare its catalog read a command gets the ordinary refusal"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a catalog read that claims no command, the claim's restrictive value, is admitted"
-
 ### M-54 (normative): How a host grants a claim
 
 A host reads each claim as the more restrictive of the manifest's request and the grant.
@@ -842,27 +455,6 @@ The `sqlText.redaction` row is kept in `SQL_TEXT_REDACTION`, a core record keyed
 The change that moves a provider whose row records a claim into a package, or the first change that makes Studio read that claim from a declaration, whichever comes first, keeps the claim's row in a core record keyed by the engine, so a package never carries its own grant.
 Studio reads the policy and MCP claims, M-82, and the connection and agent mode claims, M-83, from the admitted declarations through its grant reader by these rules; the agent overlay's claims and the SQL text claims are not read from a declaration yet, M-52, and the change that first reads one applies this clause to it and extends its enforcer.
 
-- test `tests/unit/db/claim-grants.test.ts` "a write reach request is capped at the grant, and read open where no record exists"
-- test `tests/unit/db/claim-grants.test.ts` "a claim whose restrictive value is true is granted true where the request or the record is, or no record exists: %s, request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "a claim whose restrictive value is false is granted true only where both the request and the record are: %s, request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "a denied file access refusal requested keeps its own sentence, one offered against a record's refusal takes the record's, and one offered where no record exists takes core's own"
-- test `tests/unit/db/claim-grants.test.ts` "a single-writer file request equal to its grant is read as granted, and any other request leaves the engine refused at every open, by name"
-- test `tests/unit/db/claim-grants.test.ts` "an agent credential form request equal to the record, pair for its null row, is read as the record's, and any other, or one with no record, as none"
-- test `tests/unit/db/claim-grants.test.ts` "a masking exemption request equal to the record's row is granted, and any other, or one with no record, is read as null"
-- test `tests/unit/db/claim-grants.test.ts` "a claim value outside its vocabulary is refused by name, naming the claim and the engine"
-- test `tests/unit/db/claim-grants.test.ts` "READ_ONLY_ENFORCED is true exactly where the granted write reach is not open"
-- test `tests/unit/db/claim-grants.test.ts` "the granted tables are frozen, each row too, keyed exactly by the shipped engines"
-- test `tests/unit/lib/db/claim-grant-refusal.test.ts` "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none"
-- test `tests/isolated/claim-grant-open-refusal.test.ts` "each of the factory's four entry points refuses an engine left refused at open before any cache lookup, tunnel or build"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "the redaction is the record's row, a command reader bound through the function table, never the entry's"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
-- test `tests/unit/db/claim-grants.test.ts` "the host path fields granted are the union of the request and the record, and every host path field among the seed-only fields where no record exists"
-- test `tests/unit/db/claim-grants.test.ts` "a server level request is read per gate: true at governance admission where either is or no record exists, true at the choice of database only where both are: request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "a refused tunnel request keeps its own sentence, one offered against a refusing record takes the record's, and one offered where no record exists takes core's own"
-- test `tests/unit/db/claim-grants.test.ts` "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null"
-- test `tests/unit/db/claim-grants.test.ts` "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request"
-
 ### M-55 (normative): The rules of an engine's claims
 
 A statement read is claimed only for an engine its MCP claims expose.
@@ -874,26 +466,11 @@ A denied file access refusal is stated only for an engine that reads the file-ac
 The rules check requests, never a host's reading of them: a request of every policy and MCP claim at its restrictive value meets them where the engine's connection allows it.
 An engine a host reads as requiring an agent credential it takes none of is closed to MCP: Studio's grant of `exposable` is false where its grant of `agentCredentialRequired` is true and either its grant of `connection.agentCredential` is null or its grant of `policy.agentCredentialForm` is `none`, which refuses every agent acquisition, M-54.
 
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statement read on an engine not exposed to MCP is refused as statement-read-unexposed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential required of an engine whose seeds take none is refused as agent-credential-form-missing"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a seed agent credential whose form is not the one the agent credential form request names is refused as agent-credential-seed-form-differs, a request of none excepted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "read roots required of an engine whose seeds cannot declare them are refused as read-roots-field-undeclared"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a denied file access refusal on an engine that reads no file-access posture is refused as denied-file-access-unread"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's claims are held to the rules the schema cannot state, at pointers into it"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
-- test `tests/unit/db/claim-grants.test.ts` "an engine read as requiring an agent credential its seeds take none of is closed to MCP"
-- test `tests/unit/db/claim-grants.test.ts` "an engine read as requiring an agent credential whose granted credential is null, or whose granted form is none, is closed to MCP"
-
 ### M-56 (normative): The trust material a provider is handed
 
 An engine whose provider's TLS library does not read Node.js's trust store states `connection.readsTrustMaterial: true`, and its provider is handed the CA certificates of the file `NODE_EXTRA_CA_CERTS` names, as data.
 Every other engine states false and is handed nothing.
 No gate reads it, the material is the operator's public certificates, and a provider that needs it and does not ask fails to verify, never verifies less, so it is not a claim.
-
-- schema `/$defs/connection/properties/readsTrustMaterial`
-- test `tests/unit/db/engine-declarations.test.ts` "connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row"
-- test `tests/security/provider-trust-material.test.ts` "READS_TRUST_MATERIAL names db2 alone, the engine whose TLS the probe found outside Node's trust store"
-- test `tests/security/provider-trust-material.test.ts` "a caller's trust in the execution context never reaches a provider"
 
 ### M-57 (normative): A built provider's own declaration of a claim this clause names reaches no gate
 
@@ -907,55 +484,17 @@ The places that honour a caller's choice of database, `scopeToCatalog` (every ed
 So none of these claims moves a gate on the provider's word, as a claim a declaration requests never does, M-52.
 For every engine Studio ships, each provider's own declaration is its record's row, and its catalog sessions are honoured exactly where it declares them.
 
-- test `tests/isolated/factory.test.ts` "a form a provider declares that Studio's record does not hold is never read: the record's pair refuses an agent secret alone"
-- test `tests/isolated/factory.test.ts` "the form Studio's record holds is read when the provider declares none: Kubernetes takes an agent token alone"
-- test `tests/isolated/factory.test.ts` "a provider that declares singleWriterFile on an engine Studio's record does not name registers no file, and no other connection is lent its handle"
-- test `tests/isolated/factory.test.ts` "Studio's record registers the file of a single-writer engine whose provider declares nothing, and another connection on the file is lent the open handle"
-- test `tests/isolated/factory.test.ts` "a masking exemption a provider declares that Studio's record does not hold is never read: readProviderDeclarations answers none"
-- test `tests/isolated/factory.test.ts` "the masking exemption Studio's record holds is read when the provider declares none: Modbus answers its address column"
-- test `tests/api/db/provider-meta.test.ts` "a masking exemption a provider declares that Studio's record does not hold never reaches the browser"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a masking exemption the provider declares that Studio's record does not hold is not in the description"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "the description answers Studio's record of the masking exemption where the provider declares none"
-- test `tests/unit/db/agent-credential-capability.test.ts` "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none"
-- test `tests/unit/db/compatibility.test.ts` "SINGLE_WRITER_FILE matches the engines whose capabilities declare singleWriterFile"
-- test `tests/unit/db/write-reach-capability.test.ts` "%s: the record answers the summary of its provider's declaration"
-- test `tests/unit/db/reads-file-access-posture-capability.test.ts` "%s: the map answers what its provider declares"
-- test `tests/unit/db/masking-exemption-guard.test.ts` "%s: MASKING_EXEMPT_COLUMNS is the exemption its provider declares, null where it declares none"
-- test `tests/unit/db/catalog-scope.test.ts` "catalogChoice honours catalog sessions only where the provider declares them, Studio's record holds the engine, and the connection names no database"
-- test `tests/unit/db/catalog-scope.test.ts` "a provider that declares catalog sessions on a connection naming a database is refused a catalog by name, and no session opens"
-- test `tests/unit/db/catalog-scope.test.ts` "a provider that declares catalog sessions on an engine Studio's record does not hold is refused a catalog by name, and no session opens"
-- test `tests/unit/db/catalog-scope.test.ts` "assertNotWholeServer refuses a provider that declares catalog sessions, whatever Studio's record and the connection say"
-- test `tests/unit/mcp/database-choice.test.ts` "a provider that declares catalog sessions on a connection naming a database is read as it is, and another database is refused by name"
-- test `tests/unit/mcp/database-choice.test.ts` "a provider that declares catalog sessions on an engine Studio's record does not hold is read as it is, and a database is refused by name"
-- test `tests/api/agent/runs.test.ts` "a provider that declares catalog sessions on a connection naming a database is not read: a catalog is refused by name, and a run without one starts"
-- test `tests/api/agent/runs.test.ts` "a provider that declares catalog sessions on an engine Studio's record does not hold is not read: a catalog is refused by name"
-- test `tests/api/db/query.test.ts` "a provider that declares catalog sessions on a connection naming its database runs nothing in another: the catalog is refused by name"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a provider that declares catalog sessions on a connection naming its database runs nothing in another catalog, and the refusal says why"
-- test `tests/unit/db/compatibility.test.ts` "%s: Studio honours catalog sessions exactly where its provider declares them, with and without a database"
-
 ### M-58 (normative): The agent credential form an engine requests
 
 `policy.agentCredentialForm` is one of the forms Studio's agent credential takes, with `pair` for the user and password together, the form Studio's record writes null.
 The secret-only forms and the dedicated user's are the record's own forms, named as the record names them.
 Every agent acquisition reads Studio's grant of the request, M-57, which is the more restrictive of the request and Studio's record, M-54.
 
-- schema `/$defs/agentCredentialFormClaim`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential form outside the claim's values is refused as value-not-allowed, and null as wrong-type beside it"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
-- test `tests/unit/db/engine-declarations.test.ts` "the generated unions are Studio's own types"
-- test `tests/unit/db/agent-credential-capability.test.ts` "%s: AGENT_CREDENTIAL_FORM is the form its provider declares, null where it declares none"
-
 ### M-59 (normative): A masking exemption matches whole column names only
 
 The column pattern of `policy.maskingExemptColumns` opens with `^`, closes with a `$` no backslash escapes and no character class holds, keeps every alternative inside a group, and compiles with no flag, the way Studio's masking compiles it.
 An unanchored pattern reaches columns other masking rules cover, so an exemption written for one column crosses into a rule it was never about.
 The pattern is read as text and never run, so a pattern anchored in each alternative, such as `^a$|^b$`, is refused for the group form `^(?:a|b)$`, which says the same once.
-
-- schema `/$defs/maskingExemption`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal whose pattern or reason is empty or past its bound is refused as out-of-range"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption whose column pattern does not match whole names only is refused as masking-exemption-unanchored"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal pattern that does not compile is refused as pattern-invalid"
-- test `tests/unit/db/masking-exemption-guard.test.ts` "an unanchored pattern reaches into a rule it was never about"
 
 ### M-60 (normative): An engine's safeguards are its provider's own statements
 
@@ -966,13 +505,6 @@ For every engine Studio ships, the census reads each safeguard back to the provi
 A provider that declares no write reach is stated open on every path, the reading Studio gives that absence.
 A fact a provider answers only for a connection, or one that waits for a chapter not yet in this contract, is not a member.
 
-- schema `/$defs/safeguards`
-- test `tests/unit/db/engine-declarations.test.ts` "every fact of the safeguards segment is its provider's own declaration"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration's safeguards segment holds exactly the facts the census reads back to the providers"
-- test `tests/unit/db/engine-declarations.test.ts` "a declared write reach that misses a path is refused by name by the census, and the generator writes the authored safeguards whatever the provider declares"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the machine redaction, billed compute and the write paths are no claims, each refused as unknown-key where it is not a member"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's safeguards and its new claims are held to their rules, at pointers into it"
-
 ### M-61 (normative): The write paths and the write reach they sum to
 
 Each of the four write paths is absent, gated with the gate that refuses every write there while read-only mode holds, or open.
@@ -981,26 +513,10 @@ A gate or a proof names a module by its path relative to the root of the package
 `policy.writeReach` is the summary of the paths: `open` where any path is open, else `guarded` where any is gated, else `none`.
 A request at M-55's restrictive values meets this rule only where the write paths still sum to its write reach.
 
-- schema `/$defs/writePaths`
-- schema `/$defs/writePathProof`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a write path that is not one of the three reaches, or whose gate or proof is not a .ts module under src with an export name, is refused as no-variant at the path"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a write reach claim that is not the summary of the engine's write paths is refused as write-reach-summary-differs"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an absent editor write path that names no proof is refused as editor-write-path-unproven"
-- test `tests/unit/db/engine-declarations.test.ts` "the validator admits a write reach claim exactly where it is Studio's summary of the write paths"
-- test `tests/unit/db/write-reach-proofs.test.ts` "every write-reach gate and proof names a real export"
-
 ### M-62 (normative): The metadata-only answer and the inline edit refusal
 
 `metadataOnly` lists each operation the metadata-only read permits, once, in the provider's order, with its columns, each once within its operation, and the kind of fact each holds; it is null where the provider answers as it reads.
 `inlineEditRefusedColumns` is a type pattern that compiles with no flag, the way the inline editor compiles it, and the reason a refused cell shows, or null.
-
-- schema `/$defs/metadataOnlyOperation`
-- schema `/$defs/inlineEditRefusal`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata-only answer with no operation or an operation with no column is refused as too-few, and a kind outside name, count and flag as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata operation or column name outside its pattern is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a metadata operation named twice is refused as metadata-operation-duplicate, at the later one"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a column named twice in one metadata operation is refused as metadata-column-duplicate, and the same column in two operations is admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a masking exemption or inline edit refusal pattern that does not compile is refused as pattern-invalid"
 
 ### M-63 (informative): Facts a provider answers per connection
 
@@ -1016,20 +532,6 @@ For every engine Studio ships, the census reads each spec back to the provider's
 No member of a spec is a claim, M-52: the maintenance routes read the placements only to refuse a request in a form the provider says it does not take, every maintenance request is an administrator's, and a typed confirmation only adds a step to the confirmations Studio asks itself, whole-database runs and session kills included, so no value skips one.
 The maintenance list is no claim either: the routes read it to refuse, before any provider is built, an operation the engine does not offer.
 
-- schema `/$defs/maintenanceSpec`
-- schema `/$defs/facets/properties/maintenanceSpecs`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec whose label, title or description is empty or past its bound is refused as out-of-range"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec for an operation the maintenance facet does not list is refused as maintenance-spec-unlisted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance operation given two specs is refused as maintenance-spec-duplicate, at the later one"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a listed maintenance operation with no spec is refused as maintenance-spec-missing, at the operation"
-- test `tests/unit/db/engine-declarations.test.ts` "facets.maintenanceSpecs is its provider's own maintenance specs, one for each operation its facet lists, in the facet's order"
-- test `tests/unit/db/engine-declarations.test.ts` "maintenanceControl and declaredEntityOperations answer from each declaration what they answer from its provider, for every operation, placement and kind"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration's maintenance specs hold exactly Studio's spec members and the operation they name"
-- test `tests/unit/db/engine-declarations.test.ts` "a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name, by the generator and by the census"
-- test `tests/api/db/maintenance.test.ts` "non-admin user returns 403"
-- test `tests/components/admin/OperationsTab.test.tsx` "confirming sends exactly one request for the whole database"
-- test `tests/components/admin/OperationsTab.test.tsx` "kill button opens confirmation dialog"
-
 ### M-65 (normative): Where a spec places its operation, its confirmation and its preview
 
 A spec places its operation on a row, over the whole database or both.
@@ -1041,17 +543,6 @@ A spec may declare one only where it places its operation on a row alone.
 A preview is shown only on a row.
 A confirmation is admitted only where at least one control sends the operation and every control that sends it asks the confirmation: a typed confirmation where the operation's one control is its declared card, whose typed dialog takes the title as its heading and the description as its body, and a typed target where its only controls are on its objects' rows.
 A preview is admitted only where a row shows it.
-
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance spec that places its operation nowhere is refused as maintenance-spec-unplaced, and kill's is admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a typed confirmation is admitted only on a spec placed over the whole database alone, with a title and a description, and refused elsewhere as maintenance-typed-confirmation-unasked"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a typed target is admitted only on a spec placed on a row alone, and refused elsewhere as maintenance-typed-target-unasked"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a maintenance preview no per-row control shows is refused as maintenance-preview-unplaced"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's maintenance specs are held to their rules, at pointers into it"
-- test `tests/api/db/maintenance.test.ts` "an operation that takes no target refuses a request that names one"
-- test `tests/api/db/maintenance.test.ts` "an operation that requires a target refuses a request without one"
-- test `tests/api/db/maintenance.test.ts` "kill keeps its session-id target, which neither placement describes"
-- test `tests/components/admin/OperationsTab.test.tsx` "a typed-target control sends nothing until the row's own name is typed exactly, then sends once"
-- test `tests/components/admin/OperationsTab.test.tsx` "a whole-database card with a typed confirmation still asks for the connection's name, not a row's"
 
 ### M-66 (informative): The maintenance a connected server accepts
 
@@ -1071,22 +562,6 @@ No member states whether agent mode runs on the engine: the engines agent and MC
 The other members Studio's overlay type lets an engine override are not in this contract.
 For every engine Studio ships, the census reads each member back through Studio's overlay registries and holds each name to the very function the engine's overlay holds.
 
-- schema `/$defs/agentOverlay`
-- schema `/$defs/agent/properties/overlay`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent overlay member Studio's declaration has no place for is refused as unknown-key"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine that speaks a statement language with no agent overlay is refused as agent-overlay-missing"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent overlay on an engine that speaks no statement language is refused as agent-overlay-unspoken"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL engine with no dialect is refused as agent-dialect-missing"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a dialect on an engine of another family is refused as agent-dialect-unspoken"
-- test `tests/unit/db/engine-declarations.test.ts` "the server registry holds each engine module's overlay, member by member"
-- test `tests/unit/db/engine-declarations.test.ts` "every data member of each declared dialect is what the server registry's dialect holds, null where it is unsupported"
-- test `tests/unit/db/engine-declarations.test.ts` "every engine's server facet, through runServerPack, is its family's with exactly the derivations its declaration names"
-- test `tests/unit/db/engine-declarations.test.ts` "each engine's family and client dialect, through the client registry, are its declared language and the client view of its declared dialect"
-- test `tests/unit/db/engine-declarations.test.ts` "the SQL catalog and composer requirements and the composed capture hold on exactly the engines whose declared dialect supplies them"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration's agent overlay holds exactly the members of the schema's overlay and SQL dialect"
-- test `tests/unit/db/engine-declarations.test.ts` "an agent overlay member the declaration has no place for, a grounding given as a value, and a pattern flag it does not take are refused by name by the generator"
-- test `tests/unit/db/engine-declarations.test.ts` "agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it"
-
 ### M-68 (normative): The SQL dialect
 
 Its catalog read names a composer per catalog kind, an optional schema fold, an optional retry and an optional row mapper, and says whether its statement is a command.
@@ -1097,36 +572,12 @@ Its capture lists the catalog kinds it reads in order, a builder, and the engine
 A member is null where the engine composes none.
 A statistics reading or a capture is stated only beside a catalog read.
 
-- schema `/$defs/sqlDialect`
-- schema `/$defs/catalogRead`
-- schema `/$defs/planEstimatePrefix`
-- schema `/$defs/captureKindWord`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an estimating plan that is neither an EXPLAIN prefix nor the session mode is refused as no-variant"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statistics reading without a catalog read is refused as statistics-without-catalog-read"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a catalog capture without a catalog read is refused as catalog-capture-without-catalog-read"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a kind word given twice is refused as capture-kind-word-duplicate, at the later one"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an estimating prefix that executes the plan is refused as plan-estimate-prefix-executes"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a profile type pattern that does not compile is refused as pattern-invalid"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's agent overlay is held to its rules, at pointers into it"
-- test `tests/unit/lib/agent/engine-overlays.test.ts` "an engine that reads statistics also reads its catalog, since the statistics read is a catalog kind"
-- test `tests/unit/lib/agent/engine-overlays.test.ts` "an engine that captures its catalog also composes every kind it captures"
-
 ### M-69 (normative): A composed statement meets the statement fence
 
 Every statement a dialect composes is checked as a statement the model wrote is.
 The catalog read and its statistics kind are checked as a bounded read, the estimating plan and the profile as a bounded read that refuses plan execution, and the statistics probe as a plain read.
 So a dialect widens what agent mode composes on an engine it already runs on, never where it runs or what the fence admits.
 The one exception is a catalog read whose statement is a command: the fence admits that one statement by identity, still refusing a comment or a word with a side effect, and the claim is `commandShaped`, M-53.
-
-- test `tests/unit/db/operations/statement-guard.test.ts` "only the plan-execution schema admits EXPLAIN ANALYZE"
-- test `tests/unit/db/operations/statement-guard.test.ts` "the query read admits the statement the server composed, though its verb is no read"
-- test `tests/unit/db/operations/statement-guard.test.ts` "the same text with no admission is refused as it always was"
-- test `tests/unit/db/operations/statement-guard.test.ts` "an admission a caller wrote itself is refused, as any text a model sends would be"
-- test `tests/unit/db/operations/statement-guard.test.ts` "only the query read takes an admission: plan inspection and the profile keep the strict read input"
-- test `tests/unit/db/operations/statement-guard.test.ts` "only the catalog read mints an admission, for the catalog statement itself or for its statistics kind"
-- test `tests/unit/lib/agent/composed-catalog-admission-drive.test.ts` "the identical command written by the model is refused before it is sent, as it always was"
-- test `tests/unit/lib/agent/elasticsearch-catalog-read.test.ts` "each composed command is admitted by identity, and refused as model text"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
 
 ### M-70 (normative): Studio's engine catalog is projected from the admitted declarations
 
@@ -1138,22 +589,6 @@ The projection is rendered into one generated module, `src/lib/db/engine-catalog
 Every reader of the catalog, in the browser, the server, the VS Code extension and the published library, reads that module through `SHIPPED_DATABASE_TYPES`, `EXTERNAL_DATABASE_TYPES`, `isExternalDatabaseType` and `connectBudgetFor`; no module of Studio's runtime reads a declaration file.
 Removing an engine's declaration gives exactly the catalog a fresh build from the remaining set gives, and a stored connection of an engine the catalog no longer holds stays in the user's list, shown as Unavailable.
 
-- test `tests/unit/db/engine-catalog.test.ts` "the catalog holds one entry per declaration, keyed in ascending id order whatever order they come in"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the catalog reads only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "every committed declaration is admitted through the SDK's digest-checked validator before it is projected"
-- test `tests/unit/db/engine-catalog.test.ts` "a declaration the schema refuses, one whose id is not its file name, and a stray entry are each refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "--write's authored members of a declaration the validator refuses until its generated members are rewritten"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed catalog module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale catalog module, --write writes it, and anything else is refused with the usage line"
-- test `tests/unit/db/engine-catalog.test.ts` "SHIPPED_DATABASE_TYPES is the catalog's engines in its order"
-- test `tests/unit/db/engine-catalog.test.ts` "EXTERNAL_DATABASE_TYPES and isExternalDatabaseType answer the location each declaration authors"
-- test `tests/unit/db/engine-declarations.test.ts` "connectBudgetFor answers, for every engine, the budget its declaration states, or the host's default where it states null"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the fixture engine's declaration is admitted by the schema's engine declaration and its rules"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the catalog built with the fixture engine holds it, and with it removed is exactly a fresh build from the remaining set and the committed catalog"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the catalog is the same whatever order the declarations are admitted in"
-- test `tests/unit/db/engine-projections-removal.test.ts` "a stored connection of an engine the catalog no longer holds is kept and shown as Unavailable"
-
 ### M-71 (normative): Studio's data-only connection tables are projected from the admitted declarations
 
 Each engine's connection fields, seed-only fields, refused fields, credential warnings, trust material answer and connection string answers are the connection tables: `CONNECTION_FIELDS`, `SEED_ONLY_FIELDS`, `REFUSED_CONNECTION_FIELDS`, `CREDENTIAL_WARNINGS`, `READS_TRUST_MATERIAL`, `CONNECTION_STRING_ACCEPTED` and `CONNECTION_FORM_URI_MODE`.
@@ -1163,17 +598,6 @@ It is rendered by the command M-70 names, from the same authored members and hel
 A seed-only refusal is its template with each `{field}`, or each `{id}` and `{type}`, replaced once by its value, so a value holding a placeholder or a replacement pattern is written as it is.
 None of these members is a claim, M-52: each gate that reads one reads data a wrong value cannot loosen, or no gate reads it.
 Removing an engine's declaration gives exactly the tables a fresh build from the remaining set gives.
-
-- test `tests/unit/db/engine-catalog.test.ts` "the connection tables hold one row per declaration, keyed in ascending id order whatever order they come in"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection tables read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed connection modules are what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale connection module, and --write writes every projected module"
-- test `tests/unit/db/connection-fields/census.test.ts` "a seed-only refusal writes each value in its place once, a value holding a placeholder or a replacement pattern included"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.seedOnly is the engine's SEED_ONLY_FIELDS row, and every refusal Studio renders from it is the sentence the table gave"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the fixture engine's declaration is admitted by the schema's engine declaration and its rules"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection tables built with the fixture engine hold its rows, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection tables are the same whatever order the declarations are admitted in"
 
 ### M-72 (normative): Studio's connection form is projected from the admitted declarations
 
@@ -1186,26 +610,6 @@ A named function is bound to the function Studio's own source holds for that eng
 None of these members is a claim, M-52: each is presentation, or a field rule or condition that only adds a refusal to the ones core makes, or the TLS modes the engine takes, M-73, which hand its provider the connection's own settings, or an identity reader Studio's own source holds.
 Removing an engine's declaration gives exactly the forms a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-catalog.test.ts` "the connection forms hold one entry per declaration, keyed in ascending id order whatever order they come in"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection forms read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed connection form module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale connection form module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer writes a backslash, a character outside ASCII and a number as the formatter leaves them, and refuses a control character by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer refuses a line or paragraph separator by name, as it refuses a control character"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer refuses a soft hyphen by name, as it refuses a control character"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer refuses a zero-width character by name, as it refuses a control character"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer refuses a lone surrogate by name, and writes a surrogate pair as itself"
-- test `tests/unit/lib/db/connection-form.test.ts` "each entry is its declaration's form members composed with Studio's function table"
-- test `tests/unit/lib/db/connection-form.test.ts` "a declaration naming a function Studio holds none for is refused by name when its form is composed"
-- test `tests/unit/lib/db/connection-form.test.ts` "a name Studio holds only for another slot is refused by name"
-- test `tests/unit/lib/db/connection-form.test.ts` "a form entry for a field the connection dialog does not draw is refused by name when its form is composed"
-- test `tests/unit/lib/db-ui-config.test.ts` "Snowflake's declared rule sentences and Sign-in absent value are the account module's own"
-- test `tests/unit/lib/db/provider-field-census.test.ts` "providerFields composes each engine's declared connection fields, seed-only fields, accepted connection string and TLS offer, and Studio's tunnel record"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms are the same whatever order the declarations are admitted in"
-
 ### M-73 (normative): An engine's TLS modes are data of its declaration
 
 A declaration states in `connection.tls.modes` the TLS modes its engine's provider takes, each once and in the order of the schema's `tlsMode`, and none where the engine offers no TLS, so no surface draws the SSL / TLS panel for it and its provider receives no TLS settings.
@@ -1213,21 +617,6 @@ Each mode means what Studio's published `SSLMode` in `src/lib/types.ts` says, th
 A mode outside the vocabulary, a repeated mode and a mode listed after one the vocabulary orders after it are each refused by name, at the mode's own pointer, and a TLS offer stated as a word rather than a list of modes is refused as the wrong type.
 The SDK's TLS settings read the same vocabulary: `TlsSettings.mode` is the generated `TlsMode`, which a census holds equal to `SSLMode` in both directions and in its order.
 Each of Studio's surfaces that offers a mode offers every mode of the vocabulary today, and every shipped engine that lists any lists them all, which a census holds.
-
-- schema `/$defs/tlsMode`
-- schema `/$defs/tlsOffer`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "TLS modes in the provider contract's order, %s, are admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode outside the provider contract's modes is refused as value-not-allowed at its own pointer"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode listed twice is refused as duplicate at the second"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode listed after one the provider contract orders after it is refused as tls-mode-order, at each such mode"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS mode out of order is refused in one sentence naming its pointer and no mode"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS offer stated as the word %s is refused as wrong-type"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a TLS offer with no modes member is refused as missing-key, and one with another member as unknown-key"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the manifest's TLS modes are Studio's published SSL modes, in its order"
-- test `tests/unit/db/engine-declarations.test.ts` "connection.tls lists TLS modes exactly where the dialog offers the SSL panel"
-- test `tests/unit/lib/db/connection-form.test.ts` "a composed form offers the SSL / TLS panel exactly where its engine lists any TLS mode, one or several"
-- test `tests/unit/lib/db/provider-field-census.test.ts` "every engine that lists TLS modes lists each of the provider contract's modes, in its order, and an engine lists none exactly where the dialog offers no SSL / TLS panel"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 
 ### M-74 (normative): Studio's connection strings are projected from the admitted declarations
 
@@ -1238,22 +627,6 @@ It is rendered by the command M-70 names, from the same authored members and hel
 A name Studio holds no function for, at that slot, is refused by name when the module loads, with no default.
 None of these members is a claim, M-52: the scheme is presentation, a paste reader and a URL TLS reader fill the dialog's fields in the browser and decide nothing on the server, and a seed check only refuses earlier what the provider or the agent profile's proof refuses again when the connection opens, and binds only to Studio's own function, so a declaration chooses between Studio's reviewed check and none.
 Removing an engine's declaration gives exactly the connection strings a fresh build from the remaining set gives.
-
-- test `tests/unit/db/engine-catalog.test.ts` "the connection strings hold one entry per declaration, keyed in ascending id order whatever order they come in"
-- test `tests/unit/db/engine-catalog.test.ts` "the connection strings read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed connection string module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale connection string module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection string change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a connection string function Studio holds none for"
-- test `tests/unit/db/connection-string/census.test.ts` "each row is its declaration's connection string composed with Studio's function table"
-- test `tests/unit/db/connection-string/census.test.ts` "each function the table binds for an engine is the export of that engine's own module"
-- test `tests/unit/db/connection-string/compose.test.ts` "a declaration naming a function Studio holds none for is refused by name when its connection string is composed"
-- test `tests/unit/db/connection-string/compose.test.ts` "a name Studio holds only for another slot is refused by name"
-- test `tests/unit/db/connection-string/compose.test.ts` "Studio's connection string function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection strings built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the connection strings are the same whatever order the declarations are admitted in"
 
 ### M-75 (normative): Studio's execution UI and fence aliases are projected from the admitted declarations
 
@@ -1266,32 +639,12 @@ An engine's id names that engine as a fence tag through the catalog, M-70, so no
 None of these members is a claim, M-52: the commit keyword and the consent deadline are text Studio shows, and a fence tag decides only whether a fenced block is offered to the editor and which block a plan run records, and nothing runs on that answer without the confirmation gate.
 Removing an engine's declaration gives exactly the execution UI and fence aliases a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-catalog.test.ts` "the execution UI holds one entry per declaration and the fence aliases one per alias, keyed in ascending id order whatever order they come in"
-- test `tests/unit/db/engine-catalog.test.ts` "the execution UI and the fence aliases read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "an alias two declarations state, or one equal to another admitted engine id, is refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed editor module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored execution UI and fence alias change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the alias when two declarations state one fence alias"
-- test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
-- test `tests/unit/db/engine-declarations.test.ts` "ALIAS_ENGINES and QUERY_FENCE_ALIASES are the declarations' aliases and the schema's generic fence tags"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases built with the fixture engine hold its entries, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the execution UI and the fence aliases are the same whatever order the declarations are admitted in"
-
 ### M-76 (normative): An agent reading's panel is offered
 
 An engine lists in `facets.agentReadings` a reading read through a monitoring panel, as `AGENT_READING_PANELS` names it, only where its `facets.monitoring` offers that panel, since the host refuses every panel call for a panel the session's engine does not offer, C-71.
 A reading whose panel the engine does not offer is refused as `agent-reading-panel-not-offered`, at the reading's own pointer, in a sentence naming that pointer and no value.
 `health`, which the mandatory health call serves, is admitted whatever the panels.
 Every engine Studio ships satisfies the rule, which its census holds.
-
-- schema `/$defs/agentReading`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent reading whose monitoring panel the engine does not offer is refused as agent-reading-panel-not-offered"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "the health reading and a reading whose panel the engine offers are admitted"
-- test `tests/unit/db/engine-declarations.test.ts` "each declaration is admitted by the schema's engine declaration and its rules"
-- test `tests/unit/db/engine-facets/census.test.ts` "every agent reading is the kind of a panel the row offers, or health"
 
 ### M-77 (normative): Studio's query dialects, tab type editors and editor languages are projected from the admitted declarations
 
@@ -1304,23 +657,6 @@ Each of Studio's languages is its own code, keyed by its Monaco id, composed whe
 None of these members is a claim, M-52: the row menus, the export menu and the tab's language are offers and presentation, the profile route's language check protects no interest M-52 names, and the history mask only adds to what history drops.
 Removing a declaration gives exactly the query dialects, tab type editors and editor languages a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-catalog.test.ts` "the query dialects, the tab type editors and the editor languages hold one entry per stated key, keyed in ascending order whatever order the declarations come in"
-- test `tests/unit/db/engine-catalog.test.ts` "the query editor facts read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations of one engine id are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "two declarations stating one dialect with different rows, one tab type in different editor languages, or one editor language with a different accent or console are refused by name"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed query editor module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored dialect row and editor language change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the editor language when two declarations state it with different accents"
-- test `tests/unit/db/engine-declarations.test.ts` "a committed declaration lacking an authored member, or naming another id than its file, is refused by name"
-- test `tests/unit/db/engine-declarations.test.ts` "the generator refuses, by name, a declaration whose query dialect or query language is not the one its provider declares"
-- test `tests/unit/editor/editor-language-registry.test.ts` "composeEditorLanguages gives each of Studio's languages the accent and console the declarations state, in the code's order"
-- test `tests/unit/editor/editor-language-registry.test.ts` "composeEditorLanguages refuses by name a stated language Studio holds no code for, a language no declaration states, and a console the code and the declarations disagree on"
-- test `tests/unit/editor/editor-language-registry.test.ts` "composeEditorLanguages refuses by name a code row or a console that names another Monaco id"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the query dialects, the tab type editors and the editor languages built with the fixture engine are the committed module's, and with it or the only declaration of a dialect, tab type and language removed are exactly a fresh build from the remaining set"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the query dialects, the tab type editors and the editor languages are the same whatever order the declarations are admitted in"
-
 ### M-78 (normative): Studio's SQL grammar is projected from the admitted declarations
 
 `SQL_GRAMMAR` in `src/lib/db/sql-grammar/index.ts` is composed from each admitted declaration's `sqlText.readsSqlText`, `grammar`, `updateTarget` and `completion`, members it authors, M-15.
@@ -1330,24 +666,6 @@ Each row is composed when that module loads: the grammar is the declaration's fa
 The redaction is never read from a declaration: it is the engine's row of `SQL_TEXT_REDACTION`, Studio's hand-written review record of the claim, its command reader bound through the same table, M-53 and M-54.
 `readsSqlText: false` and an exempt form are claims the confirmation gate counts only where `CONFIRMATION_CLAIM_REVIEW` lists them, S-8, and every other member is read as declared.
 Removing a declaration gives exactly the SQL text a fresh build from the remaining set gives.
-
-- test `tests/unit/db/engine-catalog.test.ts` "projectSqlText answers each declaration's SQL text but its redaction, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the SQL text reads only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed SQL text module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored SQL text change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a SQL grammar function Studio holds none for"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "each row is its declaration's SQL text composed with Studio's record of its redaction"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "a grammar fact at the reading its absence has is left out, and every other fact is the declaration's"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "each trailing limit clause is compiled once, when its row is composed"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "the rows, their grammars and their lists are frozen"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "a function name Studio holds none for is refused by name at its slot, a name it holds only at another slot included"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "Studio's grammar function table holds exactly the functions the committed declarations and the redaction record name, each at its own slot"
-- test `tests/unit/db/sql-grammar/compose.test.ts` "the redaction is the record's row, a command reader bound through the function table, never the entry's"
-- test `tests/unit/sql/confirmation-claim-review-gate.test.ts` "mongodb and redis text is not read as SQL"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL text built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL text is the same whatever order the declarations are admitted in"
 
 ### M-79 (normative): Studio's SQL writing is projected from the admitted declarations
 
@@ -1359,23 +677,6 @@ A function stated null is left out of the row, or is the row's null where the ro
 The segment holds no claim, M-52, so every member is read as declared.
 Removing a declaration gives exactly the SQL writing a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
-- test `tests/unit/db/engine-catalog.test.ts` "projectSqlWriting answers each declaration's SQL writing, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the SQL writing reads only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed SQL writing module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "the renderer writes a line feed as its escape and refuses every other character it does not quote"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored SQL writing change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a SQL writing function Studio holds none for"
-- test `tests/unit/db/sql-writing/compose.test.ts` "each row is its declaration's SQL writing composed with Studio's SQL writing function table"
-- test `tests/unit/db/sql-writing/compose.test.ts` "a hook the declaration states as null is left out, and a placeholder or temporal literal stated as null is null"
-- test `tests/unit/db/sql-writing/compose.test.ts` "each type pattern is compiled once, when its row is composed"
-- test `tests/unit/db/sql-writing/compose.test.ts` "the rows and their records are frozen"
-- test `tests/unit/db/sql-writing/compose.test.ts` "a function name Studio holds none for is refused by name at its slot, a name it holds only at another slot included"
-- test `tests/unit/db/sql-writing/compose.test.ts` "Studio's SQL writing function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL writing built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL writing is the same whatever order the declarations are admitted in"
-
 ### M-80 (normative): Studio's migration DDL is projected from the admitted declarations
 
 `MIGRATION_DDL` in `src/lib/db/migration-ddl/index.ts` is composed from each admitted declaration's `migrationDdl`, a segment it authors, M-15.
@@ -1385,22 +686,6 @@ Each row is composed when that module loads: a refused form as its refusal line,
 The segment holds no claim, M-52, so every member is read as declared.
 Removing a declaration gives exactly the migration DDL a fresh build from the remaining set gives.
 
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
-- test `tests/unit/db/engine-catalog.test.ts` "projectMigrationDdl answers each declaration's migration DDL, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the migration DDL reads only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed migration DDL module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored migration DDL and SQL generator change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a migration DDL function Studio holds none for"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "each row is its declaration's migration DDL composed with Studio's migration DDL function table"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "a refused declaration composes to its refusal line, no wrapper and its reasons, naming no function"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "the rows and their records are frozen"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "a function name Studio holds none for is refused by name at its slot, a name it holds only at another slot included"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "Studio's migration DDL function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/unit/db/migration-ddl/golden.test.ts` "migration DDL golden files"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the migration DDL built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the migration DDL is the same whatever order the declarations are admitted in"
-
 ### M-81 (normative): Studio's SQL generator forms are projected from the admitted declarations
 
 `SQL_ENGINE_GENERATORS` in `src/lib/db/query-generators/index.ts` is composed from each admitted declaration's `sqlGenerators`, a segment it authors, M-15.
@@ -1409,23 +694,6 @@ It is rendered by the command M-70 names, from the same authored members and hel
 Each row is composed when that module loads, for an engine whose declaration states forms, and an engine whose entry is null has no row: its name quoting and each statement form the declaration names are bound through Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, one table per slot, a name it holds no function for at that slot refused by name, with no default; a form stated null is left out, and the count expression is the declared one.
 The segment holds no claim, M-52, so every member is read as declared.
 Removing a declaration gives exactly the SQL generator forms a fresh build from the remaining set gives.
-
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
-- test `tests/unit/db/engine-catalog.test.ts` "projectSqlGenerators answers each declaration's SQL generator forms, null where it states none, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the SQL generator forms read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed SQL generator module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale editor module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored migration DDL and SQL generator change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the function when a declaration names a SQL generator function Studio holds none for"
-- test `tests/unit/lib/query-generators-compose.test.ts` "each SQL engine's generator row is its declaration's forms composed with Studio's SQL generator function table"
-- test `tests/unit/lib/query-generators-compose.test.ts` "an engine whose declaration states no generator forms has no row"
-- test `tests/unit/lib/query-generators-compose.test.ts` "a form the declaration states as null is left out, and the count expression is the declared one"
-- test `tests/unit/lib/query-generators-compose.test.ts` "the rows are frozen"
-- test `tests/unit/lib/query-generators-compose.test.ts` "a function name Studio holds none for is refused by name at its slot, a name it holds only at another slot included"
-- test `tests/unit/lib/query-generators-compose.test.ts` "Studio's SQL generator function table holds exactly the functions the committed declarations name, each at its own slot"
-- test `tests/isolated/query-generator-parity.test.ts` "every declaration answers exactly what the committed digests record"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL generator forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the SQL generator forms are the same whatever order the declarations are admitted in"
 
 ### M-82 (normative): Studio's policy and MCP claims are projected from the admitted declarations and read through one grant
 
@@ -1440,23 +708,6 @@ Every gate that reads a policy or MCP claim, on the server, in the browser and t
 No other module of Studio's source or of the VS Code extension's reads a policy or MCP claim record, and no module of the MCP layer names the write reach, recorded or granted.
 For every engine Studio ships, each granted table is its record's row and no engine is refused at open.
 A loader that admits a package computes the same grant over its admitted set.
-
-- test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
-- test `tests/unit/db/engine-catalog.test.ts` "projectClaimRequests answers each declaration's policy, MCP, connection and agent mode claims as it authors them, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the claim requests read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "the committed claim requests module is what the generator renders from the admitted declarations"
-- test `tests/unit/db/engine-catalog.test.ts` "--check names a stale claim requests module, and --write writes every projected module"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored policy, MCP and safeguards change in one run"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the claim requests built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the claim requests are the same whatever order the declarations are admitted in"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/claim-grants.test.ts` "for every shipped engine, each granted policy and MCP claim is its record's row, and no engine is refused at open"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set"
-- test `tests/unit/db/claim-record-readers.test.ts` "every policy, MCP, connection and agent mode claim record is read only by the grant reader"
-- test `tests/unit/db/claim-record-readers.test.ts` "the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import"
-- test `tests/unit/mcp/no-write-reach.test.ts` "no file under src/lib/mcp names the write reach, recorded or granted, or imports write-reach"
-- test `tests/isolated/claim-grant-open-refusal.test.ts` "each of the factory's four entry points refuses an engine left refused at open before any cache lookup, tunnel or build"
 
 ### M-83 (normative): Studio's connection and agent mode claims are projected from the admitted declarations and read through the one grant
 
@@ -1486,40 +737,6 @@ A refused tunnel hands a provider no `host` and `port` through the tunnel rule, 
 No other module of Studio's source or of the VS Code extension's reads one of the five records or the statement language record as a value, by any import, alias or re-export.
 For every engine Studio ships, each granted table is its record's row, at each gate that reads it, and a loader that admits a package computes the same grant over its admitted set, the package's own seed-only fields included.
 
-- test `tests/unit/db/engine-catalog.test.ts` "projectClaimRequests answers each declaration's policy, MCP, connection and agent mode claims as it authors them, frozen, in ascending id order"
-- test `tests/unit/db/engine-catalog.test.ts` "the claim requests read only the members a declaration authors"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored connection claim change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate regenerates an authored agent readings change in one run"
-- test `tests/unit/db/engine-catalog.test.ts` "bun run engines:generate exits 1 naming the engine when an authored statement language leaves its agent overlay no place"
-- test `tests/unit/db/engine-declarations.test.ts` "an agent overlay member the declaration has no place for, a grounding given as a value, and a pattern flag it does not take are refused by name by the generator"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the claim requests built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
-- test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
-- test `tests/unit/db/claim-grants.test.ts` "for every shipped engine, each granted connection claim is its record's row, at each gate that reads it"
-- test `tests/unit/db/claim-grants.test.ts` "a local file request is granted true where the request or the record is, or no record exists: request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "the host path fields granted are the union of the request and the record, and every host path field among the seed-only fields where no record exists"
-- test `tests/unit/db/claim-grants.test.ts` "the host path field vocabulary is the schema's hostPathField enum"
-- test `tests/unit/db/claim-grants.test.ts` "a server level request is read per gate: true at governance admission where either is or no record exists, true at the choice of database only where both are: request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "a refused tunnel request keeps its own sentence, one offered against a refusing record takes the record's, and one offered where no record exists takes core's own"
-- test `tests/unit/db/claim-grants.test.ts` "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null"
-- test `tests/unit/db/claim-grants.test.ts` "a connection claim value outside its vocabulary is refused by name, naming the claim and the engine"
-- test `tests/unit/db/claim-grants.test.ts` "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request"
-- test `tests/unit/db/claim-grants.test.ts` "an engine whose seed-only row is missing is refused by name"
-- test `tests/unit/db/claim-grants.test.ts` "the granted tables are frozen, each row too, keyed exactly by the shipped engines"
-- test `tests/unit/db/engine-projections-removal.test.ts` "the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set"
-- test `tests/unit/db/claim-record-readers.test.ts` "every policy, MCP, connection and agent mode claim record is read only by the grant reader"
-- test `tests/unit/db/claim-record-readers.test.ts` "the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import"
-- test `tests/isolated/connection-claim-grants.test.ts` "each connection gate answers Studio's grant of its claim, not the record"
-- test `tests/unit/db/claim-grants.test.ts` "for every shipped engine, each granted agent mode claim is its record's row"
-- test `tests/unit/db/claim-grants.test.ts` "a statement language request equal to the record's row is granted as that row, and any other, or one with no record, is read as null: %s, request %p, record %p"
-- test `tests/unit/db/claim-grants.test.ts` "the statement language and agent reading vocabularies are the schema's statementLanguage and agentReading enums, and the readings are CURATED_OPERATION_KINDS"
-- test `tests/unit/db/claim-grants.test.ts` "an agent mode claim value outside its vocabulary is refused by name, naming the claim and the engine"
-- test `tests/isolated/agent-claim-grants.test.ts` "each agent mode gate answers Studio's grant of its claim, not the record"
-- test `tests/unit/lib/agent/posture.test.ts` "whether an engine executes is Studio's grant of its statement language: an engine granted one reads"
-- test `tests/components/agent/AgentRail.test.tsx` "the rail reads Studio's grant of the engine's statement language: an engine granted none shows the unsupported card"
-- test `tests/unit/db/claim-grants.test.ts` "the agent readings granted are the intersection of the request and the record in the record's order, a frozen list, and empty where no record exists"
-- test `tests/unit/db/claim-record-readers.test.ts` "the agent readings of Studio's facet rows are read only by the grant reader, and the scan finds each way a module could read them"
-
 ## Values
 
 A value crosses a JSON boundary, between a provider and the host or between two of the host's own hops, in one form: the value codec of `@libredb/provider-sdk/values`.
@@ -1530,47 +747,21 @@ A value is plain JSON, or a tagged value: an object whose own keys are exactly `
 The tags are the schema's `valueTag`, typed `ValueTag`, and the codec's module comment states the value and the payload of each.
 `encodeValue` writes only those tags and `decodeValue` reads only those.
 
-- schema `/$defs/valueTag`
-- test `packages/provider-sdk/tests/values/tags.test.ts` "the codec writes and reads exactly the schema's value tags"
-- test `packages/provider-sdk/tests/values/tags.test.ts` "a tag the schema does not name is refused on decode"
-
 ### V-2 (normative): Every tag round-trips
 
 A value the codec encodes decodes to the same value, an object member left out under V-9 aside, and a JSON value with no tagged kind crosses unchanged.
-
-- test `packages/provider-sdk/tests/values/codec.test.ts` "every bigint from -2^63 to 2^64 - 1 round-trips as its decimal digits"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "every Uint8Array and Buffer round-trips as canonical base64, byte for byte"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "every valid Date round-trips as its toISOString text, the range ends included"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "NaN, Infinity and -Infinity round-trip as their words"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a JSON value with no tagged kind passes through both ways unchanged"
 
 ### V-3 (normative): Nothing a database hands back is read as a tag
 
 A data object whose own keys are exactly `$` and `v` is written as the escape tag, so an object with those two keys on the wire is always a tag.
 
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an object whose keys are exactly $ and v round-trips at any depth and is never read as a tag"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an object with $ alone or with a third key is not wrapped"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a __proto__ key stays an own key"
-
 ### V-4 (normative): The domain is closed, and a refusal never carries the value
 
 The codec refuses every value outside its domain with a `ValueCodecError` that names the kind and the JSON Pointer of the place, never the value.
 
-- test `packages/provider-sdk/tests/values/codec.test.ts` "every value outside the codec's domain is refused by kind, naming its JSON Pointer and never its value"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a bigint outside the 64-bit range is refused, naming its path"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an invalid Date is refused on encode"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a ValueCodecError is an Error with its own name"
-
 ### V-5 (normative): Decoding is strict and canonical
 
 A payload in any spelling but the one the encoder writes, an unknown tag, a payload of the wrong type and a value `JSON.parse` cannot produce are each refused on decode.
-
-- test `packages/provider-sdk/tests/values/codec.test.ts` "digits with a plus sign, a leading zero, an exponent, spaces or -0 are refused on decode"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "base64 that is malformed, unpadded, URL-safe or non-canonical is refused on decode"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a timestamp that is not exactly toISOString's text is refused on decode"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an obj payload whose keys are not exactly $ and v is refused on decode"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an unknown tag or a payload of the wrong type is refused on decode, naming its path"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "decode refuses a value JSON cannot produce"
 
 ### V-6 (informative): No tag for a decimal, a date, a time of day or a duration
 
@@ -1587,17 +778,10 @@ Nothing checks this yet.
 An array or a data object nested inside `MAX_VALUE_DEPTH` others is refused on encode and on decode with a `ValueCodecError` naming its JSON Pointer, so a deep or cyclic value is refused by name and never overflows the stack.
 A tagged value counts as the one value it carries: the wire's tag wrapper adds no level, and an `obj` payload is the data object the bound counts.
 
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a value inside MAX_VALUE_DEPTH arrays and objects round-trips, and one level more is refused on encode and decode, naming its path"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "a tagged value adds no level, so the bound counts the value's own arrays and objects"
-- test `packages/provider-sdk/tests/values/codec-depth.test.ts` "a value nested far past any stack is refused by the depth rule in a bounded Node child, never a RangeError"
-
 ### V-9 (normative): An object member whose value is undefined is left out
 
 An object member whose value is `undefined` is left out on encode, as JSON leaves it out, and the `obj` escape is decided on the members written.
 `undefined` at the root or as an array element is refused.
-
-- test `packages/provider-sdk/tests/values/codec.test.ts` "an object member whose value is undefined is left out, and undefined anywhere else is refused"
-- test `packages/provider-sdk/tests/values/codec.test.ts` "the obj escape is decided on the members written"
 
 ## Errors
 
@@ -1615,36 +799,19 @@ One core kind reaches a caller through a provider: the read allowance core hands
 The provider lets that refusal pass unchanged, and never constructs one of its own.
 The provider code that charges the allowance is recorded, so a new charge is noticed.
 
-- test `packages/provider-sdk/tests/errors/kinds.test.ts` "the kinds a provider raises and the kinds only core raises partition the record's kinds"
-- test `tests/unit/db/provider-error-kinds.test.ts` "every error class Studio declares has a kind the contract places"
-- test `tests/unit/db/provider-error-kinds.test.ts` "provider code constructs and extends only classes of the kinds a provider may raise"
-- test `tests/unit/db/provider-error-kinds.test.ts` "provider code charges the read allowance only where the record names, so its refusal is the one core kind a provider passes on"
-- test `tests/unit/lib/db/error-record.test.ts` "every class errors.ts exports has exactly one kind, and no two share one"
-
 ### E-2 (normative): A provider's own class takes its nearest contract class's kind
 
 An error class a provider declares takes the kind of the nearest contract class it extends, whatever its own fields say.
 Any thrown value that is no contract error is `internal`.
-
-- test `tests/unit/lib/db/error-record.test.ts` "a TransportError answers connection, whatever its own kind field says"
-- test `tests/unit/lib/db/error-record.test.ts` "a value that is no error class answers internal"
 
 ### E-3 (normative): The record is closed
 
 A record holds `kind` and `code`, and may hold `sqlState`, `engineCode`, `outcome` and `sessionState`, each in its vocabulary or pattern: `ERROR_KINDS`, `SQLSTATE_PATTERN`, `ENGINE_CODE_PATTERN`, `EXECUTE_OUTCOMES` and `SESSION_STATES`.
 A reader refuses any other record, naming the field and never its value.
 
-- test `tests/unit/lib/db/error-record.test.ts` "a missing or unknown kind or code is refused, naming the field"
-- test `tests/unit/lib/db/error-record.test.ts` "a malformed sqlState or engineCode is refused, naming the field and not the value"
-- test `tests/unit/lib/db/error-record.test.ts` "an unknown outcome or session state is refused"
-- test `tests/unit/lib/db/error-record.test.ts` "an extra key is refused"
-- test `tests/unit/lib/db/error-record.test.ts` "every generated record over the whole shape crosses JSON and the reader unchanged"
-
 ### E-4 (normative): The record holds no text of the error
 
 A record holds no message, detail, statement or identifier of the error.
-
-- test `tests/unit/lib/db/error-record.test.ts` "no record holds any text the error carries"
 
 ### E-5 (normative): Only a statement that cannot have reached the database is not-sent
 
@@ -1653,28 +820,6 @@ The host marks every failure of a provider's connect, and a provider claims not-
 The host also marks not-sent a console call it refuses before making it, a deadline already passed or a caller already gone, C-51.
 Studio's own refusal of an offset a legacy provider's prepare did not apply, C-85, is not-sent, since the bridge raises it before the provider's read path is called.
 No provider writes an error's `outcome` itself, and every other failure is `unknown`.
-
-- test `tests/unit/db/provider-error-kinds.test.ts` "provider code never writes an error's outcome"
-- test `tests/unit/lib/db/error-record.test.ts` "a refusal before send answers not-sent wherever it is raised"
-- test `tests/unit/lib/db/error-record.test.ts` "every other class answers unknown"
-- test `tests/unit/db/errors.test.ts` "is an OffsetUnsupportedError only Studio raises, outcome not-sent"
-- test `tests/unit/lib/db/error-record.test.ts` "Studio's refusal of an offset it did not see applied answers not-sent wherever it is raised"
-- test `tests/unit/db/errors.test.ts` "a failure the connect raises keeps its identity and answers not-sent"
-- test `tests/unit/db/errors.test.ts` "a connect deadline becomes a ConnectionError that answers not-sent"
-- test `tests/unit/db/errors.test.ts` "a failure the checkout raises is thrown as its mapped class and answers not-sent"
-- test `tests/unit/db/errors.test.ts` "a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause"
-- test `tests/unit/db/statement-outcome-docs.test.ts` "each provider document has one Failed statement outcome row, checkout-not-sent exactly when its provider runs a checkout through checkoutPhase"
-- test `tests/integration/db/postgres-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing"
-- test `tests/integration/db/mysql-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent, not an internal error"
-- test `tests/integration/db/oracle-provider.test.ts` "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing"
-- test `tests/integration/db/postgres-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent, sends nothing and holds no transaction"
-- test `tests/integration/db/mysql-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent, not an internal error"
-- test `tests/integration/db/oracle-provider.test.ts` "a begin whose pool checkout fails answers its mapped class with outcome not-sent and holds no transaction"
-- test `tests/unit/db/errors.test.ts` "a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown"
-- test `tests/integration/db/postgres-provider.test.ts` "%s on a held transaction whose session already ended answers TRANSACTION_LOST with outcome not-sent and sends nothing"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "a checkout failure inside execute answers not-sent"
-- test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
-- test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
 
 ### E-6 (informative): No error carries a session state or an engine code yet
 
@@ -1686,16 +831,12 @@ A driver's error row, `DriverErrorClassifier`, answers what the driver's own fie
 A configuration refusal is `config`; a database the login cannot open is `connection`; an access refusal is `permission` for a missing privilege and `authentication` for a refused credential, and the credential words count only on an error that carries no code; a statement fault is `query`; the engine's own time budget is `timeout`; a cancelled statement is `cancelled`; a late classification is `connection` or `query`, as it says.
 The record keeps the SQLSTATE the driver reported.
 
-- test `tests/unit/db/driver-row-kinds.test.ts` "each answer a driver row gives maps to one error kind, keeping the driver's SQLSTATE"
-- test `tests/unit/db/driver-errors.test.ts` "answers every corpus input exactly as the shared mapping answered it before the move"
-
 ### E-8 (normative): Nothing resends on `retryable`
 
 An answer's `retryable` is advice to a person that trying again may help.
 No host, client, agent or MCP component resends a request because of it, for a write and a billed read alike.
 Every read of the flag in Studio's source is a recorded copy that carries it to the next hop.
 
-- test `tests/unit/lib/api/retryable-readers.test.ts` "every read of an answer's retryable is a recorded copy, so nothing resends on it"
 ## SQL grammar
 
 An engine whose query text is SQL states its grammar facts: what a handful of characters and forms mean in its SQL, which Studio's readers read a statement's structure with.
@@ -1705,11 +846,6 @@ An engine whose query text is SQL states its grammar facts: what a handful of ch
 The grammar facts are one type and the compatibility reading is one value, both exported from `@libredb/provider-sdk/sql`.
 Studio's readers and the composition of its grammar rows import `SqlGrammar` and `DEFAULT_SQL_GRAMMAR` from `@libredb/provider-sdk/sql` by name, a fact a dialect has not established takes the default's value, and the module that resolves a grammar by engine id declares neither.
 The default is frozen to its leaves, so no module that imports it changes it for another.
-
-- test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is the compatibility reading"
-- test `packages/provider-sdk/tests/sql/grammar.test.ts` "DEFAULT_SQL_GRAMMAR is frozen to its leaves, so no importer changes it for another"
-- test `tests/unit/sql/grammar.test.ts` "the module that resolves a grammar by engine id exports only its two readers"
-- test `tests/unit/db/sql-grammar/shared.test.ts` "the shared blocks are NO_EXTRA_WORDS and REDACTED_VALUE"
 
 ### S-2 (informative): Studio composes its grammar rows from the declarations
 
@@ -1722,13 +858,6 @@ An engine states, in `sqlText`, whether its statement text is SQL, its grammar f
 `grammar` has one member per member of the SDK's `SqlGrammar`, under the same name, and every member is required.
 Studio composes each engine's grammar row from its declaration, M-78, and its census reads every member of every declaration back to that row, and finds no member of a row that its declaration leaves out.
 
-- schema `/$defs/sqlText`
-- schema `/$defs/grammarFacts`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a SQL text segment with every grammar fact stated, a command redaction and both completion readers is admitted"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.readsSqlText is the engine's SQL_GRAMMAR row's"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of a grammar row has its member in the declaration"
-
 ### S-4 (normative): A fact the grammar may leave out is written
 
 A fact the `SqlGrammar` type may leave out is written at the reading its absence has.
@@ -1737,24 +866,11 @@ The two backslash overrides are null where the quote takes the reading `backslas
 The session keys are null where no SET or RESET asks, and a list, even an empty one, makes a RESET with no key ask.
 A grammar read from a declaration, each null fact left out, reads every statement as the engine's grammar row does.
 
-- schema `/$defs/grammarFacts/properties/confirmConfigKeys`
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.grammar is the row's grammar, each fact the row leaves out at its reading when left out and each trailing limit clause by its source and flags"
-- test `tests/unit/db/engine-declarations.test.ts` "a grammar read from the declaration reads every statement of the census corpus as the row's grammar does"
-- test `tests/components/QuerySafetyDialog.test.tsx` "absent: a RESET and a listed key ask nothing"
-- test `tests/unit/sql/spans.test.ts` "absent, with backslashAlwaysEscapes true: the backslash escapes the quote and the run does not close"
-
 ### S-5 (normative): Trailing limit clauses
 
 A trailing limit clause is a pattern of a `source`, of 1 to 512 characters, which opens with `\s+` and closes with `\s*$`, and its `flags`, `i` or `iu`, and it compiles as JavaScript's `RegExp` reads it with its flags.
 The flags that would make the limiter remember where it stopped, match at a line end or anchor at a stored index are left out.
 Studio places the row bound before the run of such clauses at a statement's end, stripping them in the order declared, and reads a bound followed by such a run as the statement's own.
-
-- schema `/$defs/clausePattern`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause longer than 512 characters is refused as out-of-range"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause whose flags are not i or iu is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a trailing limit clause that does not compile is refused as pattern-invalid"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's trailing limit clauses are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/sql/spark-grammar.test.ts` "a trailing OFFSET follows the row bound, and LIMIT before OFFSET reads as bounded"
 
 ### S-6 (informative): How a host runs a clause pattern
 
@@ -1770,36 +886,16 @@ An engine's redaction says what the query event log keeps of a statement.
 `none`: nothing of the text is kept.
 `command`: a named pure reader answers, from the statement's text, the text the log keeps.
 
-- schema `/$defs/statementRedaction`
-- schema `/$defs/nameQuote`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a redaction of no listed kind, a name quote outside the vocabulary and a reader that is not a function name are each one refusal at the redaction"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.redaction is the row's redaction, a command reader named by its slot"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names"
-- test `tests/unit/lib/query-events/redact.test.ts` "the vectors hold every literal form for postgres, mysql, mssql and oracle, and MongoDB and Redis commands"
-
 ### S-8 (normative): A claim that loosens the confirmation gate
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
 The gate counts such a claim only where Studio's review record lists it, and every other reader reads it as declared.
 Studio's census holds each declaration's claims to the record.
 
-- test `tests/unit/sql/confirmation-claim-review-gate.test.ts` "mongodb and redis text is not read as SQL"
-- test `tests/unit/sql/confirmation-claim-review-gate.test.ts` "snowflake's session forms stay exempt"
-- test `tests/unit/lib/db/confirmation-claim-review.test.ts` "lists every exempt form a shipped grammar row declares, and no other"
-- test `tests/unit/lib/db/confirmation-claim-review.test.ts` "lists every text-not-sql claim a shipped grammar row makes, and no other"
-- test `tests/unit/db/engine-declarations.test.ts` "the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine"
-- test `tests/unit/db/engine-declaration-readers.test.ts` "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW"
-
 ### S-9 (normative): Update target words and completion quoting
 
 `updateTarget` names the words beside the shared sets that open a query and that join two queries, each one upper-case word, and whether `--` opens a comment only before a space or a control character.
 `completion` names a pure segment formatter, used instead of the connection's quoting, and a pure reader of a quoted qualifier before a dot, each null where the engine has none.
-
-- schema `/$defs/updateTargetWords`
-- schema `/$defs/completionReaders`
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.updateTarget is the row's, each word set in its order"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlText.completion names a segment formatter and a quoted qualifier reader exactly where the row has one"
-- test `tests/unit/db/engine-declarations.test.ts` "every function a grammar row holds is named by its engine's declaration"
 
 ### S-10 (informative): Where a grammar function runs
 
@@ -1813,32 +909,12 @@ The segment has one member per member of Studio's SQL writing row, under the sam
 A function the engine lacks is null, and every other function is named by the slot it fills.
 Studio composes each engine's row from the segment, M-79, so no member of the row is stated anywhere else.
 
-- schema `/$defs/sqlWriting`
-- schema `/$defs/inlineEditFacts`
-- schema `/$defs/exportFacts`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL writing segment with every hook named, a create table key, a bare spelling and every key float64 is admitted"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL writing row has its member in the declaration"
-
 ### S-12 (normative): The type names an inline edit and an export read
 
 An inline edit type name is one lower-case word, since the inline edit reads the first word of a declared type, lower-cased and with its wrappers off.
 A standing-alone name, a bare spelling's name and a bare type family's name are lower-case words separated by one space, since the export reads a declared type trimmed, lower-cased and with each run of whitespace one space.
 Every key column is float64 where `float64TypeNames` is `all`.
 A map keyed by type name is a list, the bare spellings as entries and the bare type families as one list per kind, and each name is named once per table.
-
-- schema `/$defs/keyTypeName`
-- schema `/$defs/declaredTypeName`
-- schema `/$defs/float64TypeNames`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an inline edit type name that is not one lower-case word is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a declared type name that is not lower-case words separated by single spaces is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "float64 type names that are neither a list nor all are one refusal at the member"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type name under two families, or a bare spelling named twice, is refused as type-name-duplicate at the later"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.inlineEdit is the row's, each type name set in its order and float64 as all where every key is"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export states the row's DDL types, standing-alone names, bare spellings, non-finite literals and insert form"
-- test `tests/unit/db/sql-writing/golden.test.ts` "SQL writing golden output"
-- test `tests/unit/db/sql-writing/compose.test.ts` "each row is its declaration's SQL writing composed with Studio's SQL writing function table"
 
 ### S-13 (normative): Text an export writes from a declaration stays on its line
 
@@ -1847,33 +923,12 @@ A non-finite literal is printable ASCII with no line break and no space at eithe
 A create table key's note is whole comment lines, each `-- ` and text with no line break, ending in a line feed.
 So nothing a declaration states becomes a statement of the file an export writes.
 
-- schema `/$defs/sqlTypeSpelling`
-- schema `/$defs/nonFiniteLiteral`
-- schema `/$defs/commentLines`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a DDL type, a bare spelling or a non-finite literal that would not stay on its line is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a DDL type or a bare spelling that is more than one type at the top level is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a create table key note that is not whole comment lines is refused as pattern-mismatch"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.createTableKey carries the row's note where the row has a key"
-
 ### S-14 (normative): The type vocabulary
 
 Each engine states the vocabulary its declared types are read with: its bare type families grouped by kind, and three patterns.
 Each pattern is a `source` of 2 to 512 characters, written with `^` and `$`, and its `flags`, none, `i`, `u` or `iu`, and it compiles as JavaScript's `RegExp` reads it with its flags.
 `floatType` and `exactNumericType` are tested against a whole type, and `numericWrapper` captures exactly one group, the type it wraps.
 The validator counts that group without running the declared pattern, so a wrapper that backtracks without end on some text is admitted or refused as quickly as any other.
-
-- schema `/$defs/typeVocabulary`
-- schema `/$defs/typePattern`
-- schema `/$defs/typeFamilies`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern longer than 512 characters is refused as out-of-range, and one not written with ^ and $ as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern whose flags are not none, i, u or iu is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a type pattern that does not compile is refused as pattern-invalid"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that does not capture exactly one group is refused as wrapper-group-count"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a wrapper pattern that backtracks without end on the empty string is still counted at once"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL writing facts are held to the rules the schema cannot state, at pointers into it"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlWriting.export.typeVocabulary is the row's, its bare type families grouped by kind and each pattern by its source and flags"
-- test `tests/unit/db/sql-writing/golden.test.ts` "SQL writing golden output"
-- test `tests/unit/db/sql-writing/compose.test.ts` "each row is its declaration's SQL writing composed with Studio's SQL writing function table"
 
 ### S-15 (informative): How a host runs a type pattern
 
@@ -1883,9 +938,6 @@ Studio takes a wrapper off only while the pattern matches and its capture is a s
 Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 Every type pattern Studio declares is the source and flags of one its export runs today, each measured to run in time linear in the type's length.
 Studio compiles each type pattern once, when it composes the engine's row, M-79.
-
-- test `tests/unit/lib/export/numeric-wrapper-bounds.test.ts` "a wrapper whose capture is not shorter than the type ends the unwrapping, so the export reads the type as it is"
-- test `tests/unit/lib/export/numeric-wrapper-bounds.test.ts` "a wrapper whose group is absent ends the unwrapping"
 
 ### S-16 (informative): Where an SQL writing function runs
 
@@ -1903,36 +955,12 @@ The segment has one member per member of Studio's migration DDL row in that form
 A value neither form admits is one `no-variant` refusal at the segment, as M-5 says of every union.
 Studio composes each engine's migration DDL row from the segment, M-80, so no member of the row is stated anywhere else.
 
-- schema `/$defs/migrationDdl`
-- schema `/$defs/migrationDdlRefused`
-- schema `/$defs/migrationDdlWritten`
-- schema `/$defs/createTable`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL segment that refuses table DDL, one that writes it with a transaction wrapper, and one whose CREATE TABLE is refused are admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL member of the other form, a missing one or an unknown one is one no-variant refusal at the segment"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a create table of no listed kind, or with a member of the other kind, is one no-variant refusal at the segment"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's migration DDL is refused at its own pointer under validateEngine"
-- test `tests/unit/db/engine-declarations.test.ts` "migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order"
-- test `tests/unit/db/engine-declarations.test.ts` "migrationDdl.createTable states the row's create table form"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of a migration DDL row has its member in the declaration"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "each row is its declaration's migration DDL composed with Studio's migration DDL function table"
-- test `tests/unit/db/migration-ddl/compose.test.ts` "a refused declaration composes to its refusal line, no wrapper and its reasons, naming no function"
-- test `tests/unit/db/migration-ddl/golden.test.ts` "migration DDL golden files"
-
 ### S-18 (normative): Text a migration writes from a declaration stays on its line
 
 The refusal is one comment line, `-- ` and text with no line break, up to 1024 characters.
 Each transaction wrapper statement is words separated by one space, ending in its one semicolon, up to 64 characters.
 Each reason is one line of 1 to 1024 characters, named once.
 So nothing a declaration states becomes a second statement of the migration.
-
-- schema `/$defs/migrationRefusal`
-- schema `/$defs/wrapperStatement`
-- schema `/$defs/transactionWrapper`
-- schema `/$defs/ddlReason`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL refusal that is not one comment line is one no-variant refusal at the segment"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a migration DDL reason that is not one line, or is listed twice, is one no-variant refusal at the segment"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a transaction wrapper statement that is not words ending in one semicolon is one no-variant refusal at the segment"
-- test `tests/unit/db/migration-ddl/golden.test.ts` "migration DDL golden files"
 
 ### S-19 (informative): Where a migration DDL function runs
 
@@ -1948,26 +976,10 @@ Otherwise it names the engine's name quoting, the tree click's statement, Genera
 The segment has one member per member of Studio's SQL generator row, and every member is required.
 Studio composes each SQL engine's generator row from the segment, M-81, so no member of the row is stated anywhere else.
 
-- schema `/$defs/sqlGenerators`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL generator segment naming every form, one naming only its quoting, and a null one are admitted"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an SQL generator form named in another form is refused at the form"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's SQL generators are refused at their own pointer under validateEngine"
-- test `tests/unit/db/engine-declarations.test.ts` "sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none"
-- test `tests/unit/db/engine-declarations.test.ts` "every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs"
-- test `tests/unit/db/engine-declarations.test.ts` "every function an SQL generator row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of an SQL generator row has its member in the declaration"
-- test `tests/unit/lib/query-generators-compose.test.ts` "each SQL engine's generator row is its declaration's forms composed with Studio's SQL generator function table"
-- test `tests/unit/lib/query-generators-compose.test.ts` "an engine whose declaration states no generator forms has no row"
-- test `tests/isolated/query-generator-parity.test.ts` "every declaration answers exactly what the committed digests record"
-
 ### S-21 (normative): A count expression is one call
 
 A count expression is an aggregate name of letters, digits and underscores, starting with a letter, followed by `(*)`, up to 64 characters.
 So the count a declaration states fills one expression of the statement Studio writes, and never adds a clause or a statement.
-
-- schema `/$defs/countExpression`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a count expression that is not one aggregate call over every row is refused as pattern-mismatch, and one longer than 64 characters as out-of-range"
-- test `tests/isolated/query-generator-parity.test.ts` "every declaration answers exactly what the committed digests record"
 
 ### S-22 (informative): Where an SQL generator function runs
 
@@ -1985,24 +997,6 @@ An engine with no dialect opens its tabs under its query language's tab type: `s
 An engine with a dialect opens them under the dialect's name (M-50), so a manifest states no tab type.
 Two engines that name one editor language state the same accent and console.
 The projection refuses by name two declarations that state one editor language with a different accent or console, or one tab type in different languages, M-77, and Studio composes each language's code with the accent the declarations state.
-
-- schema `/$defs/editorLanguageFacts`
-- schema `/$defs/queryLanguage`
-- schema `/$defs/monacoLanguageId`
-- schema `/$defs/editorAccent`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an editor language with Studio's query language, Monaco language and accent is admitted, and a console language too"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a query language or a Monaco language outside Studio's is refused as value-not-allowed"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an accent that is not one border hue class of Studio's palette, or is a status hue, is refused as pattern-mismatch"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an editor language that states a tab type or a console dialect id is refused as unknown-key"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's editor language is refused at its own pointer under validateEngine"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.language.queryLanguage is the query language the engine's unconnected provider declares"
-- test `tests/unit/db/engine-declarations.test.ts` "a dialect-less engine's tabs take its query language's tab type, and a dialect engine's its dialect's name"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.language.monacoId is the Monaco language Studio's editor renders the engine's tabs in"
-- test `tests/unit/db/engine-declarations.test.ts` "editor.language.accent and console are the EDITOR_LANGUAGES row's, a console registered under its own Monaco id"
-- test `tests/unit/db/engine-declarations.test.ts` "EDITOR_LANGUAGES and DIALECT_EDITORS are the editor language facts the declarations state, one per language and one per tab type"
-- test `tests/unit/db/engine-declarations.test.ts` "every member of an editor language row and of a tab type's editor row has its member in the declaration, or stays browser code"
-- test `tests/unit/db/engine-declarations.test.ts` "the query languages and the editor languages are Studio's"
-- test `tests/unit/editor/editor-language-registry.test.ts` "each language takes an accent of its own, and none is a status hue"
 
 ### S-24 (informative): What stays Studio's browser code
 
@@ -2035,28 +1029,6 @@ Every key the check reads is read as a data property, and an accessor there is r
 An `honours` list longer than the request fields is refused by its length, before any item is read, so a sparse array's length bounds no loop of the check.
 So is an engine list, and an engine's maintenance, maintenance specs and agent readings lists, longer than the schema's `maxItems` for it: the engine list holds at most 64 engines, a contract limit for a package that serves one provider's engines, and each facet list at most the size of its vocabulary, since each item is listed once and a spec is stated once for each operation listed.
 
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a provider whose implementation matches its declared calls is defined, and its record is frozen"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the manifest in the record is a deep-frozen copy, and the package's own object is left as it was"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a value that is not a provider module record is refused as module-not-a-record"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a manifest or record built against another contract is refused as contract-not-served"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no refusal and no message carries a value of the manifest or the implementation"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an accessor the check would read is refused as property-not-data, and its getter is never called"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an honours list longer than the request fields is refused as manifest-unreadable at the list, and no item is read"
-- test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a manifest honours list of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no engine is read"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance or agent readings list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no item is read"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance specs list longer than the schema's maxItems is refused as manifest-unreadable at the list, and no item is read"
-- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "an engine list of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "a maintenance list of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "a maintenance specs list of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/list-bounds.test.ts` "an agent readings list of the longest length is refused at the list, in a bounded child"
-- schema `/properties/engines/maxItems`
-- schema `/$defs/facets/properties/maintenance/maxItems`
-- schema `/$defs/facets/properties/maintenanceSpecs/maxItems`
-- schema `/$defs/facets/properties/agentReadings/maxItems`
-- test `packages/provider-sdk/tests/manifest/schema.test.ts` "the engine list is bounded at 64, and each facet list by the size of its vocabulary"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a list longer than its maxItems is refused as too-many"
-
 ### C-2 (informative): Admission checks the record with the host's SDK
 
 The loader reads only the entry's `default` export, C-87.
@@ -2070,10 +1042,6 @@ The mandatory calls are `open`, `close`, `health` and `console.execute`, each a 
 An implementation defines no other key than the calls this contract defines: its keys are `open`, `close`, `health`, `console`, `objects`, which holds the object facets, `maintenance`, which holds the maintenance facets, and `monitoring`, which holds the monitoring facets; an implementation that offers no object, maintenance or monitoring facet may leave that segment out or hold it empty.
 Each calls segment it has, `console`, `objects`, `maintenance` and `monitoring` alike, is a record of its calls: one that is `null`, a string, an array or any other value that is not an object is refused by name, and nothing under it is read.
 
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a calls segment of the implementation that is not a record is refused as impl-segment-not-a-record, and nothing under it is read"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
-
 ### C-4 (normative): An optional facet is declared and implemented, both ways
 
 An optional facet, one of `CONSOLE_FACETS`, `OBJECTS_FACETS`, `MAINTENANCE_FACETS` or `MONITORING_FACETS`, is offered in the manifest's `calls.console`, `calls.objects`, `calls.maintenance` or `calls.monitoring` exactly when the implementation has its function under `console`, `objects`, `maintenance` or `monitoring`.
@@ -2086,48 +1054,17 @@ A package may offer either monitoring facet with no engine offering a panel: the
 An engine's agent reading is admitted only where the package offers the call that serves it, which `AGENT_READING_PANELS` names: a reading read through a monitoring panel only where it offers `monitoring.panel`, and is otherwise refused by name as `engine-facet-call-not-offered`, naming `monitoring.panel`; `health`, which the mandatory health call serves, on every package.
 Of an agent reading the check reads only which call serves it; a reading outside the vocabulary, and a reading whose panel its engine does not offer, are the validator's, M-76.
 
-- schema `/$defs/consoleCalls`
-- schema `/$defs/objectsCalls`
-- schema `/$defs/maintenanceCalls`
-- schema `/$defs/monitoringCalls`
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an offered facet the implementation lacks is refused as facet-unimplemented"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implemented facet the manifest does not offer is refused as facet-undeclared"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the objects tree facet is declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the maintenance facets are declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's maintenance is admitted where the package offers maintenance.run, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance spec that previews is admitted where the package offers maintenance.preview, and refused by name where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an agent reading is admitted where the call that serves it is offered: a panel reading where the package offers monitoring.panel, and health on every package"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a panel reading is refused by name as engine-facet-call-not-offered, naming monitoring.panel, where the package does not offer it"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "no definition check answers engine-facet-without-call, which left the vocabulary with the agent readings' calls"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance facets are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "each agent reading names the monitoring panel that serves it, or none for health"
-
 ### C-5 (normative): A package declares the request fields its execute honours
 
 A package lists in `calls.console.execute.honours` the optional request fields, of `EXECUTE_REQUEST_FIELDS`, its execute honours.
 How the host uses that list is C-9, and how a provider does is C-8.
 A package that serves read-only statements lists `readOnly`, the read-only execute of C-78.
 
-- schema `/$defs/executeCall/properties/honours`
-- schema `/$defs/executeRequestField`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a request field execute does not know, or one listed twice, is refused"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a manifest without its calls is refused as missing-key"
-
 ### C-6 (normative): A package never reads a proxy variable
 
 `runtime.env` cannot declare a proxy variable, in either case, so every route out of Studio's process is core's.
 Package source reads no environment variable itself, M-18.
 A later check of the kit runs each package in an environment poisoned with proxy variables; it does not exist yet.
-
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a proxy variable declared in runtime.env is refused as env-proxy-variable"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a lower-case proxy variable is refused by the name pattern"
-- test `tests/unit/provider-source-coupling-lint.test.ts` "process.env is refused in provider source, in each form a provider reads it today"
 
 ### C-7 (normative): Today's provider inputs and console answer each have a place
 
@@ -2147,19 +1084,6 @@ The panel shapes, the pool statistics and the health answer are mutually assigna
 It covers today's read-only statement surface: the provider's read-only statement path placed on console execute sent with `readOnly`, its statement on the request's statement, its budget's rows and bytes on the read-only execute's budget, its mode on the read-only execute's mode, its timeout on the call's deadline, and its billed-read allowance with the host, C-78.
 Studio's read-only statement mode is the SDK's `READ_ONLY_MODES`, both ways.
 
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every input a provider is built with has a place in the open context or a reason it stays with the host"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's console answer and request has a place in the console calls"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's transaction surface has a place in the console calls"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's object tree surface has a place in the objects calls"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the object tree's answers are Studio's own shapes"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's maintenance surface has a place in the maintenance calls or the open answer"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the maintenance answers are Studio's own shapes"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's monitoring and health surface has a place in the monitoring calls, the health call or with the host"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the monitoring and health answers are Studio's own shapes"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "the context's shared shapes are Studio's own"
-
 ### C-8 (informative): A provider never ignores a request field it does not honour
 
 A provider that receives a request field it does not honour answers a named error and never ignores it.
@@ -2175,14 +1099,6 @@ A present `params` key is sent whatever its length, and an offset is sent when i
 A present `readOnly` key is held to `honours` like every other field, and the session's read-only policy holds it beside, C-78.
 A refusal names the field and a JSON Pointer into the request, never a value of it.
 
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that honours every field and offers endScope takes each"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a request on a refined session is held to the narrowed calls"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a statement sent inside a transaction to a session without console.transaction is refused before the call"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a statement sent inside a transaction never carries a scope"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers console.transaction takes a statement inside its transaction with its params and offset"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a CallRefusalError carries every refusal and words each"
-
 ### C-10 (normative): A refinement only narrows a session's calls
 
 `open` may answer a refinement beside its handle: a closed object at the paths of the manifest's `calls`, every key optional, every value of which is a subset of the declared one.
@@ -2195,19 +1111,6 @@ Its `calls` may hold `console`, `objects`, `maintenance` and `monitoring`, each 
 A refinement may also hold `maintenance`, the placements the session's server accepts, C-68, read for its shape here; any other top-level key is refused by name.
 A refinement is a call's answer, not a manifest fact, so the schema has no place for it.
 
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that widens a declared value is refused as refinement-widens"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw console.transaction, and never offer it where the manifest does not"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw maintenance.run and maintenance.preview, and never offer one the manifest does not"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw monitoring.panel and monitoring.poolStats, and never offer one the manifest does not"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "an honours list longer than the declared one is refused as refinement-widens at the list, and no item is read"
-- test `packages/provider-sdk/tests/calls/honours-bounds.test.ts` "a refinement honours list of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a key a refinement cannot have is refused as refinement-key-unknown"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a calls segment the contract does not define is refused by name, and never read as the objects segment"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement value of the wrong type, an accessor or a repeated field is refused as refinement-unreadable"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "no refinement refusal carries a value of the refinement"
-
 ### C-11 (normative): The contexts and requests the host passes are frozen
 
 `freezeContext` freezes a context in place at every depth, except its `signal` and `env`, which stay exactly as the host passed them, because a frozen AbortSignal can no longer be aborted or listened to on Node.
@@ -2216,23 +1119,11 @@ Both walk every own key of every object they freeze, symbols included.
 Either refuses, by its JSON Pointer and then freezing nothing, an object outside the value codec's domain, a function, an invalid Date, which `encodeValue` refuses too, and an accessor property, whose getter it never calls, so no object behind a getter is left unfrozen.
 Either refuses a symbol-keyed property by the JSON Pointer of the object that holds it, since a pointer cannot name a symbol, and then freezes nothing.
 
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a context is frozen at every depth, and a write to any of it throws"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "the signal and the environment reader are left as the host passed them, and the signal still aborts"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a request is frozen at every depth, except its typed arrays and dates"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a value that holds itself is frozen once"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an object outside the value codec's domain is refused by its pointer"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an accessor property is refused by its pointer, its getter never runs, and nothing is frozen"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "a symbol-keyed property is refused by the pointer of the object that holds it, and nothing is frozen"
-- test `packages/provider-sdk/tests/calls/freeze.test.ts` "an invalid Date is refused by its pointer, as the value codec refuses it, and nothing is frozen"
-
 ### C-12 (normative): The host freezes on every call, in every environment
 
 The host passes every context and request through `freezeContext` and `freezeData` on every call, in every environment, production included, so a provider that writes to what the host passed fails the same way in a test and in production, at the line that writes.
 Both freeze in place, so the host builds a fresh context and request for each call, and a value it shares across calls ends frozen.
 The host core's console calls do so, C-48.
-
-- test `tests/unit/lib/provider-host/core/console.test.ts` "every call gets a fresh context and request, frozen at every depth"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel of a run the provider does not know answers not cancelled"
 
 ### C-13 (normative): The byte budgets and the row measure
 
@@ -2241,17 +1132,11 @@ A row's size is the UTF-8 length of its encoded JSON text, `encodedRowBytes`, an
 The pump hands each pull its own measure, `measure` on the pull's limit, which answers that size.
 Measuring a row encodes every cell, so a cell outside the value codec's domain is refused by the codec's own error.
 
-- test `packages/provider-sdk/tests/calls/results.test.ts` "the batch and page budgets are one MiB and 32 MiB"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a row's size is the UTF-8 length of its encoded JSON text"
-
 ### C-14 (normative): A result source answers within the limit it is asked for
 
 A result source answers each `next` with at most the rows and the bytes it is asked for, and never splits a row, so a batch of exactly one row may be larger than its byte limit and one row always makes progress.
 It sizes each row it answers with the measure of the limit it is asked with.
 `rowsSource` does so over rows a driver already holds in memory.
-
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch held to batch.maxBytes"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a row larger than the batch budget comes alone, and is refused only when no page can hold it"
 
 ### C-15 (normative): The host pulls a page with pumpPage
 
@@ -2265,19 +1150,6 @@ A limit that is not a positive safe integer is a host defect, refused before any
 The pump never keeps a source open across pages, so a later page is a new execution with an offset, C-9.
 The pump takes the context of the execute call that answered the source and starts no pull once that call's signal has aborted or its deadline has passed, C-27.
 
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a page cut by size at page.maxBytes"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a page ends at its row limit or when the source is done"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a batch a source should not have answered is refused by name, and the source is closed once"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a failure to pull or to close is thrown, and neither is lost"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "the limits a source is asked for are frozen and within the page"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a row the source did not size with its pull's measure is measured by the pump"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a pull's measure called after its pull answered is refused by name"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a pump limit that is not a positive safe integer is refused before any pull"
-- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never progresses is refused after one pull, in a bounded child"
-- test `packages/provider-sdk/tests/calls/pump-bounds.test.ts` "a source that never ends is cut at the page's byte budget, in a bounded child"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
-
 ### C-16 (normative): What the byte budgets bound
 
 The pump runs in the host's copy of the SDK, so every package's batches are measured by one rule.
@@ -2288,12 +1160,6 @@ Every other row is measured by the pump as C-15 states, so a copy of a measured 
 The pump hands on the provider's own row arrays, so a source whose cells change after the row was measured, through a getter or a later write, whether after its own call of the pull's measure or after the pump read the batch, answers more than was measured.
 In process nothing is framed, so the host measures what a source answers, through the pump's own measure, and a source of the legacy bridge sizes each row with the pull's measure in the form C-50 states.
 How many pages larger than one batch the host holds at once is bounded by its page budget, C-53.
-
-- test `tests/unit/lib/provider-host/core/console.test.ts` "the first result is pumped within the limits set from the answer, and every other result is closed once"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "each pull hands the source the pump's own measure, and a row the source sized with it is not measured again"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
 
 ### C-17 (normative): The host calls a facet only when the session offers it
 
@@ -2308,33 +1174,10 @@ A preview request whose path is not a list is not read by the check: reading the
 The host holds every monitoring panel request to the panels the session's engine offers with `checkMonitoringPanelRequest` before the call, and refuses a panel that engine does not offer, a request that names no panel and a panel name an object inherits as `request-panel-not-offered`, without throwing.
 Each refusal names a JSON Pointer into the request, in request order, and never a value of it.
 
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session offers is called"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the transaction facet is refused by name to a session that does not offer it"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the objects tree facet is refused by name to a session that does not offer it"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers objects.tree is called"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the maintenance facets are refused by name to a session that does not offer them"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers maintenance.run and maintenance.preview is called"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance run is held to the operations and placements the session's maintenance offers, kill placed nowhere"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance preview is held to an operation whose spec previews on a row"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a maintenance request with empty text where it names something is refused by the field"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "no maintenance request refusal carries a value of the request"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the monitoring facets are refused by name to a session that does not offer them"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a session that offers monitoring.panel and monitoring.poolStats is called"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a monitoring panel request is held to the panels the session's engine offers"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "no monitoring request refusal carries a value of the request"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "every call refusal rule is worded in one sentence"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call whose request the session's maintenance does not take is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
-
 ### C-18 (normative): The testing entry is for tests
 
 `@libredb/provider-sdk/testing` holds the memory test transport's pieces, and only tests import it.
 The package root never re-exports it, and Studio's runtime source under `src/`, `bin/` and `vscode-extension/src/` never imports it, in any form, a type import included.
-
-- test `packages/provider-sdk/tests/manifest/digest.test.ts` "the package root does not export the testing surface"
-- test `tests/unit/package-imports.test.ts` "Studio's runtime source never imports the SDK's testing entry"
-- test `tests/unit/package-imports.test.ts` "a planted runtime file that imports the testing entry fails by file and specifier"
 
 ### C-19 (normative): serve crosses every call as JSON frames through the value codec
 
@@ -2348,20 +1191,6 @@ A value outside the codec's domain fails where it is encoded, with the codec's o
 An `undefined` optional member, which the codec leaves out (V-9), is refused by the round trip as `round-trip-changed` at its pointer, and a frame that `readFrame` or `roundTripRefusals` refuses fails as one `FrameRefusalError`.
 An error either side throws crosses by reference.
 `serve` checks the module with `checkProviderModule` first and serves nothing it refuses, and what it serves is itself an implementation of the module's manifest, with the module's facets.
-
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served module answers every call through one request frame and one answer frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "the provider receives decoded copies, frozen at every depth, with the host's signal and environment reader by reference"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "the host's own context and request are left as the host built them, and the host receives decoded copies of each answer"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a value the codec cannot carry, or a frame key the call does not define, fails the call before the provider is called"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served source's provider receives the limit's numbers decoded and frozen with the host's measure by reference, and the frame carries the numbers only"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a value that is not a provider module record is refused with every refusal before anything is served"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "the served implementation is an implementation of the module's manifest, with the module's facets"
 
 ### C-20 (normative): Each part of each frame is read as a closed shape
 
@@ -2377,25 +1206,6 @@ A timestamp member admits a valid `Date`, which the value codec carries as its t
 The frame reader reads shapes only: which answer form answers which action, or which panel, is the host's, C-62.
 Each reader is declared as the shape of its call type, so a member added to a call type, or to a union it reads, fails typecheck until its reader names it.
 
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a well-formed frame of every call and part is admitted"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a key a frame's shape does not define is refused as frame-key-unknown at its pointer"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a required key a frame lacks is refused as frame-key-missing"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a page bound is exactly one of its two forms"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance run request and answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance preview request and answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel request is the closed shape of the panel it names"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel answer is exactly one of its seven forms, each read as its closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a pool statistics answer and a health answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a timestamp member admits a Date and nothing else"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a connection's keys are the contract's field names and each value a connection field value"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "no frame refusal and no sentence carries a value of the frame"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "every frame refusal rule is worded in one sentence"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a FrameRefusalError carries every refusal and words each"
-
 ### C-21 (normative): What crosses is compared deep-equal, and whatever the round trip changes is refused
 
 The value a side decodes is compared deep-equal with the value the other side handed, as `roundTripRefusals` does, and never copied with `structuredClone`, so a test sees what a JSON boundary does to a value.
@@ -2403,27 +1213,12 @@ Whatever the value codec's JSON round trip changes or drops is refused as `round
 What the codec defines as equal compares equal: `-0` and `0`, NaN and NaN, a `Uint8Array` subclass such as a Buffer and a plain `Uint8Array` of the same bytes, a `Date` subclass and a `Date` of the same time, and an object with no prototype and one with `Object.prototype`.
 A `Uint8Array` and a `Date` are compared by their bytes and their time alone, so an own property either one carries besides them is not compared: a typed array's own keys are its indices, and walking them would cost a pass over every byte.
 
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a value the codec carries is admitted, with -0, a Buffer, a null-prototype object and Date and Uint8Array subclasses compared as the codec defines them"
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a symbol-keyed property is refused as round-trip-changed at the pointer of the object that holds it"
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a non-enumerable property is refused as round-trip-changed at its pointer"
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an accessor is refused as round-trip-changed at its pointer, and the comparison never calls its getter"
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "an array's own property that is not an index is refused as round-trip-changed at the array"
-- test `packages/provider-sdk/tests/testing/round-trip.test.ts` "a received value that differs from the sent one is refused at the pointer where it differs"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
-
 ### C-22 (normative): A session handle and a result source never cross
 
 Over the memory test transport a session handle and a result source stay in tables the served instance owns, and only their ids cross.
 The host holds a frozen token for each session, looked up by identity, so a copy of a token is foreign, and the provider's calls receive the provider's own handle.
 A closed or foreign token is refused as `session-not-open`, and a closed result source as `result-not-open`, before any frame.
 A close takes its entry out of both tables whatever the provider's close answers, and a close that resolves anything but nothing is refused.
-
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "the session handle and each result source stay in the served instance's tables, and only their ids cross"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed or foreign session token is refused as session-not-open before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed result source is refused as result-not-open before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a close takes the session out of both tables even when the provider's close throws"
 
 ### C-23 (normative): The served host side checks each call before any frame, and closes what a refused answer handed over
 
@@ -2434,26 +1229,10 @@ An answer the host refuses holds nothing open afterwards: a refused open answer 
 An item of an execute answer's `results` that is not an object is refused at its index, as a hole is, and a source whose `columns` or `rowCount` read throws is closed with the sources before it, the read's own error thrown.
 Every close runs, and when one fails the host receives an `AggregateError` with the refusal first and each close's error after it.
 
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a transaction call or a statement inside a transaction on a session without console.transaction is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a tree call on a session without objects.tree is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a maintenance call on a session without the facet is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a refinement open answers narrows the served session's calls"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open is held to the maintenance of the engine its context names, which the module declares"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "an open answer the host refuses closes its session, and an execute answer the host refuses closes its sources"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a close that fails beside a refused answer is thrown with the refusal first"
-
 ### C-24 (normative): A frame never grows past what the provider holds
 
 The transport encodes a value before it stringifies it, and every loop it runs over a provider's array stops at the first hole, so a sparse list of any length is refused at its first hole.
 A served result source asks the provider for exactly the limit it is pulled with, one batch a pull, and buffers nothing ahead, so `pumpPage` cuts a page of a source that never ends at its byte budget.
-
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served result source pulled by pumpPage answers the provider's rows, one frame a batch"
-- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "a batch whose rows are a sparse list of the longest length is refused at its first hole, in a bounded child"
-- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "an execute answer whose results are a sparse list of the longest length is refused at its first hole, in a bounded child"
-- test `packages/provider-sdk/tests/testing/serve-bounds.test.ts` "a served source that never ends is cut at the page's byte budget, in a bounded child"
 
 ### C-25 (informative): The memory transport is a test transport
 
@@ -2469,13 +1248,6 @@ Its `signal` aborts at the deadline with a DOMException named `TimeoutError`, or
 A deadline that is not a finite number, or one further ahead than a timer waits, 2147483647 milliseconds, is a host defect, refused with a `RangeError` before any signal is built, since Node.js runs a longer timer after one millisecond.
 Node.js does not let the signal's timer keep a process alive, so nothing relies on the signal to do so.
 
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a call signal aborts at its deadline with a TimeoutError"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a call signal aborts with the caller's reason when the caller goes first"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline already past answers a signal already aborted"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline that is not a finite number is a host defect, refused before any signal is built"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a deadline further ahead than a timer can wait is refused before any signal is built"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "the provider's context carries the host's deadline and signal, and its signal aborts at the deadline"
-
 ### C-27 (normative): No call starts after its signal aborted or its deadline passed
 
 The host checks each call with `checkCallStart` before it makes it, and refuses it by `call-deadline-passed` or `call-signal-aborted`, rules of `CALL_REFUSAL_RULES`, each at a JSON Pointer into the call's context.
@@ -2483,14 +1255,6 @@ A refusal by `call-signal-aborted` is thrown with the signal's reason as the err
 The deadline is read by time, since a signal does not abort at once when its deadline has already passed.
 The served host side runs the check on every call, before any frame and before C-9 and C-17, so a refused call reaches no provider and leaves the session as it was.
 `pumpPage` checks before every pull, so no batch is pulled after either, and a refusal there is thrown after the source's one close, as any failure of a step is, C-15.
-
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "checkCallStart refuses a call whose deadline passed or whose signal aborted, naming each"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a CallRefusalError carries the signal's reason as its cause"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "the pump pulls no batch once the call's signal aborted or its deadline passed, and closes the source once"
-- test `packages/provider-sdk/tests/calls/results.test.ts` "a call signal that aborts during a page stops the pump before its next pull"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call whose signal aborted or whose deadline passed is refused before any frame, and the provider is never called"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "no statement starts once the call's signal aborted"
-- test `tests/api/db/cancel.test.ts` "a cancel whose caller already left calls nothing and answers 499"
 
 ### C-28 (normative): The host stops waiting at the signal, and an abandoned answer keeps its handler
 
@@ -2503,18 +1267,6 @@ A result source runs under the context of the execute call that answered it, so 
 The memory transport races nothing: an answer the host stopped waiting for is delivered whole, its session token and served sources included, so the late handler closes it once, and what the served host side refuses of a late answer it closes itself, C-23, and hands on as a failure.
 The host core's execute call closes every source of an execute answer that arrives after its stop and pumps none of them, and hands a failure that arrives after its stop to the caller's late handler once, C-48, which logs it by its kind and code, never its text.
 Once the host sent the run's cancel, the caller's late handler reads a cancellation the provider answers after it, Studio's `QueryCancelledError`, as the run's expected end and logs nothing for it.
-
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait settles as the answer does when the answer comes first, and leaves no listener on the signal"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "the host's wait ends at the signal, and the abandoned answer's outcome reaches the late handler once"
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a signal aborted before the wait ends it at once, and the answer still reaches the late handler"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "an answer the host stopped waiting for reaches its late handler whole, and the host closes what it handed over once"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "an answer that arrives after the stop has its sources closed and is never pumped"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a failure after the stop reaches the late handler once and is never a detached rejection"
-- test `tests/unit/lib/api/editor-query.test.ts` "a failure after the caller left is logged by kind and code, never its text"
-- test `tests/unit/lib/api/editor-query.test.ts` "the cancellation answer of a run whose cancel the host sent is its expected end, and is not logged"
-- test `tests/unit/lib/api/editor-query.test.ts` "any other late failure is still logged: another error after the cancel, or a cancellation with no cancel sent"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "an answer the host abandoned keeps its handler"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "every provider promise the host abandons keeps a rejection handler"
 
 ### C-29 (informative): What a provider does with the deadline and the signal
 
@@ -2530,30 +1282,15 @@ The kit checks these, and no such check exists yet.
 The host refuses a cancel to a session that does not offer `console.cancel` before the call, C-17, and reports the run as not cancelled.
 Studio's cancel route answers such a connection with `cancelled: false` and calls nothing.
 
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a console facet the session does not offer is refused before the call"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a request field or a console facet the session does not offer is refused before any frame"
-- test `tests/api/db/cancel.test.ts` "provider without cancelQuery returns 400"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "an engine that cannot cancel is reported still running, and nothing is called"
-
 ### C-31 (normative): A throw inside a call fails only that call
 
 An error a provider's call throws reaches the host by reference, and that session and every other session keep serving.
 An error a bridged provider throws reaches the caller by reference, through the host core and the legacy bridge, and is read into an error record where the caller answers it, `databaseErrorBody`.
 
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "an error a call or a source throws reaches the host as the same object"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a call that throws fails only that call, and its session and the served instance keep serving"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "a socket lost mid-statement answers CONNECTION_ERROR with outcome unknown"
-
 ### C-32 (normative): The SDK keeps sessions apart
 
 The SDK keeps no state across sessions and installs no process handler, since several copies of it share Studio's process, M-19.
 The memory transport keeps each served instance's sessions in tables of its own, and each call reaches only its own session's handle.
-
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source declares no top-level let or var"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source creates no top-level Map, Set, WeakMap or WeakSet"
-- test `packages/provider-sdk/tests/sdk-purity.test.ts` "SDK source never reads process"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "two sessions of one served module reach only their own handles, and one session's error or close leaves the other serving"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "two served instances of one module share no session"
 
 ### C-33 (informative): A provider keeps per-session state in its handle
 
@@ -2585,19 +1322,11 @@ The kit's fault cases and a measurement under Electron do not exist yet, and the
 An exception that no code catches stops Studio's server with exit code 70, after one logged line.
 A promise rejection that nothing handles does not stop it, unless Node.js runs with `--unhandled-rejections=strict`, which raises the rejection as an uncaught exception, so the server exits with 70 for it too ([DISTRIBUTION.md](../DISTRIBUTION.md#uncaught-errors-and-restarts)).
 
-- test `tests/unit/lib/uncaught-exception.test.ts` "the listener logs the line once, with no stack even under NODE_ENV=development, then exits with 70"
-- test `tests/unit/lib/uncaught-exception.test.ts` "attaches one uncaughtException listener and nothing else"
-- test `tests/unit/lib/uncaught-exception.test.ts` "logs an unhandled rejection that Node.js raised as an uncaught exception by that origin, then exits with 70"
-- test `tests/unit/uncaught-exception-documentation.test.ts` "it says an unhandled promise rejection does not stop the server, unless Node.js raises it as an exception"
-
 ### C-36 (normative): A close that never settles at shutdown is cut
 
 Where Studio owns the exit, a provider cache close still pending 15 s into the shutdown is cut, and the exit code is 143.
 Where Next.js owns the exit, Studio closes no provider.
 Inside those 15 s each provider is also cut by C-45's own deadlines.
-
-- test `tests/unit/lib/shutdown-handler.test.ts` "a cache close that never settles is cut after 15 s and the exit code is 143"
-- test `tests/unit/lib/shutdown-handler.test.ts` "where Next.js owns the exit it runs the hooks, closes no provider cache and never exits"
 
 ### C-37 (informative): The import deadline cannot stop synchronous code
 
@@ -2613,31 +1342,17 @@ The kit's import-time measurement is the check at a package's build, and the loa
 Whether a statement needs a confirmation is decided by core's readers over facts core holds, never by a call into a provider.
 The verdict is one of the members of `ConfirmationVerdict`, and a reader that throws asks for a confirmation.
 
-- test `tests/unit/editor/statement-analysis.test.ts` "answers run for a read"
-- test `tests/unit/editor/statement-analysis.test.ts` "answers confirm for a write"
-- test `tests/unit/editor/statement-analysis.test.ts` "refuses a connection-name ask on a nameless connection"
-- test `tests/unit/lib/api/run-confirmation.test.ts` "a reader that throws asks, marked classificationFailed, and logs no text"
-
 ### C-39 (normative): A protected read path is a precondition of agent and MCP statements
 
 A provider without `queryReadOnly` is refused for agent and MCP statements before it is connected, and the plain query path is never the fallback.
 The host holds the same rule on its own side: the legacy bridge's read-only statement session over a provider without `queryReadOnly` is refused at its open by name, before anything is called, and the host core refuses a plain execute on a read-only statement session before the call, C-78, so `query()` is never called on that path.
 Every agent, hand-over and MCP statement reaches that open, C-79 and C-81, so a provider without `queryReadOnly` that an acquirer handed over anyway is refused there, answered as Studio's profile refusal with its record.
 
-- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
-- test `tests/isolated/factory.test.ts` "refuses %s on an engine on the review record whose provider implements no read-only statement path, before connecting it, and query() is never the fallback"
-- test `tests/api/agent/handover.test.ts` "refuses to replay on an engine the review record does not list, naming it, and never calls queryReadOnly"
-- test `tests/unit/lib/provider-host/host-rules.test.ts` "the host never falls back from the protected read path to the plain one: a read-only statement session without queryReadOnly is refused at its open, a plain statement on one is refused before the call, and query() is never called"
-
 ### C-40 (normative): One provider kind, and no named provider method
 
 Every package implements the mandatory calls, `console.execute` among them, so no lifecycle-only kind of provider exists.
 An implementation key the contract does not define is refused, so a dialog action or a dynamic option is never a provider method of its own.
 A host path field is M-12's.
-
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an implementation key the contract does not define is refused as impl-key-unknown"
-- schema `/$defs/consoleCalls/required`
 
 ### C-41 (informative): Dialog actions, dynamic options and a provider's classification
 
@@ -2650,21 +1365,12 @@ No such call exists yet, so nothing checks this.
 No workspace package but the kit imports, in its source or its tests, or declares, in any dependency field of its `package.json`, a name starting `@libredb/provider-` other than `@libredb/provider-sdk` and its own.
 The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its `devDependencies`.
 
-- test `tests/unit/package-imports.test.ts` "no workspace package imports or declares another provider package"
-- test `tests/unit/package-imports.test.ts` "a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only"
-
 ### C-43 (normative): A provider depends on no load order
 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
 The lock's read answers the same for every order of the same entries, and lists its packages by name.
 With no providers directory set, no package is read, and a lock with no entries names none.
 Boot admits the packages in the lock's order, which carries no meaning, and the catalog it composes answers the same for every order of the same packages, C-106; the loader's registry lists records in the order they were registered, an order nothing reads.
-
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the entries' order changes no result"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock with no entries names no package"
-- test `tests/unit/lib/provider-host/providers-dir.test.ts` "an unset, empty or blank LIBREDB_PROVIDERS_DIR is no providers directory"
-- test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order"
 
 ### C-44 (normative): The host owns each open
 
@@ -2678,34 +1384,6 @@ A caller passes its own wait as the fourth argument of `getOrCreateProvider`.
 The metadata session of C-66 shares its opens the same way, in a table of its own.
 The editor's query and its cancel, in the routes and in the VS Code backend, wait for their provider's open at most their engine's connect budget, M-51, or until their caller leaves, whichever comes first.
 
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "concurrent callers of one key share one open"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a failed open reaches every caller and frees its key"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal aborts stops waiting, and the others still get the open"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a caller whose signal already aborted starts nothing and joins nothing"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open no caller waits for any more is admitted exactly once by its own start"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that fails with no caller left reaches the unclaimed hook once, never as a detached rejection"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard aborts the matching flights' signals and answers them"
-- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "a caller's signal frees it from an open that never settles"
-- test `tests/isolated/factory.test.ts` "two concurrent first calls for one connection build, connect and cache one provider"
-- test `tests/isolated/factory.test.ts` "a connect two concurrent callers share fails once for both, releases the tunnel once and caches nothing"
-- test `tests/isolated/factory.test.ts` "twelve concurrent first acquisitions of one connection and profile construct one provider"
-- test `tests/isolated/factory.test.ts` "two concurrent first tree reads of one connection open one metadata session, and a removal overtakes one in flight"
-- test `tests/isolated/factory.test.ts` "a removal of the connection closes an open it overtook and caches nothing"
-- test `tests/isolated/factory.test.ts` "a cache clear closes an open in flight and names one still opening at the cut"
-- test `tests/isolated/factory.test.ts` "an open that settles while the caches close is closed once, admits nothing and answers not-sent, in either cache"
-- test `tests/integration/db/factory-open-once.test.ts` "two concurrent first writes for one DuckDB connection both reach the file"
-- test `tests/isolated/factory.test.ts` "a caller whose wait ends stops waiting with its reason, and the others still get the open"
-- test `tests/isolated/factory.test.ts` "an open every caller stopped waiting for is admitted once and served from the cache"
-- test `tests/isolated/factory.test.ts` "an open that fails after every caller stopped waiting is logged by its connection, kind and code, never its text"
-- test `tests/isolated/factory.test.ts` "a caller whose wait already ended builds and connects nothing"
-- test `tests/unit/lib/api/editor-open-bounds.test.ts` "an open that never settles is cut at the call's open allowance, not-sent"
-- test `tests/api/db/query.test.ts` "the provider opens under the request's own open wait"
-- test `tests/api/db/cancel.test.ts` "a cancel that leaves while its connection opens answers 499 not-sent and cancels nothing"
-- test `tests/api/db/query-open-wait.test.ts` "a request that leaves while its connection opens is answered at once, and the open's later failure is logged by connection, kind and code"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/run opens its provider under the run's own open wait, and a token cancelled while it opens answers QUERY_CANCELLED not-sent"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel takes its request's cancellation as its caller signal, while the provider opens and while the engine answers"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "query/cancel with a token already cancelled calls nothing"
-
 ### C-45 (normative): Teardown under fixed deadlines
 
 When the host closes its sessions, at a shutdown or when its caches are cleared, it tears each one down under fixed deadlines, shared, owned and metadata sessions alike.
@@ -2714,40 +1392,17 @@ Then the session is closed, and the host waits at most 10 s for the close.
 A step that fails or is cut is logged, the next step still runs, and the teardown itself never fails.
 Each provider still open at a cut is named, by its connection, its author and Studio's version.
 
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a rollback settles before the close starts"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a rollback that never settles is cut at its deadline and the close still runs"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a close that never settles is cut at its deadline"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a step that fails is reported with its error and the next step still runs"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a step that fails after its cut changes nothing and is never a detached rejection"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "a teardown leaves no timer pending once it answers"
-- test `tests/unit/lib/provider-host/core/teardown-bounds.test.ts` "a close that never settles is cut by the teardown's own deadline"
-- test `tests/isolated/factory.test.ts` "a shared provider in a transaction is rolled back before it is closed when the caches close"
-- test `tests/isolated/factory.test.ts` "a shared provider whose disconnect never settles is cut at 10 s and named"
-- test `tests/isolated/factory.test.ts` "a shared provider whose rollback never settles is cut at 5 s and still closed"
-- test `tests/isolated/factory.test.ts` "the providers not closed at shutdown are named with their author and Studio's version"
-- test `tests/isolated/factory.test.ts` "the close the factory registers for the shutdown names an owned provider whose rollback or disconnect timed out or failed, and a profiled one whose close failed"
-- test `tests/isolated/factory.test.ts` "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed"
-
 ### C-46 (normative): Contract first
 
 The legacy provider interface, `DatabaseProvider` in `src/lib/db/types.ts`, gains no member.
 A new capability lands in the manifest schema or a facet first, then in the bridge that serves today's providers as contract providers, then in the facade today's callers use.
 The lint holds the members `DatabaseProvider` declares, so a capability read by duck typing outside the interface, as the factory's `openTransaction` reads `isInTransaction` and `rollbackTransaction`, is not a member it can see, and such a read is held by review.
 
-- test `tests/unit/lib/db/database-provider-members.test.ts` "DatabaseProvider gains no member, so every SPI change lands contract-first"
-- test `tests/unit/lib/db/database-provider-members.test.ts` "a planted member is refused by name"
-- test `tests/unit/lib/db/database-provider-members.test.ts` "a removed member is refused by name, so the list stays exact"
-
 ### C-47 (normative): A cleanup call runs under a context of its own
 
 A cleanup call ends work another call started: a close, the cancel the host sends when it stops waiting for a run, and the end of a run's scope, C-60.
 It never runs under the context of the call it follows, which may have aborted, but under `cleanupContext`: a deadline `CLEANUP_DEADLINE_MS`, 10 s, after it starts, a signal that aborts only at that deadline, and the reader of the call it follows.
 The memory transport closes the session of an open answer it refuses under such a context, and the host core's teardown waits for a close at most the same 10 s, C-45.
-
-- test `packages/provider-sdk/tests/calls/deadline.test.ts` "a cleanup call gets a context of its own, ten seconds ahead and never aborted"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a refused open answer's session is closed with a context of its own, not the open's aborted one"
-- test `tests/unit/lib/provider-host/core/teardown.test.ts` "the close deadline is the SDK's cleanup deadline"
-- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end runs under a cleanup context of its own, ten seconds from its start, which the caller's leaving does not end"
 
 ### C-48 (normative): The host's console calls
 
@@ -2766,51 +1421,12 @@ An endScope call is checked with `checkCallStart` and with `checkConsoleFacet` f
 Core's execute never ends a scope: the caller that minted the scope ends it through `endScopeCall`.
 Core constructs no error class a caller tests with `instanceof`: the caller builds its own classes from the records, C-51.
 
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a request field the session does not honour is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a row no page can hold is refused as a record, and the source is closed once"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "an error the provider throws reaches the caller as the same object, and every source is closed once"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a wait the caller's signal ends answers a stop at once and sends the run's cancel with a context of its own"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "no cancel is sent to a session without console.cancel or for a request without a run id"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel that fails after a stop reaches its handler once"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a provider that throws its own signal's reason is answered as a stop"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its caller stops while it is read answers a stop marked as waiting for the page"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose page its deadline stops while it is read answers a stop marked as waiting for the page"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call stopped after its page was read, while its other results close, answers a stop marked as closing them"
-- test `tests/unit/lib/api/editor-query.test.ts` "a page whose reading its deadline ends answers StudioTimeoutRefusal saying the statement answered, outcome unknown"
-- test `tests/unit/lib/api/editor-query.test.ts` "a run whose closing of its other results its deadline ends answers StudioTimeoutRefusal saying the page was read, outcome unknown"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel to a session without console.cancel is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel whose signal already aborted is refused as a record"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a cancel the caller stops waiting for answers a stop, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an execute that never settles is stopped at the call's deadline"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call to a session without console.transaction is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call answers the session state it was answered, and stateReported only for a begin"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an answer the host cannot read is refused as a record after the call, never read as any state"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "an error the provider throws reaches the caller as the same object"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a transaction call the caller stops waiting for answers a stop at once with no state, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement sent inside a transaction answers its page with the session state after it"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction whose answer carries no readable session state is refused as a record, and every source is closed once"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a statement inside a transaction that its caller stops answers a stop with no state"
-- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "a transaction call that never settles is stopped at the call's deadline"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call to a session without console.endScope is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call answers the outcome its session answered, with the request and context frozen"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an error the provider throws reaches the caller as the same object"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "an endScope call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/console-scope.test.ts` "a session that offers console.endScope with no endScope function is a host defect, named"
-- test `tests/unit/lib/provider-host/core/console-bounds.test.ts` "an endScope call that never settles is stopped at the call's deadline"
-
 ### C-49 (normative): A turn of the event loop before every pull
 
 A source over rows already in memory answers each pull without leaving the microtask queue, so a page pumped from it would hold the event loop until the whole page is measured.
 The host core awaits one `setImmediate` turn before every pull, then refuses the pull, as `checkCallStart` answers, when the call's signal aborted or its deadline passed during that turn, the signal's reason as the refusal's cause.
 So the longest the host holds the event loop over a page is one batch's pull and measure, which the host page benchmark holds under its T4 threshold.
 The turn is the host's and not the SDK pump's, since the pump is also the kit's and runs where fake timers may hold `setImmediate`.
-
-- test `tests/unit/lib/provider-host/core/turns.test.ts` "the host yields one turn of the event loop before every pull"
-- test `tests/unit/lib/provider-host/core/turns.test.ts` "a signal that aborts during the turn stops the pull it precedes"
 
 ### C-50 (normative): The legacy bridge serves today's providers as contract sessions
 
@@ -2871,72 +1487,6 @@ It runs the provider's `queryInTransaction` with that text alone, no params, no 
 Its calls offer execute honouring `offset`, and `console.transaction` with the member the console session offers; it offers no cancel, endScope, tree, maintenance or monitoring facet and is no read-only statement session.
 It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and the session state read after the statement, and its page's row limit is every row the provider returned, at least one, within one page.
 
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a unit of a script inside a transaction is sent as written through queryInTransaction alone, and answers the session state read after it"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the last unit of a script inside a transaction is prepared whole when it is one statement and sent as written otherwise, never probed"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit's failure that names the bound Studio added says so, passes by reference, and reads no state after it"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit session offers execute honouring offset and the transaction facet, and nothing else"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit session sent another statement or a statement outside the transaction is a host defect, named, and calls nothing"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a transaction script unit answers one source per result set, and its page's row limit is every row it returned"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sends an earlier unit as written, with the run id only where the provider cancels and the request's scope, and never prepares or probes it"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the script's last unit has its last read statement bounded by the provider's prepare and spliced back, never probed, and a write or a module body is sent as written"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session offers execute honouring offset, and cancel and endScope as the console session offers them, and nothing else"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit's failure that names the bound Studio added says so, and passes by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit answers one source per result set, its page applied exactly when the prepare bounded it, and its page's row limit is every row it returned"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sent a statement other than its unit's text is a host defect, named, and calls nothing"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session honours offset, runs the provider's prepare on a bounded page with a fresh copy of it, and sends the statement it prepared to queryReadOnly"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bounded page the prepare did not apply with no offset sends the prepared statement and answers its page not applied"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "an offset the provider's prepare did not apply is refused as Studio's own refusal, not-sent, and no read-only path is called"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a refusal or failure the prepare raises passes by reference, and no read-only path is called"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session runs the provider's plain query with the statement as composed and nothing else, never prepareQuery or the probe"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a composed statement session offers execute alone, honouring no request field, and is no read-only statement session"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session honours params and offset, offers cancel only where the provider cancels, and endScope only where the provider ends its query path's transactions"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged endScope runs the provider's ender on the scope it is sent and answers its outcome, its failure by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers the transaction facet exactly where the provider is a TransactionProvider"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers objects.tree for every provider"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers maintenance.run for every provider and maintenance.preview exactly where the provider previews"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session offers monitoring.panel for every provider and monitoring.poolStats exactly where the provider reads its pool statistics"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's panels are its engine's row"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a panel whose member the legacy provider does not hold is not offered on its session, and a provider holding every member keeps its engine's row"
-- test `tests/isolated/monitoring-panels-census.test.ts` "every shipped provider holds the member of each panel its engine offers, so its bridged session offers its engine's row"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged panel call runs the panel's own member with today's argument and answers its answer by reference under the panel's key"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged pool statistics call answers the provider's own statistics by reference, and a throw as its rejection"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged health call runs getHealth with no argument and answers its health by reference, and a throw as its rejection"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance run calls runMaintenance with the operation, the target and the container, undefined where absent, and answers its result by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance preview calls previewMaintenance with a copy of the path and answers its preview by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged maintenance call whose member throws passes the error by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance is the provider's declaration, narrowed through sessionMaintenance by what the connected provider still accepts"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session's maintenance never offers more than the declaration"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call runs the provider's own member for each action with today's arguments, and answers its answer by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call never calls forCatalog"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call hands the session's read allowance by reference to count, list and describeMany, and today's arguments where the session has none"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged top-level containers read asks the provider whether its inventory needs configuration first, and given a reason answers no container and the reason without listing"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged containers read below the top level, or of a provider that cannot say, lists as before and carries no reason"
-- test `tests/unit/db/modbus/index.test.ts` "a connection with no register map answers its top-level tree listing with no unit and the reason, and a malformed map with the error its listing raises"
-- test `tests/isolated/inventory-configuration-census.test.ts` "every shipped provider that answers the inventory's configuration question declares a container level, so the grounding walk asks it on its top-level listing"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged tree call whose member throws passes the error by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy tree member that writes the paths it receives changes nothing the host froze"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin, COMMIT, ROLLBACK and state read call the provider's methods and answer its state after each"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged begin hands the provider requireReportedState as the route always did, true only when asked"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged statement inside the transaction prepares, probes and runs queryInTransaction, with no run id, no scope and no ender, and answers the state after it"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged transaction call whose provider throws passes the error by reference"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a legacy provider that writes what it receives changes nothing the host froze"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the run prepares, probes and queries with the request's own scope, and ends nothing itself"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "every result set is a source, the main rows first"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge sizes every row it answers with the pull's measure, and answers that same array"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a cell outside the value codec is measured in its JSON form and answered unchanged"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a measuring error other than the codec's passes as the same object"
-- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with an undefined cell is measured in its JSON form, and the codec throws nothing"
-- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a Map is measured in its JSON form, and the codec throws nothing"
-- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row with a class instance, nested in a cell, is measured in its JSON form, and the codec throws nothing"
-- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "the bridge reads the codec's domain as the codec does, for every kind it takes and refuses"
-- test `tests/unit/lib/provider-host/legacy-bridge-measure.test.ts` "a row holding a bigint beside a cell outside the codec is measured with the bigint as its decimal text, never thrown"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the page's row limit is the probe limit for a bound Studio wrote, and every returned row otherwise"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged cancel names the run and answers the provider's boolean"
-
 ### C-51 (normative): The host's records become the calling bundle's classes
 
 The accessor, in the calling bundle, builds Studio's error class from each record the host core answers, so a class a caller tests with `instanceof` is always its own bundle's.
@@ -2948,19 +1498,6 @@ A call's wait for its provider's open that ended answers `QueryCancelledError` w
 Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only where it offers `console.endScope`: a plain error naming each refusal's sentence.
 A refused offset and refused params of a session that refuses a field arrive with the first such session.
 A caller whose time refusal is its own reads the records through a budget view: a refusal or a stop whose reason is the caller's own is `QueryCancelledError` as above, a refusal of a passed deadline or of any other aborted signal, and any other stop, whatever wait it ended, is the caller's own time refusal, built fresh for the call, and every other refusal answers as above.
-
-- test `tests/unit/lib/provider-host/access.test.ts` "a call the caller left is answered as QueryCancelledError, not-sent before the call and unknown after it"
-- test `tests/unit/lib/provider-host/access.test.ts` "a call past its deadline is answered as StudioTimeoutRefusal, not-sent before the call and unknown after it"
-- test `tests/unit/lib/provider-host/access.test.ts` "a row no page can hold is answered as StudioByteBudgetRefusal, outcome unknown"
-- test `tests/unit/lib/provider-host/access.test.ts` "any other refusal is a host defect named by its rule"
-- test `tests/unit/lib/provider-host/access.test.ts` "every class the accessor builds is the calling bundle's own"
-- test `tests/unit/lib/provider-host/access.test.ts` "a budget view's stop or refused start is QueryCancelledError when the caller left, and otherwise the caller's own time refusal"
-- test `tests/unit/lib/api/editor-query.test.ts` "the open allowance is the engine's connect budget"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open is handed the call's own wait, which the caller's leaving or the allowance ends"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open the caller left answers QueryCancelledError, not-sent"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open past its allowance answers StudioTimeoutRefusal naming the engine's budget, not-sent"
-- test `tests/unit/lib/api/editor-query.test.ts` "an open's own failure passes as the same object"
-- test `tests/api/db/query.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
 
 ### C-52 (normative): One host core per process
 
@@ -2974,22 +1511,6 @@ A second install from another composition root is refused by name, naming both r
 The library surface never reads the installed core, so an embedder composes nothing.
 The live check `tests/live/host-core-live.ts` holds the same rule against the built standalone server, in CI's "Host Core Live Check".
 
-- test `tests/unit/lib/provider-host/core/host-core.test.ts` "the host core holds the console calls on a page budget of its own, the tree call, the maintenance calls, the monitoring calls and the health call, frozen, and nothing else"
-- test `tests/unit/lib/provider-host/instance.test.ts` "the host core is installed once per process, under a registered symbol"
-- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from the same composition root keeps the first core, and throws nothing"
-- test `tests/unit/lib/provider-host/instance.test.ts` "a second install from another composition root is refused by name, naming both roots, and the first core stays"
-- test `tests/unit/instrumentation.test.ts` "register() installs the shutdown handler once, and before the auth bootstrap"
-- test `tests/unit/lib/provider-host/instance.test.ts` "a call made with no host core installed fails by name, and nothing reaches the provider"
-- test `tests/unit/lib/provider-host/instance.test.ts` "only a composition root creates the host core, and only the core reaches its console calls"
-- test `tests/unit/lib/provider-host/instance.test.ts` "no module the library entries reach reads the host core, so an embedder needs none"
-- test `tests/unit/instrumentation.test.ts` "register() installs the provider host core once, after the boot checks"
-- test `tests/unit/instrumentation.test.ts` "a boot a check refuses installs no host core"
-- test `vscode-extension/test/unit/backend-start.test.ts` "installs the provider host core, then starts the backend on its own process, which under Mocha has no IPC channel"
-- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "the two bundles hold two copies of Studio's errors, as instrumentation and a route do"
-- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a route runs the host core instrumentation installed, and builds none of its own"
-- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a refusal the host core answers as a record becomes the route bundle's own class"
-- test `tests/unit/lib/provider-host/cross-bundle.test.ts` "a provider error the route bundle built passes through the host core by reference"
-
 ### C-53 (normative): The host's page budget
 
 A host core holds one page budget of large-page slots, and the budget holds one slot.
@@ -3002,37 +1523,11 @@ A slot or a page record released twice is refused by name.
 The slot count does not follow the heap limit V8 reports, which adds a young generation whose size differs by Node version and machine.
 The budget does not bound a legacy provider's own rows, held before the first pull, nor the caller's answer text, written from the body after the release, nor one row of up to the whole page taken as a first batch.
 
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a free slot is taken at once, and a host core's budget holds one slot"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page that finds every slot held waits, and slots go in arrival order as they are released"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a wait its signal ends rejects with the signal's reason and leaves the queue"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a signal already aborted is refused at once and takes no free slot"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot released twice is refused by name"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a slot count that is not a positive safe integer is refused"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a page's first pull takes no slot, and every later pull runs under the one slot it took"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a pull whose wait for a slot the call's signal ends is refused as checkCallStart answers, the signal's reason as its cause, and the source is not pulled"
-- test `tests/unit/lib/provider-host/core/page-budget.test.ts` "a take that fails for a reason other than the call's signal passes that failure by reference"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "every page takes its first batch without waiting"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "of two concurrent large pages the second waits for the slot holding one batch, and is pumped once the first page is released"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "three concurrent large pages are pumped one after another in arrival order, each waiting page holding one batch and no slot"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page of one batch answers at once beside a large page that holds the slot"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page whose pump is refused or fails, or whose other results fail to close, gives its slot back before the call answers"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page answered after its call stopped gives its slot back"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a page record released twice is refused by name"
-- test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
-- test `tests/unit/lib/provider-host/core/host-core.test.ts` "each host core holds one large-page slot of its own"
-- test `tests/unit/lib/api/editor-query.test.ts` "a large page's slot is released once its body is built, so the next large page does not wait"
-- test `tests/unit/lib/api/editor-query.test.ts` "two concurrent large pages each answer their whole page"
-
 ### C-54 (normative): A wait for a large-page slot that ends
 
 A page whose wait for a large-page slot, C-53, its call's signal ends answers a stop marked as waiting for the slot.
 The caller answers `QueryCancelledError` when its own signal ended the wait, and otherwise `StudioTimeoutRefusal` with Studio's sentence naming that wait, both outcome unknown, since the statement ran.
 The run's cancel is sent as for any stop, C-48, and the page's first batch is closed with its source.
-
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its caller ends answers a stop marked as waiting for the slot, and holds no slot"
-- test `tests/unit/lib/provider-host/core/console-pages.test.ts` "a call whose wait for a slot its deadline ends answers a stop marked as waiting for the slot"
-- test `tests/unit/lib/provider-host/core/page-budget-bounds.test.ts` "a large page waiting behind a slot that is never released is stopped at its call's deadline"
-- test `tests/unit/lib/api/editor-query.test.ts` "a large page that waits for the slot past its deadline answers StudioTimeoutRefusal naming that wait, outcome unknown"
 
 ### C-55 (normative): An open ends at its engine's connect budget
 
@@ -3045,41 +1540,12 @@ Until it settles, an expired open stays where a cache close still finds it but n
 A deadline is the host's, not a removal's: a removal keeps an overtaken open in the table so a caller arriving meanwhile joins it, C-44.
 A provider that bounds nothing of its own on a server that accepts and never answers keeps its socket until its connect settles, since the host closes what an open opened only once it settles.
 
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open still pending at its deadline fails every waiting caller with the owner's expired error, and leaves the table"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the next caller after an open's deadline starts a new open"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late settle of an expired open leaves the open that replaced it in the table"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a late failure of an expired open reaches the unclaimed hook once, never as a detached rejection"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "an open that settled before its deadline is not expired by it afterwards"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a deadline already passed when the open starts expires it at once"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard still reaches an open its deadline ended while that open is pending, and no longer once it settled"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "a discard reaches an expired open beside the open that replaced it under its key"
-- test `tests/unit/lib/provider-host/core/open-once.test.ts` "the deadline signal is read once per open, with its meta"
-- test `tests/unit/lib/provider-host/core/open-once-bounds.test.ts` "an open that never settles is ended by its own deadline"
-- test `tests/isolated/factory.test.ts` "an open still connecting at its engine's connect budget answers StudioTimeoutRefusal not-sent to every caller, one without a wait included"
-- test `tests/isolated/factory.test.ts` "the next call after an open's deadline builds and connects a new provider"
-- test `tests/isolated/factory.test.ts` "a provider whose connect settles after its open's deadline is closed once and never cached"
-- test `tests/isolated/factory.test.ts` "an execution-profile open ends at the same budget"
-- test `tests/isolated/factory.test.ts` "a cache clear names an open its deadline ended that is still connecting at the cut"
-- test `tests/api/db/query-open-wait.test.ts` "a connection whose open never settles is opened afresh by the next request after its connect budget"
-
 ### C-56 (normative): Test connection answers within its engine's connect budget
 
 A Test connection has one deadline, its engine's connect budget from the test's start, M-51, over the whole test: the tunnel's open, the provider's build, its connect, the checks a provider runs only for a test and the health read.
 At that deadline the test answers a connection error naming the budget, never a caution or a degraded success.
 A one-shot tunnel closes at once, a provider already connected is closed at once, and a provider still connecting is closed once its connect settles, since no provider promises a disconnect during its connect.
 The same deadline holds on the Test connection route and in the VS Code backend's `connection/test`, which keeps no deadline of its own.
-
-- test `tests/unit/lib/api/test-connection.test.ts` "a connect still pending at the engine's connect budget rejects with the test's ConnectionError, and its provider is closed once the connect settles"
-- test `tests/unit/lib/api/test-connection.test.ts` "a connect that fails after the deadline gets its provider closed too, and its failure goes nowhere"
-- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the tunnel opened builds nothing"
-- test `tests/unit/lib/api/test-connection.test.ts` "a deadline that passed while the provider was built starts no connect, and closes what was built"
-- test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
-- test `tests/unit/lib/api/test-connection.test.ts` "a health read whose deadline passed before its timer fired answers the test's ConnectionError and reads no health"
-- test `tests/unit/lib/api/test-connection.test.ts` "the deadline names the engine's own budget"
-- test `tests/unit/lib/api/test-connection-bounds.test.ts` "a connect that never settles is cut at the test's deadline"
-- test `tests/api/db/test-connection.test.ts` "a test with no answer within the engine's connect budget answers 503 CONNECTION_ERROR with the test's sentence, and closes its provider once the connect settles"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "hands the core the connection, posture and route only, so the core's deadline bounds the test"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "answers the core's deadline error as CONNECTION_ERROR with its sentence, its own status and code"
 
 ### C-57 (normative): The transaction facet
 
@@ -3091,18 +1557,6 @@ A statement inside the transaction is console execute sent with `transaction`: t
 A statement sent without `transaction` runs outside any transaction the facet opened, on another of the session's connections.
 The host reads a transaction answer with `checkTransactionAnswer` and a statement's answer with `checkTransactionStatement`, which refuse by name, as `transaction-answer-unreadable`, a session state that is missing, outside its vocabulary or an accessor, a `stateReported` on another action than begin or of another type, any other key, and an answer that is no plain record.
 Each reads the answer by its own property descriptors, never calls a getter, and names no value of the answer, so a state the host cannot read is refused, never read as any state.
-
-- schema `/$defs/consoleCalls/properties/transaction`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "console calls that leave out transaction are refused as missing-key"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the transaction actions are begin, commit, rollback and state"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the transaction facet is declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a transaction answer is a session state, and stateReported only for begin"
-- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a missing or unknown session state is refused by name, and no getter is called"
-- test `packages/provider-sdk/tests/calls/transaction.test.ts` "stateReported on another action, a key a transaction answer cannot have, or no record at all is refused by name"
-- test `packages/provider-sdk/tests/calls/transaction.test.ts` "a statement answered inside a transaction carries its session state, and one without is refused by name"
-- test `packages/provider-sdk/tests/calls/transaction.test.ts` "no transaction answer refusal carries a value of the answer"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served transaction call crosses its request and answer as frames, and a statement inside the transaction carries its session state back"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a transaction request is one of its actions, and only begin carries requireReportedState"
 
 ### C-58 (normative): An unknown session state is never read as closed
 
@@ -3131,59 +1585,6 @@ A BEGIN that replaces a record whose end no path recorded records that end `unkn
 A COMMIT that fails after it may have reached the database, its outcome not `not-sent`, E-5, and leaves no transaction is recorded `unknown`, never rolled back.
 A unit of the transaction route's script that Studio stopped waiting for leaves the state unknown: nothing is read after it, the record is marked unresolved, the script's call counts as stopped until that unit settles, and the script's answer carries `inTransaction: null`, C-84.
 
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "the core asks the session on every call and keeps no state between calls"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bridged session reads the provider's state on every call, and keeps none"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a COMMIT the caller leaves answers QueryCancelledError outcome unknown and an unknown state, with no state read"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a COMMIT or ROLLBACK the provider fails answers its error by reference and the state read at once after it"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a state read after a failure that is stopped or fails answers unknown, and a failing read is logged by kind and code"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a state read answers the session's state, and a stopped read answers unknown"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "an unknown state is answered as inTransaction null, never false"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the owner's own call settles the record by the state it answered"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the reconcile resolves a record by the state it read, and an end seen on an unknown state is recorded unknown"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a lease that lapses on an unknown state records unknown, never timed-out"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records unknown for an unresolved record its read finds closed, and nothing for an open or unknown one"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a reload that takes the grant away records unknown for a record whose state is unknown"
-- test `tests/api/db/transaction.test.ts` "a statement whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner"
-- test `tests/api/db/transaction.test.ts` "a COMMIT whose caller leaves answers 499 with outcome unknown, and keeps the transaction and its owner"
-- test `tests/api/db/transaction.test.ts` "an unknown state answers inTransaction null, and the next read that finds the transaction resolves it"
-- test `tests/api/db/transaction.test.ts` "a script whose state read after its statements fails answers the statements' results with inTransaction null, and keeps the transaction and its owner unresolved"
-- test `tests/api/db/transaction.test.ts` "while a BEGIN whose caller left still runs, the status read answers inTransaction null, and who holds the record"
-- test `tests/api/db/transaction.test.ts` "governance: an unknown state records no terminal event, and a later read that finds no transaction records unknown, never timed-out or rolled-back"
-- test `tests/api/db/transaction.test.ts` "governance: an unknown state the next read finds still open is resolved, and a later provider timeout records timed-out"
-- test `tests/api/db/transaction.test.ts` "governance: a COMMIT that fails after it may have reached the database and leaves no transaction records unknown, never rolled-back"
-- test `tests/api/db/transaction.test.ts` "governance: a COMMIT refused before it was sent that leaves no transaction records rolled-back"
-- test `tests/api/db/transaction.test.ts` "governance: a COMMIT whose caller leaves records an open event, and the end a later read finds is recorded unknown"
-- test `tests/unit/lib/provider-host/core/console-transaction.test.ts` "a stopped transaction call's record settles once the call it stopped waiting for settles, answered or failed"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a stopped execute's record settles once the run it stopped waiting for settles, answered or failed"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call Studio stopped waiting for keeps the record unresolved until it settles, whatever a read or answer finds open"
-- test `tests/api/db/transaction.test.ts` "governance: a read that finds the transaction open while a COMMIT whose caller left still runs keeps the state unknown, and the end found after it is recorded unknown"
-- test `tests/api/db/transaction.test.ts` "governance: a ROLLBACK sent while a COMMIT whose caller left still runs is refused and sends nothing, and the end the read after the COMMIT settled finds is recorded unknown"
-- test `tests/api/db/transaction.test.ts` "governance: a COMMIT sent while a ROLLBACK whose caller left still runs is refused and sends nothing, and the end the read after the ROLLBACK settled finds is recorded unknown"
-- test `tests/api/db/transaction.test.ts` "a BEGIN, statement, COMMIT or ROLLBACK sent while a COMMIT whose caller left still runs is refused 409 by name and sends nothing, and once it settled the ROLLBACK is sent and answers by its own outcome"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a read that finds no transaction while a call Studio stopped waiting for still runs keeps the record unresolved, and one after it settled releases it"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing while a call Studio stopped waiting for still runs, and looks again until it has settled"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read a call Studio stopped waiting for began during, and looks again"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a state read taken before the record was claimed, changed or ended neither settles nor resolves it"
-- test `tests/api/db/transaction.test.ts` "a state read that began before the owner's newer BEGIN claimed the record neither releases nor settles it when it answers"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a call of the owner's in flight keeps every read from acting on the record, and its own answer settles it"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch looks again and records nothing while a call of the owner's is in flight, and once it answered a read that finds no transaction records timed-out once"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch records nothing for a read the record changed during, and looks again"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "the watch's repeated looks stop once the record's lease has lapsed"
-- test `tests/api/db/transaction.test.ts` "governance: a read that answers while the owner's COMMIT has committed but not yet answered keeps the record and records nothing, and the COMMIT records committed"
-- test `tests/api/db/transaction.test.ts` "a BEGIN the owner sends on their own record that Studio stops waiting for holds the record's calls until it settles"
-- test `tests/api/db/transaction.test.ts` "governance: a credential change while the owner's stopped COMMIT still runs records unknown, never rolled-back, and answers rolledBack false"
-- test `tests/api/db/transaction.test.ts` "governance: a provider timeout that ends the transaction while a statement runs is recorded unknown once the statement answers"
-- test `tests/api/db/transaction.test.ts` "governance: a typed COMMIT statement, alone or ending a script, records exactly one terminal event, unknown"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a reload that takes the grant away records unknown while a call of the owner's is in flight or stopped"
-- test `tests/api/db/transaction.test.ts` "governance: a reload that tears down the owner's providers while their COMMIT still runs records unknown, never rolled-back"
-- test `tests/unit/lib/api/transaction-ownership.test.ts` "a claim over a record whose end was not recorded records that end unknown, once"
-- test `tests/api/db/transaction.test.ts` "governance: a BEGIN that opens a new transaction while the owner's statement still runs on the old record records the old one's end unknown"
-- test `tests/api/db/transaction.test.ts` "governance: a read that finds no transaction while a BEGIN whose caller left still runs keeps the record, so the transaction it opens stays its caller's and its end is recorded unknown"
-- test `tests/api/db/transaction.test.ts` "governance: a lease that lapses on an unknown state records unknown, never timed-out"
-- test `tests/api/db/transaction.test.ts` "governance: a credential change on a transaction whose state is unknown records unknown unless a rollback answered"
-- test `tests/api/db/transaction.test.ts` "a script unit that does not answer within its deadline is that unit's error inside the 200 answer, no further unit starts, and the transaction is kept with its state unknown until that unit settles"
-- test `tests/api/db/transaction.test.ts` "governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown"
-
 ### C-59 (normative): The transaction route on the host
 
 `POST /api/db/transaction` makes every call on its session through the host core, behind its caller facade: a begin, a COMMIT, a ROLLBACK and the state read are transaction calls, C-57, and one statement inside the transaction is console execute sent with `transaction`.
@@ -3196,21 +1597,6 @@ A begin Studio stopped waiting for, on a key with no record whose session held n
 A begin the session answers with no transaction held claims nothing and is refused in Studio's words.
 The script of several statements runs each unit through the host core, C-84.
 
-- test `tests/unit/lib/api/editor-transaction.test.ts` "each transaction call's deadline is the statement timeout plus ten seconds, and a state read's the cleanup deadline"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a begin past its deadline is refused before the provider is called, not-sent"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a BEGIN, COMMIT or ROLLBACK past its deadline answers StudioTimeoutRefusal naming it, outcome unknown, state unknown"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "a statement inside the transaction answers its page as runEditorQuery does, with the session state after it"
-- test `tests/unit/lib/api/editor-transaction.test.ts` "the rollback after a credential change runs on Studio's own 5 s allowance, never the caller's"
-- test `tests/unit/lib/api/editor-transaction-bounds.test.ts` "a rollback after a credential change that never answers is abandoned at its 5 s allowance, unconfirmed"
-- test `tests/unit/lib/api/editor-transaction-bounds.test.ts` "a COMMIT that never answers is stopped at its deadline, its state unknown"
-- test `tests/api/db/transaction.test.ts` "a begin whose caller leaves claims for its caller alone the transaction it may have opened"
-- test `tests/api/db/transaction.test.ts` "a call past its deadline answers 504 with outcome unknown, and keeps the transaction and its owner"
-- test `tests/api/db/transaction.test.ts` "a request that leaves while its connection opens answers 499 not-sent and runs nothing"
-- test `tests/api/db/transaction.test.ts` "a begin whose session answers it holds no transaction answers 400 with the reason, and holds nothing"
-- test `tests/api/db/transaction.test.ts` "a statement's page is held to the host's page budget, as on POST /api/db/query"
-- test `tests/api/db/transaction.test.ts` "governance: a rollback after a credential change waits on Studio's own 5 s allowance, and one the host stops waiting for answers 409 unconfirmed"
-- test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
-
 ### C-60 (normative): A run's scope ends through console.endScope, after the run
 
 The caller that runs statements in a scope mints it, one per request, sends it with every execute of the request and only to a session that offers `console.endScope`, C-9, and ends it once through `endScopeCall`, C-48, under a cleanup context the caller's leaving does not end, C-47.
@@ -3222,33 +1608,6 @@ The answer carries `openTransaction: "rolled-back"` only when the end answered i
 `POST /api/db/query` and the VS Code backend's `query/run` end their run's scope so.
 `POST /api/db/multi-query` ends its script's scope once after the last unit it ran, at once when that unit answered or failed and once its call settled when Studio stopped waiting for it, C-83, and answers 504 naming the end when its cleanup deadline stopped an end it waited for.
 Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
-
-- test `tests/unit/lib/api/editor-query.test.ts` "the run on a session that offers console.endScope is sent a scope of its own, and that scope is ended once after the run"
-- test `tests/unit/lib/api/editor-query.test.ts` "a provider that declares no transaction ender is sent no scope and asked to end none, and answers no openTransaction key"
-- test `tests/unit/lib/api/editor-query.test.ts` "the scope is ended when the statement throws, and the statement's error is answered"
-- test `tests/unit/lib/api/editor-query.test.ts` "a transaction the run left open and the provider rolled back is answered (D74)"
-- test `tests/unit/lib/api/editor-query.test.ts` "an end that fails is answered in the run's place, its error by reference, and the page record is released once"
-- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end is sent before the answer body is built"
-- test `tests/unit/lib/api/editor-query.test.ts` "a page refused after the call ends its scope before the refusal is answered"
-- test `tests/unit/lib/api/editor-query.test.ts` "a run refused before its call ends no scope"
-- test `tests/unit/lib/api/editor-query.test.ts` "the scope's end runs under a cleanup context of its own, ten seconds from its start, which the caller's leaving does not end"
-- test `tests/unit/lib/api/editor-query.test.ts` "an end its cleanup deadline stops answers StudioTimeoutRefusal naming the end, outcome unknown"
-- test `tests/unit/lib/api/editor-query.test.ts` "an end the host refuses is answered as a defect of Studio's bridge, named by its rule"
-- test `tests/unit/lib/api/editor-query.test.ts` "a caller that leaves while the statement runs is answered at once, and the scope is ended once the statement has settled"
-- test `tests/unit/lib/api/editor-query.test.ts` "the end of a stopped run's scope that fails or is stopped is logged by kind and code, never its text"
-- test `tests/unit/lib/api/editor-scope-bounds.test.ts` "an end that never answers is cut at the cleanup deadline, and the run answers StudioTimeoutRefusal naming it"
-- test `tests/api/db/query.test.ts` "ends the transaction its own statement left open and says so"
-- test `tests/api/db/query.test.ts` "ends the transaction a FAILING statement left open, which is where they come from"
-- test `tests/api/db/query.test.ts` "leaves a provider that cannot name its own session exactly as it found it"
-- test `tests/api/db/query.test.ts` "governance: a rollback that fails after the statement answered is answered in the statement's place and recorded as the run's error, as the finally always did"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "answers a transaction the statement left open as rolled back (D74)"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "ends the statement's own scope after the run, and answers an end that fails in the run's place"
-- test `tests/api/db/multi-query.test.ts` "the script's scope is ended once through the host core's console.endScope, under a cleanup context the request's leaving does not end"
-- test `tests/api/db/multi-query.test.ts` "a script whose end does not answer within 10 s answers 504 naming the end"
-- test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
-- test `tests/api/db/multi-query.test.ts` "every statement and the ender run under ONE scope, this request's own (D87)"
-- test `tests/api/db/multi-query.test.ts` "a provider that cannot end one is asked nothing and answers as before"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "only the legacy bridge calls a provider's endOpenQueryTransaction, so a run's open transaction ends through console.endScope alone"
 
 ### C-61 (normative): The objects tree facet
 
@@ -3263,20 +1622,6 @@ An engine with no container level reads no top-level listing, so it is never ask
 A container's path and an object's path are opaque: the host sends each back exactly as it was answered and reads nothing in it.
 The facet has no honours list: its request's members are each the action's own, absent `parent` meaning the top level and absent `limit` meaning unbounded, and a provider honours every one of them, C-63.
 The answer shapes are Studio's own object tree shapes, declared by the SDK and held mutually assignable with Studio's, C-7.
-
-- schema `/$defs/calls/properties/objects`
-- schema `/$defs/objectsCalls/properties/tree`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "calls that leave out objects, or objects that leave out tree, are refused as missing-key"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the objects facets are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the tree actions are containers, count, list, describe and describeMany"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the objects tree facet is declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the objects tree facet is refused by name to a session that does not offer it"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw objects.tree, and never offer it where the manifest does not"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree request is one of its actions, each with its own members"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a tree answer is exactly one of its five forms, each read as its closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a containers answer may carry needsConfiguration as text, read as part of its closed shape"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served tree call crosses each action's request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a containers answer that says the inventory needs configuration crosses as a frame with its sentence"
 
 ### C-62 (informative): A tree answer is read by reference
 
@@ -3300,16 +1645,6 @@ It answers the session's answer by reference, C-62, a stop with its reason and `
 A failure after the stop reaches the caller's late handler once, and a later answer is dropped, so no promise the host stopped waiting for is left without a handler.
 A session that offers the facet with no function is a defect of the host's session, named.
 
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call to a session without objects.tree is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call answers the session's own answer, with the request and context frozen"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "an error the provider throws reaches the caller as the same object"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a tree answer that arrives after the stop is dropped, and settled resolves"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that throws its own signal's reason is answered as a stop"
-- test `tests/unit/lib/provider-host/core/objects.test.ts` "a session that offers objects.tree with no tree function is a host defect, named"
-- test `tests/unit/lib/provider-host/core/objects-bounds.test.ts` "a tree call that never settles is stopped at the call's deadline"
-
 ### C-65 (normative): The object tree on the host
 
 The six tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read every container listing, count, object listing and description through one caller facade and the host core's tree call, C-64, on the session the legacy bridge serves, C-50, of the provider the connection's metadata session holds, C-66.
@@ -3321,31 +1656,6 @@ The facade takes the provider its caller resolved and no catalog, so no catalog 
 Its container listing answers the containers alone, so a top-level listing that says the inventory needs configuration answers no container, as the provider's own listing does, C-61.
 Each route's and handler's own checks and scrubs run where they ran.
 Beside it, the granted tree facade serves the agent's grounding walk under one grant, C-80, and the within-call tree facade serves MCP's schema reads under one MCP call's deadline and its request's signal, C-82.
-
-- test `tests/unit/lib/api/object-tree.test.ts` "each tree read is one host core tree call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
-- test `tests/unit/lib/api/object-tree.test.ts` "each tree read answers the provider's own answer by reference"
-- test `tests/unit/lib/api/object-tree.test.ts` "an error the provider raises reaches the caller as the same object"
-- test `tests/unit/lib/api/object-tree.test.ts` "a caller that leaves while the provider reads is answered QueryCancelledError at once, outcome unknown, and the read's later failure is logged by kind and code, never its text"
-- test `tests/unit/lib/api/object-tree.test.ts` "a caller already gone reads nothing and is answered QueryCancelledError, not-sent"
-- test `tests/unit/lib/api/object-tree.test.ts` "a tree read past its deadline answers StudioTimeoutRefusal naming the read, the statement timeout and the slack"
-- test `tests/unit/lib/api/object-tree.test.ts` "a tree read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
-- test `tests/unit/lib/api/object-tree.test.ts` "an answer without its action's member is answered as a defect of Studio's bridge, or of the provider for the batch the bridge passes through, naming the action and the member"
-- test `tests/unit/lib/api/object-tree.test.ts` "a tree read before the host core is installed fails by name and reaches no provider"
-- test `tests/unit/lib/api/object-tree.test.ts` "a containers answer that says the inventory needs configuration reaches the granted tree whole and the editor's listing as its containers alone"
-- test `tests/unit/lib/api/object-tree.test.ts` "a needsConfiguration beside a container, or below the top level, is answered as the provider's defect, named"
-- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a tree read that never answers is stopped at its deadline, StudioTimeoutRefusal naming the read"
-- test `tests/unit/db/container-walk.test.ts` "the walk reads any container source, not only a provider"
-- test `tests/api/db-objects.test.ts` "a tree route whose request leaves while the provider reads answers 499 at once, outcome unknown"
-- test `tests/api/db-objects.test.ts` "a tree route whose request is already gone answers 499 not-sent and asks the provider nothing"
-- test `tests/api/db-objects.test.ts` "an inventory or a search whose request leaves between its reads sends no further read"
-- test `tests/api/db-objects.test.ts` "a tree route past its deadline answers 504 studio-timeout-refusal naming the read"
-- test `tests/api/db-objects.test.ts` "every read of an inventory, its container walk included, is a host core tree call with a deadline of its own"
-- test `tests/api/db-objects.test.ts` "a tree route reads no catalog, and its provider's forCatalog is never called"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is cancelled while the provider reads answers QUERY_CANCELLED at once, outcome unknown"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call whose request is already cancelled reads nothing and answers QUERY_CANCELLED, not-sent"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call past its deadline answers TIMEOUT_ERROR naming the read"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "the columns are read through the host core's tree call, under the request's cancellation"
 
 ### C-66 (normative): The metadata session and the host's session capacity class
 
@@ -3365,42 +1675,6 @@ On a server-level connection, a tree read inside one of its databases, and a kil
 The legacy bridge's postgres provider, the one provider that declares catalog sessions, gives each catalog session a pool of at most three sessions that opens none until a read asks, and keeps at most five databases open at once, so its metadata session on a server-level connection holds at most seventeen sessions.
 A native provider's metadata session is an open like the editor's with a smaller `pool`, and the open names no role.
 
-- test `tests/unit/db/session-capacity.test.ts` "every shipped engine's session capacity is one exactly where Studio's record names a reason"
-- test `tests/unit/db/session-capacity.test.ts` "an in-memory database serves one session on every engine that opens a local file"
-- test `tests/unit/db/session-capacity.test.ts` "a name the file admission reads as a file is a file, whatever it spells"
-- test `tests/unit/db/session-capacity.test.ts` "the class and the file admission read one in-memory name"
-- test `tests/unit/db/session-capacity.test.ts` "the class reads Studio's records and the connection, never a provider or a manifest"
-- test `tests/unit/db/compatibility.test.ts` "is exhaustive over the shipped engines and frozen, each reason a sentence"
-- test `tests/unit/db/compatibility.test.ts` "names a reason for every engine SINGLE_WRITER_FILE names"
-- test `tests/isolated/factory.test.ts` "a tree read's provider is a session of its own beside the editor's, from the same connection and posture, with a pool of at most two that opens none until asked"
-- test `tests/isolated/factory.test.ts` "under governance each owner's metadata session is their own, with a pool of at most two beside a pool of poolMaxPerUser"
-- test `tests/isolated/factory.test.ts` "a connection that serves one session answers the editor's own provider and builds no other"
-- test `tests/isolated/factory.test.ts` "every refusal of the editor's open refuses a metadata open alike, before anything is built"
-- test `tests/isolated/factory.test.ts` "two concurrent first tree reads of one connection open one metadata session, and a removal overtakes one in flight"
-- test `tests/isolated/factory.test.ts` "a removal closes the metadata session with the editor's, by connection, by owner and by record key"
-- test `tests/isolated/factory.test.ts` "the idle sweep evicts an idle metadata session and keeps one with a run in flight"
-- test `tests/isolated/factory.test.ts` "the caches' close tears the metadata sessions down under the teardown's deadlines and names one not closed"
-- test `tests/isolated/factory.test.ts` "the SSH tunnel stays open while a metadata session still serves the connection"
-- test `tests/isolated/factory.test.ts` "a saved query timeout change reopens the metadata session"
-- test `tests/api/db-objects.test.ts` "each tree route reads on the connection's metadata session, and the source and edit routes on the editor's"
-- test `tests/api/db-objects.test.ts` "a tree route answers while the editor's provider holds every read, without waiting for it"
-- test `tests/api/db-objects.test.ts` "handleObjectRequest resolves the editor's provider by default and the metadata session when asked, after the guard and the connection's resolution"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "each tree call reads through the host core's tree call, on the provider of the connection's metadata session"
-- test `vscode-extension/test/unit/backend-handlers.test.ts` "a tree call answers while the editor's provider holds every read, without waiting for it"
-- test `tests/unit/lib/api/editor-provider.test.ts` "opens the connection's metadata session with the editor's connection and posture, and without a catalog runs on it"
-- test `tests/unit/lib/api/editor-provider.test.ts` "a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one"
-- test `tests/api/db/maintenance.test.ts` "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider"
-- test `tests/api/db/maintenance.test.ts` "a kill answers while the editor's provider holds every run, without waiting for it"
-- test `tests/api/db/monitoring.test.ts` "the dashboard reads every panel on the connection's metadata session, opened with the editor's connection and posture, and answers that session's maintenance"
-- test `tests/api/db/monitoring.test.ts` "a dashboard answers while the editor's provider holds every panel read, without waiting for it"
-- test `tests/api/db/monitoring.test.ts` "a dashboard's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words with no panel read"
-- test `tests/api/db/health.test.ts` "the health read runs on the connection's metadata session, opened with the editor's connection and posture"
-- test `tests/api/db/health.test.ts` "a health read answers while the editor's provider holds every read, without waiting for it"
-- test `tests/api/db/health.test.ts` "a health read's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words"
-- test `tests/api/admin/fleet-health.test.ts` "each row's health and overview are read on the connection's metadata session, opened under the posture its declarations were read with"
-- test `tests/api/admin/fleet-health.test.ts` "a row answers while the editor's provider holds every read, without waiting for it"
-- test `tests/api/db/maintenance.test.ts` "a kill's catalog runs on that database's session of the metadata session, and a catalog the connection cannot honour is refused as the editor's provider refuses it, with nothing run or audited"
-
 ### C-67 (normative): The maintenance facets
 
 `maintenance.run` and `maintenance.preview` are the two maintenance facets, each offered or not in `calls.maintenance`, and each implemented as one function under the implementation's `maintenance`.
@@ -3414,22 +1688,6 @@ The engine principal a session acts as, a user name and never any part of a secr
 No member of either call is a claim, M-64.
 The answer shapes are Studio's own maintenance result and preview, declared by the SDK and held mutually assignable with Studio's, C-7.
 
-- schema `/$defs/calls/properties/maintenance`
-- schema `/$defs/maintenanceCalls/properties/run`
-- schema `/$defs/maintenanceCalls/properties/preview`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "calls that leave out maintenance, or maintenance that leaves out run or preview, are refused as missing-key"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance facets are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the maintenance operations are the schema's"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the maintenance facets are declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's maintenance is admitted where the package offers maintenance.run, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a maintenance spec that previews is admitted where the package offers maintenance.preview, and refused by name where it does not"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "the maintenance facets are refused by name to a session that does not offer them"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement may withdraw maintenance.run and maintenance.preview, and never offer one the manifest does not"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance run request and answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a maintenance preview request and answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served maintenance call crosses its request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a value of the wrong type or outside its vocabulary is refused as frame-value-unreadable"
-
 ### C-68 (normative): A session's maintenance is narrowed by what its server accepts
 
 `open` may answer, in its refinement's `maintenance`, the placements its server accepts for the operations its provider measured at open: one item for each such operation, naming it and whether the server takes it on a row and over the whole database.
@@ -3439,16 +1697,6 @@ It adds nothing and changes no label, confirmation, preview or kinds, and an ope
 Its answer is frozen at every depth, and the declaration is left as it is.
 The host keeps the narrowed maintenance with the session, beside its calls, and holds every run and preview request to it, C-17.
 
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing is a list of the placements the server accepts, each read as a closed record of its operation and two booleans"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a maintenance narrowing longer than the operation vocabulary is refused as refinement-unreadable at the list, and no item is read"
-- test `packages/provider-sdk/tests/calls/narrowing-bounds.test.ts` "a maintenance narrowing of the longest length is refused at the list, in a bounded child"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "sessionMaintenance refuses an operation the session's engine does not list as refinement-widens"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "sessionMaintenance withdraws what the server refuses and adds nothing, as narrowMaintenance does"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "no maintenance narrowing refusal carries a value of the refinement"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served open whose maintenance narrowing names an operation its engine does not list is refused, and the session it opened is closed"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a server accepts"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "a bridged session's maintenance is narrowMaintenance's answer for every shipped spec and every placement a connected server accepts"
-
 ### C-69 (normative): The host's maintenance calls
 
 `maintenanceRunCall` and `maintenancePreviewCall` check the context with `checkCallStart`, C-27, the facet with `checkMaintenanceFacet` and the request against the session's maintenance, C-17, answering each refusal as a record without calling the provider.
@@ -3456,18 +1704,6 @@ Each freezes the context and the request in place, C-12, and waits with `awaitWi
 Each answers the session's answer by reference, a stop with its reason and `settled`, and a provider's error by reference.
 A failure after the stop reaches the caller's late handler once, and a later answer is dropped, so no promise the host stopped waiting for is left without a handler.
 A session that offers a facet with no function for it is a defect of the host's session, named.
-
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance call to a session without its facet is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance request the session's maintenance does not take is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance call answers the session's own answer, with the request and context frozen"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "an error the provider throws reaches the caller as the same object"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a maintenance answer that arrives after the stop is dropped, and settled resolves"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a session that throws its own signal's reason is answered as a stop"
-- test `tests/unit/lib/provider-host/core/maintenance.test.ts` "a session that offers a maintenance facet with no function is a host defect, named"
-- test `tests/unit/lib/provider-host/core/maintenance-bounds.test.ts` "a maintenance run that never settles is stopped at the call's deadline"
-- test `tests/unit/lib/provider-host/core/maintenance-bounds.test.ts` "a maintenance preview that never settles is stopped at the call's deadline"
 
 ### C-70 (normative): Maintenance on the host
 
@@ -3478,32 +1714,6 @@ A later failure is logged by kind and code, never its text, and a run that answe
 A run the host stopped waiting for is audited as an unknown outcome, and one refused before the call, or failed before it by an error the host raised, writes no audit row.
 The routes read the provider's declarations after their own checks.
 Each route's doors, checks, confirmations, scrubs and error mapping run where they ran, an operation the engine does not offer is still refused before any provider is built, and a run of an operation placed nowhere, `kill`, still passes.
-
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "each maintenance run and preview is one host core call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a run and a preview answer the provider's own answer by reference, and the preview's offer is the bridged session's"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "an error the provider raises reaches the caller as the same object"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a caller that leaves while the provider runs is answered a stop at once, QueryCancelledError outcome unknown, and the later failure is logged by kind and code, never its text"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a run the caller stopped waiting for that answers afterwards is logged by route and facet, never its text"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a caller already gone sends nothing and is answered not-sent"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call past its deadline answers StudioTimeoutRefusal naming the run or the preview, the statement timeout and the slack"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
-- test `tests/unit/lib/api/provider-maintenance.test.ts` "a maintenance call before the host core is installed fails by name and reaches no provider"
-- test `tests/unit/lib/api/provider-maintenance-bounds.test.ts` "a maintenance run that never answers is stopped at its deadline, StudioTimeoutRefusal naming the run"
-- test `tests/api/db/maintenance.test.ts` "the route reads the provider's declarations once, after its own checks, and none for a request it refuses"
-- test `tests/api/db/maintenance.test.ts` "a run whose request leaves while the provider runs answers 499 at once, outcome unknown, and is audited as an unknown outcome"
-- test `tests/api/db/maintenance.test.ts` "a run whose request is already gone answers 499 not-sent, asks the provider nothing and writes no audit row"
-- test `tests/api/db/maintenance.test.ts` "a run past its deadline answers 504 studio-timeout-refusal naming the run, and is audited as an unknown outcome"
-- test `tests/api/db/maintenance.test.ts` "a run the host refuses before the call answers as a defect of Studio and writes no audit row"
-- test `tests/api/db/maintenance.test.ts` "a broken audit sink does not change the answer for a run Studio stopped waiting for"
-- test `tests/api/db/maintenance.test.ts` "kill's session target passes the host's placement check, which neither placement describes"
-- test `tests/api/db/maintenance.test.ts` "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider"
-- test `tests/api/db/maintenance.test.ts` "an error the host raises before the provider is called is not audited as an execution failure"
-- test `tests/api/db/maintenance.test.ts` "a connection whose connected maintenance is narrower than its declaration is refused the placement its session's maintenance withdrew"
-- test `tests/api/db/maintenance.test.ts` "the provider is asked once with the operation, the target the request names, none for an empty one, and the container, and the answer is its result"
-- test `tests/api/db/maintenance-preview.test.ts` "a preview whose request leaves while the provider reads answers 499 at once, outcome unknown"
-- test `tests/api/db/maintenance-preview.test.ts` "a preview whose request is already gone answers 499 not-sent and asks the provider nothing"
-- test `tests/api/db/maintenance-preview.test.ts` "a preview past its deadline answers 504 studio-timeout-refusal naming the preview"
-- test `tests/api/db/maintenance-preview.test.ts` "whether a preview is offered is read from the bridged session"
 
 ### C-71 (normative): The monitoring facets
 
@@ -3518,34 +1728,12 @@ A timestamp member of an answer, such as when the server started or when a query
 No member of either call is a claim.
 The answer shapes are Studio's own panel shapes and pool statistics, declared by the SDK and held mutually assignable with Studio's, C-7.
 
-- schema `/$defs/calls/properties/monitoring`
-- schema `/$defs/monitoringCalls/properties/panel`
-- schema `/$defs/monitoringCalls/properties/poolStats`
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "calls that leave out monitoring, or monitoring that leaves out panel or poolStats, are refused as missing-key"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the monitoring facets are the schema's"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "the monitoring facets are declared and implemented both ways, like every console facet"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "an engine's offered monitoring panel is admitted where the package offers monitoring.panel, and refused by name as engine-facet-call-not-offered where it does not"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a monitoring panel request is held to the panels the session's engine offers"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "no monitoring request refusal carries a value of the request"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel request is the closed shape of the panel it names"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a monitoring panel answer is exactly one of its seven forms, each read as its closed shape"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a timestamp member admits a Date and nothing else"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served monitoring call crosses its request and answer as frames, and the provider receives decoded frozen copies"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a monitoring call on a session without the facet, or for a panel its engine does not offer, is refused before any frame"
-
 ### C-72 (normative): The health call
 
 Every session answers `health`, a mandatory call beside `open` and `close` that reaches the engine and answers its health.
 It answers the count of open connections where the engine can measure it, left out where it cannot and never a zero in its place, the database's size, its cache hit ratio, its slowest queries and its sessions, as Studio's health shape.
 It takes no request, and no refinement withdraws it, since it is no member of `calls`.
 The answer shape is Studio's own health answer, declared by the SDK and held mutually assignable with Studio's, C-7.
-
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a mandatory call that is missing or no function is refused as call-missing"
-- test `packages/provider-sdk/tests/calls/define-provider.test.ts` "a call inherited from a prototype is not read, so a class instance is refused as call-missing"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a calls segment the contract does not define is refused by name, and never read as the objects segment"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a pool statistics answer and a health answer are each read as their closed shape"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a served health call crosses its context and answer as frames, and the host receives a decoded copy"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a closed or foreign session token is refused as session-not-open before any frame"
 
 ### C-73 (normative): The host's monitoring calls
 
@@ -3556,24 +1744,6 @@ A failure after the stop reaches the caller's late handler once, and a later ans
 A session that offers a facet with no function for it is a defect of the host's session, named.
 The core does not read a panel answer's form: the caller reads the member its request names.
 `healthCall` checks the context with `checkCallStart`, C-27, and no facet, since every session answers `health`, C-72, freezes the context in place, waits with `awaitWithin` until the context's signal, and answers the session's health by reference, a stop with its reason and `settled`, and a provider's error by reference, a later failure reaching the caller's late handler once.
-
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call whose signal aborted or whose deadline passed is refused as a record, and the provider is never called"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call to a session without its facet is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a panel request for a panel the session's engine does not offer is refused as a record before the call"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call answers the session's own answer, with the request and context frozen"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "an error the provider throws reaches the caller as the same object"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring call the caller stops waiting for answers a stop at once, and its later failure reaches the late handler once"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a monitoring answer that arrives after the stop is dropped, and settled resolves"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a session that throws its own signal's reason is answered as a stop"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a session that offers a monitoring facet with no function is a host defect, named"
-- test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a panel read that never settles is stopped at the call's deadline"
-- test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a pool statistics read that never settles is stopped at the call's deadline"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call whose signal aborted or whose deadline passed is refused as a record, and the session's health is never called"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call reads no facet and answers the session's own health, its context frozen"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health error the session raises reaches the caller as the same object, a synchronous throw as the call's rejection"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a health call the caller stops waiting for answers a stop at once, its later failure reaches the late handler once, and a later answer is dropped"
-- test `tests/unit/lib/provider-host/core/monitoring.test.ts` "a session that throws its health call's own signal reason is answered as a stop"
-- test `tests/unit/lib/provider-host/core/monitoring-bounds.test.ts` "a health read that never settles is stopped at the call's deadline"
 
 ### C-74 (normative): Monitoring on the host
 
@@ -3588,37 +1758,6 @@ A later failure is logged by kind and code, never its text.
 The monitoring route refuses, by name and before any connection resolves, a slow query or session limit that is not a whole number of at least 1 and a schema filter that is not text naming a schema.
 Each route's doors, checks, scrubs and answers run where they ran, and a session that offers no pool statistics is answered with today's zeros and sentence.
 
-- test `tests/unit/db/engine-facets/monitoring.test.ts` "each panel is read through one request of its own, the limits resolved and the schema present only when the caller named one"
-- test `tests/unit/db/engine-facets/monitoring.test.ts` "an answer whose form is not the requested panel's fails that panel by name, and the others answer"
-- test `tests/unit/db/engine-facets/monitoring.test.ts` "a dashboard whose one panel answered a form other than its own rejects with that panel's sentence as a plain Error"
-- test `tests/unit/db/engine-facets/monitoring.test.ts` "readPanel calls the panel's member with today's argument and answers its answer by reference under the panel's key"
-- test `tests/isolated/monitoring-panels-census.test.ts` "no provider overrides mapError, so the host's mapping of a dashboard's several sentences is each provider's own"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "each panel read and each pool statistics read is one host core call with a fresh request, on a deadline of the statement timeout plus ten seconds from its own start"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a dashboard read answers each panel's own answer by reference in the orchestration's four states, and a pool statistics read the provider's own"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "an error the provider raises reaches the caller as the same object, and several sentences answer the engine's mapping of them"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a caller that leaves while the reads are pending is answered a stop at once, QueryCancelledError outcome unknown, and each later failure is logged by kind and code, never its text"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a pool statistics read whose caller leaves is answered a stop at once, and its later failure is logged by kind and code, never its text"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a caller already gone sends nothing and is answered not-sent"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read past its deadline answers StudioTimeoutRefusal naming the panel read or the pool statistics read, the statement timeout and the slack"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read refused for any other reason is answered as a defect of Studio's bridge, named by its rule"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read before the host core is installed fails by name and reaches no provider"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "the monitoring options are refused by name when a limit is not a whole number of at least 1 or the schema is not text that names one"
-- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a dashboard read whose panels never answer is stopped at their deadline, StudioTimeoutRefusal naming the panel read"
-- test `tests/api/db/monitoring.test.ts` "the route reads every panel through the host core and never the provider's getMonitoringData"
-- test `tests/api/db/monitoring.test.ts` "a dashboard whose request leaves while its panels are read answers 499 at once, outcome unknown"
-- test `tests/api/db/monitoring.test.ts` "a dashboard whose request is already gone answers 499 not-sent and reads no panel"
-- test `tests/api/db/monitoring.test.ts` "a dashboard past its deadline answers 504 studio-timeout-refusal, and a panel stopped beside answered ones carries the sentence in errors"
-- test `tests/api/db/monitoring.test.ts` "options with a limit that is not a whole number of at least 1, or a schema filter that is not text naming a schema, are refused by name before any connection resolves"
-- test `tests/api/db/monitoring.test.ts` "a panel answer whose form is not the requested panel's fails that panel by name"
-- test `tests/api/db/monitoring.test.ts` "a provider error that reads like an abort answers by its class, and only the request's own signal answers 499"
-- test `tests/api/db/monitoring.test.ts` "a provider error with the code ECONNRESET answers by its class, not as a request the caller left"
-- test `tests/api/db/pool-stats.test.ts` "a pool statistics read whose request leaves answers 499 at once, outcome unknown"
-- test `tests/api/db/pool-stats.test.ts` "a pool statistics read whose request is already gone answers 499 not-sent and reads nothing"
-- test `tests/api/db/pool-stats.test.ts` "a pool statistics read past its deadline answers 504 studio-timeout-refusal naming the read"
-- test `tests/api/db/pool-stats.test.ts` "whether pool statistics are offered is read from the bridged session"
-- test `tests/api/db/monitoring.test.ts` "the dashboard reads every panel on the connection's metadata session, opened with the editor's connection and posture, and answers that session's maintenance"
-- test `tests/api/db/pool-stats.test.ts` "pool statistics are read on the editor's provider and never on the metadata session, since they describe the editor's pool"
-
 ### C-75 (normative): Health on the host
 
 The health route and fleet health read a connection's health through the monitoring facade and the host core's health call, C-73, on the session the legacy bridge serves, C-50, of the provider of the connection's metadata session, C-66.
@@ -3631,34 +1770,6 @@ Test Connection reads health through the same call on the session the bridge ser
 The wait's end answers the test's connection error naming the budget, a health failure the degraded success, and a failure after the wait ended is logged by kind and code.
 A health read made before the host core is installed fails by name, and Test Connection never answers that defect as a degraded success.
 Each route's doors, checks, scrubs and answers run where they ran.
-
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read is one host core health call on a deadline of the statement timeout plus ten seconds from its own start and the caller's signal, answering the provider's own health by reference"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read's provider error reaches the caller as the same object"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read whose caller leaves is answered a stop at once, QueryCancelledError outcome unknown, and its later failure is logged by kind and code, never its text"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read whose caller is already gone sends nothing and is answered not-sent"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read past its deadline answers StudioTimeoutRefusal naming the health read, the statement timeout and the slack"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "an overview read is one host core panel call where the engine offers the overview, answering its figures by reference, and reads nothing where it does not"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "an overview answer whose form is not the overview panel's fails by name"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a monitoring read before the host core is installed fails by name and reaches no provider"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read within a wait the caller holds runs on that deadline and that signal itself, and answers the provider's health by reference"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read within a wait that ended answers that it ended, before the call or while it was pending, and a later failure is logged by kind and code"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a health read within a wait passes the provider's error as the same object"
-- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a health read whose provider never answers is stopped at its deadline, StudioTimeoutRefusal naming the health read"
-- test `tests/unit/lib/api/editor-query.test.ts` "contextOn carries the caller's own signal and deadline, and callContext is contextOn on a deadline signal of its own"
-- test `tests/api/db/health.test.ts` "a health read whose request leaves answers 499 at once, outcome unknown"
-- test `tests/api/db/health.test.ts` "a health read whose request is already gone answers 499 not-sent and reads nothing"
-- test `tests/api/db/health.test.ts` "a health read past its deadline answers 504 studio-timeout-refusal naming the health read"
-- test `tests/api/db/health.test.ts` "the health read runs on the connection's metadata session, opened with the editor's connection and posture"
-- test `tests/api/admin/fleet-health.test.ts` "each row's health and overview are read on the connection's metadata session, opened under the posture its declarations were read with"
-- test `tests/api/admin/fleet-health.test.ts` "each row's health and overview are read through the host core, the overview only where the engine offers it"
-- test `tests/api/admin/fleet-health.test.ts` "a row whose health read the host stopped at its deadline answers error with the health read's sentence"
-- test `tests/api/admin/fleet-health.test.ts` "a row whose overview read the host stopped stays healthy and carries no byte figure"
-- test `tests/api/admin/fleet-health.test.ts` "a request already gone answers each row error with the cancelled sentence and reads no health"
-- test `tests/unit/lib/api/test-connection.test.ts` "the health read is one host core health call on the bridged session of the provider the test holds, under the test's own deadline"
-- test `tests/unit/lib/api/test-connection.test.ts` "a health failure after the test's deadline is logged by kind and code, never its text, and the answer stays the test's ConnectionError"
-- test `tests/unit/lib/api/test-connection.test.ts` "a health read made before the host core is installed fails by name, never a degraded success, and the provider is closed"
-- test `tests/unit/lib/api/test-connection.test.ts` "checks or a health read still pending at the deadline answer the test's ConnectionError, never a caution or a degraded success"
-- test `tests/unit/lib/api/test-connection-bounds.test.ts` "a health read that never settles is cut at the test's deadline"
 
 ### C-76 (normative): The agent's curated readings on the host
 
@@ -3674,34 +1785,12 @@ A refused start is `StudioTimeoutRefusal`, outcome not-sent, and no member is ca
 A provider's error passes as the same object, and a failure after the stop is logged under the reading's route, the facet and the panel by kind and code, never its text.
 A reading made before the host core is installed throws by name before any promise, so it is never taken for a provider's failure.
 
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read answers the panel's member through one host core panel call, on a fresh request and a context of deadline, signal and env alone"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted panel read of a panel the session does not offer answers not-offered and reads nothing"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read whose deadline passed before it started is StudioTimeoutRefusal not-sent and reads nothing"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read its deadline stopped is StudioTimeoutRefusal, hands its caller the stopped call's settlement and logs a later failure by kind and code only"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read passes the provider's error as the same object"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted read before the host core is installed throws by name before any read"
-- test `tests/unit/lib/api/provider-monitoring.test.ts` "a granted health read follows the same rules over the host core's health call"
-- test `tests/unit/lib/api/provider-monitoring-bounds.test.ts` "a granted panel read and a granted health read whose provider never answers each end at their own deadline"
-- test `tests/unit/lib/agent/tools.test.ts` "a curated reading reads through the host core's panel call, with the reading's panel, the model's limit or the run's ceiling, and the schema where named"
-- test `tests/unit/lib/agent/tools.test.ts` "the health reading reads through the host core's health call"
-- test `tests/unit/lib/agent/tools.test.ts` "a curated reading that outlives the time its call was granted is refused as a timeout, and the run counts it until the provider's call settles"
-- test `tests/unit/lib/agent/tools.test.ts` "a provider that does not serve a kind is REFUSED, not crashed"
-- test `tests/unit/lib/agent/operations-readings.test.ts` "a context without an engine on kafka asking for a kind whose panel kafka's row does not offer is refused as KIND_UNSUPPORTED_BY_PROVIDER, its member never called"
-
 ### C-77 (normative): The agent routes' opens
 
 The hand-over route and the agent runs route wait for their opens within the engine's connect budget and the request's signal, as the query route does, C-44 and C-55: the hand-over for its execution-profile provider, the runs route for the database session a run names.
 An execution-profile acquisition takes the caller's own wait as the editor's acquisition does: a caller whose wait ends rejects with its reason by reference while the open goes on for every other caller and admits its provider into the profiled cache once, and without a wait it waits for the open as before.
 A request that leaves while its open is pending answers `QueryCancelledError`, 499, and an open past the budget `StudioTimeoutRefusal`, 504, naming the budget, both outcome not-sent, and nothing is read and no run is opened.
 The agent's drive passes no wait of its own: it has no signal of its own, C-76, so its acquisitions end where their open's own deadline, the engine's connect budget, ends them.
-
-- test `tests/isolated/factory.test.ts` "a caller whose wait ends stops waiting while the open goes on and admits itself once"
-- test `tests/isolated/factory.test.ts` "a profile acquisition without a wait waits for the open as before"
-- test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its provider opens answers 499 not-sent and never reads"
-- test `tests/api/agent/handover.test.ts` "a hand-over whose open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
-- test `tests/api/agent/runs.test.ts` "a run whose client leaves while its catalog opens answers 499 and opens no run"
-- test `tests/api/agent/runs.test.ts` "a run whose catalog open outlasts its engine's connect budget answers 504 studio-timeout-refusal not-sent"
-- test `tests/isolated/agent-runtime.test.ts` "the drive's acquisitions pass no wait of their own: the open's own deadline bounds them"
 
 ### C-78 (normative): The read-only execute
 
@@ -3719,19 +1808,6 @@ The memory transport keeps the policy its session was opened under and refuses b
 `readOnly` is also the name of the open policy's flag: the request reuses the word because the request is the read-only execute.
 The billed-read allowance a run spends stays with the host: it is a ledger charged as each request is sent, which no frame carries, so a provider of an engine that bills every read is handed none through the contract and refuses every statement, as its own rule refuses a budget that carries none.
 
-- schema `/$defs/executeRequestField`
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the console facets and execute's request fields are the schema's"
-- test `packages/provider-sdk/tests/calls/vocabulary.test.ts` "the read-only modes are execute and estimate-plan, frozen"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a request field the session does not honour is refused before the call"
-- test `packages/provider-sdk/tests/calls/request.test.ts` "a read-only execute goes only to a session opened under the read-only policy to be sent statements, and such a session takes no other execute"
-- test `packages/provider-sdk/tests/calls/refinement.test.ts` "a refinement that narrows the declared calls is admitted, and the session's calls are the narrowed ones"
-- test `packages/provider-sdk/tests/manifest/validate.test.ts` "a request field execute does not know, or one listed twice, is refused"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute crosses to a session opened for read-only statements, and every other pairing is refused before any frame"
-- test `packages/provider-sdk/tests/testing/serve.test.ts` "a read-only execute to a session whose module does not honour readOnly is refused by the field before any frame"
-- test `packages/provider-sdk/tests/testing/frames.test.ts` "a read-only execute's budget and mode are read as a closed shape"
-- test `tests/unit/lib/provider-host/core/console.test.ts` "a read-only execute is refused before the call on a session not opened for read-only statements, and a plain execute on one that is"
-- test `tests/unit/provider-sdk/call-surface-parity.test.ts` "every member of today's read-only statement surface has a place in the console calls or with the host"
-
 ### C-79 (normative): The agent's statements and the hand-over replay on the host
 
 Every statement the agent's run sends, the model's and every composed grounding statement, and the editor's hand-over replay of the run's answer, runs through the host core's execute, C-48, on the legacy bridge's read-only statement session, C-50, of the provider acquired under the agent's read-only execution profile or the hand-over's, each with an open policy of both `readOnly` and `sendsStatements`, C-78.
@@ -3747,28 +1823,6 @@ A stopped call's settlement is handed to the run, which counts the call as an ex
 The session offers no cancel, so a stopped statement runs on, and its later failure is logged under the caller's route by kind and code, never its text, and a later answer is not logged.
 A provider's error passes as the same object.
 MCP's statements run through the same read-only execute under the MCP call's deadline and its request's signal, C-81.
-
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a read-only execute runs the provider's read-only path once through one host core execute call, on a fresh request and a context of deadline, signal and env alone"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "its answer is the provider's result by reference, held to the row budget, except for an estimating plan, and to the byte budget, in the providers' sentences"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "an engine off the review record, a budget that is not whole positive numbers and a provider without a read-only path are each refused by name before any provider call"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a statement its deadline stopped is refused in the time budget's sentence, its settlement handed to the caller's hold, and a later failure is logged by kind and code only"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a stop at any wait of the run answers the time refusal"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a statement whose deadline passed before its call starts is refused in the time budget's sentence, outcome not-sent, and never reaches the provider"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a statement whose caller left is QueryCancelledError: outcome unknown once sent, not-sent before"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a row larger than one page is refused by the host's page budget"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a provider's error passes as the same object"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "before the host core is installed the read fails by name and calls no provider"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a time budget at the longest a timer waits builds its deadline"
-- test `tests/unit/lib/api/read-only-execute-bounds.test.ts` "a read-only execute whose provider never answers ends at its own deadline in the time budget's sentence"
-- test `tests/unit/lib/agent/tools.test.ts` "a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query"
-- test `tests/unit/lib/agent/tools.test.ts` "an acquired provider without a read-only path is refused by the host at the session's open, and the run propagates it"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no module outside the providers calls queryReadOnly except the legacy bridge's read-only statement session"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "runReadOnlyPage reads the review record before it reads the budget, the host core or the provider"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, the hand-over and MCP call no runReadOnlyStatement, and no module declares it: every statement runs through the host core's read-only execute"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
-- test `tests/api/agent/handover.test.ts` "a hand-over whose client leaves while its statement runs answers 499 QUERY_CANCELLED, outcome unknown, and its later failure is logged by kind and code"
-- test `tests/api/agent/handover.test.ts` "a hand-over row larger than one page is refused by the host's page budget"
-- test `tests/api/agent/handover.test.ts` "a provider with no read-only statement path is a server fault, not a fallback"
 
 ### C-80 (normative): The agent's grounding walk and statistics read on the host
 
@@ -3790,37 +1844,6 @@ The answer is the provider's result by reference, its page released once read, a
 The host pumps the first result within one page, C-53, so a row larger than one page is refused as `StudioByteBudgetRefusal` with the page's sentence, and an answer over 1 MiB waits for the host's large-page slot within the time granted.
 A stop at whatever wait of the run, and a start refused at the deadline, is the read's own time refusal, the stopped call's settlement handed to the run first, and a failure after the stop is logged under the read's route by kind and code, never its text.
 
-- test `tests/unit/lib/api/object-tree.test.ts` "each granted read is one host core tree call on the walk's one bridged session, a fresh request, and a fresh context on the grant's one deadline and one signal, of deadline, signal and env alone"
-- test `tests/unit/lib/api/object-tree.test.ts` "a granted read hands the grant's read allowance to the bridge by reference, and none where the grant has none"
-- test `tests/unit/lib/api/object-tree.test.ts` "a granted read its deadline stopped answers the grant's own time refusal, hands the stopped read's settlement to the grant's hold, and logs a later failure by kind and code only"
-- test `tests/unit/lib/api/object-tree.test.ts` "a granted read after the grant's deadline is refused before the call with the grant's own time refusal and reads nothing"
-- test `tests/unit/lib/api/object-tree.test.ts` "a granted read passes the provider's error as the same object"
-- test `tests/unit/lib/api/object-tree.test.ts` "a granted tree before the host core is installed throws by name and reads nothing"
-- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a granted tree read that never answers ends at the grant's deadline in the grant's own time refusal"
-- test `tests/unit/lib/agent/grounding-walk.test.ts` "every read of the walk is a host core tree call on one deadline, the time its call was granted"
-- test `tests/unit/lib/agent/grounding-walk.test.ts` "the drive's allowance reaches each count, listing and bulk describe by reference through the host's tree call"
-- test `tests/unit/lib/agent/grounding-walk.test.ts` "a walk whose grant ends sends no further read and answers timed-out, and the run counts only the read in flight until it settles"
-- test `tests/unit/lib/agent/grounding-walk.test.ts` "the walk reads its top-level listing once, and it is the walk's first level"
-- test `tests/unit/lib/agent/grounding-walk.test.ts` "is read from the provider's declaration, lists nothing and carries the reason on every kind"
-- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns the time it was granted loses the whole snapshot, under its own code"
-- test `tests/unit/lib/agent/context-snapshot.test.ts` "a reading that overruns its grant counts against the run's concurrency until its provider call settles"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement runs once through one host core execute call on a composed statement session, on a fresh request of its statement and every row and a context of deadline, signal and env alone"
-- test `tests/unit/lib/api/composed-statement.test.ts` "its answer is the provider's result by reference, and its page is released"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement its deadline stopped answers the grant's own time refusal, its settlement handed to the hold, and a later failure is logged by kind and code only"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a stop at any wait of the run answers the grant's time refusal"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a composed statement whose deadline passed before its call is refused with the grant's time refusal, not-sent, and never reaches the provider"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a row larger than one page is refused by the host's page budget"
-- test `tests/unit/lib/api/composed-statement.test.ts` "a provider's error passes as the same object"
-- test `tests/unit/lib/api/composed-statement.test.ts` "before the host core is installed it throws by name and calls no provider"
-- test `tests/unit/lib/api/composed-statement-bounds.test.ts` "a composed statement whose provider never answers ends at the grant's deadline in the grant's own time refusal"
-- test `tests/unit/lib/agent/schema-stats.test.ts` "the operations-profile statistics read runs through the host core's console execute on a composed statement session, its statement exactly as composed"
-- test `tests/unit/lib/agent/schema-stats.test.ts` "a statistics reading past the byte budget in UTF-8 bytes is refused, though its text is shorter than the budget"
-- test `tests/unit/lib/agent/schema-stats.test.ts` "a bigint cell in a statistics reading is measured as its decimal text"
-- test `tests/unit/lib/agent/schema-stats.test.ts` "the statistics read that outlasts its time is recorded as Studio's refusal"
-- test `tests/isolated/composed-statistics-statement.test.ts` "every dialect that reads statistics under the operations profile hands its provider the composed statement unchanged"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
-
 ### C-81 (normative): MCP's acquisitions and statements on the host
 
 Each MCP tool's acquisition, run_statement's under the agent's read-only execution profile and inspect_schema's under the operations profile, hands the factory's profiled open the call's wait: a signal that aborts when the request's signal does or at the call's deadline, the call's start plus `timeout_ms`.
@@ -3838,30 +1861,6 @@ A value the host's page cannot carry, refused by the value codec as the host mea
 An answer over 1 MiB in the host's measure waits for the host's large-page slot, C-53, within the call's deadline.
 No statement tool calls a provider's member directly: run_read_query's page is applied by the read-only statement session, C-85, and the database choice's listing and inspect_schema's tree reads run through the host core's tree call, C-82.
 
-- test `tests/unit/mcp/read-query-limits.test.ts` "hands the acquisition the call's wait, ended by the request leaving or the call's deadline"
-- test `tests/unit/mcp/read-query-limits.test.ts` "answers cancelled or timeout without acquiring when the request has left or the deadline has passed"
-- test `tests/unit/mcp/read-query-limits.test.ts` "answers the wait's own reason as the request leaving or the deadline, never as a failure"
-- test `tests/unit/mcp/read-query-limits.test.ts` "passes any other failure of the acquisition by reference with its settle time"
-- test `tests/unit/mcp/acquire-within-call-bounds.test.ts` "an MCP acquisition whose open never settles ends at the call's deadline"
-- test `tests/integration/mcp/context.test.ts` "an acquisition hands the factory the caller's wait"
-- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the connection opens is answered cancelled at once, and the open is released by the host"
-- test `tests/integration/mcp/run-read-query.test.ts` "an open that outlasts timeout_ms is answered with the timeout, and the open is released by the host"
-- test `tests/integration/mcp/inspect-schema.test.ts` "inspect_schema waits for its connection's open within the call's deadline and the request's signal"
-- test `tests/integration/mcp/run-read-query.test.ts` "a statement tool called before the host core is installed throws by name, writes no audit record and opens nothing"
-- test `tests/integration/mcp/run-read-query.test.ts` "a statement runs through the host core's read-only execute on a read-only statement session, never the provider's plain query"
-- test `tests/integration/mcp/run-mongo-command.test.ts` "a statement runs through the host core's read-only execute"
-- test `tests/integration/mcp/run-kafka-read.test.ts` "a statement runs through the host core's read-only execute"
-- test `tests/integration/mcp/run-read-query.test.ts` "each call is handed an allowance of its own, so one call's spend never reaches the next"
-- test `tests/integration/mcp/run-read-query.test.ts` "a statement that outlasts timeout_ms is stopped by the host core, answered with the timeout and no record, and its later failure is logged by kind and code only"
-- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the statement runs is answered cancelled at once through the host core, and its later answer is not logged"
-- test `tests/integration/mcp/run-read-query.test.ts` "a statement whose call deadline passed while its connection opened is never sent"
-- test `tests/integration/mcp/run-read-query.test.ts` "a failure that settles after the deadline is the timeout answer, and its cause goes to the server log, redacted"
-- test `tests/integration/mcp/run-read-query.test.ts` "a failure settling after the deadline answers as the deadline, with no record, as the deadline timer does"
-- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
-- test `tests/integration/mcp/protocol.test.ts` "a document nested deeper than MAX_VALUE_DEPTH refuses the answer by the depth rule"
-- test `tests/integration/mcp/run-mongo-command.test.ts` "a document with a bigint beside a missing field is answered through the host core as before"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
-
 ### C-82 (normative): MCP's schema reads on the host
 
 inspect_schema reads the host core before anything else, so a call made before its install throws by name, writes no audit record, resolves no connection and opens nothing.
@@ -3874,31 +1873,6 @@ A read's failure after MCP stopped waiting is logged under `/api/mcp` with the t
 The facade's container listing answers the containers alone, so a top-level listing that says the inventory needs configuration, C-61, is read as no container and its sentence is never answered.
 A statement tool's database listing that ends at the call's deadline or when the request leaves is answered as the timeout or the cancel, as the statement is, C-81.
 The catalog session the database choice opens for a named database, the provider's `forCatalog`, is an open, not a tree read, and the bridge never calls it, C-50: inspect_schema's call deadline bounds it through MCP's own race, and a statement tool's does not yet.
-
-- test `tests/unit/lib/api/object-tree.test.ts` "each read is one host core tree call on the tree's one bridged session, a fresh request, and a fresh context on the call's one deadline and one signal, of deadline, signal and env alone"
-- test `tests/unit/lib/api/object-tree.test.ts` "it answers the provider's answer by reference, hands the capabilities through, and reads a listing that says the inventory needs configuration as no container"
-- test `tests/unit/lib/api/object-tree.test.ts` "a caller that leaves while a read is pending is answered QueryCancelledError at once, and the read's later failure is logged by kind and code only"
-- test `tests/unit/lib/api/object-tree.test.ts` "a read its deadline stopped answers the call's own time refusal, and its later failure is logged by kind and code only"
-- test `tests/unit/lib/api/object-tree.test.ts` "a read after the call's deadline or after the caller left is refused before the call and reads nothing"
-- test `tests/unit/lib/api/object-tree.test.ts` "a read passes the provider's error as the same object"
-- test `tests/unit/lib/api/object-tree.test.ts` "before the host core is installed it throws by name and reads nothing"
-- test `tests/unit/lib/api/object-tree-bounds.test.ts` "a within-call tree read that never answers ends at the call's deadline in the call's own time refusal"
-- test `tests/unit/mcp/read-query-limits.test.ts` "a tree read of an MCP call ends at the call's deadline as the timeout and when the request leaves as cancelled, logged under /api/mcp afterwards"
-- test `tests/unit/mcp/read-query-limits.test.ts` "a tree read's answer and a provider's failure pass by reference"
-- test `tests/unit/mcp/read-query-limits.test.ts` "a provider's own timeout or cancel error is its failure, never the call's deadline or the request leaving"
-- test `tests/unit/mcp/database-choice.test.ts` "a call naming no database lists the databases through one host core tree call, and a named one opens its session directly"
-- test `tests/unit/mcp/database-choice.test.ts` "a listing the call's deadline or the request ends is answered as the timeout or the cancel, and a failing one throws its error"
-- test `tests/integration/mcp/run-read-query.test.ts` "a database listing that outlasts timeout_ms on a connection that reaches a whole server is answered with the timeout"
-- test `tests/integration/mcp/run-read-query.test.ts` "a client that leaves while the databases are listed is answered cancelled at once"
-- test `tests/integration/mcp/inspect-schema.test.ts` "a database listing held past the deadline is the timeout, through the host core"
-- test `tests/integration/mcp/inspect-schema.test.ts` "a database choice held past the deadline is the timeout, and no session listing starts"
-- test `tests/integration/mcp/inspect-schema.test.ts` "inspect_schema called before the host core is installed throws by name, writes no audit record and opens nothing"
-- test `tests/integration/mcp/inspect-schema.test.ts` "every container listing, relation listing and description is one host core tree call under the call's one deadline and the request's signal"
-- test `tests/integration/mcp/inspect-schema.test.ts` "a description that fails after the deadline is logged by its action, kind and code, never its text"
-- test `tests/integration/mcp/inspect-schema.test.ts` "a top-level listing that says the inventory needs configuration is read as no container, and its sentence is never answered"
-- test `tests/integration/mcp/inspect-schema.test.ts` "a cancel during a held step is answered at once as mcp_cancelled, and nothing after it starts"
-- test `tests/unit/mcp/schema-reads-census.test.ts` "no MCP module calls a provider's tree member: the schema reads go through the host core's tree call"
-- test `tests/unit/mcp/schema-reads-census.test.ts` "objectTreeWithinCall is called only by MCP's object tree, and that only by the database choice and inspect_schema"
 
 ### C-83 (normative): The editor's script on the host
 
@@ -3918,34 +1892,6 @@ A unit's failure after Studio stopped waiting for it is logged under the route b
 The script's scope is ended once after the last unit it ran, C-60: at once when that unit answered or failed, and, when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged by kind and code, the script answered with no `openTransaction`.
 A provider that ends nothing of its query path is sent no scope and asked to end none, and a script none of whose units reached its provider ends none.
 
-- test `tests/unit/lib/api/editor-script.test.ts` "each unit is one host core execute call on a script unit session of its own, on a fresh request and a context of deadline, signal and env alone"
-- test `tests/unit/lib/api/editor-script.test.ts` "every unit but the last asks every row, and the last asks the request's page"
-- test `tests/unit/lib/api/editor-script.test.ts` "the request names the run by its queryId, and carries the script's scope only on a session that offers console.endScope"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit's answer is built from the provider's result by reference before its page record is released exactly once"
-- test `tests/unit/lib/api/editor-script.test.ts` "a page record is released once even when building the unit's answer throws"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit's answer keeps every row, however many pages its rows would fill"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit row larger than one page is refused as StudioByteBudgetRefusal, outcome unknown"
-- test `tests/unit/lib/api/editor-script.test.ts` "a value nested past the value codec's depth bound in a unit's first result is the unit's error in the codec's sentence"
-- test `tests/unit/lib/api/editor-script.test.ts` "a script opened before the host core is installed throws by name and calls no provider"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit's deadline is its connection's statement timeout plus ten seconds from the unit's start"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit its deadline stops answers StudioTimeoutRefusal in the statement's sentence, outcome unknown, and its later failure is logged by kind and code only"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit whose request leaves answers QueryCancelledError at once, and the core sends its run's cancel once"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit whose page waits for the large-page slot past its deadline answers the slot's sentence"
-- test `tests/unit/lib/api/editor-script.test.ts` "a unit started after its request left is refused before the call and reaches no provider"
-- test `tests/unit/lib/api/editor-script.test.ts` "a provider's error passes as the same object"
-- test `tests/unit/lib/api/editor-script-bounds.test.ts` "a script unit whose provider never answers ends at its deadline in the statement's timeout refusal"
-- test `tests/unit/lib/api/editor-script.test.ts` "the script's scope is ended once after its last unit, under a cleanup context of its own"
-- test `tests/unit/lib/api/editor-script.test.ts` "a provider that ends nothing is sent no scope and asked to end none"
-- test `tests/unit/lib/api/editor-script.test.ts` "after a unit Studio stopped waiting for, the scope is ended once that unit settled, and an end that fails is logged by kind and code only"
-- test `tests/api/db/multi-query.test.ts` "every unit of a script runs through the host core's console execute, one call per unit"
-- test `tests/api/db/multi-query.test.ts` "a unit that does not answer within its deadline is answered as that unit's error with Studio's sentence, and no further unit starts"
-- test `tests/api/db/multi-query.test.ts` "a malformed connection queryTimeout is refused with the query route's sentence before anything is split or opened"
-- test `tests/api/db/multi-query.test.ts` "a request that leaves while its connection opens is answered 499 at once and runs no unit"
-- test `tests/api/db/multi-query.test.ts` "a script run before the host core is installed fails by name and sends no unit"
-- test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "the scan finds a call of a provider statement member, and not a comment or a field that names one"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member"
-
 ### C-84 (normative): The editor's script inside a transaction on the host
 
 `POST /api/db/transaction` runs every unit of its script of several statements through the host core's console execute sent with `transaction`, C-48, one unit at a time in the script's order, each on a transaction script unit session of its own that the legacy bridge serves, C-50.
@@ -3963,28 +1909,6 @@ A unit's failure after Studio stopped waiting for it is logged under the route b
 The state after the script is read once through the host after its last unit, unless Studio stopped waiting for that unit, when it is unknown and nothing is read, C-58.
 The script records its one `open` event as before, and after a unit Studio stopped waiting for, with status `error` and the stop's code.
 
-- test `tests/unit/lib/api/editor-script.test.ts` "each unit of a script inside a transaction is one host core execute sent with transaction, on a session of its own, a fresh request and a context of deadline, signal and env alone"
-- test `tests/unit/lib/api/editor-script.test.ts` "every unit of a script inside a transaction but the last asks every row and the last the request's page, with no run id and no scope"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's answer is built from the provider's result by reference before its page record is released exactly once, even when building it throws"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's answer keeps every row, however many pages its rows would fill"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit row larger than one page is unanswered with StudioByteBudgetRefusal, its call settled"
-- test `tests/unit/lib/api/editor-script.test.ts` "a value nested past the value codec's depth bound in a transaction script unit is the unit's error in the codec's sentence"
-- test `tests/unit/lib/api/editor-script.test.ts` "a script inside a transaction opened before the host core is installed throws by name and calls no provider"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's deadline is its connection's statement timeout plus ten seconds from the unit's start"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit its deadline stops is unanswered with StudioTimeoutRefusal in the statement's sentence, its later failure logged by kind and code only, and nothing cancelled"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit whose request leaves is unanswered with QueryCancelledError at once, and nothing cancelled"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit whose page waits for the large-page slot past its deadline answers the slot's sentence"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit started after its request left is refused before the call and reaches no provider"
-- test `tests/unit/lib/api/editor-script.test.ts` "a transaction script unit's provider error passes as the same object"
-- test `tests/unit/lib/api/editor-script-bounds.test.ts` "a unit of a script inside a transaction whose provider never answers ends at its deadline in the statement's timeout refusal"
-- test `tests/api/db/transaction.test.ts` "every unit of a script inside a transaction runs through the host core's console execute sent with transaction, one call per unit"
-- test `tests/api/db/transaction.test.ts` "a script unit that does not answer within its deadline is that unit's error inside the 200 answer, no further unit starts, and the transaction is kept with its state unknown until that unit settles"
-- test `tests/api/db/transaction.test.ts` "a script whose request leaves while a unit runs answers that unit's cancellation at once and sends no further unit"
-- test `tests/api/db/transaction.test.ts` "a malformed connection queryTimeout is refused with the query route's sentence before a query action opens anything"
-- test `tests/api/db/transaction.test.ts` "governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown"
-- test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member"
-
 ### C-86 (normative): The data profile on the host
 
 The data profile route waits for its connection's open within the engine's connect budget and while the request stays, C-44 and C-55, so a request that leaves during the open, or an open past its budget, is answered not-sent.
@@ -3999,32 +1923,6 @@ A read the request left answers the cancel, and a read its deadline stopped answ
 A measure whose row is larger than one page is that measure's refusal, and a failure of the sample leaves the samples out.
 No cancel is sent for a stopped read, so the engine may run it on; its failure after the stop is logged under the route by kind and code, never its text.
 The route calls no provider statement member.
-
-- test `tests/unit/lib/api/profile-reads.test.ts` "a profile's composed read is one host core execute call on a composed statement session, its statement exactly as written, every row, and a context of its own deadline, the request's signal and env alone"
-- test `tests/unit/lib/api/profile-reads.test.ts` "each composed read takes a deadline of its own from its start"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read answers the provider's result by reference, and its page is released"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read its deadline stopped answers Studio's timeout refusal naming the statement timeout, and a later failure is logged by kind and code only"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read whose request leaves answers the cancel at once"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read after the request left or past its deadline is refused before the call, not-sent, and never reaches the provider"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read's row larger than one page is refused by the host's page budget"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read passes the provider's error as the same object"
-- test `tests/unit/lib/api/profile-reads.test.ts` "opening the profile's reads before the host core is installed throws by name and calls no provider"
-- test `tests/unit/lib/api/profile-reads.test.ts` "the sample is one host core execute call on the console session asking a page of the given rows: the provider's own bound one row past it, and at most that many rows answered by reference"
-- test `tests/unit/lib/api/profile-reads.test.ts` "a sample its deadline stopped or whose request left answers the accessor's class"
-- test `tests/unit/lib/api/profile-reads-bounds.test.ts` "a profile's composed read whose provider never answers ends at its own deadline in Studio's timeout refusal"
-- test `tests/unit/lib/api/profile-reads-bounds.test.ts` "a profile's sample whose provider never answers ends at its own deadline in Studio's timeout refusal"
-- test `tests/api/db/profile.test.ts` "every read of a SQL profile is one host core execute call: each composed read on a composed statement session exactly as written, and the sample on the console session with a page of five, each under its own deadline and the request's signal"
-- test `tests/api/db/profile.test.ts` "a MongoDB profile's aggregate and count are each one host core execute call on a composed statement session, sent as written"
-- test `tests/api/db/profile.test.ts` "a read its deadline stops ends the profile with Studio's 504, and no further read is sent"
-- test `tests/api/db/profile.test.ts` "a request that leaves while a read runs ends the profile at once with 499, and no further read is sent"
-- test `tests/api/db/profile.test.ts` "a request that leaves while its connection opens answers 499 not-sent and sends nothing"
-- test `tests/api/db/profile.test.ts` "a connection queryTimeout the host cannot wait on is refused 400 before the connection opens"
-- test `tests/api/db/profile.test.ts` "a profile run before the host core is installed fails by name and sends nothing"
-- test `tests/api/db/profile.test.ts` "a measure whose row is larger than one page is that measure's refusal in Studio's page sentence"
-- test `tests/api/db/profile.test.ts` "the sample asks the provider one row past five and keeps five"
-- test `tests/api/db/profile.test.ts` "governance: a profile whose request leaves while a read runs records it cancelled with QUERY_CANCELLED, and one whose read passed its deadline records TIMEOUT_ERROR"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the data profile route calls no provider statement member: its reads run through the host core"
 
 ### C-85 (normative): A read-only execute's page, and MCP's offset paging on the host
 
@@ -4049,26 +1947,6 @@ Studio's refusal of an offset the prepare did not apply is answered in Studio's 
 Since the prepare now runs inside the host call, a call whose deadline passed or whose request left before the statement starts is answered with the timeout or the cancel, where an offset the prepare did not apply was refused first.
 A statement tool that does not page sends every row as its page.
 
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session honours offset, runs the provider's prepare on a bounded page with a fresh copy of it, and sends the statement it prepared to queryReadOnly"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a bounded page the prepare did not apply with no offset sends the prepared statement and answers its page not applied"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "an offset the provider's prepare did not apply is refused as Studio's own refusal, not-sent, and no read-only path is called"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a refusal or failure the prepare raises passes by reference, and no read-only path is called"
-- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only execute with an offset reaches the bridged read-only statement session through the host core"
-- test `tests/unit/db/errors.test.ts` "is an OffsetUnsupportedError only Studio raises, outcome not-sent"
-- test `tests/unit/db/operations/provider-text.test.ts` "Studio's refusal of an offset is Studio's, and a provider's OffsetUnsupportedError is not"
-- test `tests/unit/db/operations/provider-text-census.test.ts` "only the legacy bridge's read-only paging constructs a StudioOffsetRefusal, and no provider module does"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a paged read-only execute sends its page through one host core execute call and answers whether the provider applied it"
-- test `tests/unit/lib/api/read-only-execute.test.ts` "a paged read-only execute whose offset the provider's prepare did not apply is refused as Studio's own refusal before the read-only path is called"
-- test `tests/integration/mcp/run-read-query.test.ts` "run_read_query's page, one row past max_rows from the offset, is applied by the read-only statement session through the host core, never by MCP"
-- test `tests/integration/mcp/run-read-query.test.ts` "the next page with offset 100 answers rows 101 to 150 and no more"
-- test `tests/integration/mcp/run-read-query.test.ts` "a query with its own LIMIT is cut without a next offset, and says how to page in SQL"
-- test `tests/integration/mcp/run-read-query.test.ts` "whose preparation refuses an offset is answered in the provider's words behind a notice naming it, and nothing runs"
-- test `tests/integration/mcp/run-read-query.test.ts` "an offset the provider's read path refuses with OffsetUnsupportedError is answered in its words behind the notice, as its prepare's refusal is"
-- test `tests/integration/mcp/run-read-query.test.ts` "a call whose deadline passed while its connection opened is answered with the timeout before its offset is read"
-- test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no MCP module calls a provider's prepareQuery: run_read_query's page is applied by the read-only statement session"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
-
 ### C-87 (normative): The loader reads only a package entry's default record
 
 The loader imports a package's entry by the `file:` URL of its absolute path and reads only the namespace's `default`.
@@ -4079,16 +1957,6 @@ No step of the check calls the package's code.
 A record that passes is answered as the package exported it.
 The measured limit: on Bun the runtime unwraps a CommonJS entry's interop wrapper before the loader reads it, so only an ES module entry reads alike on Node.js, Electron and Bun.
 
-- test `tests/unit/lib/provider-loader/load.test.ts` "a package's entry is imported from its file URL, and its default record is answered as it was exported"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a package's entry resolves its own dependencies from its own node_modules"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a record with a null prototype is answered as loaded"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a namespace with no default is refused as PROVIDER_LOAD_FAILED, default-missing"
-- test `tests/unit/lib/provider-loader/load.test.ts` "an interop wrapper is refused as PROVIDER_LOAD_FAILED, interop-wrapper, and its inner default is never read"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a default that is not a plain record is refused as PROVIDER_LOAD_FAILED, not-a-record, and none of its code runs"
-- test `tests/unit/lib/provider-loader/load.test.ts` "under Bun, a CommonJS entry's interop wrapper is unwrapped by Bun itself, so only an ES module entry reads alike on every runtime"
-- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, a CommonJS entry's interop wrapper is refused as interop-wrapper, in a bounded child"
-- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, a default record loads with its own dependency, in a bounded child"
-
 ### C-88 (normative): Every import runs under its caller's deadline
 
 The loader runs every import under the deadline its caller passes, and past it answers `PROVIDER_LOAD_FAILED` with the reason `deadline-passed`.
@@ -4097,20 +1965,11 @@ The refusal's other members carry no text of the package's error; `cause` is for
 An entry that is not an absolute path, a deadline that is not a whole number of milliseconds from 1 to 2,147,483,647 and a late port that is not a function are host defects, refused with a `TypeError` before anything is imported.
 The deadline cannot stop synchronous code, C-37.
 
-- test `tests/unit/lib/provider-loader/load.test.ts` "an import that throws is refused as PROVIDER_LOAD_FAILED, import-threw, with the thrown value as its cause and no text of it in the refusal"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a missing entry file is refused as PROVIDER_LOAD_FAILED, import-threw"
-- test `tests/unit/lib/provider-loader/load.test.ts` "a relative entry, a deadline outside 1 to 2147483647 ms and a port that is not a function are refused before any import"
-- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, an import that never settles is refused at its deadline and holds no exit, in a bounded child"
-
 ### C-89 (normative): A late settle is never answered as loaded
 
 An import that settles after its deadline is never answered as loaded.
 Its success or its rejection reaches the caller's late port once, the success without its value and the rejection with its cause, and no rejection is left unhandled.
 A late port that throws is a host defect, which the loader does not catch.
-
-- test `tests/unit/lib/provider-loader/load.test.ts` "an import past its deadline is refused as PROVIDER_LOAD_FAILED, deadline-passed, and its late success reaches the port once and is never answered as loaded"
-- test `tests/unit/lib/provider-loader/load.test.ts` "an import that rejects after its deadline reaches the port once with its cause, and leaves no unhandled rejection"
-- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node with --unhandled-rejections=strict, a rejection after the deadline reaches the port once and the child exits 0, in a bounded child"
 
 ### C-90 (normative): One loader module and one registry per process
 
@@ -4118,17 +1977,6 @@ The loader is a package Next.js leaves to Node's `require`, installed as a direc
 Only the loader's own tests import its source by path.
 A record enters the registry only through `registerAdmitted`, under a non-empty name registered once: a name registered before is refused by name, and its first record stays.
 The loader registers nothing itself, and its registry lists the records in the order they were registered, an order nothing reads, C-43.
-
-- test `tests/unit/lib/provider-loader/registry.test.ts` "the registry starts empty, and a loaded record is not registered by its load"
-- test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
-- test `tests/unit/lib/provider-loader/registry.test.ts` "a name registered twice is refused by name, and the first record stays"
-- test `tests/unit/lib/provider-loader/registry.test.ts` "a name that is not a non-empty string and a record that is not an object are refused"
-- test `tests/unit/lib/provider-loader/load.test.ts` "the loader exports loadPackage, registerAdmitted and admitted, and nothing else"
-- test `tests/unit/lib/provider-loader/packaging.test.ts` "the loader is listed in serverExternalPackages, so Next.js leaves it to Node's require and every bundle of a server shares one module"
-- test `tests/unit/lib/provider-loader/packaging.test.ts` "the root installs the loader as a file: dependency, a directory under node_modules and never a link, because Turbopack bundles a linked package"
-- test `tests/unit/lib/provider-loader/packaging.test.ts` "the installed loader is its source, file for file and byte for byte"
-- test `tests/unit/lib/provider-loader/packaging.test.ts` "Studio reaches the loader only by its package name, and only the loader's own tests import its source"
-- test `tests/unit/lib/provider-loader/packaging.test.ts` "the import scan names a planted file that imports the loader's source by path"
 
 ### C-91 (normative): A package is read from the providers directory only where its lock entry names it
 
@@ -4140,26 +1988,12 @@ A link that stays inside the providers directory is followed, and the package is
 The entry its manifest names must be a regular file of that directory, compared by exact path, or the package is refused as `PROVIDER_PATH_OUTSIDE`.
 No connection's database file or host path may name the providers directory, a path in it or its lock.
 
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry whose directory resolves outside the providers directory, a symbolic link included, is refused as PROVIDER_PATH_OUTSIDE"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a directory that resolves inside the providers directory through a link is read as its real path"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry the lock names that is not a regular file of the artifact is refused as PROVIDER_PATH_OUTSIDE"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a providers directory named through another spelling of itself reads as its real path does"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the lock's name, version, engine id and entry forms are the provider contract's"
-- test `tests/unit/lib/provider-host/providers-dir.test.ts` "the providers directory, everything in it and its lock, by real path too, are reserved in any letter case, normalization form or spelling"
-- test `tests/unit/lib/db/provider-files.test.ts` "a file or host path naming the providers directory, a path in it or its lock is refused by name before any provider is built"
-- test `tests/unit/scripts/providers-lock.test.ts` "the lock the command writes is admitted unchanged, and a later edit to the artifact is refused"
-
 ### C-92 (normative): An artifact is a tree of regular files with portable names
 
 A package's directory holds only regular files and directories, each named by 1 to 255 letters, digits and `. _ - @ + ~`.
 It holds at most 10,000 files and 32 levels of directories.
 A symbolic link, a junction, a named pipe, a socket or a device anywhere in it, such as the links a package manager writes under `node_modules/.bin`, is refused as `PROVIDER_PATH_OUTSIDE`, and is never followed or opened.
 A name outside that set, or more files or levels, is refused as `PROVIDER_DIGEST_MISMATCH`.
-
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact that holds a symbolic link or junction is refused as PROVIDER_PATH_OUTSIDE, and the link is never followed"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact that holds a named pipe or a link to a device is refused at once, and neither is opened"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a name outside letters, digits and . _ - @ + ~ is refused as PROVIDER_DIGEST_MISMATCH"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "more files or deeper directories than the limits are refused as PROVIDER_DIGEST_MISMATCH, and the limits are 10000 files and 32 levels"
 
 ### C-93 (normative): Every file of a package is checked against the lock's digest at every read
 
@@ -4170,17 +2004,6 @@ The lock's digest of a package also covers its import record, C-102: after the f
 A package whose modules import nothing has the digest of its files alone.
 The digest is computed at every read and nothing is kept between reads, so any changed, added, removed or renamed file is refused as `PROVIDER_DIGEST_MISMATCH` at the next read, and so is a package whose directory is missing or cannot be read.
 
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the digest is SHA-256 over each file's mode, SHA-256 and path, one line each in path order"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a fixed artifact has the same digest on every platform"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "only the owner execute bit moves the digest: group and other bits and the umask do not"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "an empty directory moves no digest"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact whose files differ from the lock digest is refused as PROVIDER_DIGEST_MISMATCH"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a byte changed in any file of an artifact is refused at the next read, and nothing is kept between reads"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a missing or unreadable artifact is refused as PROVIDER_DIGEST_MISMATCH, naming why"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the digest lists each import after the files, one line each in order, and an empty record leaves the files' digest"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the digest covers the import record, so a record edited without its files is refused as PROVIDER_DIGEST_MISMATCH"
-
 ### C-94 (normative): A package's identity is its package.json and its manifest, as its lock entry names them
 
 A package holds `package.json` and its manifest, `libredb-provider.json`, at the root of its directory.
@@ -4188,18 +2011,11 @@ Its `package.json` is at most 1 MiB and its manifest at most 2 MiB, each UTF-8 J
 The name and version of its `package.json`, the engine ids of its manifest in any order, and its manifest's `runtime.entry` must equal its lock entry's.
 Each difference is refused as `PROVIDER_IDENTITY_MISMATCH` naming the field, and a `package.json` or manifest that cannot be read, or whose `engines` or `runtime.entry` is not in its form, is refused naming that file.
 
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a package.json whose name, version or engine ids differ from its entry is refused naming the field"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the identity is read from package.json and libredb-provider.json at the artifact's root, each within its byte limit"
-- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a manifest whose engines or runtime.entry are not in their form is refused naming the manifest, and its other members are never read"
-
 ### C-95 (normative): A package serves no engine Studio already serves
 
 A package that serves an engine id Studio's bundled catalog serves is refused as `PROVIDER_ID_COLLISION`, so a package never takes over a shipped engine.
 Two packages that serve one engine id are both refused as `PROVIDER_ID_COLLISION`, each naming the others by name and version, so the lock's order decides nothing.
 Both are read from the lock alone, before any file of the package is read.
-
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry serving an engine id the bundled catalog serves is refused as PROVIDER_ID_COLLISION"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "two entries serving one engine id are both refused as PROVIDER_ID_COLLISION, each naming the other, before any of their files is read"
 
 ### C-96 (normative): A refusal names the package and nothing it holds
 
@@ -4208,13 +2024,6 @@ The rules of `PROVIDER_SCHEMA_INVALID` and `PROVIDER_RECORD_INVALID` are the SDK
 A package's refusal names the package by the name and version its lock entry gives, and never carries a file name inside its directory, a value of its `package.json` or its manifest, or an engine id.
 A package the lock refuses also carries the engine ids its lock entry names, which the operator wrote, not the package, so the server answers those engines as unavailable, C-107.
 No step of the lock's read imports or runs a package's code, and admission imports it only after the checks C-97 orders.
-
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "no refusal carries a value read from the package beyond its name and version"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the refusal codes are one closed list, and every refusal names a code and a rule of its lists"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "reading and writing a lock run no code of a package"
-- test `tests/unit/lib/provider-host/admission.test.ts` "no refusal carries a value read from the package beyond its name and version"
-- test `tests/unit/lib/provider-host/admission.test.ts` "the admission codes join the closed list, each with its closed rules, and the loader's reasons are the loader's"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a refused package carries its lock entry's engine ids"
 
 ### C-97 (normative): A locked package is admitted in a fixed order, and none of its code runs before its manifest, format, closure and native checks pass
 
@@ -4225,16 +2034,6 @@ The entry module is read by the runtime's loader, not by admission, so a change 
 Admission grants no claim: a package carries no grant in this contract, so every claim of its engines is read as M-54 reads a claim with neither a record nor a grant, at its restrictive value, whatever the manifest requests.
 A package passing every step is answered with Studio's record of it, and admission registers nothing: boot registers it once, under its name, when the catalog's set rules keep it, C-105.
 
-- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest for another contract major is refused before the schema validator runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a bare require is refused as closure-outside even when the package's own node_modules holds the folder, since the resolver moves on past it"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package holding a TypeScript file of any kind, a declaration file among them, is refused as PROVIDER_MODULE_FORMAT"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted"
-- test `tests/unit/lib/provider-host/admission.test.ts` "admission refuses no claim request and grants none"
-
 ### C-98 (normative): The manifest is read as bytes, for Studio's contract, by the SDK's validator
 
 Admission reads `libredb-provider.json` as bytes within 2 MiB, never by importing it, and its SHA-256 must be the one the lock's listing holds, or the package is refused as `PROVIDER_DIGEST_MISMATCH`.
@@ -4242,21 +2041,10 @@ A contract of the envelope's form other than Studio's, `0.1`, is refused as `PRO
 The SDK's validator then applies the schema and its code rules, the same rules Studio's generator admits its own engine declarations by, and a refusal is `PROVIDER_SCHEMA_INVALID`.
 The manifest admitted is deep-frozen.
 
-- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest for another contract major is refused before the schema validator runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "the admitted manifest is deep-frozen"
-- test `tests/unit/lib/provider-host/admission.test.ts` "HOST_CONTRACT is the contract the schema serves and the SDK's PROVIDER_CONTRACT"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a validator for another contract is a host defect, refused before any file is read"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest the schema refuses is refused as PROVIDER_SCHEMA_INVALID, naming the first rule and its pointer and never a key"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest or package.json changed after the lock read is refused as PROVIDER_DIGEST_MISMATCH before any import"
-- test `tests/unit/lib/provider-host/admission.test.ts` "an unreadable manifest is refused naming its errno, and an error without one is raised"
-
 ### C-99 (normative): A package's named functions are read for their form only
 
 Admission binds no function name through any of Studio's function tables and reads no table keyed by an engine id, so an engine Studio does not ship is never refused because such a table lacks its id.
 Its SQL writing names are read for their form, and Studio composes no SQL writing row for its engine, S-16.
-
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package naming functions in every slot, none of which Studio's tables hold, is admitted"
-- test `tests/unit/lib/provider-host/admission.test.ts` "admission reads no table of Studio's keyed by engine id"
 
 ### C-100 (normative): A package serves no engine another serves, in Studio's catalog or in this process
 
@@ -4264,18 +2052,12 @@ A package is refused as `PROVIDER_ID_COLLISION` when it serves an engine id Stud
 Each names its own rule.
 The engine ids and the name a package registered earlier serves are checked before the import and again by `registerAdmission` right before registration, with nothing awaited between that check and the registration, so of two admitted packages registered in one process the one that would register second is refused, after its import.
 
-- test `tests/unit/lib/provider-host/admission.test.ts` "an engine id already served is refused"
-- test `tests/unit/lib/provider-host/admission.test.ts` "two admissions that overlap never register two packages serving one engine id, or one name twice"
-
 ### C-101 (normative): The entry is an ES module
 
 The entry is an ES module when its name ends in `.mjs`, or in `.js` and the nearest `package.json` from its directory up to the package's root declares `"type": "module"`.
 The lookup stops at a directory named `node_modules` without reading a `package.json` there, as Node.js's package scope lookup does, so a `.js` entry below such a directory is an ES module only when a `package.json` below it declares the type, whatever the root declares.
 Any other entry is refused as `PROVIDER_MODULE_FORMAT` before the import, and so is one whose nearest `package.json` is over 1 MiB or not a JSON object.
 A module's syntax is never read to decide.
-
-- test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "an .mjs entry and a .js entry under a package.json of type module are admitted"
 
 ### C-102 (normative): Every module of a package imports only what its own directory holds or a built-in
 
@@ -4294,28 +2076,9 @@ The kind of each import stays in the record, as what the scanner saw, and no rul
 The limits: a computed `import()` or `require()` is not recorded; the `main` of a package.json, which a `require` of a directory reads, is not read; a file a module loads by another extension is not scanned, such as a `.txt` or extensionless file a `require` names, which Node.js's CommonJS loader runs as JavaScript, or a `.wasm` module.
 The check keeps a package from depending on modules outside its directory, Studio's own `node_modules` among them; it is no sandbox, since an admitted package runs in Studio's process.
 
-- test `tests/unit/lib/provider-host/admission.test.ts` "a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a bare require is refused as closure-outside even when the package's own node_modules holds the folder, since the resolver moves on past it"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package holding a TypeScript file of any kind, a declaration file among them, is refused as PROVIDER_MODULE_FORMAT"
-- test `tests/unit/lib/provider-host/admission.test.ts` "an entry importing ./types.d beside a types.d.ts is refused before the import, so the declaration file's import never runs"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a built-in and a relative file inside the artifact are inside, named by an import or a require"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "a relative import that leaves the artifact, or holds %, ?, # or a backslash, is outside"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "every bare specifier, named by an import or a require, is outside whatever node_modules folder the package holds"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "an absolute path, a URL, another scheme and a subpath import are outside"
-- test `tests/unit/lib/provider-host/provider-closure.test.ts` "the answer reads only the record, so it is the same on every platform"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock entry's import record is closed and capped, each import in its forms and listed once"
-- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a verified package carries its import record as the lock wrote it, frozen"
-- test `tests/unit/scripts/providers-lock.test.ts` "the command records every static import of each module file, sorted and once each, and Studio's read admits the lock"
-- test `tests/unit/scripts/providers-lock.test.ts` "the command refuses a module file its parser cannot read, a specifier outside its form, too many imports and a lock over its byte limit, writing nothing"
-- test `tests/unit/scripts/providers-lock.test.ts` "an import's kind is require for a require call and import for every import form, and any other kind is a defect"
-
 ### C-103 (normative): A native addon is not admitted in this contract yet
 
 A package holding a file whose name ends in `.node`, in any letter case, or whose manifest declares `runtime.native`, is refused as `PROVIDER_NATIVE_UNSUPPORTED` before the import.
-
-- test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a manifest declaring native packages is refused as PROVIDER_NATIVE_UNSUPPORTED"
 
 ### C-104 (normative): The record a package exports is the manifest it declared
 
@@ -4324,12 +2087,6 @@ The record's manifest must equal the manifest file, compared by the own data pro
 An implementation or one of its segments that is a Proxy is refused as `PROVIDER_RECORD_INVALID` before the SDK's check, which would run its traps.
 The SDK's `checkProviderModule`, Studio's copy, then checks the record, and a refusal is `PROVIDER_RECORD_INVALID` naming its rule.
 Studio then freezes the implementation and its segments and answers its own record of them with the manifest it validated, which boot registers, C-105.
-
-- test `tests/unit/lib/provider-host/admission.test.ts` "a record whose manifest differs from its file is refused"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a record the SDK's check refuses is refused as PROVIDER_RECORD_INVALID, naming the rule"
-- test `tests/unit/lib/provider-host/admission.test.ts` "an implementation or a segment that is a Proxy is refused, and none of its traps runs"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a loader refusal is the package's PROVIDER_LOAD_FAILED with the loader's reason, its cause kept out of the sentence"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted"
 
 ### C-105 (normative): Boot admits each locked package once, after the host core and before anything is served
 
@@ -4341,20 +2098,6 @@ The catalog's set rules, C-106, then run over every admitted package, and only t
 Each refused package is logged once with its sentence, and a value its entry threw only as the logged error, never in the sentence.
 An import that settles after its deadline is logged by its package and never registered.
 A synchronous hang at import blocks the boot, C-37.
-
-- test `tests/unit/lib/provider-host/boot.test.ts` "a refused package leaves Studio running without its engines, named once by code"
-- test `tests/unit/lib/provider-host/boot.test.ts` "an unreadable lock exits 1 with a named line"
-- test `tests/unit/lib/provider-host/boot.test.ts` "an unset directory admits nothing and boots"
-- test `tests/unit/lib/provider-host/boot.test.ts` "a package whose entry throws at import is refused with its code, its cause logged on the same line call and out of the sentence"
-- test `tests/unit/lib/provider-host/boot.test.ts` "an import that settles after its deadline is logged once by its package and never registered"
-- test `tests/unit/lib/provider-host/boot.test.ts` "a package a set rule refuses is absent from the loader's registry, which names exactly the packages the catalog serves"
-- test `tests/unit/lib/provider-host/boot.test.ts` "the boot's validator is compiled once from the SDK's schema module, whose digest is the SDK's"
-- test `tests/unit/lib/provider-host/boot.test.ts` "admission runs once per process: a second call reads nothing and keeps the installed catalog"
-- test `tests/unit/lib/provider-host/boot.test.ts` "each package is admitted under the 10 s import deadline, in lock order, one after another"
-- test `tests/unit/instrumentation.test.ts` "register() admits providers once, after the host core and before governance and the samples"
-- test `tests/unit/instrumentation.test.ts` "a boot a check refuses admits no provider"
-- test `tests/unit/instrumentation.test.ts` "a providers lock that cannot be read stops register before governance, the banner and the samples"
-- test `tests/unit/provider-sdk/manifest-types.test.ts` "the schema text module is the schema's bytes, line for line, and its SHA-256 is MANIFEST_SCHEMA_SHA256"
 
 ### C-106 (normative): The server's engine catalog is Studio's bundled catalog and the admitted packages' engines, composed once
 
@@ -4370,22 +2113,6 @@ The catalog is held in one place per process, so the module instance boot instal
 A process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
 The published `DatabaseType` and `isDatabaseType` are unchanged.
 
-- test `tests/unit/lib/db/server-catalog.test.ts` "an admitted engine is a known type to the server and its connection fields come from its declaration"
-- test `tests/unit/lib/db/server-catalog.test.ts` "the library's DatabaseType guard is unchanged"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a refused package's engine is unavailable naming every code that refused it, and a bundled id stays bundled"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a type a client sends that is an Object.prototype key is unknown, never an inherited member"
-- test `tests/unit/lib/db/server-catalog.test.ts` "the catalog composes once: a second install is refused by name, and nothing installed answers the bundled catalog"
-- test `tests/unit/lib/db/server-catalog.test.ts` "the composed catalog holds no engine knowledge the declaration did not state: no SQL writing, connection form, connection string, grammar, migration DDL or generator row"
-- test `tests/unit/lib/db/server-catalog.test.ts` "composing a set that still conflicts, or an engine both served and unavailable, is a host defect"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a field rule naming a check refuses a value with core's sentence naming the field, and passes an empty field"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order"
-- test `tests/unit/lib/db/server-catalog.test.ts` "an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines"
-- test `tests/unit/lib/db/server-catalog.test.ts` "an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both"
-- test `tests/unit/lib/db/server-catalog.test.ts` "a set rule refusal carries the package's name, version and rule and no value of its declaration"
-- test `tests/unit/lib/db/server-catalog-cross-bundle.test.ts` "a catalog installed by the boot bundle is the one a route bundle reads"
-- test `tests/unit/lib/provider-host/boot.test.ts` "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines"
-- test `tests/unit/db/claim-grants.test.ts` "an admitted package with no grant record reads every claim at its restrictive value"
-
 ### C-107 (normative): A connection of an engine no admitted package serves names why
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, on every route and at every factory entry point, before any cache, tunnel or build.
@@ -4393,27 +2120,11 @@ An admitted package's engine is served by Test Connection, which validates its c
 MCP answers both with the same sentences: `list_connections` lists such a connection with no read tool and the sentence as its `unavailable`, every MCP tool refuses it with that sentence before any open, and the open's own checks refuse it as the factory does.
 Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported`, E-1.
 
-- test `tests/unit/seed/resolve-connection-package-engines.test.ts` "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code"
-- test `tests/unit/seed/resolve-connection-package-engines.test.ts` "an admitted engine's connection is refused on a route that does not serve package engines, by name, and accepted by the package-aware resolve"
-- test `tests/api/db/test-connection-package-engine.test.ts` "Test Connection accepts an admitted engine's connection and validates it against its declared field rules, then refuses at the open, building nothing"
-- test `tests/api/db/test-connection-package-engine.test.ts` "Test Connection answers PROVIDER_UNAVAILABLE naming the refusal code for a refused package's engine"
-- test `tests/isolated/factory-package-engines.test.ts` "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build"
-- test `tests/isolated/factory-package-engines.test.ts` "an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet"
-- test `tests/unit/lib/api/error-body.test.ts` "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501"
-- test `tests/unit/mcp/availability.test.ts` "answers the server catalog's refusal for an engine a provider package serves or a refused package names"
-- test `tests/unit/mcp/statement-arms.test.ts` "lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact"
-- test `tests/integration/mcp/context.test.ts` "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it"
-
 ### C-108 (normative): The exit-70 line names the provider package in the error's stack
 
 Boot records every package that passed its lock with its directory, as a path and as a file URL, before any import.
 Where a package was recorded, the exit-70 line of C-35 ends with each recorded package a frame of the error's stack runs through, or says no provider package is in it.
 With none recorded the line is unchanged.
-
-- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line names the admitted package in the stack"
-- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line says no provider package is in the stack for a throw from core, or a thrown value that is not an Error"
-- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line is unchanged where no package passed its lock"
-- test `tests/unit/lib/provider-host/boot.test.ts` "every package that passed its lock is recorded with its directory, as a path and as a file URL"
 
 ## Not yet in this contract
 

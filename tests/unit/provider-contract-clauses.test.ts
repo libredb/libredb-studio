@@ -4,12 +4,16 @@
  * Pointer. So the contract never states a rule nothing checks, and renaming a test or moving a schema member fails
  * here by clause id rather than leaving the contract pointing at nothing.
  *
- * A clause is a level-three heading `### <id> (normative|informative): <title>`, and its enforcers are the list items
- * under it that read ``- test `<file>` "<title>"`` or ``- schema `<pointer>` ``.
+ * A clause is a level-three heading `### <id> (normative|informative): <title>`. Its enforcers are not in the
+ * document: they are its entry in `CLAUSE_ENFORCERS` (tests/unit/provider-contract-enforcers.ts), so the document
+ * states the rule and the map names what checks it. The check runs both ways: every map id is a clause of the
+ * document, and an enforcer-shaped line left in the document, ``- test `<file>` "<title>"`` or
+ * ``- schema `<pointer>` ``, is named, so the two can never hold different lists.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { CLAUSE_ENFORCERS, type ClauseEnforcers } from "./provider-contract-enforcers";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const CONTRACT_FILE = "docs/providers/CONTRACT.md";
@@ -23,7 +27,12 @@ type Enforcer =
 interface Clause {
   readonly id: string;
   readonly status: string;
-  readonly enforcers: readonly Enforcer[];
+}
+
+/** A line of the document that reads as an enforcer, and the clause it stands under, if any. */
+interface ListedEnforcer {
+  readonly clause: string | undefined;
+  readonly line: string;
 }
 
 const CLAUSE_HEADING = /^### (\S+) \((\w+)\): \S/;
@@ -31,19 +40,20 @@ const CLAUSE_ID = /^[A-Z]{1,3}-[1-9][0-9]*$/;
 const TEST_ENFORCER = /^- test `([^`]+)` "(.+)"$/;
 const SCHEMA_ENFORCER = /^- schema `([^`]*)`$/;
 
-/** The clauses of a contract document, in document order. */
-function clauses(document: string): Clause[] {
+/** The clauses of a contract document, in document order, and every line of it that reads as an enforcer. */
+function clauses(document: string): { clauses: Clause[]; listed: ListedEnforcer[] } {
   const found: Clause[] = [];
-  let current: { id: string; status: string; enforcers: Enforcer[] } | undefined;
+  const listed: ListedEnforcer[] = [];
+  let current: string | undefined;
   for (const line of document.split("\n")) {
     const heading = CLAUSE_HEADING.exec(line);
     if (heading) {
-      current = { id: heading[1] as string, status: heading[2] as string, enforcers: [] };
-      found.push(current);
+      current = heading[1] as string;
+      found.push({ id: current, status: heading[2] as string });
       continue;
     }
     if (line.startsWith("### ")) {
-      found.push({ id: line, status: "unparsed", enforcers: [] });
+      found.push({ id: line, status: "unparsed" });
       current = undefined;
       continue;
     }
@@ -51,14 +61,19 @@ function clauses(document: string): Clause[] {
       current = undefined;
       continue;
     }
-    if (current === undefined) continue;
-    const testEnforcer = TEST_ENFORCER.exec(line);
-    if (testEnforcer)
-      current.enforcers.push({ kind: "test", file: testEnforcer[1] as string, title: testEnforcer[2] as string });
-    const schemaEnforcer = SCHEMA_ENFORCER.exec(line);
-    if (schemaEnforcer) current.enforcers.push({ kind: "schema", pointer: schemaEnforcer[1] as string });
+    if (TEST_ENFORCER.test(line) || SCHEMA_ENFORCER.test(line)) listed.push({ clause: current, line });
   }
-  return found;
+  return { clauses: found, listed };
+}
+
+/** A clause's enforcers as the map lists them, tests first, each file's titles in the map's order. */
+function enforcersOf(entry: ClauseEnforcers | undefined): Enforcer[] {
+  if (entry === undefined) return [];
+  const tests = Object.entries(entry.tests ?? {}).flatMap(([file, titles]) =>
+    titles.map((title): Enforcer => ({ kind: "test", file, title })),
+  );
+  const schema = (entry.schema ?? []).map((pointer): Enforcer => ({ kind: "schema", pointer }));
+  return [...tests, ...schema];
 }
 
 /** The value a JSON Pointer names in `document`, or undefined where it names nothing. */
@@ -90,10 +105,16 @@ interface Reader {
 }
 
 /** Every failure of the clause rules, each naming its clause. */
-function clauseFailures(document: string, schema: unknown, reader: Reader): string[] {
+function clauseFailures(
+  document: string,
+  enforcers: Readonly<Record<string, ClauseEnforcers>>,
+  schema: unknown,
+  reader: Reader,
+): string[] {
   const failures: string[] = [];
   const seen = new Set<string>();
-  for (const clause of clauses(document)) {
+  const parsed = clauses(document);
+  for (const clause of parsed.clauses) {
     if (clause.status === "unparsed") {
       failures.push(`"${clause.id}" is a level-three heading that is not a clause`);
       continue;
@@ -104,10 +125,11 @@ function clauseFailures(document: string, schema: unknown, reader: Reader): stri
     if (clause.status !== "normative" && clause.status !== "informative") {
       failures.push(`${clause.id}: "${clause.status}" is neither normative nor informative`);
     }
-    if (clause.status === "normative" && clause.enforcers.length === 0) {
+    const listed = Object.hasOwn(enforcers, clause.id) ? enforcersOf(enforcers[clause.id]) : [];
+    if (clause.status === "normative" && listed.length === 0) {
       failures.push(`${clause.id}: a normative clause names no enforcer`);
     }
-    for (const enforcer of clause.enforcers) {
+    for (const enforcer of listed) {
       if (enforcer.kind === "schema") {
         if (resolvePointer(schema, enforcer.pointer) === undefined) {
           failures.push(`${clause.id}: the schema has nothing at ${enforcer.pointer}`);
@@ -118,6 +140,12 @@ function clauseFailures(document: string, schema: unknown, reader: Reader): stri
         failures.push(`${clause.id}: ${enforcer.file} has no test titled "${enforcer.title}"`);
       }
     }
+  }
+  for (const id of Object.keys(enforcers)) {
+    if (!seen.has(id)) failures.push(`${id}: the enforcer map names a clause the document does not have`);
+  }
+  for (const { clause, line } of parsed.listed) {
+    failures.push(`${clause ?? "the document"}: an enforcer is listed in the document, not in the map: ${line}`);
   }
   return failures;
 }
@@ -150,14 +178,14 @@ describe("docs/providers/CONTRACT.md", () => {
   const schema = JSON.parse(readFileSync(path.join(ROOT, SCHEMA_FILE), "utf8")) as unknown;
 
   test("every clause has a unique id, a status, and every enforcer it names exists", () => {
-    expect(clauseFailures(document, schema, repositoryReader)).toEqual([]);
+    expect(clauseFailures(document, CLAUSE_ENFORCERS, schema, repositoryReader)).toEqual([]);
   });
 
   test("the document states normative clauses, each with an enforcer", () => {
-    const normative = clauses(document).filter((clause) => clause.status === "normative");
+    const normative = clauses(document).clauses.filter((clause) => clause.status === "normative");
 
     expect(normative.length).toBeGreaterThan(10);
-    expect(normative.filter((clause) => clause.enforcers.length === 0)).toEqual([]);
+    expect(normative.filter((clause) => enforcersOf(CLAUSE_ENFORCERS[clause.id]).length === 0)).toEqual([]);
   });
 
   test("the document links the schema file and the generated types", () => {
@@ -187,18 +215,19 @@ describe("the clause rules on planted documents", () => {
       "## Manifest",
       "### M-1 (normative): One rule",
       "Text.",
-      '- test `tests/a.test.ts` "the rule holds"',
-      '- test `tests/a.test.ts` "the group"',
-      '- test `tests/a.test.ts` "each %d"',
       "### M-2 (normative): Another",
-      "- schema `/properties/a~1b/enum`",
       "### M-3 (informative): A limit",
       "No enforcer.",
+      "### M-4 (informative): A limit with a check",
       "## Change notes",
-      "- schema `/not/a/clause/enforcer`",
     ].join("\n");
+    const enforcers = {
+      "M-1": { tests: { "tests/a.test.ts": ["the rule holds", "the group", "each %d"] } },
+      "M-2": { schema: ["/properties/a~1b/enum"] },
+      "M-4": { tests: { "tests/a.test.ts": ["the rule holds"] }, schema: [""] },
+    };
 
-    expect(clauseFailures(document, schema, reader)).toEqual([]);
+    expect(clauseFailures(document, enforcers, schema, reader)).toEqual([]);
   });
 
   test("each failure is named by its clause", () => {
@@ -206,18 +235,22 @@ describe("the clause rules on planted documents", () => {
       "### M-1 (normative): No enforcer",
       "### M-1 (informative): Repeated id",
       "### m1 (normative): Bad id",
-      '- test `tests/a.test.ts` "the rule holds"',
       "### M-4 (advisory): Unknown status",
       "### M-5 (normative): Missing file",
-      '- test `tests/missing.test.ts` "anything"',
       "### M-6 (normative): Missing title",
-      '- test `tests/a.test.ts` "a title nobody wrote"',
       "### M-7 (normative): Unresolved pointer",
-      "- schema `/properties/runtime`",
+      "### M-8 (informative): Unresolved pointer on an informative clause",
       "### Not a clause",
     ].join("\n");
+    const enforcers = {
+      m1: { tests: { "tests/a.test.ts": ["the rule holds"] } },
+      "M-5": { tests: { "tests/missing.test.ts": ["anything"] } },
+      "M-6": { tests: { "tests/a.test.ts": ["a title nobody wrote"] } },
+      "M-7": { schema: ["/properties/runtime"] },
+      "M-8": { schema: ["/properties/vendor"] },
+    };
 
-    expect(clauseFailures(document, schema, reader)).toEqual([
+    expect(clauseFailures(document, enforcers, schema, reader)).toEqual([
       "M-1: a normative clause names no enforcer",
       "M-1: the id is used twice",
       "m1: not a clause id",
@@ -225,7 +258,51 @@ describe("the clause rules on planted documents", () => {
       "M-5: tests/missing.test.ts does not exist",
       'M-6: tests/a.test.ts has no test titled "a title nobody wrote"',
       "M-7: the schema has nothing at /properties/runtime",
+      "M-8: the schema has nothing at /properties/vendor",
       '"### Not a clause" is a level-three heading that is not a clause',
+    ]);
+  });
+
+  test("a map id the document has no clause for is named", () => {
+    const document = "### M-1 (normative): One rule";
+    const enforcers = { "M-1": { schema: [""] }, "M-999": { schema: [""] } };
+
+    expect(clauseFailures(document, enforcers, schema, reader)).toEqual([
+      "M-999: the enforcer map names a clause the document does not have",
+    ]);
+  });
+
+  test("a normative clause whose map entry is missing or empty is named", () => {
+    const document = [
+      "### M-1 (normative): No entry",
+      "### M-2 (normative): An empty entry",
+      "### M-3 (normative): Empty lists",
+      "### M-4 (normative): A file with no titles",
+    ].join("\n");
+    const enforcers = { "M-2": {}, "M-3": { tests: {}, schema: [] }, "M-4": { tests: { "tests/a.test.ts": [] } } };
+
+    expect(clauseFailures(document, enforcers, schema, reader)).toEqual([
+      "M-1: a normative clause names no enforcer",
+      "M-2: a normative clause names no enforcer",
+      "M-3: a normative clause names no enforcer",
+      "M-4: a normative clause names no enforcer",
+    ]);
+  });
+
+  test("an enforcer line left in the document is named", () => {
+    const document = [
+      '- test `tests/a.test.ts` "the rule holds"',
+      "### M-1 (normative): One rule",
+      '- test `tests/a.test.ts` "the rule holds"',
+      "## Change notes",
+      "- schema `/properties/contract`",
+    ].join("\n");
+    const enforcers = { "M-1": { tests: { "tests/a.test.ts": ["the rule holds"] } } };
+
+    expect(clauseFailures(document, enforcers, schema, reader)).toEqual([
+      'the document: an enforcer is listed in the document, not in the map: - test `tests/a.test.ts` "the rule holds"',
+      'M-1: an enforcer is listed in the document, not in the map: - test `tests/a.test.ts` "the rule holds"',
+      "the document: an enforcer is listed in the document, not in the map: - schema `/properties/contract`",
     ]);
   });
 
