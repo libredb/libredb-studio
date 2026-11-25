@@ -9,6 +9,9 @@
  * states the rule and the map names what checks it. The check runs both ways: every map id is a clause of the
  * document, and an enforcer-shaped line left in the document, ``- test `<file>` "<title>"`` or
  * ``- schema `<pointer>` ``, is named, so the two can never hold different lists.
+ *
+ * A clause body states its rule in at most three sentences, one per physical line; list items and table rows are not
+ * counted, so an enumeration the rule cannot be read without stays a list. The rationale lives beside the code.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -169,6 +172,33 @@ function vocabulariesListed(document: string, schema: unknown): string[] {
     .map(([pointer]) => pointer);
 }
 
+/** The most sentences a clause body states, one per physical line; list items and table rows are not counted. */
+const MOST_SENTENCES = 3;
+
+/** Every clause whose body states more than three sentences, each named with its count. */
+function longClauses(document: string): string[] {
+  const failures: string[] = [];
+  let current: { id: string; sentences: number } | undefined;
+  const close = () => {
+    if (current !== undefined && current.sentences > MOST_SENTENCES) {
+      failures.push(`${current.id}: states ${current.sentences} sentences, more than ${MOST_SENTENCES}`);
+    }
+  };
+  for (const line of document.split("\n")) {
+    if (line.startsWith("#")) {
+      close();
+      const heading = CLAUSE_HEADING.exec(line);
+      current = heading ? { id: heading[1] as string, sentences: 0 } : undefined;
+      continue;
+    }
+    if (current === undefined || line.trim() === "") continue;
+    if (line.startsWith("- ") || line.startsWith(" ") || line.startsWith("|")) continue;
+    current.sentences += 1;
+  }
+  close();
+  return failures;
+}
+
 /** A token that reads as a clause id wherever it stands in a file's text. */
 const CLAUSE_CITATION = /\b[CMSEV]-[1-9][0-9]*\b/g;
 /** The text files a clause citation can stand in: code, docs, configuration and scripts. */
@@ -237,6 +267,10 @@ describe("docs/providers/CONTRACT.md", () => {
 
   test("the document names no internal change number or ledger path", () => {
     expect(document).not.toMatch(/\bPR ?\d|\.team\//);
+  });
+
+  test("every clause states its rule in at most three sentences", () => {
+    expect(longClauses(document)).toEqual([]);
   });
 
   test("every removed id is gone from the document, has a home, and has no enforcers", () => {
@@ -380,6 +414,45 @@ describe("the clause rules on planted documents", () => {
       "src/b.ts names M-9, which is neither a clause of the document nor a removed id",
       "src/b.ts names E-12, which is neither a clause of the document nor a removed id",
       "docs/c.md names V-40, which is neither a clause of the document nor a removed id",
+    ]);
+  });
+
+  test("a clause body of more than three sentences is named, and list items and table rows are not counted", () => {
+    const document = [
+      "## Calls",
+      "One.",
+      "Two.",
+      "Three.",
+      "Four, a section intro, which is no clause.",
+      "### C-1 (normative): Three and a list",
+      "",
+      "One.",
+      "Two:",
+      "",
+      "- an item,",
+      "  its continuation,",
+      "- and another.",
+      "",
+      "| a | b |",
+      "|---|---|",
+      "Three.",
+      "### C-2 (informative): Four",
+      "One.",
+      "Two.",
+      "Three.",
+      "Four.",
+      "## Not yet in this contract",
+      "### C-3 (normative): Five, the last",
+      "1.",
+      "2.",
+      "3.",
+      "4.",
+      "5.",
+    ].join("\n");
+
+    expect(longClauses(document)).toEqual([
+      "C-2: states 4 sentences, more than 3",
+      "C-3: states 5 sentences, more than 3",
     ]);
   });
 
