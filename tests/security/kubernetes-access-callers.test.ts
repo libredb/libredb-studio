@@ -348,6 +348,14 @@ const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
         "the CommonJS package entry for bundlers that cannot read TypeScript gives ./index.ts on as a whole; nothing in the app requires it",
     },
   ],
+  "src/lib/provider-loader/index.cjs": [
+    {
+      origin: null,
+      form: "computed",
+      reason:
+        "the provider loader imports the absolute entry file its caller passes, a provider package's entry, by its file URL (docs/providers/CONTRACT.md, clause C-87); no Studio module calls loadPackage yet, and Studio's own modules reach the loader only by its package name, clause C-90",
+    },
+  ],
 };
 
 /**
