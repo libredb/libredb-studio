@@ -61,10 +61,17 @@ A package is never a root `dependencies`, `peerDependencies` or `optionalDepende
 Every `dependencies` and `peerDependencies` name of a package is also a root `dependencies` or `peerDependencies` name, because the bundled package's drivers are the library's own.
 `bun run lib:load` enforces all of this on the packed package (`docs/TOOLCHAIN.md`, "The packed library loads (`lib:load`)").
 
+## The SDK tarball
+
+`bun run sdk:pack -- --out <dir>` builds `@libredb/provider-sdk` into a tarball of ES modules with declarations that a provider developer outside the repository installs with npm.
+The repository's `packages/provider-sdk/package.json` keeps its entry points on the source; the packed `package.json` points them at `dist/`, written at pack time.
+The build runs in a temporary directory and writes nothing into the repository.
+`docs/TOOLCHAIN.md`, "The SDK tarball (`sdk:pack`)", records why and what the pack test checks.
+
 ## Planes
 
 Tests resolve source: a package's `exports`, `main`, `module` and `types` point under its `src/`, and no test under `tests/` or `packages/<name>/tests/` imports a `dist/` path, `@libredb/studio` by name or a package's `dist/` subpath.
-`bun run lib:load` is the only path through a built artifact.
+`bun run lib:load` and the SDK's pack test (`packages/provider-sdk/tests/pack.test.ts`), which builds the tarball it reads, are the only paths through a built artifact.
 `tests/unit/source-plane.test.ts` holds both rules.
 
 ## Gates

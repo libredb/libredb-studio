@@ -733,10 +733,39 @@ One run is exact, because the projections read only authored members, which the 
 All three run inside `bun run test`, so none needs a CI step of its own.
 The generators live in `scripts/`, which the coverage merge does not measure, so their tests are what holds them.
 
-Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` is the only path through a built artifact.
+Tests resolve source: `tests/unit/source-plane.test.ts` holds every package's entry points (`exports`, `main`, `module`, `types`) under its `src/`, and fails a test under `tests/` or `packages/<name>/tests/` that imports a `dist/` path, the root package by name or a package's `dist/` subpath, so `lib:load` and the SDK's pack test ("The SDK tarball (`sdk:pack`)") are the only paths through a built artifact.
 
 `tests/unit/package-gates.test.ts` proves the install, Biome, ESLint and knip rows on a throwaway root that carries the repository's own configuration file and one planted violation, so a tool upgrade that changes one of these behaviours fails a named test.
 The other rows are held by the tests of the script that implements them.
+
+### The SDK tarball (`sdk:pack`)
+
+`bun run sdk:pack -- --out <dir>` (`scripts/sdk-pack.ts`) builds `packages/provider-sdk` into a tarball of ES modules with declarations, writes it into `<dir>` and prints its absolute path as the only line on standard output.
+It is what a provider developer outside the repository installs with npm; it is not published.
+The tarball holds `package.json`, the repository's MIT `LICENSE` and `dist/`, where the manifest schema is `dist/manifest/manifest.schema.json`, byte for byte the source's; no source, test, README or source map.
+
+The build is tsup's `build()` with every option stated: ESM only, `platform: "node"`, `target: "node24"`, code splitting, so an error class keeps one identity across the entries that export it, bundled declarations, whose relative imports carry `.js` as Node's resolution requires, no source map and no minification, and the packed manifest's `dependencies` (ajv) external.
+It reads `packages/provider-sdk/tsconfig.build.json`, named so that no tool discovers it, so the build inherits nothing from the root tsconfig (its `paths`, its Bun types or its DOM library).
+tsup reads the working directory's `package.json` for its externals and the output extension, and esbuild resolves against the working directory it saw when it loaded, so the script changes into the SDK directory before it loads tsup and also sets esbuild's `absWorkingDir`; started from the repository root without either, the build named no declaration `.d.ts` and the staged check refused it.
+
+The repository's `packages/provider-sdk/package.json` keeps `types` and every `exports` entry on the SDK's source, and the packed `package.json` is written at pack time by one rule: each `./src/<p>.ts` entry becomes `{ "types": "./dist/<p>.d.ts", "default": "./dist/<p>.js" }`, the JSON entry its copy under `dist/`, `types` `./dist/index.d.ts`, and every other field is copied as it is.
+Measured on 2026-11-25 against Next.js 16.4.6, tsup 9.0.0 with esbuild 0.28.2, TypeScript 6.0.3 and Bun 1.4.4, neither manifest form a repository could hold works:
+- Standard conditional exports make every in-repository consumer (Turbopack, tsup, the VS Code bundles, the type check, Bun's tests and scripts) resolve `dist/`, so Studio would build and test against a build output, failing when it is absent and passing when it is stale.
+- A custom condition listed first is honoured only by a tool configured with it, and Turbopack documents no way to take one, so `next build` compiled `dist/`.
+- Either form is refused by `tests/unit/source-plane.test.ts` and by `workspacePackageSourcePaths` ("Workspace packages", the library row).
+- npm 11.19.1 and `bun pm pack` copy `publishConfig.exports` and `publishConfig.types` into the tarball verbatim, so its `exports` would name source files it does not hold.
+
+The build and the staged package live in a temporary directory outside the repository, removed when the pack ends: a package-local `dist/` would be linted by ESLint, whose `dist/**` ignore is anchored at the root, and taken by the root type check on a developer's machine, and never in CI.
+The packed manifest keeps `"private": true`: neither packer requires it removed, npm installs a private tarball, and npm refuses to publish one.
+
+The validator imports `ajv/dist/2020.js` with its extension: ajv 8 has no `exports` map and Node's ES module loader adds no extension, so the packed root and `/manifest` entries failed under Node with `ERR_MODULE_NOT_FOUND` while Bun loaded them.
+The packed declarations name the global `AbortSignal`, so a consumer's type check needs Node's or Bun's types, or the DOM library.
+
+`packages/provider-sdk/tests/pack.test.ts` runs the pack in a child, installs the tarball into an empty directory with npm, and checks there: the tarball's file list, the packed manifest against the repository's, the licence and schema bytes, that `dist/` imports only ajv and Node built-ins, that every subpath imports under Node and Bun with the export names the source has and one object per name across entries, that the validator compiles the packed schema, that a consumer file type-checks with `tsc` under `nodenext`, `strict` and `skipLibCheck: false`, and that the declarations export the source's names.
+An `npm install` of the tarball needs ajv from a registry, so the test packs ajv's closure and `@types/node` from the repository's own install, found as Node finds a package directory, and installs with `--offline`, an empty cache and empty user and global configs; a second install of the tarball alone must fail with `ENOTCACHED` for ajv, which proves the flag holds.
+Its children run without `NODE_OPTIONS`, `NODE_PATH` or any `npm_config_*` variable, with `HOME` at an empty directory, and on Windows npm runs as the `npm-cli.js` beside the `npm.cmd` shim, under the node on PATH.
+The whole file takes about 5 s; the build alone about 1.5 s and 785 MB.
+`tests/unit/provider-sdk/sdk-pack.test.ts` holds the script's command line, the manifest rule and the staged-package check in process.
 
 ### Provider source coupling lint
 
