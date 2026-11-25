@@ -4,7 +4,8 @@
  * libredb-platform). On standalone boot, first install the uncaught-exception
  * exit (docs/DISTRIBUTION.md#uncaught-errors-and-restarts), then the shutdown
  * handler (docs/DISTRIBUTION.md#stopping-the-server), then take Studio's
- * storage location (src/lib/data-dir.ts), then bootstrap missing auth env
+ * storage location (src/lib/data-dir.ts) and its providers directory
+ * (src/lib/provider-host/providers-dir.ts), then bootstrap missing auth env
  * (#109), run the boot preflights and the credential re-seal and check when
  * STORAGE_ENCRYPTION_RESEAL or STORAGE_ENCRYPTION_REQUIRE_V2 asks for them,
  * then install the process's one provider host core
@@ -37,6 +38,12 @@ export async function register(): Promise<void> {
   // credentials file into that directory.
   const { storageLocation } = await import("@/lib/data-dir");
   storageLocation();
+
+  // Fourth, the providers directory: LIBREDB_PROVIDERS_DIR resolved against the working directory now, kept for the
+  // life of the process and logged once, so the directory and lock no connection may name are fixed before any request
+  // (docs/providers/CONTRACT.md, clause C-91). Nothing is read from it yet.
+  const { providersDirectory } = await import("@/lib/provider-host/providers-dir");
+  providersDirectory();
 
   // Zero-config first run (#109): fill missing auth env from the persisted
   // bootstrap file BEFORE anything reads process.env secrets. Fail-open inside.

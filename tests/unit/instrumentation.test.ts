@@ -11,6 +11,8 @@ import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import { cancelCall, endScopeCall, transactionCall } from "@/lib/provider-host/core/console";
 import { forgetHostCore, HostCoreBootOrderError, hostCore } from "@/lib/provider-host/instance";
+import * as providersDir from "@/lib/provider-host/providers-dir";
+import { forgetProvidersDirectory } from "@/lib/provider-host/providers-dir";
 import * as resealAtBoot from "@/lib/storage/reseal-at-boot";
 import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
@@ -43,6 +45,7 @@ const ENV_KEYS = [
   "SEED_ASSETS_DIR",
   "LIBREDB_ENABLED_PROVIDERS",
   "STORAGE_SQLITE_PATH",
+  "LIBREDB_PROVIDERS_DIR",
   "JWT_SECRET",
   "ADMIN_PASSWORD",
   "AUTH_BOOTSTRAP",
@@ -115,6 +118,7 @@ describe("instrumentation register()", () => {
     forgetEgressDecision();
     forgetTrustMaterial();
     forgetStorageLocation();
+    forgetProvidersDirectory();
     // register() installs the provider host core once per process; forgotten here, each boot below installs its own.
     forgetHostCore();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
@@ -154,6 +158,7 @@ describe("instrumentation register()", () => {
       forgetEgressDecision();
       forgetTrustMaterial();
       forgetStorageLocation();
+      forgetProvidersDirectory();
       forgetHostCore();
       resetUncaughtExceptionExit();
       resetShutdownHandler();
@@ -342,6 +347,36 @@ describe("instrumentation register()", () => {
     try {
       await register();
       expect(order.slice(0, 3)).toEqual(["shutdown handler", "storage location", "auth bootstrap"]);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+  });
+
+  test("register() takes the providers directory after Studio's storage location and before the auth bootstrap", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.JWT_SECRET = "x".repeat(32);
+    const order: string[] = [];
+    const takeLocation = dataDir.storageLocation;
+    const takeProviders = providersDir.providersDirectory;
+    const spies = [
+      spyOn(dataDir, "storageLocation").mockImplementation(() => {
+        order.push("storage location");
+        return takeLocation();
+      }),
+      spyOn(providersDir, "providersDirectory").mockImplementation(() => {
+        order.push("providers directory");
+        return takeProviders();
+      }),
+      spyOn(authBootstrap, "bootstrapAuth").mockImplementation(() => {
+        order.push("auth bootstrap");
+      }),
+    ];
+    try {
+      await register();
+      expect(order.slice(0, 3)).toEqual(["storage location", "providers directory", "auth bootstrap"]);
     } finally {
       for (const spy of spies) spy.mockRestore();
     }
@@ -772,6 +807,26 @@ describe("instrumentation register()", () => {
             storageFile: path.join(tmpDir, "libredb-storage.db"),
             dataDirectory: tmpDir,
           },
+        ],
+      ]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("reports the providers directory once at boot", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.LIBREDB_PROVIDERS_DIR = path.join(tmpDir, "providers");
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      await register();
+      expect(info.mock.calls.filter((call) => call[1]?.route === "providers-directory")).toEqual([
+        [
+          "Studio's providers directory is taken for this process",
+          { route: "providers-directory", providersDirectory: path.join(tmpDir, "providers") },
         ],
       ]);
     } finally {

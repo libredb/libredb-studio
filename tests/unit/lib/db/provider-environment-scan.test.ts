@@ -270,6 +270,29 @@ describe("Studio's storage location and OPC UA's PKI root are read by core alone
   });
 });
 
+// Core owns the providers directory the same way (M1-04): `src/lib/provider-host/providers-dir.ts` reads
+// LIBREDB_PROVIDERS_DIR once per process, the reservation of a connection's paths reads that module, and no provider
+// reads the setting or reaches the module.
+const PROVIDERS_VARIABLE = "LIBREDB_PROVIDERS_DIR";
+const PROVIDERS_READER = "src/lib/provider-host/providers-dir.ts";
+
+describe("the providers directory is read by core alone, and no provider reaches the module that reads it (M1-04)", () => {
+  test("no source file under src/ or vscode-extension/src/ other than src/lib/provider-host/providers-dir.ts reads LIBREDB_PROVIDERS_DIR", () => {
+    expect(readsTheSetting(`const a = process.env.${PROVIDERS_VARIABLE};`, "probe.ts", PROVIDERS_VARIABLE)).toBe(true);
+    expect(readersOtherThan(PROVIDERS_READER, PROVIDERS_VARIABLE)).toEqual([]);
+  });
+
+  test("src/lib/provider-host/providers-dir.ts reads LIBREDB_PROVIDERS_DIR", () => {
+    const source = readFileSync(join(process.cwd(), PROVIDERS_READER), "utf8");
+    expect(readsTheSetting(source, PROVIDERS_READER, PROVIDERS_VARIABLE)).toBe(true);
+  });
+
+  test("no module under src/lib/db/providers/ reaches src/lib/provider-host/providers-dir.ts through its imports", () => {
+    const reaching = providerModules().filter((name) => valueImportClosure(name).modules.includes(PROVIDERS_READER));
+    expect(reaching).toEqual([]);
+  });
+});
+
 // The SSH tunnel is core's (FND-2 slice 5b, docs/SECURITY.md control 3.41): core decides and opens it, and builds every
 // provider from a copy of the connection without `sshTunnel`, the tunnel's local endpoint in `host` and `port`, its far
 // end under `TUNNEL_FAR_END` and its route under `TUNNEL_ROUTE`. So no provider module, and no shared module a provider
