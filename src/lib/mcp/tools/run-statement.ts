@@ -1,12 +1,14 @@
+import type { PageBound } from "@libredb/provider-sdk/calls";
 import { encodeValue, ValueCodecError, type WireValue } from "@libredb/provider-sdk/values";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { runReadOnlyExecute } from "@/lib/api/read-only-execute";
+import { type ReadOnlyPageAnswer, runReadOnlyPage } from "@/lib/api/read-only-execute";
 import { getDBConfig } from "@/lib/db-ui-config";
 import {
   ExecutionProfileError,
   OffsetUnsupportedError,
   QueryCancelledError,
+  StudioOffsetRefusal,
   StudioTimeBudgetRefusal,
 } from "@/lib/db/errors";
 import {
@@ -18,11 +20,11 @@ import {
   withScrubbedWarnings,
 } from "@/lib/db/operations/provider-text";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
-import type { DatabaseProvider, PreparedQuery } from "@/lib/db/types";
+import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { hostCore } from "@/lib/provider-host/instance";
 import type { ManagedConnection } from "@/lib/seed";
-import type { DatabaseType, QueryResult } from "@/lib/types";
+import type { DatabaseType } from "@/lib/types";
 import {
   newMcpCorrelationId,
   recordMcpDecision,
@@ -86,10 +88,12 @@ import {
  * The order is run_read_query's: the host core, signal, resolve, availability, the served-engine gate, canonicalize,
  * fence, the decision record, the open's `textScrub`, the acquisition under "agent-read-only" within the call
  * (`acquireWithinCall`), `providerInDatabase`, whose database listing is a host core tree call under the call's
- * deadline and the request's signal (clause C-82) while its catalog session open is not yet bounded, for an arm that
- * pages the provider's `prepareQuery` with the row cap and offset, the statement through the host core's read-only
- * execute (`runReadOnlyExecute`) under the provider budgets, which refuses an answer past either budget again in core,
- * the cut to max_rows and the result cap, the outcome record (docs/providers/CONTRACT.md, clause C-81). The host core
+ * deadline and the request's signal (clause C-82) while its catalog session open is not yet bounded, the page, the
+ * statement through the host core's read-only execute with that page (`runReadOnlyPage`) under the provider budgets,
+ * which refuses an answer past either budget again in core, the cut to max_rows and the result cap, the outcome record
+ * (docs/providers/CONTRACT.md, clauses C-81 and C-85). An arm that pages asks for one row past max_rows from the
+ * offset, and the read-only statement session applies it through the provider's own paging; no module of MCP calls a
+ * provider's `prepareQuery`. The host core
  * is read before anything else, so a call made before its install throws `HostCoreBootOrderError` by name, with no
  * record written and nothing opened.
  *
@@ -113,11 +117,12 @@ import {
  * codec's wire form (`encodeValue` of `@libredb/provider-sdk/values`, `MCP_CELL_FORM`), in structuredContent and in the
  * JSON text block alike; a value outside the codec refuses the whole answer by the codec's sentence, behind the notice
  * naming the provider, since its place quotes column names and document keys, and so does a value the host core's
- * page refuses as it measures the rows. offset on a query the provider did not rewrite is refused before anything
- * runs, because the provider would answer the first page labelled with the requested offset; so is an offset the
- * provider's prepareQuery refuses by throwing OffsetUnsupportedError, answered in its words behind a notice naming
- * it, and any offset on an engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the
- * way to page there; such an engine is never offered a next offset either. An arm that does not page sends the
+ * page refuses as it measures the rows. offset on a query the provider did not rewrite is refused by the read-only
+ * statement session before anything runs, because the provider would answer the first page labelled with the requested
+ * offset, Studio's `StudioOffsetRefusal`, answered in Studio's words; so is an offset the provider refuses by throwing
+ * OffsetUnsupportedError, answered in its words behind a notice naming it, and any offset on an engine whose
+ * accepted-forms row says its SQL has none, refused before the statement's execute with the way to page there; such
+ * an engine is never offered a next offset either. An arm that does not page sends every row as its page and the
  * statement as written, and the row budget, the provider's and core's, bounds it.
  *
  * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
@@ -235,11 +240,11 @@ function profileRefusal(call: StatementCall, error: ExecutionProfileError, scrub
 function resultOf(
   call: StatementCall,
   type: DatabaseType,
-  prepared: PreparedQuery,
-  raw: QueryResult,
+  answer: ReadOnlyPageAnswer,
   scrub: ProviderTextScrub,
 ): Answer {
   const { args, arm, offset } = call;
+  const { result: raw, pageApplied } = answer;
   // Only the rows an answer can carry: a value in the row past the page, which proves more exist, never refuses it.
   let page: { [column: string]: WireValue }[];
   try {
@@ -255,7 +260,7 @@ function resultOf(
     const truncatedBy = count < page.length ? "result_bytes" : raw.rows.length > args.max_rows ? "max_rows" : null;
     const hasMore = raw.rows.length > count;
     // Only a query the provider paged, on an engine whose SQL has an offset to page the next call with.
-    const nextOffset = hasMore && prepared.wasLimited && pagesWithOffset(type) ? offset + count : null;
+    const nextOffset = hasMore && pageApplied && pagesWithOffset(type) ? offset + count : null;
     return withByteSize(
       {
         connection_id: args.connection_id,
@@ -265,7 +270,7 @@ function resultOf(
         row_count: count,
         truncated: truncatedBy !== null,
         truncated_by: truncatedBy,
-        pagination: { offset, limit: args.max_rows, hasMore, nextOffset, wasLimited: prepared.wasLimited },
+        pagination: { offset, limit: args.max_rows, hasMore, nextOffset, wasLimited: pageApplied },
         hint:
           nextOffset !== null
             ? nextPageHint(nextOffset)
@@ -293,40 +298,48 @@ function resultOf(
   return fits === 0 ? [ownWordsError(arm.rowOverCap), "mcp_result_too_large"] : [build(fits).result];
 }
 
-/** The statement as the provider runs it: paged by its own prepareQuery where the arm pages, or as written. */
-function prepare(
-  call: StatementCall,
-  provider: DatabaseProvider,
-  type: DatabaseType,
-  scrub: ProviderTextScrub,
-): { readonly prepared: PreparedQuery } | { readonly refused: Answer } {
+/**
+ * The page the statement asks the host core's read-only execute for (clause C-85): every row where the arm does not
+ * page, and otherwise one row past max_rows from the offset, which the read-only statement session applies through the
+ * provider's own paging. An offset on an engine whose SQL has none is refused before anything is acquired for the
+ * statement, in the words that say how to page there instead.
+ */
+function pageOf(call: StatementCall, type: DatabaseType): { readonly page: PageBound } | { readonly refused: Answer } {
   const { args, offset, statement } = call;
-  if (call.arm.paging === "none") {
-    return { prepared: { query: statement, wasLimited: false, limit: args.max_rows, offset: 0 } };
-  }
-  // An engine whose SQL has no offset takes none: refused before the provider is asked, in the words that say how to
-  // page there instead.
+  if (call.arm.paging === "none") return { page: { unlimited: true } };
   if (offset > 0 && !pagesWithOffset(type)) {
     return { refused: [ownWordsError(offsetRefusalText(statement, type)), "mcp_offset_unsupported"] };
   }
-  let prepared: PreparedQuery;
-  try {
-    prepared = provider.prepareQuery(statement, { limit: args.max_rows + 1, offset });
-  } catch (error) {
-    // An engine whose SQL cannot page refuses the offset here, and its sentence says what to do instead: the
-    // provider's text, behind a notice naming it. Any other failure, and this one with no offset asked for, is the
-    // engine's, never masked as an offset refusal.
-    if (error instanceof OffsetUnsupportedError && offset > 0) {
-      return {
-        refused: [providerTextError(OFFSET_REFUSED_LEAD, error, scrub, providerAuthor(type)), "mcp_offset_unsupported"],
-      };
-    }
-    throw error;
+  return { page: { limit: args.max_rows + 1, offset } };
+}
+
+/**
+ * A statement that failed on the host core's read-only execute, answered in this order: a value the host's page cannot
+ * carry by the codec's sentence behind the notice; Studio's refusal of an offset the provider did not apply in Studio's
+ * words, which say which case kept the provider from paging; a provider's refusal of a non-zero offset, from its
+ * prepare or its read path, in its own words behind the notice; anything else as a failed acquisition is. Both offset
+ * refusals are answered by class before the settle-time rule, as the refusals of a synchronous prepare always were.
+ */
+function statementFailure(
+  call: StatementCall,
+  failed: { readonly error: unknown; readonly settledAt: number },
+  deadline: number,
+  record: McpCallRecord,
+  scrub: ProviderTextScrub,
+): Answer {
+  const { error } = failed;
+  if (error instanceof ValueCodecError) {
+    return [engineError(MCP_CELL_REFUSED_PREFIX, error, scrub, providerAuthor(call.type)), "mcp_execution_failed"];
   }
-  if (!prepared.wasLimited && offset > 0) {
-    return { refused: [ownWordsError(offsetRefusalText(statement, type)), "mcp_offset_unsupported"] };
+  if (error instanceof StudioOffsetRefusal) {
+    return [ownWordsError(offsetRefusalText(call.statement, call.type)), "mcp_offset_unsupported"];
   }
-  return { prepared };
+  // An engine whose SQL cannot page refuses the offset, and its sentence says what to do instead. Any other failure,
+  // and this one with no offset asked for, is the engine's, never masked as an offset refusal.
+  if (error instanceof OffsetUnsupportedError && call.offset > 0) {
+    return [providerTextError(OFFSET_REFUSED_LEAD, error, scrub, providerAuthor(call.type)), "mcp_offset_unsupported"];
+  }
+  return acquisitionFailure(call, failed, deadline, record, scrub);
 }
 
 async function execute(
@@ -422,9 +435,9 @@ async function executeOpened(
   const chosen = await callDatabase(call, tool, acquired.value, deadline, scrub);
   if ("answer" in chosen) return chosen.answer;
   const { provider } = chosen;
-  const prepared = prepare(call, provider, connection.type, scrub);
-  if ("refused" in prepared) return prepared.refused;
-  const executed = await statementOnHost(tool, provider, connection.type, prepared.prepared.query, deadline);
+  const paged = pageOf(call, connection.type);
+  if ("refused" in paged) return paged.refused;
+  const executed = await statementOnHost(tool, provider, connection.type, call.statement, paged.page, deadline);
   if (executed.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (executed.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   // A provider whose principal check runs before every statement, rather than at the open, refuses there, in the
@@ -432,23 +445,17 @@ async function executeOpened(
   // so it goes behind a notice naming the provider, scrubbed, redacted and cut as an engine message is. A value the
   // host core's page cannot carry, refused by the value codec as the host measures the rows, is refused as the answer's
   // own cut refuses one, by the codec's sentence behind the notice.
-  if (executed.kind === "failed") {
-    if (executed.error instanceof ValueCodecError) {
-      return [
-        engineError(MCP_CELL_REFUSED_PREFIX, executed.error, scrub, providerAuthor(call.type)),
-        "mcp_execution_failed",
-      ];
-    }
-    return acquisitionFailure(call, executed, deadline, record, scrub);
-  }
+  if (executed.kind === "failed") return statementFailure(call, executed, deadline, record, scrub);
+  const { result, pageApplied } = executed.value;
   // The notes an arm answers are the provider's text too, scrubbed before the answer is built.
-  return resultOf(call, connection.type, prepared.prepared, withScrubbedWarnings(scrub, executed.value), scrub);
+  return resultOf(call, connection.type, { result: withScrubbedWarnings(scrub, result), pageApplied }, scrub);
 }
 
 /**
- * The statement through the host core's read-only execute (`runReadOnlyExecute`, docs/providers/CONTRACT.md, clauses
- * C-79 and C-81), which opens the legacy bridge's read-only statement session over the provider, refusing one without
- * `queryReadOnly` by name, and holds the answer to the read budget before it is cut to max_rows and the answer cap. Its
+ * The statement through the host core's read-only execute with its page (`runReadOnlyPage`, docs/providers/CONTRACT.md,
+ * clauses C-79, C-81 and C-85), which opens the legacy bridge's read-only statement session over the provider, refusing
+ * one without `queryReadOnly` by name, applies a bounded page through the provider's own paging or refuses an offset it
+ * did not apply, and holds the answer to the read budget before it is cut to max_rows and the answer cap. Its
  * deadline is the call's, as the time left, and its caller is the request's signal, so the host core ends the wait and
  * no race of this module's runs beside it. A call whose request left, or whose deadline passed while the connection
  * opened, sends nothing, as a raced step starts nothing late. The facade's ends are read into the race's kinds: its
@@ -460,15 +467,17 @@ async function statementOnHost(
   provider: DatabaseProvider,
   type: DatabaseType,
   statement: string,
+  page: PageBound,
   deadline: number,
-): Promise<Raced<QueryResult>> {
+): Promise<Raced<ReadOnlyPageAnswer>> {
   if (tool.signal.aborted) return { kind: "cancelled" };
   const remaining = Math.floor(deadline - Date.now());
   if (remaining <= 0) return { kind: "timeout" };
   try {
-    const value = await runReadOnlyExecute(provider, {
+    const value = await runReadOnlyPage(provider, {
       type,
       statement,
+      page,
       budget: {
         maxResultRows: MCP_PROVIDER_ROW_CAP,
         maxResultBytes: MCP_PROVIDER_BYTE_CAP,

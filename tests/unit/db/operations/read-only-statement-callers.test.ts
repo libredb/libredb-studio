@@ -407,6 +407,8 @@ const HANDOVER_ROUTE = join("src", "app", "api", "agent", "runs", "[runId]", "ha
 /** MCP's statement core, whose one helper sends every statement tool's statement through the read-only execute. */
 const MCP_STATEMENT = join("src", "lib", "mcp", "tools", "run-statement.ts");
 const MCP_STATEMENT_HELPER = "statementOnHost";
+/** The paged read-only execute, the one opener of the read-only statement session. */
+const PAGE_FACADE = "runReadOnlyPage";
 
 /** The core statement call MCP was the last to use, removed with that use. */
 const RETIRED = "runReadOnlyStatement";
@@ -487,16 +489,15 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     expect(files.length).toBeGreaterThan(0);
     const named = files.filter((file) => declaresOrCalls(file, readFileSync(join(ROOT, file), "utf8"), RETIRED));
     expect(named).toEqual([]);
-    const callers = AGENT_AND_MCP_SOURCES.flatMap(sourceFiles).flatMap((file) =>
-      functionCalls(file, readFileSync(join(ROOT, file), "utf8"), "runReadOnlyExecute"),
+    const callersOf = (facade: string) =>
+      AGENT_AND_MCP_SOURCES.flatMap(sourceFiles)
+        .flatMap((file) => functionCalls(file, readFileSync(join(ROOT, file), "utf8"), facade))
+        .map((call) => `${call.file} in ${call.declaration}`)
+        .sort();
+    expect(callersOf("runReadOnlyExecute")).toEqual(
+      [`${HANDOVER_ROUTE} in POST`, `${AGENT_TOOLS} in runStatement`].sort(),
     );
-    expect(callers.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
-      [
-        `${HANDOVER_ROUTE} in POST`,
-        `${AGENT_TOOLS} in runStatement`,
-        `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`,
-      ].sort(),
-    );
+    expect(callersOf(PAGE_FACADE)).toEqual([`${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`]);
   }, 60_000);
 
   test("only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements", () => {
@@ -504,18 +505,22 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     // policy has both readOnly and sendsStatements; the host trusts the facade's word, so the callers are held here.
     const sessions = callsOutsideProviders(BRIDGE_SESSION);
     expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
-      `${EXECUTE_FACADE} in runReadOnlyExecute`,
+      `${EXECUTE_FACADE} in ${PAGE_FACADE}`,
     ]);
+    // The paged facade is called by the facade of every row and by MCP's statement helper alone.
+    const mcpCaller = `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`;
+    expect(
+      callsOutsideProviders(PAGE_FACADE)
+        .map((call) => `${call.file} in ${call.declaration}`)
+        .sort(),
+    ).toEqual([`${EXECUTE_FACADE} in runReadOnlyExecute`, mcpCaller].sort());
     const facade = callsOutsideProviders("runReadOnlyExecute");
     const profiles: Record<string, string> = {
       [`${AGENT_TOOLS} in runStatement`]: "AGENT_EXECUTION_PROFILE",
       [`${HANDOVER_ROUTE} in POST`]: "AGENT_HANDOVER_PROFILE",
     };
-    const mcpCaller = `${MCP_STATEMENT} in ${MCP_STATEMENT_HELPER}`;
-    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
-      [...Object.keys(profiles), mcpCaller].sort(),
-    );
-    for (const call of facade.filter((each) => `${each.file} in ${each.declaration}` !== mcpCaller)) {
+    expect(facade.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(Object.keys(profiles).sort());
+    for (const call of facade) {
       const profile = profiles[`${call.file} in ${call.declaration}`] as string;
       expect([call.declaration, call.names.has(profile)]).toEqual([call.declaration, true]);
     }
@@ -527,6 +532,19 @@ describe("the agent's statements and the hand-over replay on the host core", () 
       ["agent-read-only"],
     ]);
   }, 60_000);
+
+  test("no MCP module calls a provider's prepareQuery: run_read_query's page is applied by the read-only statement session", () => {
+    const files = sourceFiles(join("src", "lib", "mcp"));
+    expect(files).toContain(MCP_STATEMENT);
+    const reads = files
+      .map((file) => ({ file, text: readFileSync(join(ROOT, file), "utf8") }))
+      .filter(({ text }) => text.includes("prepareQuery"))
+      .flatMap(({ file, text }) => memberReads(file, text, "prepareQuery"));
+    expect(reads.map(label)).toEqual([]);
+    // The rule is not vacuous: the scan finds the read-only statement session's own call of the provider's prepare.
+    const bridged = memberReads(BRIDGE, readFileSync(join(ROOT, BRIDGE), "utf8"), "prepareQuery");
+    expect(bridged.some((read) => read.called && read.functions.includes("pagedReadOnlyStatement"))).toBe(true);
+  });
 
   test("only the agent's statistics read opens a composed statement session, under the operations profile", () => {
     // The session sends its statement through the plain query, unprepared, so its callers are held here: one facade,
@@ -784,8 +802,8 @@ describe("the review record gates the protected read path", () => {
     });
   });
 
-  test("runReadOnlyExecute reads the review record before it reads the budget, the host core or the provider", () => {
-    const body = declaredFunction(EXECUTE_FACADE, "runReadOnlyExecute");
+  test("runReadOnlyPage reads the review record before it reads the budget, the host core or the provider", () => {
+    const body = declaredFunction(EXECUTE_FACADE, PAGE_FACADE);
     expect(gatedBefore(body, REVIEW_GATE, ["assertReadOnlyBudget", "hostCore", BRIDGE_SESSION])).toEqual({
       assertReadOnlyBudget: "gated",
       hostCore: "gated",

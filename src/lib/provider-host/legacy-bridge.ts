@@ -86,16 +86,16 @@
  *
  * The console session is no read-only statement session (`readOnlyStatements` false): it serves the editor's and the
  * operations profile's sessions, none of which is sent read-only statements. A provider's read-only statement path is
- * served by `bridgedReadOnlyStatements`, a session of its own built per call by its facade, `runReadOnlyExecute` in
+ * served by `bridgedReadOnlyStatements`, a session of its own built per call by its facade, `runReadOnlyPage` in
  * src/lib/api/read-only-execute.ts (clause C-78). Its open refuses a provider without `queryReadOnly` by name, before
  * anything is called, so the plain `query()` is never the fallback (clause C-39); its calls offer execute alone,
  * honouring `offset` and `readOnly`. Its execute applies a bounded page through the provider's own `prepareQuery`, on a
  * fresh options object of the page's limit and offset, and refuses a non-zero offset the prepare did not apply as
  * `StudioOffsetRefusal`, outcome not-sent, before anything is sent; every row calls no prepare (clause C-85). It then
- * runs `queryReadOnly` with the statement it prepared, or as written, a fresh budget of the open's statement timeout and
- * read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one source per
- * result set, its page applied exactly when the prepare says it applied it. Its page limits read every row the provider
- * returned, at least one, within one page, and it keeps the legacy result for the facade to answer from.
+ * runs `queryReadOnly` with the statement it prepared, or as written, a fresh budget of the open's statement timeout
+ * and read allowance, by reference, and the request's rows and bytes, and the request's mode, and answers one source
+ * per result set, its page applied exactly when the prepare says it applied it. Its page limits read every row the
+ * provider returned, at least one, within one page, and it keeps the legacy result for the facade to answer from.
  *
  * A statement Studio composed, which must reach the provider exactly as composed, is served by
  * `bridgedComposedStatements`, a session of its own built per call by `runComposedStatement` in

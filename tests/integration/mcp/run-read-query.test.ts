@@ -1125,8 +1125,8 @@ describe("the host core", () => {
         const [{ readOnlyStatements, request, ctx }] = executes;
         expect(readOnlyStatements).toBe(true);
         expect(request).toEqual({
-          statement: expect.stringContaining("SELECT id FROM numbers"),
-          page: { unlimited: true },
+          statement: "SELECT id FROM numbers",
+          page: { limit: 101, offset: 0 },
           readOnly: { budget: { maxRows: 1000, maxBytes: 1048576 } },
         });
         expect(Object.keys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
@@ -1239,6 +1239,76 @@ describe("the host core", () => {
 
     expect(result).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+  });
+
+  test("run_read_query's page, one row past max_rows from the offset, is applied by the read-only statement session through the host core, never by MCP", async () => {
+    const statement = "SELECT id FROM numbers ORDER BY id";
+    const prepared: { readonly executesBefore: number; readonly args: unknown[] }[] = [];
+    const sent: unknown[] = [];
+    const realPrepare = SQLiteProvider.prototype.prepareQuery;
+    const realRead = SQLiteProvider.prototype.queryReadOnly;
+    await withRecordingHostCore(async ({ executes }) => {
+      const prepare = spyOn(SQLiteProvider.prototype, "prepareQuery").mockImplementation(function (
+        this: SQLiteProvider,
+        ...args: Parameters<SQLiteProvider["prepareQuery"]>
+      ) {
+        prepared.push({ executesBefore: executes.length, args });
+        return realPrepare.apply(this, args);
+      });
+      const read = spyOn(SQLiteProvider.prototype, "queryReadOnly").mockImplementation(function (
+        this: SQLiteProvider,
+        ...args: Parameters<SQLiteProvider["queryReadOnly"]>
+      ) {
+        sent.push(args[0]);
+        return realRead.apply(this, args);
+      });
+      try {
+        const result = await direct({ connection_id: "seed:shop", sql: statement, max_rows: 50, offset: 100 });
+
+        expect((result.structuredContent?.rows as { id: number }[] | undefined)?.map((row) => row.id)).toEqual(
+          Array.from({ length: 50 }, (_, index) => 101 + index),
+        );
+        expect(result.structuredContent?.pagination).toEqual({
+          offset: 100,
+          limit: 50,
+          hasMore: false,
+          nextOffset: null,
+          wasLimited: true,
+        });
+        expect(executes.map(({ request }) => request)).toEqual([
+          { statement, page: { limit: 51, offset: 100 }, readOnly: { budget: { maxRows: 1000, maxBytes: 1048576 } } },
+        ]);
+      } finally {
+        prepare.mockRestore();
+        read.mockRestore();
+      }
+    });
+
+    expect(prepared).toEqual([{ executesBefore: 1, args: [statement, { limit: 51, offset: 100 }] }]);
+    expect(sent).toEqual([expect.stringContaining("LIMIT 51 OFFSET 100")]);
+  });
+
+  test("a call whose deadline passed while its connection opened is answered with the timeout before its offset is read", async () => {
+    const queryReadOnly = mock(async () => empty);
+    const prepareQuery = mock((query: string) => ({ query, wasLimited: false, limit: 101, offset: 100 }));
+    const provider = { getCapabilities: () => ({}), prepareQuery, queryReadOnly } as unknown as DatabaseProvider;
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT 1", offset: 100, timeout_ms: 500 },
+      undefined,
+      fakeContext(provider, "sqlite", {}, async () => {
+        // The open holds the event loop past the call's deadline, as a synchronous driver's open does.
+        const until = Date.now() + 600;
+        while (Date.now() < until) {
+          // busy on purpose
+        }
+        return provider;
+      }),
+    );
+
+    expect(result).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    expect(prepareQuery).not.toHaveBeenCalled();
     expect(queryReadOnly).not.toHaveBeenCalled();
   });
 
@@ -1360,14 +1430,15 @@ describe("the audit sequence", () => {
 describe("a provider the profile seam should never hand out", () => {
   test("without queryReadOnly is refused, and query() is never the fallback", async () => {
     const writable = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+    const prepareQuery = mock((query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }));
     const result = await direct(
       { connection_id: "seed:fake", sql: "SELECT 1" },
       undefined,
-      // A declaration it still has: every provider does, and the tool reads it before anything runs (#1530). Its
-      // prepareQuery pages the statement and sends nothing; the read-only statement session's open refuses it after.
+      // A declaration it still has: every provider does, and the tool reads it before anything runs (#1530). The
+      // read-only statement session's open refuses it before its prepareQuery could page the statement.
       fakeContext({
         query: writable,
-        prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 0 }),
+        prepareQuery,
         getCapabilities: () => ({}),
       } as unknown as Partial<DatabaseProvider>),
     );
@@ -1385,6 +1456,7 @@ describe("a provider the profile seam should never hand out", () => {
     });
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
     expect(writable).not.toHaveBeenCalled();
+    expect(prepareQuery).not.toHaveBeenCalled();
   });
 
   test("whose preparation throws is answered as an engine failure, redacted", async () => {
@@ -1439,6 +1511,32 @@ describe("a provider the profile seam should never hand out", () => {
       structuredContent: { error: { kind: "offset-unsupported", code: "QUERY_ERROR", outcome: "unknown" } },
     });
     expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_offset_unsupported" });
+  });
+
+  test("an offset the provider's read path refuses with OffsetUnsupportedError is answered in its words behind the notice, as its prepare's refusal is", async () => {
+    const queryReadOnly = mock(async () => {
+      throw new OffsetUnsupportedError(CQL_REFUSAL, "cassandra");
+    });
+    const provider = {
+      getCapabilities: () => ({}),
+      queryReadOnly,
+      prepareQuery: (query: string) => ({ query, wasLimited: true, limit: 101, offset: 100 }),
+    };
+    const result = await direct(
+      { connection_id: "seed:fake", sql: "SELECT id FROM numbers", offset: 100 },
+      undefined,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        { type: "text", text: providerTextNotice(SQLITE_AUTHOR) },
+        { type: "text", text: `${OFFSET_REFUSED_LEAD}${CQL_REFUSAL}` },
+      ],
+      structuredContent: { error: { kind: "offset-unsupported", code: "QUERY_ERROR", outcome: "unknown" } },
+    });
+    expect(queryReadOnly).toHaveBeenCalledTimes(1);
     expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_offset_unsupported" });
   });
 
