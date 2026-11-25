@@ -253,6 +253,9 @@ Each row is composed when the registry loads from three sources: the SQL text it
 The confirmation gate reads the facts that would spare a statement, `readsSqlText: false`, a `confirmExemptForms` form and a vocabulary row's `decidesAlone`, through Studio's review record of such claims, `CONFIRMATION_CLAIM_REVIEW` in `src/lib/db/confirmation-claim-review.ts`, and counts each only where the record lists it.
 `sqlGrammarFor()` answers a missing type with `NO_CONNECTION_SQL_GRAMMAR` and refuses a value outside the union with `UnknownProviderError`, so no reader of these facts names a type id or reads another engine's facts.
 
+The policy and MCP claims each declaration authors, such as its write reach, its single-writer file and whether MCP may read it, are projected into `src/lib/db/engine-catalog/claims.generated.ts` and read by one module only, the grant reader `src/lib/db/claim-grants.ts`.
+It grants each claim as the more restrictive of the engine's request and Studio's hand-written review record of the claim, in `src/lib/db/compatibility.ts` and `src/lib/db/connection-fields.ts`, and every gate, from the seed schema and the provider factory to the MCP tools and the connection form, reads its granted tables (docs/providers/CONTRACT.md, M-54 and M-82).
+
 ### 4.2. Authentication Flow
 
 ```mermaid
