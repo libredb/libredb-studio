@@ -277,9 +277,18 @@ describe("the deadline and the refusals of a failed import", () => {
     const entry = fixture("flag-at-import.mjs");
     const port = (): undefined => undefined;
 
-    await expect(
-      loadPackage(path.relative(process.cwd(), entry), { deadlineMs: DEADLINE_MS, onLateSettle: port }),
-    ).rejects.toThrow(new TypeError("loadPackage: entry must be an absolute path"));
+    // The working directory is the fixture directory, so the relative entry names the flagging fixture: were the guard
+    // missing, its import would set the flag. path.relative is not used, since it answers an absolute path when the
+    // checkout and the temporary directory sit on two Windows drives.
+    const cwd = process.cwd();
+    process.chdir(dir);
+    try {
+      await expect(loadPackage("flag-at-import.mjs", { deadlineMs: DEADLINE_MS, onLateSettle: port })).rejects.toThrow(
+        new TypeError("loadPackage: entry must be an absolute path"),
+      );
+    } finally {
+      process.chdir(cwd);
+    }
     await expect(loadPackage(42 as unknown as string, { deadlineMs: DEADLINE_MS, onLateSettle: port })).rejects.toThrow(
       new TypeError("loadPackage: entry must be an absolute path"),
     );
