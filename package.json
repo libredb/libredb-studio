@@ -277,6 +277,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.12",
     "@eslint/compat": "^2.1.1",
+    "@libredb/provider-loader": "file:./src/lib/provider-loader",
     "@libredb/provider-sdk": "workspace:*",
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",

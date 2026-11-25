@@ -766,6 +766,31 @@ The providers' `eslint-disable-next-line` comments stop suppressing their warnin
 
 `tests/unit/provider-source-coupling-lint.test.ts` proves each rule on a throwaway root that carries the repository's `eslint.config.mjs`, with planted lines copied from today's providers and named by file and enclosing symbol, the scope boundaries above, and a probe in every provider package the repository has.
 
+## The provider loader (`@libredb/provider-loader`)
+
+The provider loader is the one place Studio brings a provider package's code into its process: it imports a package's entry under a deadline, reads only its default record, and keeps the process's registry of admitted records ([CONTRACT.md](providers/CONTRACT.md), clauses C-87 to C-90).
+It lives at `src/lib/provider-loader/` as plain CommonJS, `index.cjs`, beside a hand-written declaration, `index.d.cts`, with no build step, so Node `require`s the same file in `next dev`, in the standalone server and in the VS Code extension's backend child.
+`tsc` checks its callers against the declaration and never the `.cjs` itself, and the loader's tests call every export.
+
+### Why a `file:` directory and not a workspace package
+
+Measured on Next.js 16.4.6 with Node 26.13.1 (2026-11-25), with the loader listed in `serverExternalPackages` in both layouts.
+As a workspace package, which bun links into `node_modules`, Turbopack followed the link, bundled one copy of the loader into instrumentation and another into the route, and replaced its `import()` with a stub that throws "Cannot find module": two registries and no load.
+As a `file:` dependency, which bun installs as a real directory, Next.js left it to Node's `require`, traced it into the standalone `node_modules`, kept it through the payload prune, and gave instrumentation and a route one module, in the standalone server and in `next dev`.
+So the root `package.json` declares `"@libredb/provider-loader": "file:./src/lib/provider-loader"` in `devDependencies`, `next.config.ts` lists the name in `serverExternalPackages`, and Studio reaches the loader only by that name.
+
+### Editing it
+
+bun installs a `file:` directory as hard links on Linux and as copies on macOS and Windows, and an editor that saves by renaming replaces the link.
+So an edit to the loader reaches `node_modules/@libredb/provider-loader` only through `bun install`, and `tests/unit/lib/provider-loader/packaging.test.ts` fails with "run bun install" until it does.
+The loader's own tests import its source path, `@/lib/provider-loader/index.cjs`, which is how its lines are measured: the coverage merge keeps `src/` records and drops `node_modules/` ones.
+No other file imports it by path, since a path import would be bundled.
+
+### The images
+
+A frozen install whose `file:` directory is absent fails by name, and one whose directory holds only its `package.json` installs a package without code and exits 0.
+So each Dockerfile's deps stage copies the whole directory, `COPY src/lib/provider-loader/ ./src/lib/provider-loader/`, before `bun install --frozen-lockfile`, and `tests/unit/docker-workspace-install.test.ts` holds a COPY line for every `file:` dependency the root `package.json` declares.
+
 ## VS Code extension (vscode-extension/)
 
 `vscode-extension/` is a second package beside the Bun root, with its own toolchain and its own CI job.

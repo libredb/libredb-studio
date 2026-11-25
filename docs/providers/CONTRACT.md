@@ -2056,11 +2056,12 @@ So is an engine list, and an engine's maintenance, maintenance specs and agent r
 - test `packages/provider-sdk/tests/manifest/schema.test.ts` "the engine list is bounded at 64, and each facet list by the size of its vocabulary"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a list longer than its maxItems is refused as too-many"
 
-### C-2 (informative): The loader checks the record with the host's SDK
+### C-2 (informative): Admission checks the record with the host's SDK
 
-The loader reads only the entry's `default` export and runs `checkProviderModule` on it, so a record another copy of the SDK built is checked by the host's copy.
-Validating the manifest against the schema is the loader's too, since it holds the schema bytes.
-No loader exists yet, so nothing checks this.
+The loader reads only the entry's `default` export, C-87.
+Admission runs `checkProviderModule` on that record with the host's copy of the SDK, so a record another copy of the SDK built is checked by the host's copy.
+Admission also validates the manifest against the schema the host holds.
+Admission does not exist yet, so nothing checks this.
 
 ### C-3 (normative): The mandatory calls
 
@@ -2564,13 +2565,13 @@ The kit's isolation case checks it, and no such case exists yet.
 How a provider's failure ends, by kind and by runtime.
 The runtimes are Studio's Next.js server, the VS Code extension's backend child under Node.js, the same child under Electron, which is how the extension forks it, and the server under Node.js started with `--unhandled-rejections=strict`.
 Each "held by" cell names the clause that holds the row, or says what will hold it.
-The loader, the kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
+Boot admission, the kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
 
 | Failure | Next.js server | VS Code child, Node.js | VS Code child, Electron | Node.js, strict | Blast radius | Held by |
 |---|---|---|---|---|---|---|
-| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
-| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | The loader |
-| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | The loader, and C-37 |
+| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | Boot admission, which does not exist yet |
+| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | C-88, and boot admission |
+| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | C-88 and C-89, and C-37 |
 | A synchronous hang, at import or in a call | Every request waits | The same | The same | The same | The process | Only a watchdog outside the process, C-37 |
 | A throw inside a call | That call fails | The same | The same | The same | That call | C-31 |
 | A detached rejection | Logged, and the server keeps serving | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | None on the server, the process otherwise | C-35, with the server's own choice open |
@@ -2604,7 +2605,7 @@ Only a watchdog outside the process detects a hung process.
 The Helm chart's and the OpenShift operator's liveness probe restarts the pod.
 The Compose healthcheck marks the container unhealthy and restarts nothing.
 npx, the Linux packages' units, Snap, Homebrew, Windows, the desktop shell after its boot and the VS Code extension detect nothing.
-The kit's import-time measurement is the check at a package's build, and no loader exists yet.
+The kit's import-time measurement is the check at a package's build, and the loader's deadline, C-88, is the bound at its load.
 
 ### C-38 (normative): Classification is core's, and its verdict is a closed set
 
@@ -2654,7 +2655,7 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 ### C-43 (informative): A provider depends on no load order
 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
-The loader holds this, and it does not exist yet.
+The lock and boot admission hold this, and neither exists yet; the loader's registry lists records in the order they were registered, an order nothing reads.
 
 ### C-44 (normative): The host owns each open
 
@@ -4058,6 +4059,67 @@ A statement tool that does not page sends every row as its page.
 - test `tests/integration/mcp/run-read-query.test.ts` "without queryReadOnly is refused, and query() is never the fallback"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "no MCP module calls a provider's prepareQuery: run_read_query's page is applied by the read-only statement session"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statement path, the hand-over route and MCP's statement path open a read-only statement session, each under a profile that sends statements"
+
+### C-87 (normative): The loader reads only a package entry's default record
+
+The loader imports a package's entry by the `file:` URL of its absolute path and reads only the namespace's `default`.
+A namespace with no `default` is refused as `PROVIDER_LOAD_FAILED` with the reason `default-missing`.
+A default that is not a plain record is refused with `not-a-record`: a plain record is an object whose prototype is `Object.prototype` or `null`, and a Proxy, an array, a function, a class instance and a primitive are not.
+A plain record with an own `__esModule` key is an interop wrapper, refused with `interop-wrapper`, and its inner `default` is never read.
+No step of the check calls the package's code.
+A record that passes is answered as the package exported it.
+The measured limit: on Bun the runtime unwraps a CommonJS entry's interop wrapper before the loader reads it, so only an ES module entry reads alike on Node.js, Electron and Bun.
+
+- test `tests/unit/lib/provider-loader/load.test.ts` "a package's entry is imported from its file URL, and its default record is answered as it was exported"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a package's entry resolves its own dependencies from its own node_modules"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a record with a null prototype is answered as loaded"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a namespace with no default is refused as PROVIDER_LOAD_FAILED, default-missing"
+- test `tests/unit/lib/provider-loader/load.test.ts` "an interop wrapper is refused as PROVIDER_LOAD_FAILED, interop-wrapper, and its inner default is never read"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a default that is not a plain record is refused as PROVIDER_LOAD_FAILED, not-a-record, and none of its code runs"
+- test `tests/unit/lib/provider-loader/load.test.ts` "under Bun, a CommonJS entry's interop wrapper is unwrapped by Bun itself, so only an ES module entry reads alike on every runtime"
+- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, a CommonJS entry's interop wrapper is refused as interop-wrapper, in a bounded child"
+- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, a default record loads with its own dependency, in a bounded child"
+
+### C-88 (normative): Every import runs under its caller's deadline
+
+The loader runs every import under the deadline its caller passes, and past it answers `PROVIDER_LOAD_FAILED` with the reason `deadline-passed`.
+An import that throws, a missing entry file among them, is refused with `import-threw`, and the thrown value is the refusal's `cause`, by reference.
+The refusal's other members carry no text of the package's error; `cause` is for the host's log, and a host never sends it to a client.
+An entry that is not an absolute path, a deadline that is not a whole number of milliseconds from 1 to 2,147,483,647 and a late port that is not a function are host defects, refused with a `TypeError` before anything is imported.
+The deadline cannot stop synchronous code, C-37.
+
+- test `tests/unit/lib/provider-loader/load.test.ts` "an import that throws is refused as PROVIDER_LOAD_FAILED, import-threw, with the thrown value as its cause and no text of it in the refusal"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a missing entry file is refused as PROVIDER_LOAD_FAILED, import-threw"
+- test `tests/unit/lib/provider-loader/load.test.ts` "a relative entry, a deadline outside 1 to 2147483647 ms and a port that is not a function are refused before any import"
+- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node, an import that never settles is refused at its deadline and holds no exit, in a bounded child"
+
+### C-89 (normative): A late settle is never answered as loaded
+
+An import that settles after its deadline is never answered as loaded.
+Its success or its rejection reaches the caller's late port once, the success without its value and the rejection with its cause, and no rejection is left unhandled.
+A late port that throws is a host defect, which the loader does not catch.
+
+- test `tests/unit/lib/provider-loader/load.test.ts` "an import past its deadline is refused as PROVIDER_LOAD_FAILED, deadline-passed, and its late success reaches the port once and is never answered as loaded"
+- test `tests/unit/lib/provider-loader/load.test.ts` "an import that rejects after its deadline reaches the port once with its cause, and leaves no unhandled rejection"
+- test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node with --unhandled-rejections=strict, a rejection after the deadline reaches the port once and the child exits 0, in a bounded child"
+
+### C-90 (normative): One loader module and one registry per process
+
+The loader is a package Next.js leaves to Node's `require`, installed as a directory under `node_modules` and never as a link, and Studio reaches it only by its name, `@libredb/provider-loader`, so a process holds one loader module and one registry.
+Only the loader's own tests import its source by path.
+A record enters the registry only through `registerAdmitted`, under a non-empty name registered once: a name registered before is refused by name, and its first record stays.
+The loader registers nothing itself, and its registry lists the records in the order they were registered, an order nothing reads, C-43.
+
+- test `tests/unit/lib/provider-loader/registry.test.ts` "the registry starts empty, and a loaded record is not registered by its load"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a name registered twice is refused by name, and the first record stays"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a name that is not a non-empty string and a record that is not an object are refused"
+- test `tests/unit/lib/provider-loader/load.test.ts` "the loader exports loadPackage, registerAdmitted and admitted, and nothing else"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the loader is listed in serverExternalPackages, so Next.js leaves it to Node's require and every bundle of a server shares one module"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the root installs the loader as a file: dependency, a directory under node_modules and never a link, because Turbopack bundles a linked package"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the installed loader is its source, file for file and byte for byte"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "Studio reaches the loader only by its package name, and only the loader's own tests import its source"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the import scan names a planted file that imports the loader's source by path"
 
 ## Not yet in this contract
 

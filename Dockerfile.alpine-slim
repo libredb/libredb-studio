@@ -84,6 +84,9 @@ RUN apk add --no-cache python3 make g++
 # bunfig.toml carries the hoisted linker, and each workspace package's package.json gets its own
 # COPY line before the install; without either the install still exits 0, in another layout or
 # without the package (packages/README.md, "Docker").
+# The provider loader is a file: dependency, copied whole: without its directory the frozen install fails, and with only
+# its package.json the install exits 0 with no code (docs/TOOLCHAIN.md, "The provider loader").
+COPY src/lib/provider-loader/ ./src/lib/provider-loader/
 COPY package.json bun.lock bunfig.toml ./
 COPY patches ./patches
 COPY packages/provider-sdk/package.json ./packages/provider-sdk/

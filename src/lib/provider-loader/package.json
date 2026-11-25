@@ -1,0 +1,12 @@
+{
+  "name": "@libredb/provider-loader",
+  "version": "0.1.0",
+  "description": "The one place LibreDB Studio brings a provider package's code into its process: it imports the package's entry under a deadline, reads only its default record, and keeps the process's registry of admitted records.",
+  "license": "MIT",
+  "private": true,
+  "main": "./index.cjs",
+  "types": "./index.d.cts",
+  "exports": {
+    ".": "./index.cjs"
+  }
+}
