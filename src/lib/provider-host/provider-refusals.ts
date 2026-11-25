@@ -1,22 +1,34 @@
 /**
- * The refusals of a provider package read from the providers directory (docs/providers/CONTRACT.md, clauses C-91 to
- * C-96): one closed list of codes, each with its closed list of rules, and the records and one-line sentences that
- * carry them.
+ * The refusals of a provider package read from the providers directory and admitted (docs/providers/CONTRACT.md,
+ * clauses C-91 to C-104): one closed list of codes, each with its closed list of rules, and the records and one-line
+ * sentences that carry them.
  *
  * A package's refusal names the package by the name and version its lock entry gives, which the lock's format has
  * already checked, and never carries a value read from the package: no file name inside its directory, no value of its
- * package.json or its manifest, no engine id. A lock's refusal names the lock file, the rule and, for a rule of the
- * lock's shape, the JSON pointer and the key, both read from the operator's own lock. An errno code may be named.
+ * package.json or its manifest, no engine id, no key the package chose. The rules of `PROVIDER_SCHEMA_INVALID` and
+ * `PROVIDER_RECORD_INVALID` are the SDK's own lists, imported; an admission refusal names the first one, with the
+ * manifest's JSON pointer for a schema rule (every object of the schema is closed but `vendor`, which no rule points
+ * into, so a pointer holds only the schema's own names and list positions), and how many more there are. A lock's
+ * refusal names the lock file, the rule and, for a rule of the lock's shape, the JSON pointer and the key, both read
+ * from the operator's own lock. An errno code may be named.
  */
+import { DEFINITION_REFUSAL_RULES } from "@libredb/provider-sdk/calls";
+import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
 import { quoteTypeId } from "@/lib/db/type-id";
 
-/** Every code a provider package or its lock is refused with. Milestone 1's later admission steps append theirs. */
+/** Every code a provider package or its lock is refused with. */
 export const PROVIDER_REFUSAL_CODES = Object.freeze([
   "PROVIDER_LOCK_INVALID",
   "PROVIDER_PATH_OUTSIDE",
   "PROVIDER_DIGEST_MISMATCH",
   "PROVIDER_IDENTITY_MISMATCH",
   "PROVIDER_ID_COLLISION",
+  "PROVIDER_CONTRACT_UNSUPPORTED",
+  "PROVIDER_SCHEMA_INVALID",
+  "PROVIDER_MODULE_FORMAT",
+  "PROVIDER_LOAD_FAILED",
+  "PROVIDER_NATIVE_UNSUPPORTED",
+  "PROVIDER_RECORD_INVALID",
 ] as const);
 
 export type ProviderRefusalCode = (typeof PROVIDER_REFUSAL_CODES)[number];
@@ -46,6 +58,15 @@ const LOCK_FILE_RULES = [
   "lock-not-json",
 ] as const;
 
+/** The provider loader's refusal reasons (src/lib/provider-loader/index.d.cts, `LoadRefusalReason`), by value. */
+export const LOADER_REFUSAL_REASONS = Object.freeze([
+  "import-threw",
+  "deadline-passed",
+  "default-missing",
+  "interop-wrapper",
+  "not-a-record",
+] as const);
+
 /** Each code's closed list of rules. */
 export const PROVIDER_REFUSAL_RULES = Object.freeze({
   PROVIDER_LOCK_INVALID: Object.freeze([...LOCK_FILE_RULES, ...LOCK_SHAPE_RULES]),
@@ -70,21 +91,38 @@ export const PROVIDER_REFUSAL_RULES = Object.freeze({
     "engines",
     "entry",
   ] as const),
-  PROVIDER_ID_COLLISION: Object.freeze(["bundled-engine", "shared-engine"] as const),
+  PROVIDER_ID_COLLISION: Object.freeze([
+    "bundled-engine",
+    "shared-engine",
+    "registered-engine",
+    "registered-package",
+    "inherited-name",
+  ] as const),
+  PROVIDER_CONTRACT_UNSUPPORTED: Object.freeze(["contract-not-served"] as const),
+  PROVIDER_SCHEMA_INVALID: SCHEMA_REFUSAL_RULES,
+  PROVIDER_MODULE_FORMAT: Object.freeze(["entry-commonjs", "package-scope-unreadable"] as const),
+  PROVIDER_LOAD_FAILED: Object.freeze(["closure-outside", ...LOADER_REFUSAL_REASONS] as const),
+  PROVIDER_NATIVE_UNSUPPORTED: Object.freeze(["native-file", "native-declared"] as const),
+  PROVIDER_RECORD_INVALID: Object.freeze([...DEFINITION_REFUSAL_RULES, "record-proxy", "manifest-differs"] as const),
 });
 
 export type LockShapeRule = (typeof LOCK_SHAPE_RULES)[number];
 export type LockRule = (typeof PROVIDER_REFUSAL_RULES)["PROVIDER_LOCK_INVALID"][number];
 type PackageCode = Exclude<ProviderRefusalCode, "PROVIDER_LOCK_INVALID">;
+/** The codes the artifact module answers. */
+type ArtifactCode = "PROVIDER_PATH_OUTSIDE" | "PROVIDER_DIGEST_MISMATCH" | "PROVIDER_IDENTITY_MISMATCH";
+
+/** A rule of `code`. */
+export type RuleOf<Code extends ProviderRefusalCode> = (typeof PROVIDER_REFUSAL_RULES)[Code][number];
 
 /** A refusal of one package, before the package's name and version are added: what the artifact module answers. */
 export type ArtifactFault = {
-  [Code in Exclude<PackageCode, "PROVIDER_ID_COLLISION">]: {
+  [Code in ArtifactCode]: {
     readonly code: Code;
-    readonly rule: (typeof PROVIDER_REFUSAL_RULES)[Code][number];
+    readonly rule: RuleOf<Code>;
     readonly errno?: string;
   };
-}[Exclude<PackageCode, "PROVIDER_ID_COLLISION">];
+}[ArtifactCode];
 
 /** A package as its lock entry names it. */
 export interface PackageName {
@@ -102,6 +140,10 @@ export interface PackageRefusal {
   readonly errno?: string;
   /** For `shared-engine`: every other entry that serves one of this entry's engine ids, by name and version. */
   readonly others?: readonly PackageName[];
+  /** For `PROVIDER_SCHEMA_INVALID`: the JSON pointer into the manifest of the first refusal, `""` its top level. */
+  readonly pointer?: string;
+  /** For `PROVIDER_SCHEMA_INVALID` and an SDK rule of `PROVIDER_RECORD_INVALID`: how many more refusals there are. */
+  readonly more?: number;
   /** `<code>: <name> <version>: <why>`, on one line. */
   readonly sentence: string;
 }
@@ -143,6 +185,34 @@ const PACKAGE_SENTENCES: Readonly<Record<string, string>> = {
   entry: "its manifest names another entry than its lock entry",
   "bundled-engine": "it serves an engine id Studio's bundled catalog serves",
   "shared-engine": "it serves an engine id another entry of the lock serves too",
+  "registered-engine": "it serves an engine id a package admitted earlier in this process serves",
+  "registered-package": "a package of its name was admitted earlier in this process",
+  "inherited-name": "it serves an engine id that names a member every JavaScript object inherits",
+};
+
+/** Why a package is refused at admission, by code and rule, for the rules whose sentence is fixed. */
+const ADMISSION_SENTENCES: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  PROVIDER_MODULE_FORMAT: {
+    "entry-commonjs": 'its entry is a .js file whose nearest package.json does not declare "type": "module"',
+    "package-scope-unreadable": "the package.json nearest its entry is over its byte limit or not a JSON object",
+  },
+  PROVIDER_LOAD_FAILED: {
+    "closure-outside":
+      "a module of it imports what its directory does not hold, or in a form admission does not resolve inside it",
+    "import-threw": "its entry threw while it was imported",
+    "deadline-passed": "its entry did not finish importing within its deadline",
+    "default-missing": "its entry has no default export",
+    "interop-wrapper": "its entry's default is a CommonJS interop wrapper",
+    "not-a-record": "its entry's default is not a plain record",
+  },
+  PROVIDER_NATIVE_UNSUPPORTED: {
+    "native-file": "its directory holds a native addon, a .node file, which this Studio does not admit yet",
+    "native-declared": "its manifest declares native packages, which this Studio does not admit yet",
+  },
+  PROVIDER_RECORD_INVALID: {
+    "record-proxy": "its record's implementation is a Proxy",
+    "manifest-differs": "its record's manifest differs from its libredb-provider.json",
+  },
 };
 
 /** Why a lock is refused, by rule. */
@@ -205,6 +275,89 @@ export function sharedEngineRefusal(pkg: PackageName, others: readonly PackageNa
     version: pkg.version,
     others: Object.freeze(others.map((other) => Object.freeze({ name: other.name, version: other.version }))),
     sentence: `PROVIDER_ID_COLLISION: ${pkg.name} ${pkg.version}: ${PACKAGE_SENTENCES["shared-engine"]}: ${named}`,
+  });
+}
+
+/** The refusal of a package of an engine id collision found at admission: `registered-*` or `inherited-name`. */
+export function admittedCollisionRefusal(
+  pkg: PackageName,
+  rule: "registered-engine" | "registered-package" | "inherited-name",
+): PackageRefusal {
+  return Object.freeze({
+    code: "PROVIDER_ID_COLLISION",
+    rule,
+    name: pkg.name,
+    version: pkg.version,
+    sentence: `PROVIDER_ID_COLLISION: ${pkg.name} ${pkg.version}: ${PACKAGE_SENTENCES[rule]}`,
+  });
+}
+
+/** The refusal of a package whose manifest names a contract other than `served`, the one this Studio serves. */
+export function contractRefusal(pkg: PackageName, served: string): PackageRefusal {
+  return Object.freeze({
+    code: "PROVIDER_CONTRACT_UNSUPPORTED",
+    rule: "contract-not-served",
+    name: pkg.name,
+    version: pkg.version,
+    sentence: `PROVIDER_CONTRACT_UNSUPPORTED: ${pkg.name} ${pkg.version}: its manifest was built against another provider contract than this Studio's, ${served}`,
+  });
+}
+
+/** `, and <n> more` when `more` is above zero. */
+function moreSuffix(more: number): string {
+  return more > 0 ? `, and ${more} more` : "";
+}
+
+/** The refusal of a package whose manifest the SDK's validator refused, at the first refusal's rule and pointer. */
+export function schemaRefusal(
+  pkg: PackageName,
+  rule: RuleOf<"PROVIDER_SCHEMA_INVALID">,
+  pointer: string,
+  more: number,
+): PackageRefusal {
+  const at = pointer === "" ? "the top level" : pointer;
+  return Object.freeze({
+    code: "PROVIDER_SCHEMA_INVALID",
+    rule,
+    name: pkg.name,
+    version: pkg.version,
+    pointer,
+    more,
+    sentence: `PROVIDER_SCHEMA_INVALID: ${pkg.name} ${pkg.version}: its manifest is not one the provider contract admits: ${rule} at ${at}${moreSuffix(more)}`,
+  });
+}
+
+/** The refusal of a package whose record the SDK's `checkProviderModule` refused, at the first refusal's rule. */
+export function definitionRefusal(
+  pkg: PackageName,
+  rule: (typeof DEFINITION_REFUSAL_RULES)[number],
+  more: number,
+): PackageRefusal {
+  return Object.freeze({
+    code: "PROVIDER_RECORD_INVALID",
+    rule,
+    name: pkg.name,
+    version: pkg.version,
+    more,
+    sentence: `PROVIDER_RECORD_INVALID: ${pkg.name} ${pkg.version}: its record is not one the provider contract admits: ${rule}${moreSuffix(more)}`,
+  });
+}
+
+/** A rule of admission whose sentence is fixed, by code. */
+export type AdmissionFault =
+  | { readonly code: "PROVIDER_MODULE_FORMAT"; readonly rule: RuleOf<"PROVIDER_MODULE_FORMAT"> }
+  | { readonly code: "PROVIDER_LOAD_FAILED"; readonly rule: RuleOf<"PROVIDER_LOAD_FAILED"> }
+  | { readonly code: "PROVIDER_NATIVE_UNSUPPORTED"; readonly rule: RuleOf<"PROVIDER_NATIVE_UNSUPPORTED"> }
+  | { readonly code: "PROVIDER_RECORD_INVALID"; readonly rule: "record-proxy" | "manifest-differs" };
+
+/** The refusal of a package at an admission rule whose sentence is fixed. */
+export function admissionRefusal(pkg: PackageName, fault: AdmissionFault): PackageRefusal {
+  return Object.freeze({
+    code: fault.code,
+    rule: fault.rule,
+    name: pkg.name,
+    version: pkg.version,
+    sentence: `${fault.code}: ${pkg.name} ${pkg.version}: ${ADMISSION_SENTENCES[fault.code]?.[fault.rule]}`,
   });
 }
 

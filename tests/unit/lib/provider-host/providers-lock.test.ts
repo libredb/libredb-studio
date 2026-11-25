@@ -1003,6 +1003,12 @@ describe("what a refusal carries", () => {
       "PROVIDER_DIGEST_MISMATCH",
       "PROVIDER_IDENTITY_MISMATCH",
       "PROVIDER_ID_COLLISION",
+      "PROVIDER_CONTRACT_UNSUPPORTED",
+      "PROVIDER_SCHEMA_INVALID",
+      "PROVIDER_MODULE_FORMAT",
+      "PROVIDER_LOAD_FAILED",
+      "PROVIDER_NATIVE_UNSUPPORTED",
+      "PROVIDER_RECORD_INVALID",
     ]);
     expect(Object.isFrozen(PROVIDER_REFUSAL_CODES)).toBe(true);
     expect(Object.isFrozen(PROVIDER_REFUSAL_RULES)).toBe(true);
