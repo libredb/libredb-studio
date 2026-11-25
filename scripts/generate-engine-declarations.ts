@@ -100,23 +100,23 @@
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
- * (clause M-67): null where the declaration authors no statement language; otherwise its dialect, null where the overlay holds
- * none, each dialect member null where the overlay says `"unsupported"`, and its grounding override, null where the
- * engine keeps its family's. Each function is named by its slot: `catalogColumns`, `catalogRelations`, `catalogIndexes`
- * and `catalogStatistics` for the catalog read's composers, `declaredSchema`, `retryMatches`, `retryRewrite` and
- * `mapRows`, `emailShapeTest` and `digitRunShapeTest` for a profile's shape tests, `statisticsBuild`, `captureBuild` and
- * `groundingOverride`. The command flag is written as `=== true`, each profile type pattern as its source and flags, an
- * optional member the overlay leaves out null, and the capture's kind words as `{ word, kind }` entries in the record's
- * key order. The registry is no provider module, so the sentence above on provider modules stays true. The generator
- * refuses by name a member of the overlay it has no place for, the two overridable members besides grounding among
- * them until the contract states them, a plan form that is neither prefix nor session-mode, a grounding given as a
- * value, and a profile type pattern whose flags are not none, i, u or iu.
+ * (clause M-67): null where the declaration authors no statement language; otherwise its dialect, null where the
+ * overlay holds none, each dialect member null where the overlay says `"unsupported"`, and its grounding override, null
+ * where the engine keeps its family's. Each function is named by its slot: `catalogColumns`, `catalogRelations`,
+ * `catalogIndexes` and `catalogStatistics` for the catalog read's composers, `declaredSchema`, `retryMatches`,
+ * `retryRewrite` and `mapRows`, `emailShapeTest` and `digitRunShapeTest` for a profile's shape tests,
+ * `statisticsBuild`, `captureBuild` and `groundingOverride`. The command flag is written as `=== true`, each profile
+ * type pattern as its source and flags, an optional member the overlay leaves out null, and the capture's kind words as
+ * `{ word, kind }` entries in the record's key order. The registry is no provider module, so the sentence above on
+ * provider modules stays true. The generator refuses by name a member of the overlay it has no place for, the two
+ * overridable members besides grounding among them until the contract states them, a plan form that is neither prefix
+ * nor session-mode, a grounding given as a value, and a profile type pattern whose flags are not none, i, u or iu.
  *
- * The facets but the authored agent readings come from the engine's `ENGINE_FACETS` row, except the maintenance specs, which are the provider's own
- * statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64): one per operation of the row's
- * maintenance list, in that order, a title, description, confirmation or kinds the provider leaves out written null and
- * a preview it leaves out written false. The generator refuses by name a listed operation with no spec and a spec for an
- * operation the list does not name.
+ * The facets but the authored agent readings come from the engine's `ENGINE_FACETS` row, except the maintenance specs,
+ * which are the provider's own statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64):
+ * one per operation of the row's maintenance list, in that order, a title, description, confirmation or kinds the
+ * provider leaves out written null and a preview it leaves out written false. The generator refuses by name a listed
+ * operation with no spec and a spec for an operation the list does not name.
  *
  * The safeguards are no claims but the provider's own statements of what its code does, authored with the policy
  * claims, since the write reach request must be their summary (clause M-61), and written back as the committed file

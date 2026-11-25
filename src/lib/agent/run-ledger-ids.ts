@@ -12,9 +12,9 @@
  *  - the verifier, in agent mode only, because a plan is judged by the planning rule whatever its header names
  *    (`goalFor` in `goal-verifier.ts`);
  *  - the engine, in every mode, because tool selection and the curated readings are read from Studio's grant of its
- *    agent readings, `GRANTED_AGENT_READINGS`; an agent-mode operations run also needs the engine to offer agent mode at least one reading, since its
- *    reading tool would otherwise have nothing to offer, so that pair is refused the way a workflow with no variant
- *    on its language is.
+ *    agent readings, `GRANTED_AGENT_READINGS`; an agent-mode operations run also needs the engine to offer agent mode
+ *    at least one reading, since its reading tool would otherwise have nothing to offer, so that pair is refused the
+ *    way a workflow with no variant on its language is.
  *
  * An absent id keeps its meaning: an absent language reads as `sql`, an absent workflow as
  * `DEFAULT_AGENT_WORKFLOW_TYPE`, an absent verifier as the variant's, which the variant check makes resolvable, and an

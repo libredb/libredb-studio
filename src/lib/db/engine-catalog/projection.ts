@@ -2,8 +2,8 @@
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, each engine's
  * SQL text, SQL writing, migration DDL and SQL generator forms, and each engine's policy, MCP, connection and agent
- * mode claim requests as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71,
- * M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83).
+ * mode claim requests as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses
+ * M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,

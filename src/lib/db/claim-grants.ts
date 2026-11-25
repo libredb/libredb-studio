@@ -1,7 +1,7 @@
 /**
  * Studio's grant of each policy, MCP, connection and agent mode claim an engine declaration requests
- * (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): the one module that reads a request, `BUNDLED_CLAIM_REQUESTS`, and Studio's review
- * record of each claim, and the module every gate reads in their place.
+ * (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): the one module that reads a request,
+ * `BUNDLED_CLAIM_REQUESTS`, and Studio's review record of each claim, and the module every gate reads in their place.
  *
  * A claim is a request, never a fact Studio believes as declared (clause M-52). So each claim is granted as the more
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
@@ -44,15 +44,16 @@
  *   always a fresh frozen list, and the empty list where no row exists. The record is the `agentReadings` member of
  *   each `ENGINE_FACETS` row, handed over whole.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
- * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a row of
- * Studio's record outside it is refused naming the record, the claim and the engine.
+ * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
+ * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine, and
+ * every other row is Studio's own typed table, read as it stands.
  *
  * The records stay Studio's hand-written tables in src/lib/db/compatibility.ts, the statement language record among
  * them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this
  * module; tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source reads them, the
  * facet rows' `agentReadings` by member, and tests/unit/db/engine-declaration-readers.test.ts that no other module
- * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its record
- * there.
+ * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its
+ * record there.
  *
  * The tables are computed once, when this module loads, over the bundled declarations; a loader that admits a provider
  * package computes `grantClaims` over its admitted set the same way. The module holds literals, the facet rows and
@@ -102,7 +103,7 @@ type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]
 /** One record of Studio's, keyed by engine id; an id it holds no row for is read at the claim's restrictive value. */
 type Rows<T> = Readonly<Record<string, T>>;
 
-/** Studio's review record of each policy, MCP, connection and agent mode claim, keyed by the member that requests it. */
+/** Studio's review record of each policy, MCP, connection and agent mode claim, keyed by the member requesting it. */
 export interface ClaimRecords {
   readonly writeReach: Rows<WriteReach>;
   readonly readsFileAccessPosture: Rows<boolean>;
@@ -564,9 +565,10 @@ const GRANT_MEMBERS: readonly (keyof ClaimGrants<string>)[] = [
 ];
 
 /**
- * Studio's grant of every policy, MCP, connection and agent mode claim `requests` holds, against `records`, with `seedOnly` the
- * seed-only fields of the same engines, read for the host path fields where no record row exists: one frozen table per
- * claim, and two for the server level, one per gate, keyed by the requests' engines in their order, each row frozen.
+ * Studio's grant of every policy, MCP, connection and agent mode claim `requests` holds, against `records`, with
+ * `seedOnly` the seed-only fields of the same engines, read for the host path fields where no record row exists: one
+ * frozen table per claim, and two for the server level, one per gate, keyed by the requests' engines in their order,
+ * each row frozen.
  *
  * @throws {Error} Naming the engine, the claim and the value, for a request value outside its claim's vocabulary;
  * naming Studio's record, the claim, the value and the engine, for a record row outside it; naming the engine, for an

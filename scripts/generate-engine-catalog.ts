@@ -23,7 +23,8 @@
  * src/lib/db/engine-catalog/sql-generators.generated.ts, each SQL engine's generator forms (clause M-81), which only
  * src/lib/db/query-generators/index.ts reads, so the schema diff never loads them; and
  * src/lib/db/engine-catalog/claims.generated.ts, each engine's policy, MCP, connection and agent mode claim requests
- * (clauses M-82 and M-83), which only src/lib/db/claim-grants.ts reads, so no gate reads a request but through Studio's grant of it.
+ * (clauses M-82 and M-83), which only src/lib/db/claim-grants.ts reads, so no gate reads a request but through
+ * Studio's grant of it.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations is
  * parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
