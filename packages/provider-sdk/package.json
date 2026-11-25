@@ -10,6 +10,7 @@
     ".": "./src/index.ts",
     "./manifest": "./src/manifest/index.ts",
     "./manifest.schema.json": "./src/manifest/manifest.schema.json",
+    "./manifest-schema": "./src/manifest/manifest-schema.generated.ts",
     "./values": "./src/values/index.ts",
     "./errors": "./src/errors/index.ts",
     "./calls": "./src/calls/index.ts",
