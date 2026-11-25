@@ -58,6 +58,8 @@ function request(
     policy: { ...BASE.policy, ...policy },
     mcp: { ...BASE.mcp, ...mcp },
     connection: { ...BASE.connection, ...connection },
+    facets: BASE.facets,
+    agent: BASE.agent,
   };
 }
 

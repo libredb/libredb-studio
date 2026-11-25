@@ -477,6 +477,8 @@ describe("each projection of the admitted declarations, built with and without a
         serverLevelWithoutDatabase: POSTGRES.connection.serverLevelWithoutDatabase,
         agentCredential: POSTGRES.connection.agentCredential,
       },
+      facets: { agentReadings: POSTGRES.facets.agentReadings },
+      agent: { statementLanguage: POSTGRES.agent.statementLanguage },
     });
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
 

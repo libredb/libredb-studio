@@ -8,11 +8,12 @@
  * `fields`, `defaults`, `seedOnly`, `refused`, of its `connectionString` the `accepted`, `dialogOffersUri`, `scheme`,
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
- * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `editor` its
- * `commitKeyword`, `consentDeadline`, `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`,
- * `grammar`, `updateTarget` and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`,
- * `mcp` and `safeguards`), are written in the declaration itself: this script reads them from the committed file of the
- * engine in src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
+ * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `facets` its
+ * `agentReadings`, of `agent` its `statementLanguage`, of `editor` its `commitKeyword`, `consentDeadline`,
+ * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `updateTarget` and
+ * `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
+ * written in the declaration itself: this script reads them from the committed file of the engine in
+ * src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
  * (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id` is not its file name,
  * and writes them back unchanged. Every other member is built from the tables. The engine catalog, the connection
  * tables, the connection forms, the connection strings, the execution UI and fence aliases, the query dialects, tab
@@ -86,19 +87,20 @@
  * src/lib/db/query-generators/index.ts, and the count expression, `COUNT(*)` where the engine's is the shared one.
  * `boundSegments` binds every name through that table too.
  *
- * The policy, MCP and connection claims are authored, written back as the committed file states them: each member is a
- * request, never a fact Studio believes as declared, and the catalog generator projects them into
+ * The policy, MCP, connection and agent mode claims are authored, written back as the committed file states them: each
+ * member is a request, never a fact Studio believes as declared, and the catalog generator projects them into
  * src/lib/db/engine-catalog/claims.generated.ts, which only Studio's grant reader, src/lib/db/claim-grants.ts, reads,
  * granting each request no further than Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54,
  * M-82 and M-83). The census holds each shipped engine's request equal to its record's row, so a record changed without
  * its declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
  * member, since Studio derives it from the granted write reach, and `connection.readsTrustMaterial`, which is no claim,
  * is authored too.
- * The claims of the facets, agent and SQL text segments are written from Studio's records: each is the row of the
+ * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of both segments
+ * is written from Studio's tables. The SQL text claim, the redaction, is written from Studio's record: the row of the
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
- * (clause M-67): null where the engine speaks no statement language; otherwise its dialect, null where the overlay holds
+ * (clause M-67): null where the declaration authors no statement language; otherwise its dialect, null where the overlay holds
  * none, each dialect member null where the overlay says `"unsupported"`, and its grounding override, null where the
  * engine keeps its family's. Each function is named by its slot: `catalogColumns`, `catalogRelations`, `catalogIndexes`
  * and `catalogStatistics` for the catalog read's composers, `declaredSchema`, `retryMatches`, `retryRewrite` and
@@ -110,7 +112,7 @@
  * them until the contract states them, a plan form that is neither prefix nor session-mode, a grounding given as a
  * value, and a profile type pattern whose flags are not none, i, u or iu.
  *
- * The facets come from the engine's `ENGINE_FACETS` row, except the maintenance specs, which are the provider's own
+ * The facets but the authored agent readings come from the engine's `ENGINE_FACETS` row, except the maintenance specs, which are the provider's own
  * statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64): one per operation of the row's
  * maintenance list, in that order, a title, description, confirmation or kinds the provider leaves out written null and
  * a preview it leaves out written false. The generator refuses by name a listed operation with no spec and a spec for an
@@ -158,9 +160,9 @@ import type {
   ProfileComposition,
   ProfileTypePattern,
   SqlDialect,
+  StatementLanguage,
   StatisticsReading,
 } from "@libredb/provider-sdk/manifest";
-import { AGENT_STATEMENT_LANGUAGE } from "../src/lib/agent/agent-manifest";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../src/lib/agent/composed-sql-primitives";
 import { engineServerOverlay } from "../src/lib/agent/languages/engines/server";
 import type { AgentEngineServerDialect, Unsupported } from "../src/lib/agent/languages/pack";
@@ -437,7 +439,8 @@ function sqlDialect(type: DatabaseType, dialect: AgentEngineServerDialect): SqlD
 
 /**
  * One engine's agent overlay, read from its server overlay in Studio's agent overlay registry (`engineServerOverlay`, a
- * parameter, so a test can hand the generator another): null where the engine speaks no statement language; otherwise
+ * parameter, so a test can hand the generator another): null where `language`, the statement language the engine's
+ * declaration authors, is null; otherwise
  * its dialect, null where the overlay holds none, and its grounding override named by its slot, `groundingOverride`, or
  * null where the overlay leaves the family's. A member the declaration has no place for, an overlay on an engine that
  * speaks no statement language, a plan form that is neither prefix nor session-mode, a grounding given as a value
@@ -446,9 +449,10 @@ function sqlDialect(type: DatabaseType, dialect: AgentEngineServerDialect): SqlD
  */
 export function buildAgentOverlay(
   type: DatabaseType,
+  language: StatementLanguage,
   overlay: ReturnType<typeof engineServerOverlay> = engineServerOverlay(type),
 ): AgentOverlay {
-  if (AGENT_STATEMENT_LANGUAGE[type] === null) {
+  if (language === null) {
     if (Object.keys(overlay).length > 0) {
       throw new Error(
         `${type}: the engine speaks no statement language, so its agent overlay has no place in the engine declaration`,
@@ -558,9 +562,12 @@ export function buildEngineDeclaration(
       },
       maintenance: [...facets.maintenance],
       maintenanceSpecs: buildMaintenanceSpecs(type, capabilities),
-      agentReadings: [...facets.agentReadings],
+      agentReadings: authored.facets.agentReadings,
     },
-    agent: { statementLanguage: AGENT_STATEMENT_LANGUAGE[type], overlay: buildAgentOverlay(type) },
+    agent: {
+      statementLanguage: authored.agent.statementLanguage,
+      overlay: buildAgentOverlay(type, authored.agent.statementLanguage),
+    },
     editor: buildEditor(type, capabilities, authored.editor),
     sqlText: {
       readsSqlText: authored.sqlText.readsSqlText,
