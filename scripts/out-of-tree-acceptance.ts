@@ -1044,13 +1044,8 @@ async function postJson(
 }
 
 /** Signs in as the admin and answers the session cookie. */
-async function signIn(server: Server, adminPassword: string): Promise<string> {
-  const answer = await postJson(
-    server,
-    STUDIO.routes.signIn,
-    { email: STUDIO.adminEmail, password: adminPassword },
-    null,
-  );
+async function signIn(server: Server, secret: string): Promise<string> {
+  const answer = await postJson(server, STUDIO.routes.signIn, { email: STUDIO.adminEmail, password: secret }, null);
   return sessionCookie(answer.status, answer.setCookies);
 }
 
