@@ -18,7 +18,10 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { type LateSettle, loadPackage } from "@/lib/provider-loader/index.cjs";
+import * as loader from "@/lib/provider-loader/index.cjs";
+
+const { admitted, loadPackage } = loader;
+type LateSettle = loader.LateSettle;
 
 const DEADLINE_MS = 5_000;
 const SHORT_DEADLINE_MS = 50;
@@ -135,6 +138,15 @@ afterAll(() => {
 });
 
 describe("the loader imports an entry and reads only its default", () => {
+  test("the loader exports loadPackage, registerAdmitted and admitted, and nothing else", () => {
+    // An import of CommonJS adds the module's exports object as its default.
+    expect(
+      Object.keys(loader)
+        .filter((name) => name !== "default")
+        .sort(),
+    ).toEqual(["admitted", "loadPackage", "registerAdmitted"]);
+  });
+
   test("a package's entry is imported from its file URL, and its default record is answered as it was exported", async () => {
     const late = recordingPort();
 
@@ -312,6 +324,7 @@ describe("a late settle is never answered as loaded and never left unhandled", (
     await late.settled;
     expect(late.calls).toEqual([{ entry, outcome: "fulfilled" }]);
     expect(Object.isFrozen(late.calls[0])).toBe(true);
+    expect(admitted()).toEqual([]);
   });
 
   test("an import that rejects after its deadline reaches the port once with its cause, and leaves no unhandled rejection", async () => {

@@ -2655,7 +2655,7 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 ### C-43 (informative): A provider depends on no load order
 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
-The loader holds this, and it does not exist yet.
+The lock and boot admission hold this, and neither exists yet; the loader's registry lists records in the order they were registered, an order nothing reads.
 
 ### C-44 (normative): The host owns each open
 
@@ -4102,6 +4102,24 @@ A late port that throws is a host defect, which the loader does not catch.
 - test `tests/unit/lib/provider-loader/load.test.ts` "an import past its deadline is refused as PROVIDER_LOAD_FAILED, deadline-passed, and its late success reaches the port once and is never answered as loaded"
 - test `tests/unit/lib/provider-loader/load.test.ts` "an import that rejects after its deadline reaches the port once with its cause, and leaves no unhandled rejection"
 - test `tests/unit/lib/provider-loader/node-runtime.test.ts` "under Node with --unhandled-rejections=strict, a rejection after the deadline reaches the port once and the child exits 0, in a bounded child"
+
+### C-90 (normative): One loader module and one registry per process
+
+The loader is a package Next.js leaves to Node's `require`, installed as a directory under `node_modules` and never as a link, and Studio reaches it only by its name, `@libredb/provider-loader`, so a process holds one loader module and one registry.
+Only the loader's own tests import its source by path.
+A record enters the registry only through `registerAdmitted`, under a non-empty name registered once: a name registered before is refused by name, and its first record stays.
+The loader registers nothing itself, and its registry lists the records in the order they were registered, an order nothing reads, C-43.
+
+- test `tests/unit/lib/provider-loader/registry.test.ts` "the registry starts empty, and a loaded record is not registered by its load"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a name registered twice is refused by name, and the first record stays"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a name that is not a non-empty string and a record that is not an object are refused"
+- test `tests/unit/lib/provider-loader/load.test.ts` "the loader exports loadPackage, registerAdmitted and admitted, and nothing else"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the loader is listed in serverExternalPackages, so Next.js leaves it to Node's require and every bundle of a server shares one module"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the root installs the loader as a file: dependency, a directory under node_modules and never a link, because Turbopack bundles a linked package"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the installed loader is its source, file for file and byte for byte"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "Studio reaches the loader only by its package name, and only the loader's own tests import its source"
+- test `tests/unit/lib/provider-loader/packaging.test.ts` "the import scan names a planted file that imports the loader's source by path"
 
 ## Not yet in this contract
 

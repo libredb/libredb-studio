@@ -278,6 +278,10 @@ const nextConfig: NextConfig = {
     "db2-node",
     "node-opcua-client",
     "node-opcua-certificate-manager",
+    // The provider loader stays external so that instrumentation and every route share one module and one registry,
+    // and its import() of a package entry runs as Node's own: bundled, Turbopack stubs that import with a throw
+    // (docs/providers/CONTRACT.md, clause C-90; docs/TOOLCHAIN.md, "The provider loader").
+    "@libredb/provider-loader",
   ],
 
   // One rule over every path, not just the skipped ones: both values are constants and byte

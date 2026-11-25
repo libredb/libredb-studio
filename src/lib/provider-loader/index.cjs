@@ -1,5 +1,5 @@
 // The provider loader: the one place LibreDB Studio brings a provider package's code into its process
-// (docs/providers/CONTRACT.md, clauses C-87 to C-89; docs/TOOLCHAIN.md, "The provider loader").
+// (docs/providers/CONTRACT.md, clauses C-87 to C-90; docs/TOOLCHAIN.md, "The provider loader").
 //
 // `loadPackage` imports a package's entry from the `file:` URL of its absolute path, under a deadline its caller
 // passes, and reads only the namespace's `default`. Every outcome but a plain record is a refusal with the code
@@ -22,6 +22,11 @@
 // record by accident, and its rejection is always handled here. A port that throws is a host defect: its error is not
 // caught and surfaces as an unhandled rejection.
 //
+// The registry is this module's own Map. Next.js leaves the module to Node's `require`, so Node's module cache gives a
+// process one instance and one registry. A record enters it only through `registerAdmitted`, which its caller calls
+// once admission passed; `loadPackage` registers nothing. `admitted` lists the records in the order registered, an
+// order nothing reads (C-43).
+//
 // A CommonJS file, so require() is its only import form.
 /* eslint-disable @typescript-eslint/no-require-imports */
 "use strict";
@@ -31,6 +36,8 @@ const { pathToFileURL } = require("node:url");
 const { types } = require("node:util");
 
 const CODE = "PROVIDER_LOAD_FAILED";
+/** The process's admitted records, by package name. */
+const registry = new Map();
 /** The longest delay a Node timer honours; a longer one fires at once. */
 const LONGEST_TIMER_MS = 2_147_483_647;
 
@@ -114,4 +121,21 @@ async function loadPackage(entry, options) {
   });
 }
 
-module.exports = { loadPackage };
+/** Adds `record` to the registry under `name`; a name registered before is refused, and its first record stays. */
+function registerAdmitted(name, record) {
+  if (typeof name !== "string" || name.length === 0) {
+    throw new TypeError("registerAdmitted: name must be a non-empty string");
+  }
+  if (typeof record !== "object" || record === null) {
+    throw new TypeError("registerAdmitted: record must be an object");
+  }
+  if (registry.has(name)) throw new Error(`registerAdmitted: ${JSON.stringify(name)} is registered already`);
+  registry.set(name, record);
+}
+
+/** The admitted records, a frozen list of frozen `{ name, record }` in the order registered. */
+function admitted() {
+  return Object.freeze(Array.from(registry, ([name, record]) => Object.freeze({ name, record })));
+}
+
+module.exports = { loadPackage, registerAdmitted, admitted };

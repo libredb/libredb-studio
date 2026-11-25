@@ -1,5 +1,5 @@
 // The declaration of the provider loader, written by hand beside index.cjs, which has no build step
-// (docs/providers/CONTRACT.md, clauses C-87 to C-89; docs/TOOLCHAIN.md, "The provider loader").
+// (docs/providers/CONTRACT.md, clauses C-87 to C-90; docs/TOOLCHAIN.md, "The provider loader").
 
 /** Why the loader refused a package: a closed set. */
 export type LoadRefusalReason =
@@ -44,3 +44,18 @@ export interface LoadOptions {
  * A host defect in the arguments rejects with a TypeError and imports nothing.
  */
 export function loadPackage(entry: string, options: LoadOptions): Promise<PackageLoadAnswer>;
+
+/** One admitted record and the package name it was registered under. */
+export interface AdmittedRecord {
+  readonly name: string;
+  readonly record: object;
+}
+
+/**
+ * Adds `record` to the process's registry under `name`, once admission passed; the loader registers nothing itself.
+ * A name registered before throws an Error naming it, and its first record stays.
+ */
+export function registerAdmitted(name: string, record: object): void;
+
+/** The admitted records in the order registered, an order nothing reads. */
+export function admitted(): readonly AdmittedRecord[];
