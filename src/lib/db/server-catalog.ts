@@ -22,8 +22,8 @@
  * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection serves an admitted
  * engine in this Studio: it resolves its connection through `resolveConnection` with `engines` `bundled-and-package`,
- * then `testPackageConnection` (src/lib/api/test-connection.ts) validates it against the engine's field rules and
- * refuses at the open.
+ * then `testPackageConnection` (src/lib/api/test-connection.ts, over src/lib/db/package-sessions.ts) validates it
+ * against the engine's field rules and opens one session through the package.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged:
  * server code that holds an admitted engine's id holds a `PackageEngineId`, never a `DatabaseType`.

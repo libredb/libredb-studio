@@ -5,10 +5,24 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
-import { type HealthWithin, readHealthWithin } from "@/lib/api/provider-monitoring";
+import { type HealthWithin, readHealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { connectionFieldRefusal, fieldRuleRefusal } from "@/lib/db/connection-field-rules";
-import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, waitedSeconds } from "@/lib/db/errors";
+import { errorCode, errorKind } from "@/lib/db/error-record";
+import {
+  ConnectionError,
+  connectPhase,
+  DatabaseConfigError,
+  DatabaseError,
+  markNotSent,
+  waitedSeconds,
+} from "@/lib/db/errors";
+import {
+  assertPackageOpenable,
+  type OpenedPackageSession,
+  openPackageSessionOnce,
+  teardownPackageSession,
+} from "@/lib/db/package-sessions";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -16,9 +30,11 @@ import {
   withheldProviderError,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
-import { type PackageConnection, packageEngineRefusal, serverEngine } from "@/lib/db/server-catalog";
+import type { PackageConnection, PackageEngine } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
+import { hostCore } from "@/lib/provider-host/instance";
+import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 
 /*
@@ -97,31 +113,96 @@ function testDeadlineSentence(budgetMs: number): string {
   return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
 }
 
+/** Studio's sentence for a provider package's error, which names its code; its words go to the server's log only. */
+function packageErrorSentence(call: string, error: unknown): string {
+  return `The provider package's ${call} failed (${errorCode(error)}); the server's log holds its words.`;
+}
+
+/** Logs a provider package's error once, its words through core's scrub of the connection, under `route`. */
+function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
+  logger.error(`A provider package's ${call} failed`, withholdProviderError(scrub, error), { route });
+}
+
 /**
- * Test Connection's step for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-107),
- * run on the connection `resolveConnection` answered with `engines` `bundled-and-package`. A connection of any other
- * engine returns untouched, as the bundled connection it is, for `testConnection`. A package engine's connection is
- * first, as for a bundled engine, read by the engine's own field rules, composed from its declaration
- * (`fieldRules` of its `PackageEngine`), and a refusal throws a `DatabaseConfigError` carrying the declared sentence,
- * marked `not-sent`; a connection the rules pass is refused at the open with `PackageEngineUnsupportedError`, since
- * this Studio opens no session on a package's engine yet. Nothing is built, no tunnel opens and the factory is not
- * called.
+ * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-113). First,
+ * before the budget starts, `connection` is read by the engine's own field rules, composed from its declaration
+ * (`engine.fieldRules`), a refusal rejecting with a not-sent `DatabaseConfigError` carrying the declared sentence, and
+ * then by the open checks (`assertPackageOpenable` in src/lib/db/package-sessions.ts). Then, within the engine's connect
+ * budget from `now`, one session opens through the package (`openPackageSessionOnce`), never cached; its health is read
+ * through the host core's health call on the test's own deadline and signal (`readSessionHealthWithin`); and it is
+ * closed under a cleanup context, waited for at most the teardown's close deadline, a close that fails or is cut logged
+ * by kind and code and never changing the answer. Nothing is built by the provider factory and no tunnel opens.
  *
- * @throws {DatabaseConfigError} When a field rule refuses a package engine's connection.
- * @throws {PackageEngineUnsupportedError} Otherwise for a package engine's connection, at the open.
+ * The client never receives a package's own words: an open that fails with a package's error rejects with a not-sent
+ * `ConnectionError` naming its code, and a health read that fails answers the degraded success with a sentence naming
+ * its code; the error itself is logged once under `route`, through core's scrub of the connection. An open or a health
+ * read the deadline ended rejects with a `ConnectionError` naming the budget, and a session the package answers after it
+ * is closed once it settles. No `connectWarnings` and no test-only cautions: the contract has no such call.
+ *
+ * @throws {DatabaseConfigError} When a field rule or an open check refuses the connection.
+ * @throws {ConnectionError} When the open failed or the deadline ended the test.
  */
-export function testPackageConnection(
-  connection: DatabaseConnection | PackageConnection,
-): asserts connection is DatabaseConnection {
-  const engine = serverEngine(connection.type);
-  if (engine.kind !== "package") return;
-  const refusal = connectionFieldRefusal(engine.engine.fieldRules, connection as unknown as DatabaseConnection);
+export async function testPackageConnection(
+  connection: PackageConnection,
+  engine: PackageEngine,
+  execution: EditorExecutionContext,
+  route: string,
+  now: number = Date.now(),
+): Promise<TestConnectionAnswer> {
+  const record = connection as unknown as DatabaseConnection;
+  const refusal = connectionFieldRefusal(engine.fieldRules, record);
   if (refusal !== undefined) {
     const refused = new DatabaseConfigError(refusal);
     markNotSent(refused);
     throw refused;
   }
-  throw packageEngineRefusal(engine.engine.id, "open");
+  assertPackageOpenable(connection, engine, execution);
+  const scrub = providerTextScrub(record, "any");
+  const budget = packageConnectBudget(engine);
+  const deadline = deadlineSignal(now + budget);
+  const expired = (): ConnectionError => new ConnectionError(testDeadlineSentence(budget));
+  const within = <T>(work: Promise<T>): Promise<T> => untilDeadline(work, deadline, expired);
+  let opened: OpenedPackageSession;
+  try {
+    opened = await within(openPackageSessionOnce(connection, engine, execution, now + budget, deadline));
+  } catch (error) {
+    if (error instanceof DatabaseError) throw error;
+    logPackageError("open", error, scrub, route);
+    const failed = new ConnectionError(packageErrorSentence("open", error));
+    markNotSent(failed);
+    throw failed;
+  }
+  const { session, env } = opened;
+  try {
+    const startTime = Date.now();
+    let health: HealthWithin;
+    try {
+      health = await readSessionHealthWithin(
+        hostCore(),
+        session,
+        { deadline: now + budget, signal: deadline, env },
+        route,
+      );
+    } catch (healthError) {
+      logPackageError("health", healthError, scrub, route);
+      return {
+        success: true,
+        degraded: true,
+        message: `Connected, but this server answered no health data: ${packageErrorSentence("health", healthError)}`,
+      };
+    }
+    if (health.kind === "ended") throw expired();
+    return { success: true, message: "Connection successful", latency: Date.now() - startTime };
+  } finally {
+    const outcome = await teardownPackageSession(session, env);
+    if (outcome.close !== "done") {
+      logger.warn("Test Connection's session of a provider package did not close", {
+        route,
+        close: outcome.close,
+        ...(outcome.close === "failed" && { kind: errorKind(outcome.closeError), code: errorCode(outcome.closeError) }),
+      });
+    }
+  }
 }
 
 /**

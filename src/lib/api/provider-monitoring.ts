@@ -1,4 +1,5 @@
 import {
+  type CallContext,
   type DatabaseOverview,
   deadlineSignal,
   type HealthInfo,
@@ -24,7 +25,7 @@ import {
 } from "@/lib/provider-host/access";
 import type { RefusedRecord, StoppedRecord } from "@/lib/provider-host/core/console";
 import type { HostCore } from "@/lib/provider-host/core/host-core";
-import type { MonitoringSession } from "@/lib/provider-host/core/monitoring";
+import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import { hostCore } from "@/lib/provider-host/instance";
 import { bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 
@@ -217,8 +218,25 @@ export function readHealthWithin(
 ): Promise<HealthWithin> {
   const core = hostCore();
   const { session } = bridgedConsole(provider, {});
+  return readSessionHealthWithin(core, session, contextOn(deadline, signal), route);
+}
+
+/**
+ * Test Connection's health read of `session`, a session the test holds, a legacy provider's bridged one or a provider
+ * package's own (docs/providers/CONTRACT.md, clauses C-75 and C-113): one health call of `core` with the context
+ * `ctx`, the test's own deadline, its signal and the environment the session's calls are given. Answers as
+ * `readHealthWithin` answers.
+ *
+ * @returns A promise that rejects with the session's error as the same object.
+ */
+export function readSessionHealthWithin(
+  core: HostCore,
+  session: HealthSession,
+  ctx: CallContext,
+  route: string,
+): Promise<HealthWithin> {
   return core
-    .healthCall(session, contextOn(deadline, signal), { late: monitoringLate(route, "health") })
+    .healthCall(session, ctx, { late: monitoringLate(route, "health") })
     .then((record) => (record.kind === "answered" ? { kind: "answered", health: record.answer } : { kind: "ended" }));
 }
 

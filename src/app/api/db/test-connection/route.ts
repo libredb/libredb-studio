@@ -6,6 +6,8 @@ import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { testConnection, testPackageConnection } from "@/lib/api/test-connection";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { type PackageConnection, serverEngine } from "@/lib/db/server-catalog";
+import type { DatabaseConnection } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -23,16 +25,30 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: INVALID_REQUEST_BODY }, { status: 400 });
     }
 
-    // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. The one route
-    // that serves an engine of an admitted provider package: its connection is resolved with every guard of every
-    // route, then read by the engine's field rules and refused at the open (docs/providers/CONTRACT.md, clause C-107).
-    const connection = await resolveConnection(
+    // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. An engine of
+    // an admitted provider package is resolved with every guard of every route, then tested through its package: its
+    // field rules and the open checks, then one session opened, its health read and closed (docs/providers/CONTRACT.md,
+    // clause C-113).
+    const resolved = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
       undefined,
       "bundled-and-package",
     );
-    testPackageConnection(connection);
+    const served = serverEngine(resolved.type);
+    if (served.kind === "package") {
+      const packaged = resolved as PackageConnection;
+      return NextResponse.json(
+        await testPackageConnection(
+          packaged,
+          served.engine,
+          editorExecutionContext(guard.session, packaged),
+          "api/db/test-connection",
+        ),
+      );
+    }
+    // Every other engine's connection is the bundled record `resolveConnection` answers.
+    const connection = resolved as DatabaseConnection;
     scrub = providerTextScrub(connection, "any");
 
     if (!connection.type) {

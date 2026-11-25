@@ -1,7 +1,7 @@
 import type { EditorExecutionContext } from "@/lib/db/types";
 import { governanceEnabled } from "@/lib/governance/config";
 import { runtimeSetting } from "@/lib/governance/settings";
-import type { DatabaseConnection } from "@/lib/types";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 
 /**
  * The namespace `resolveConnection` fills from the operator's seed configuration. A body that claims
@@ -36,7 +36,7 @@ const SUBJECT_MISSING_MESSAGE =
  * An inline connection is never shared this way, whatever its body carries: it is one requester's own
  * record, so the requester decides it.
  */
-function openToNonAdminRoles(connection: DatabaseConnection): boolean {
+function openToNonAdminRoles(connection: EngineConnection): boolean {
   if (connection.id?.startsWith(SEED_NAMESPACE) !== true) return false;
   if ((connection as { sharedWithNonAdminRoles?: unknown }).sharedWithNonAdminRoles === true) return true;
   const roles: unknown = (connection as { roles?: unknown }).roles;
@@ -104,7 +104,7 @@ export function sessionOwner(session: { idpSubject?: string }): string | undefin
  */
 export function editorExecutionContext(
   session: { role: string; idpSubject?: string },
-  connection: DatabaseConnection,
+  connection: EngineConnection,
 ): EditorExecutionContext {
   const allowExternalFileAccess = session.role === "admin" && !openToNonAdminRoles(connection);
   const owner = sessionOwner(session);
