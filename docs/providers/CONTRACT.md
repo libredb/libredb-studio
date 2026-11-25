@@ -3940,6 +3940,10 @@ These chapters are added by the changes that bring their enforcers:
 
 ## Change notes
 
+These notes are closed until the first published contract.
+Until then a change to this document states itself in its commit and its pull request, and the first published contract writes its notes once.
+A list every change appends to makes every two open changes conflict, which is why it stays closed.
+
 Against the manifest sketch the design started from:
 
 - The `package` segment is gone: its facts are the package's own `package.json`, M-6.
