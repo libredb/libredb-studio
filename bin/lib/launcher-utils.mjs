@@ -63,6 +63,7 @@ export function mcpUrlFor(hostname, port) {
  *   only with the Kubernetes access review on
  * - SEED_KUBERNETES_DISCOVERY_PATH: src/lib/seed/kubernetes-discovery-loader.ts
  * - OPENSHIFT_OAUTH_TOKEN_FILE, OPENSHIFT_API_CA_FILE: src/lib/openshift-auth/config.ts, read only in openshift sign-in
+ * - LIBREDB_PROVIDERS_DIR: src/lib/provider-host/providers-dir.ts, read once at boot
  *
  * The guard in tests/unit/launcher-utils.test.ts fails when .env.example documents a *_PATH, *_DIR
  * or *_FILE variable that is in none of this list, URL_PATH_VARIABLES and OTHER_PROGRAM_PATH_VARIABLES.
@@ -86,6 +87,7 @@ export const PATH_VARIABLES = Object.freeze([
   "SEED_KUBERNETES_DISCOVERY_PATH",
   "OPENSHIFT_OAUTH_TOKEN_FILE",
   "OPENSHIFT_API_CA_FILE",
+  "LIBREDB_PROVIDERS_DIR",
 ]);
 
 /**
