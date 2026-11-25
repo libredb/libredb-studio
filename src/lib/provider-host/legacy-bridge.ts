@@ -98,11 +98,11 @@
  * provider returned, at least one, within one page, and it keeps the legacy result for the facade to answer from.
  *
  * A statement Studio composed, which must reach the provider exactly as composed, is served by
- * `bridgedComposedStatements`, a session of its own built per call by `runComposedStatement` in
- * src/lib/api/composed-statement.ts: its calls offer execute alone, honouring no request field, and its execute runs
- * the plain `query` with the statement alone, never `prepareQuery` or the probe, so no page bound is appended. It
- * answers and limits its page as the read-only statement session does, through the same result record, its page not
- * applied.
+ * `bridgedComposedStatements`, a session of its own built per call by `composedStatementOn` in
+ * src/lib/api/composed-statement.ts, for plan mode's statistics read and the data profile's reads: its calls offer
+ * execute alone, honouring no request field, and its execute runs the plain `query` with the statement alone, never
+ * `prepareQuery` or the probe, so no page bound is appended. It answers and limits its page as the read-only statement
+ * session does, through the same result record, its page not applied.
  *
  * Each unit of a script of `POST /api/db/multi-query` is served by `bridgedScriptUnit`, a session of its own built per
  * unit by `openEditorScript` in src/lib/api/editor-script.ts: its execute sends the unit's text as the script route
@@ -846,8 +846,9 @@ const COMPOSED_STATEMENT_CALLS: Calls = executeAloneCalls([]);
  * its statement guard admitted, which must reach the provider exactly as composed: its execute runs `query` with
  * exactly one argument, the request's statement, never `prepareQuery`, the probe, params, a run id or a scope, so no
  * page bound is appended to it. Its calls offer execute alone, honouring no request field, and it is no read-only
- * statement session. It reads no `type` and no monitoring row. Its one caller is `runComposedStatement` in
- * src/lib/api/composed-statement.ts.
+ * statement session. It reads no `type` and no monitoring row. Its one caller is `composedStatementOn` in
+ * src/lib/api/composed-statement.ts, the opener both composed facades read: the statistics read's and the data
+ * profile's.
  */
 export function bridgedComposedStatements(provider: DatabaseProvider): BridgedComposedStatements {
   const record = resultRecord("composed statement");

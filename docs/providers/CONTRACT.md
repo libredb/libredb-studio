@@ -3783,7 +3783,7 @@ A stop at whatever wait of the run, and a start refused at the deadline, is the 
 - test `tests/unit/lib/agent/schema-stats.test.ts` "a bigint cell in a statistics reading is measured as its decimal text"
 - test `tests/unit/lib/agent/schema-stats.test.ts` "the statistics read that outlasts its time is recorded as Studio's refusal"
 - test `tests/isolated/composed-statistics-statement.test.ts` "every dialect that reads statistics under the operations profile hands its provider the composed statement unchanged"
-- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read opens a composed statement session, under the operations profile"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session"
 - test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the agent, hand-over and MCP sources call query() nowhere: the statistics read sends its statement through the host core's composed statement session"
 
 ### C-81 (normative): MCP's acquisitions and statements on the host

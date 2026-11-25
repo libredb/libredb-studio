@@ -24,7 +24,7 @@ import ts from "typescript";
  * The one plain query on those paths is the operations-profile statistics read's, which sends a statement the
  * statement guard has admitted through the host core's composed statement session (`runComposedStatement`,
  * src/lib/api/composed-statement.ts), whose execute the legacy bridge serves with the plain query
- * (`bridgedComposedStatements`); only that read opens one, under the operations profile.
+ * (`bridgedComposedStatements`); on those paths only that read opens one, under the operations profile.
  *
  * Both scans read the TypeScript syntax tree, so a comment or a docblock that names a method is never a finding, and
  * a finding names its file and its innermost declaration.
@@ -443,6 +443,10 @@ function literalArguments(node: ts.Node, callee: string): string[][] {
   return found;
 }
 const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
+/** The one function that opens the composed statement session, read by both composed facades. */
+const COMPOSED_OPENER = "composedStatementOn";
+/** The data profile's read facade, the second reader of that opener. */
+const PROFILE_READS = join("src", "lib", "api", "profile-reads.ts");
 
 interface FunctionCall {
   readonly file: string;
@@ -546,14 +550,20 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     expect(bridged.some((read) => read.called && read.functions.includes("pagedReadOnlyStatement"))).toBe(true);
   });
 
-  test("only the agent's statistics read opens a composed statement session, under the operations profile", () => {
-    // The session sends its statement through the plain query, unprepared, so its callers are held here: one facade,
-    // called by the one read that composes its statement under the operations profile.
+  test("only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session", () => {
+    // The session sends its statement through the plain query, unprepared, so its callers are held here: one opener,
+    // read by two facades, each called by the one caller that composes its statements.
     const sessions = callsOutsideProviders(COMPOSED_SESSION);
     expect(sessions.map((call) => `${call.file} in ${call.declaration}`)).toEqual([
-      `${COMPOSED_FACADE} in runComposedStatement`,
+      `${COMPOSED_FACADE} in ${COMPOSED_OPENER}`,
     ]);
-    // The one call is in the audited invoke the statistics read hands its pipeline, which acquires its provider.
+    // The profile's call is the `composed` read of the reads `openProfileReads` opens.
+    const opener = callsOutsideProviders(COMPOSED_OPENER);
+    expect(opener.map((call) => `${call.file} in ${call.declaration}`).sort()).toEqual(
+      [`${COMPOSED_FACADE} in runComposedStatement`, `${PROFILE_READS} in composed`].sort(),
+    );
+    expect(firstCall(declaredFunction(PROFILE_READS, "openProfileReads"), COMPOSED_OPENER)).toBeGreaterThan(-1);
+    // The statistics read's call is in the audited invoke it hands its pipeline, which acquires its provider.
     const facade = callsOutsideProviders("runComposedStatement");
     expect(facade.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${AGENT_TOOLS} in invoke`]);
     expect(facade[0]?.names.has("AGENT_OPERATIONS_PROFILE")).toBe(true);
