@@ -128,6 +128,11 @@ RUN node scripts/copy-monaco.mjs && npx next build
 # them, so the image pays for the package twice. Measured on this file before
 # the fix: 4.7 MB of a 55 MB image, and the published Debian image carries the
 # same duplication today.
+# Only those packages: the rest of the traced @libredb scope stays, because the
+# runner copies nothing else of it. @libredb/provider-loader is in
+# serverExternalPackages, so the server requires it by name at boot and the
+# traced copy is the only one the image has (docs/TOOLCHAIN.md, "The provider
+# loader"); deleting the whole scope booted to "Cannot find module".
 #
 # db2-node (#786) stays, as every engine but DuckDB does. It is one package
 # with all eight prebuilt addons at its root, traced into the standalone tree by
@@ -146,7 +151,7 @@ RUN set -eux; \
     done; \
     ARCH="$(node -p 'process.arch')"; \
     find node_modules/better-sqlite3/prebuilds -maxdepth 1 -type f -name '*.node' ! -name "linuxmusl-${ARCH}.node" -delete; \
-    rm -rf .next/standalone/node_modules/better-sqlite3 .next/standalone/node_modules/@libredb; \
+    rm -rf .next/standalone/node_modules/better-sqlite3 .next/standalone/node_modules/@libredb/libredb; \
     find .next/standalone/node_modules/db2-node -maxdepth 1 -type f -name 'db2-node.*.node' ! -name "db2-node.linux-${ARCH}-musl.node" -delete; \
     rm -rf node_modules/db2-node; \
     test -f ".next/standalone/node_modules/db2-node/db2-node.linux-${ARCH}-musl.node"; \
@@ -162,6 +167,7 @@ RUN set -eux; \
     test "$(find public/monaco/vs -maxdepth 1 -name '*.worker-*.js' | wc -l)" \
          -eq "$(find node_modules/monaco-editor/min/vs -maxdepth 1 -name '*.worker-*.js' | wc -l)"; \
     test -d .next/standalone/node_modules/oracledb; \
+    test -f .next/standalone/node_modules/@libredb/provider-loader/index.cjs; \
     test ! -e node_modules/@duckdb; \
     du -sh .next/standalone node_modules public
 
