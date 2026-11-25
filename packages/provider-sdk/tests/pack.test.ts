@@ -238,7 +238,8 @@ function packed(): Promise<Packed> {
     return {
       tarball,
       tarballs: readdirSync(out).filter((name) => name.endsWith(".tgz")),
-      entries: listed.stdout.split("\n").filter((line) => line !== ""),
+      // tar on Windows ends each listed line with CRLF.
+      entries: listed.stdout.split(/\r?\n/).filter((line) => line !== ""),
       packageDirectory,
       manifest: JSON.parse(readFileSync(path.join(packageDirectory, "package.json"), "utf8")),
     };
