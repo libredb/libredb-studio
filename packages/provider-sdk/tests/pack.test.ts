@@ -2,9 +2,10 @@
  * The SDK packs into a tarball a developer outside the repository installs with npm and builds against, under Node
  * and under Bun, with types (docs/TOOLCHAIN.md, "The SDK tarball").
  *
- * The test runs `bun run sdk:pack` from the repository root into a temporary directory, lists and extracts the tarball
- * it writes, installs it with npm into an empty directory beside it, offline, and imports and type-checks the installed
- * package there. Every step is a child process with a timeout of its own, run once and shared by the tests that need
+ * The test runs the script `bun run sdk:pack` runs, `bun scripts/sdk-pack.ts`, from the repository root into a
+ * temporary directory, with no `bun run` between it and the test, so the step's timeout kills the process that builds.
+ * It lists and extracts the tarball it writes, installs it with npm into an empty directory beside it, offline, and
+ * imports and type-checks the installed package there. Every step is a child process with a timeout of its own, run once and shared by the tests that need
  * it; the steps' machinery is packages/provider-sdk/tests/helpers/packed-sdk.ts. The build runs in the child, from the
  * SDK's source, every time, so the tarball can never be stale.
  *
@@ -197,7 +198,7 @@ interface Packed {
 
 let packedStep: Promise<Packed> | undefined;
 
-/** Packs the SDK with `bun run sdk:pack`, then lists and extracts the tarball. */
+/** Packs the SDK with the script `bun run sdk:pack` runs, then lists and extracts the tarball. */
 function packed(): Promise<Packed> {
   packedStep ??= (async () => {
     const ancestor = ancestorNodeModules(temp, existsSync);
@@ -211,8 +212,8 @@ function packed(): Promise<Packed> {
     writeFileSync(npmFiles.globalConfig, "");
     const out = path.join(temp, "out");
     const pack = succeeded(
-      "bun run sdk:pack",
-      await runChild([process.execPath, "run", "sdk:pack", "--", "--out", out], {
+      "bun scripts/sdk-pack.ts",
+      await runChild([process.execPath, "scripts/sdk-pack.ts", "--out", out], {
         cwd: REPOSITORY_ROOT,
         env,
         timeoutMs: 120_000,
