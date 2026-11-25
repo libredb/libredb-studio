@@ -11,8 +11,8 @@
  *    variant, the workflow on the run's language, for its tools, objective and verifier, so that pair must exist;
  *  - the verifier, in agent mode only, because a plan is judged by the planning rule whatever its header names
  *    (`goalFor` in `goal-verifier.ts`);
- *  - the engine, in every mode, because tool selection and the curated readings are read from its `ENGINE_FACETS`
- *    row; an agent-mode operations run also needs the engine to offer agent mode at least one reading, since its
+ *  - the engine, in every mode, because tool selection and the curated readings are read from Studio's grant of its
+ *    agent readings, `GRANTED_AGENT_READINGS`; an agent-mode operations run also needs the engine to offer agent mode at least one reading, since its
  *    reading tool would otherwise have nothing to offer, so that pair is refused the way a workflow with no variant
  *    on its language is.
  *
@@ -23,8 +23,8 @@
  *
  * Server-side: the verifier set is read from the goal rules, which are server modules.
  */
-import { engineFacetsFor } from "@/lib/db/engine-facets";
-import { isDatabaseType, quoteTypeId } from "@/lib/db/type-id";
+import { GRANTED_AGENT_READINGS } from "@/lib/db/claim-grants";
+import { isDatabaseType, quoteTypeId, typeIdRow } from "@/lib/db/type-id";
 import { type AgentStatementLanguageId, agentVariant } from "./agent-manifest";
 import { hasGoalRule, RETIRED_GOAL_VERIFIERS } from "./goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
@@ -93,7 +93,7 @@ export const RUN_HEADER_VOCABULARY: AgentRunHeaderVocabulary = Object.freeze({
   isVerifier: hasGoalRule,
   retiredVerifiers: RETIRED_GOAL_VERIFIERS,
   isEngine: isDatabaseType,
-  hasReading: (engine: string) => engineFacetsFor(engine).agentReadings.length > 0,
+  hasReading: (engine: string) => typeIdRow(GRANTED_AGENT_READINGS, engine).length > 0,
 });
 
 /** The noun each field is named by. */

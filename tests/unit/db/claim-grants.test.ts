@@ -11,8 +11,10 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
+  AGENT_READING_NAMES,
   type ClaimRecords,
   GRANTED_AGENT_CREDENTIAL_FORM,
+  GRANTED_AGENT_READINGS,
   GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_DENIED_FILE_ACCESS_REFUSAL,
   GRANTED_HOST_PATH_FIELDS,
@@ -43,6 +45,7 @@ import {
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
+import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 
 /** An id no shipped engine uses, for a request no record row covers. */
@@ -350,6 +353,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
       GRANTED_SSH_TUNNEL_REFUSAL,
       GRANTED_SEED_AGENT_CREDENTIAL,
       GRANTED_AGENT_STATEMENT_LANGUAGE,
+      GRANTED_AGENT_READINGS,
     ];
 
     for (const table of tables) {
@@ -627,15 +631,19 @@ describe("Studio's grant of each connection claim", () => {
   });
 });
 
-/** The schema's `statementLanguage` enum but its null, the statement languages a declaration may request. */
-function schemaStatementLanguages(): readonly string[] {
+/** The schema's enums the agent mode claims are read in. */
+function schemaAgentModeEnums(): { readonly statementLanguages: readonly string[]; readonly agentReadings: string[] } {
   const schema = JSON.parse(
     readFileSync(
       path.resolve(import.meta.dir, "../../../packages/provider-sdk/src/manifest/manifest.schema.json"),
       "utf8",
     ),
-  ) as { $defs: { statementLanguage: { enum: (string | null)[] } } };
-  return schema.$defs.statementLanguage.enum.filter((language) => language !== null);
+  ) as { $defs: { statementLanguage: { enum: (string | null)[] }; agentReading: { enum: string[] } } };
+  return {
+    // The statement languages a declaration may request, its null aside.
+    statementLanguages: schema.$defs.statementLanguage.enum.filter((language) => language !== null),
+    agentReadings: schema.$defs.agentReading.enum,
+  };
 }
 
 describe("Studio's grant of each agent mode claim", () => {
@@ -654,6 +662,22 @@ describe("Studio's grant of each agent mode claim", () => {
       "spark",
     ]);
     expect(GRANTED_AGENT_STATEMENT_LANGUAGE.mongodb).toBe("mongo");
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) =>
+          JSON.stringify(GRANTED_AGENT_READINGS[type]) !==
+          JSON.stringify(STUDIO_CLAIM_RECORDS.agentReadings[type]?.agentReadings),
+      ),
+    ).toEqual([]);
+    // Vacuity: the facet rows hold full, partial and empty readings.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_READINGS[type].length === 0)).toEqual([
+      "mqtt",
+      "mtconnect",
+      "opcua",
+      "sparkplug",
+    ]);
+    expect(GRANTED_AGENT_READINGS.kafka).toEqual(["health"]);
+    expect(GRANTED_AGENT_READINGS.postgres).toEqual([...CURATED_OPERATION_KINDS]);
   });
 
   const STATEMENT_LANGUAGE_CASES = [
@@ -677,9 +701,41 @@ describe("Studio's grant of each agent mode claim", () => {
     },
   );
 
+  test("the agent readings granted are the intersection of the request and the record in the record's order, a frozen list, and empty where no record exists", () => {
+    const of = (engine: string, agentReadings: FacetClaims["agentReadings"], against = STUDIO_CLAIM_RECORDS) =>
+      grantOf(engine, request({}, {}, {}, { agentReadings }), against).agentReadings;
+    const row = { agentReadings: ["storage", "health"] as const };
+    const two = records("postgres", { agentReadings: row });
+
+    // The record's order, whatever the request's.
+    expect(of("postgres", ["health", "storage"], two)).toEqual(["storage", "health"]);
+    // A request holding every reading of the row reads a copy of the row, frozen, never the row's own list.
+    const all = of("postgres", [...CURATED_OPERATION_KINDS], two);
+    expect(all).toEqual(["storage", "health"]);
+    expect(all).not.toBe(row.agentReadings);
+    expect(Object.isFrozen(all)).toBe(true);
+    // A reading the row lacks is never gained, and one the request drops is never kept.
+    expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
+    expect(of("postgres", ["sessions"], two)).toEqual([]);
+    expect(of("postgres", [], two)).toEqual([]);
+    expect(of("kafka", [...CURATED_OPERATION_KINDS])).toEqual(["health"]);
+    expect(of("mqtt", [...CURATED_OPERATION_KINDS])).toEqual([]);
+    // No record: the empty list, whatever the request.
+    expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
+    expect(Object.isFrozen(of(UNRECORDED, ["health"]))).toBe(true);
+    // A row on the prototype chain is no row.
+    const inherited = Object.create({ postgres: row }) as ClaimRecords["agentReadings"];
+    expect(of("postgres", ["health"], { ...STUDIO_CLAIM_RECORDS, agentReadings: inherited })).toEqual([]);
+  });
+
   test("the statement language and agent reading vocabularies are the schema's statementLanguage and agentReading enums, and the readings are CURATED_OPERATION_KINDS", () => {
-    expect<readonly string[]>([...STATEMENT_LANGUAGE_NAMES]).toEqual([...schemaStatementLanguages()]);
+    const schema = schemaAgentModeEnums();
+
+    expect<readonly string[]>([...STATEMENT_LANGUAGE_NAMES]).toEqual([...schema.statementLanguages]);
     expect(Object.isFrozen(STATEMENT_LANGUAGE_NAMES)).toBe(true);
+    expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual(schema.agentReadings);
+    expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual([...CURATED_OPERATION_KINDS]);
+    expect(Object.isFrozen(AGENT_READING_NAMES)).toBe(true);
   });
 
   test("an agent mode claim value outside its vocabulary is refused by name, naming the claim and the engine", () => {
@@ -693,5 +749,14 @@ describe("Studio's grant of each agent mode claim", () => {
     refusedLanguage("SQL", '"SQL"');
     refusedLanguage(false, "false");
     refusedLanguage(undefined, "undefined");
+    const refusedReadings = (value: unknown, written: string) =>
+      expect(() => grantOf(UNRECORDED, request({}, {}, {}, { agentReadings: wrong(value) }))).toThrow(
+        `${UNRECORDED} requests facets.agentReadings ${written}, which is not a value of the claim`,
+      );
+
+    refusedReadings(["health", "locks"], '["health","locks"]');
+    refusedReadings("health", '"health"');
+    refusedReadings(null, "null");
+    refusedReadings([1], "[1]");
   });
 });

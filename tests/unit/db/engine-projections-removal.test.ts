@@ -521,6 +521,7 @@ describe("each projection of the admitted declarations, built with and without a
     expect(FIXTURE.connection.sshTunnel).toEqual({ offered: true });
     expect(FIXTURE.connection.serverLevelWithoutDatabase).toBe(true);
     expect(FIXTURE.agent.statementLanguage).toBe("sql");
+    expect(FIXTURE.facets.agentReadings.length).toBeGreaterThan(0);
     expect(fixtureRow).toEqual({
       writeReach: "open",
       readsFileAccessPosture: true,
@@ -542,6 +543,7 @@ describe("each projection of the admitted declarations, built with and without a
       sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
       agentCredential: null,
       statementLanguage: null,
+      agentReadings: [],
     });
 
     const removed = grantsOf([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));

@@ -110,7 +110,7 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { engineFacetsFor } from "@/lib/db/engine-facets";
+import { GRANTED_AGENT_READINGS } from "@/lib/db/claim-grants";
 import { typeIdRow } from "@/lib/db/type-id";
 import {
   type AuditedInvocation,
@@ -427,8 +427,8 @@ export type AgentToolUnavailableCode =
   | "MODE_HAS_NO_TOOLS"
   | "INVALID_TOOL_INPUT"
   /**
-   * A curated reading the run's recorded engine does not offer agent mode (its `ENGINE_FACETS` row's
-   * `agentReadings`), refused before any provider is acquired, any budget charged or any repair entry made.
+   * A curated reading the run's recorded engine does not offer agent mode (Studio's grant of its agent readings,
+   * `GRANTED_AGENT_READINGS`), refused before any provider is acquired, any budget charged or any repair entry made.
    */
   | "READING_NOT_OFFERED"
   | "UNVERIFIABLE_EVIDENCE"
@@ -938,11 +938,12 @@ function isAnswerShapeFailure(problems: string): boolean {
 }
 
 /**
- * The curated readings a run is offered: its recorded engine's `ENGINE_FACETS` row's `agentReadings`, or all six kinds
- * for a run recorded before the engine field, which was told those six in its earlier turns.
+ * The curated readings a run is offered: Studio's grant of its recorded engine's `facets.agentReadings`,
+ * `GRANTED_AGENT_READINGS`, read through `typeIdRow`, so an engine that is not a type id is refused by name, or all six
+ * kinds for a run recorded before the engine field, which was told those six in its earlier turns.
  */
 export function agentReadingsOf(engine: DatabaseType | undefined): readonly CuratedOperationKind[] {
-  return engine === undefined ? CURATED_OPERATION_KINDS : engineFacetsFor(engine).agentReadings;
+  return engine === undefined ? CURATED_OPERATION_KINDS : typeIdRow(GRANTED_AGENT_READINGS, engine);
 }
 
 /** Each curated reading as `inspect_operations` describes it to the model. */

@@ -250,7 +250,7 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
  *
  * `operations` is the false one, and it is the whole reason this record exists rather
  * than a blanket rule about agent mode. Its tools are the curated provider readings
- * the run's engine offers (its `ENGINE_FACETS` row's `agentReadings`), served under
+ * the run's engine offers (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`), served under
  * `AGENT_OPERATIONS_PROFILE`, whose acquisition does not require `queryReadOnly`
  * (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`). A refusal that ignored this axis
  * would withhold from MySQL, Oracle, SQL Server, MongoDB, Redis and the rest a workflow
@@ -349,7 +349,7 @@ export type AgentRunFailureReason =
    *
    * NARROWER for the `operations` workflow (#325), and narrower is all it is. That
    * workflow's own reads go through the curated provider methods its engine offers to
-   * agent mode (its `ENGINE_FACETS` row's `agentReadings`; an engine that offers none is
+   * agent mode (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`; an engine granted none is
    * refused the workflow by the `agent-readings` requirement, not by this reason),
    * under `AGENT_OPERATIONS_PROFILE`, so it never asks for a read-only
    * STATEMENT path; and since #411 it takes a server-side catalog capture before its
@@ -1918,7 +1918,7 @@ export interface AgentRunRecord {
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
    * The type id of the run's connection when it opened, which picks the curated `inspect_operations` readings
-   * the run is offered (its `ENGINE_FACETS` row's `agentReadings`).
+   * the run is offered (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`).
    *
    * Decided once at open and read by tool selection and the curated reading, never from the live connection,
    * for the reason `statementLanguage` gives.

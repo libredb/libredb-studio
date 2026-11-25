@@ -18,6 +18,14 @@
  * references, and a comment is trivia the parser attaches to no node, so the record's name in either is passed over.
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
  * module reads the records through it either.
+ *
+ * Studio's record of the agent readings is a member of each `ENGINE_FACETS` row, `agentReadings`, beside members other
+ * gates read, so it is held by member rather than by name: no module but the grant reader and the claim projection,
+ * which reads each declaration's request and never Studio's row, reads a member named `agentReadings`, by a property
+ * access, a string element access or a binding pattern key, whatever the object. An object literal key and a type
+ * member key of that name are no read, so the rows and their types are passed over. A file whose text does not hold
+ * the name is not parsed. The capabilities member of the same name, `ProviderCapabilities.agentReadings`, which no
+ * module reads, is refused by the same rule, until the closed list of that claim's readers decides it.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -208,6 +216,50 @@ function sourceFiles(directory: string): SourceText[] {
     .map((file) => ({ path: file, text: readFileSync(path.join(ROOT, file), "utf8") }));
 }
 
+/** The member of each `ENGINE_FACETS` row that is Studio's record of the agent readings. */
+const AGENT_READINGS = "agentReadings";
+
+/** The modules that may read a member named `agentReadings`, each with why. */
+const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
+  [GRANT_READER]: "the grant reader, which grants each engine's request against Studio's facet row",
+  "src/lib/db/engine-catalog/projection.ts":
+    "the claim projection, which reads each declaration's request and never Studio's row, a CLAIM_READERS entry of tests/unit/db/engine-declaration-readers.test.ts",
+};
+
+/** Each read `file` makes of a member named `agentReadings`, as `<file> reads agentReadings`, once per file. */
+function agentReadingsReads(file: SourceText): string[] {
+  if (!file.text.includes(AGENT_READINGS)) return [];
+  const source = ts.createSourceFile(
+    file.path,
+    file.text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  let reads = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isPropertyAccessExpression(node) && node.name.text === AGENT_READINGS) reads = true;
+    else if (
+      ts.isElementAccessExpression(node) &&
+      ts.isStringLiteralLike(node.argumentExpression) &&
+      node.argumentExpression.text === AGENT_READINGS
+    )
+      reads = true;
+    else if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+      const key = node.propertyName ?? node.name;
+      if ((ts.isIdentifier(key) || ts.isStringLiteral(key)) && key.text === AGENT_READINGS) reads = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return reads ? [`${file.path} reads ${AGENT_READINGS}`] : [];
+}
+
+/** Each read of a member named `agentReadings` in `files` that no module of `AGENT_READINGS_READERS` makes. */
+function agentReadingsReaders(files: readonly SourceText[]): string[] {
+  return files.filter((file) => !Object.hasOwn(AGENT_READINGS_READERS, file.path)).flatMap(agentReadingsReads);
+}
+
 /** Each reference to a claim record in `files` that the grant reader does not make. */
 function recordReaders(files: readonly SourceText[]): string[] {
   return files.filter((file) => file.path !== GRANT_READER).flatMap(recordReferences);
@@ -363,4 +415,48 @@ describe("the claim record readers", () => {
     ]);
     expect(planted("src/lib/a.ts", 'export type * from "@/lib/db/compatibility";')).toEqual([]);
   });
+
+  test("the agent readings of Studio's facet rows are read only by the grant reader, and the scan finds each way a module could read them", () => {
+    const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
+
+    expect(agentReadingsReaders(files)).toEqual([]);
+    // Vacuity: each listed reader reads the member, and the rows that declare it are in the source read.
+    for (const reader of Object.keys(AGENT_READINGS_READERS)) {
+      const file = files.find((candidate) => candidate.path === reader);
+      if (file === undefined) throw new Error(`${reader} is not in the source read`);
+      expect(agentReadingsReads(file)).toEqual([`${reader} reads ${AGENT_READINGS}`]);
+    }
+    expect(files.filter((file) => file.text.includes(AGENT_READINGS)).length).toBeGreaterThan(40);
+
+    const planted = (text: string) => agentReadingsReaders([{ path: "src/lib/agent/a.ts", text }]);
+    const read = [`src/lib/agent/a.ts reads ${AGENT_READINGS}`];
+    // A property access, optional or not, a string element access and a binding pattern key are reads.
+    expect(planted(`ENGINE_FACETS.postgres.${AGENT_READINGS}.length;`)).toEqual(read);
+    expect(planted(`engineFacetsFor(type)?.${AGENT_READINGS};`)).toEqual(read);
+    expect(planted(`row["${AGENT_READINGS}"];`)).toEqual(read);
+    expect(planted(`row[\`${AGENT_READINGS}\`];`)).toEqual(read);
+    expect(planted(`const { ${AGENT_READINGS} } = row;`)).toEqual(read);
+    expect(planted(`const { ${AGENT_READINGS}: offered } = row;`)).toEqual(read);
+    expect(planted(`const { "${AGENT_READINGS}": offered } = row;`)).toEqual(read);
+    expect(planted(`function offered({ ${AGENT_READINGS} }: EngineFacets) { return ${AGENT_READINGS}; }`)).toEqual(
+      read,
+    );
+    // Not reads: an object literal key, a type member key, a string such as a log line, a comment, and another member.
+    expect(
+      planted(
+        [
+          `const row = { ${AGENT_READINGS}: ["health"] };`,
+          `const quoted = { "${AGENT_READINGS}": [] };`,
+          `interface Row { readonly ${AGENT_READINGS}: readonly string[] }`,
+          `type Other = { ${AGENT_READINGS}?: readonly string[] };`,
+          `const line = "${AGENT_READINGS}";`,
+          `// row.${AGENT_READINGS}`,
+          "row.agentReading;",
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    // A file that does not hold the name is not read at all, and a listed reader is passed over.
+    expect(planted("row.maintenance;")).toEqual([]);
+    expect(agentReadingsReaders([{ path: GRANT_READER, text: `row.${AGENT_READINGS};` }])).toEqual([]);
+  }, 60_000);
 });

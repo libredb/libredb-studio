@@ -4,9 +4,9 @@
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
  * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
- * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts`, Studio's grant reader
- * `@/lib/db/claim-grants.ts` and the engine facets registry `@/lib/db/engine-facets` (its rows, their types and the
- * type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
+ * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts` and Studio's grant reader
+ * `@/lib/db/claim-grants.ts` (the records, the engine facet rows among them, the generated claim requests and the type
+ * id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
  * provider module or `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its
  * advice, its admission) is server code and lives in `languages/server.ts`.
  *
@@ -16,9 +16,8 @@
  * `@/lib/db/compatibility.ts`, and `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
  * has a language exactly when its provider has `queryReadOnly`.
  */
-import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
+import { GRANTED_AGENT_READINGS, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { AgentGoalVerifierId } from "./goal-verifier";
@@ -127,8 +126,8 @@ export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | "agent-r
  * the engines that compose a catalog read, and those that compose both a catalog read and an estimating plan. A
  * statement workflow names the one it cannot run without, so a dialect with no estimating plan still opens every
  * workflow whose verdict cites none; the assessment verdict's table profile is deliberately not held (`client.ts`).
- * `agent-readings`, which the operations variant names, holds on every engine whose `ENGINE_FACETS` row offers agent
- * mode at least one curated reading (`agentReadings`), in the registry's order.
+ * `agent-readings`, which the operations variant names, holds on every engine Studio grants at least one curated
+ * reading (`GRANTED_AGENT_READINGS`, its grant of the claim `facets.agentReadings`), in the grant's order.
  * A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
  * `agent-manifest.test.ts` holds both SQL requirements to the composed-SQL entry points in `composed-sql.ts` and each
  * pack requirement to the providers that declare its reading.
@@ -137,8 +136,8 @@ export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement,
   Object.freeze({
     "sql-catalog": enginesSupporting("catalogRead"),
     "sql-composers": enginesSupporting("catalogRead", "planEstimate"),
-    "agent-readings": (Object.keys(ENGINE_FACETS) as DatabaseType[]).filter(
-      (type) => ENGINE_FACETS[type].agentReadings.length > 0,
+    "agent-readings": (Object.keys(GRANTED_AGENT_READINGS) as DatabaseType[]).filter(
+      (type) => GRANTED_AGENT_READINGS[type].length > 0,
     ),
     ...packRequirementProjection((spec) => spec.engines),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);

@@ -182,8 +182,8 @@ export const sqlTableProfileDescriptor: RegistrableOperationDescriptor = {
  * Named after what a DBA asks about rather than after the provider method that
  * answers, because the method is an implementation this layer may re-route and the
  * question is not. These are the vocabulary, and this operation's input contract
- * accepts all six; which of them an engine offers agent mode is its `ENGINE_FACETS`
- * row's `agentReadings`, and `inspect_operations` offers a run only those.
+ * accepts all six; which of them an engine offers agent mode is Studio's grant of its
+ * agent readings, `GRANTED_AGENT_READINGS`, and `inspect_operations` offers a run only those.
  */
 export const CURATED_OPERATION_KINDS = [
   "sessions",
