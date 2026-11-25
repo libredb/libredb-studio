@@ -30,6 +30,8 @@ import {
   DatabaseError,
   ExecutionProfileError,
   FacetNotOfferedError,
+  PackageEngineUnsupportedError,
+  ProviderUnavailableError,
   OffsetUnsupportedError,
   PermissionDeniedError,
   PoolExhaustedError,
@@ -102,6 +104,16 @@ const CLASSES: readonly (readonly [ErrorClass, ErrorKind, (text: string) => Erro
     UnknownProviderError,
     "unknown-provider",
     (text) => new UnknownProviderError({ reason: "unknown", typeId: text, sentence: text }),
+  ],
+  [
+    ProviderUnavailableError,
+    "provider-unavailable",
+    (text) => new ProviderUnavailableError(text, text, ["PROVIDER_LOAD_FAILED"]),
+  ],
+  [
+    PackageEngineUnsupportedError,
+    "package-engine-unsupported",
+    (text) => new PackageEngineUnsupportedError(text, text),
   ],
   [FacetNotOfferedError, "not-offered", (text) => new FacetNotOfferedError(text, "mysql", "maintenance", text)],
   [ConnectionError, "connection", (text) => new ConnectionError(text, "postgres", text, 5432)],
@@ -423,6 +435,7 @@ describe("carries what today's branches read", () => {
       "pool-exhausted",
       "config",
       "unknown-provider",
+      "provider-unavailable",
     ]);
     for (const { error, label } of everyInstance()) {
       expect(environmentKinds.has(errorRecord(scrub, error).kind), label).toBe(

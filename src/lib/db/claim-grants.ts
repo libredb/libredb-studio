@@ -55,8 +55,8 @@
  * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its
  * record there.
  *
- * The tables are computed once, when this module loads, over the bundled declarations; a loader that admits a provider
- * package computes `grantClaims` over its admitted set the same way. The module holds literals, the facet rows and
+ * The tables are computed once, when this module loads, over the bundled declarations; the server catalog's composer
+ * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals, the facet rows and
  * generated data only, so the browser's readers, the read-only marker, the connection form and the agent rail, load it
  * as they load the records.
  */
@@ -589,6 +589,20 @@ export function grantClaims<K extends string>(
       ]),
     ),
   ) as unknown as ClaimGrants<K>;
+}
+
+/**
+ * Studio's grant of the claims of the engines admitted provider packages serve (docs/providers/CONTRACT.md, clause
+ * C-106), against Studio's own records, with `seedOnly` their seed-only fields: `grantClaims` over `requests` and
+ * `STUDIO_CLAIM_RECORDS`, the records the bundled grants read. The records hold no row for an engine Studio does not
+ * ship, so each claim is granted at its restrictive value, whatever the package requests. The server catalog's
+ * composer (src/lib/db/server-catalog-compose.ts) calls it once at boot.
+ */
+export function grantPackageClaims<K extends string>(
+  requests: Readonly<Record<K, ClaimRequestEntry>>,
+  seedOnly: Rows<SeedOnlyRow>,
+): ClaimGrants<K> {
+  return grantClaims(requests, STUDIO_CLAIM_RECORDS, seedOnly);
 }
 
 /** Studio's grant of every bundled declaration's claims. */

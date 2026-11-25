@@ -7,7 +7,7 @@ import {
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
 import { type HealthWithin, readHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
-import { fieldRuleRefusal } from "@/lib/db/connection-field-rules";
+import { connectionFieldRefusal, fieldRuleRefusal } from "@/lib/db/connection-field-rules";
 import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, waitedSeconds } from "@/lib/db/errors";
 import {
   type ProviderTextScrub,
@@ -16,6 +16,7 @@ import {
   withheldProviderError,
   withholdProviderError,
 } from "@/lib/db/operations/provider-text";
+import { type PackageConnection, type PackageEngine, packageEngineRefusal } from "@/lib/db/server-catalog";
 import type { DatabaseProvider, EditorExecutionContext } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
@@ -94,6 +95,26 @@ function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal, expired: () =
 /** The test's sentence for a test its engine's connect budget of `budgetMs` ended. */
 function testDeadlineSentence(budgetMs: number): string {
   return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
+}
+
+/**
+ * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-107): first,
+ * as for a bundled engine, `connection` is read by the engine's own field rules, composed from its declaration
+ * (`engine.fieldRules`), and a refusal rejects with a `DatabaseConfigError` carrying the declared sentence, marked
+ * `not-sent`; a connection the rules pass is refused at the open with `PackageEngineUnsupportedError`, since this
+ * Studio opens no session on a package's engine yet. Nothing is built, no tunnel opens and the factory is not called.
+ *
+ * @throws {DatabaseConfigError} When a field rule refuses the connection.
+ * @throws {PackageEngineUnsupportedError} Otherwise, at the open.
+ */
+export function testPackageConnection(connection: PackageConnection, engine: PackageEngine): never {
+  const refusal = connectionFieldRefusal(engine.fieldRules, connection as unknown as DatabaseConnection);
+  if (refusal !== undefined) {
+    const refused = new DatabaseConfigError(refusal);
+    markNotSent(refused);
+    throw refused;
+  }
+  throw packageEngineRefusal(engine.id, "open");
 }
 
 /**

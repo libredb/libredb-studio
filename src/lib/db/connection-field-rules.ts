@@ -11,7 +11,7 @@
  * dialog's bundle and the server load the same functions. tests/unit/lib/db/connection-field-rules.test.ts holds its
  * run-time graph.
  */
-import { CONNECTION_FORM, type ConnectionFieldRule, type ConnectionFormSpec } from "@/lib/db/connection-form";
+import { CONNECTION_FORM, type ConnectionFieldRule, type FieldRuleSpec } from "@/lib/db/connection-form";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { typeIdRow } from "@/lib/db/type-id";
 // The storage classification, aliased because ./connection-form's own `CONNECTION_FIELDS` is the field lists: whether
@@ -26,7 +26,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
  * reads as Key pair.
  */
 export function connectionFieldShown(
-  config: ConnectionFormSpec,
+  config: Pick<FieldRuleSpec, "fieldShownWhen" | "fieldDefaults">,
   field: ConnectionField,
   connection: Partial<Record<ConnectionField, unknown>>,
 ): boolean {
@@ -56,12 +56,13 @@ function blankForRequired(field: ConnectionField, value: unknown): boolean {
 
 /**
  * The first refusal of the engine's `fieldRules` for a connection, or `undefined` when every declared check passes.
- * The fields are checked in `connectionFields` order, so the dialog names the first box to fix. A `required` field is
+ * `config` is a bundled engine's form entry, or the field rules of a provider package's engine (`packageFieldRules`
+ * in ./connection-form). The fields are checked in `connectionFields` order, so the dialog names the first box to fix. A `required` field is
  * refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field that holds no value,
  * absent, null or empty. A field `connectionFieldShown` hides is not checked, since the dialog neither draws nor
  * writes it.
  */
-export function connectionFieldRefusal(config: ConnectionFormSpec, connection: DatabaseConnection): string | undefined {
+export function connectionFieldRefusal(config: FieldRuleSpec, connection: DatabaseConnection): string | undefined {
   const values = connection as Partial<Record<ConnectionField, unknown>>;
   for (const field of config.connectionFields) {
     const rule = config.fieldRules?.[field];

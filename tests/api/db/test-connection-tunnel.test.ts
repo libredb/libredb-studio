@@ -31,6 +31,11 @@ mock.module("@/lib/seed/resolve-connection", () => {
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    // The route's resolve: every connection here is of a bundled engine.
+    resolvePackageAwareConnection: mock(async (body: Record<string, unknown>) => ({
+      kind: "bundled",
+      connection: body.connection,
+    })),
     SeedConnectionError,
   };
 });

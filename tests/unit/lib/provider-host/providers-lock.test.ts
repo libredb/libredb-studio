@@ -1044,6 +1044,7 @@ describe("what a refusal carries", () => {
       "PROVIDER_LOAD_FAILED",
       "PROVIDER_NATIVE_UNSUPPORTED",
       "PROVIDER_RECORD_INVALID",
+      "PROVIDER_CATALOG_CONFLICT",
     ]);
     expect(Object.isFrozen(PROVIDER_REFUSAL_CODES)).toBe(true);
     expect(Object.isFrozen(PROVIDER_REFUSAL_RULES)).toBe(true);
@@ -1072,6 +1073,28 @@ describe("what a refusal carries", () => {
     if (!whole.read) {
       expect(PROVIDER_REFUSAL_RULES.PROVIDER_LOCK_INVALID as readonly string[]).toContain(whole.refusal.rule);
       expect(Object.isFrozen(whole.refusal)).toBe(true);
+    }
+  });
+
+  test("a refused package carries its lock entry's engine ids", () => {
+    const providers = freshProviders();
+    writeLock(providers, [
+      entry("acme-engines-missing", ["acmeenginesb", "acmeenginesa"]),
+      entry("acme-engines-bundled", [SHIPPED_DATABASE_TYPES[0] as string, "acmeenginesc"]),
+      entry("acme-engines-shared-a", ["acmeenginesshared"]),
+      entry("acme-engines-shared-b", ["acmeenginesshared"]),
+    ]);
+    const engines = Object.fromEntries(
+      readPackages(providers).map((pkg) => [pkg.name, pkg.verified ? "verified" : pkg.engines]),
+    );
+    expect(engines).toEqual({
+      "acme-engines-bundled": [SHIPPED_DATABASE_TYPES[0], "acmeenginesc"].sort(),
+      "acme-engines-missing": ["acmeenginesa", "acmeenginesb"],
+      "acme-engines-shared-a": ["acmeenginesshared"],
+      "acme-engines-shared-b": ["acmeenginesshared"],
+    });
+    for (const pkg of readPackages(providers)) {
+      if (!pkg.verified) expect(Object.isFrozen(pkg.engines)).toBe(true);
     }
   });
 

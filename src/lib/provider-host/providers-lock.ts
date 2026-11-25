@@ -72,6 +72,11 @@ export interface RefusedPackage {
   readonly verified: false;
   readonly name: string;
   readonly version: string;
+  /**
+   * The engine ids its lock entry names, sorted, which the operator wrote and the lock's format checked: the engines
+   * the server answers as unavailable, naming this refusal's code (docs/providers/CONTRACT.md, clause C-107).
+   */
+  readonly engines: readonly string[];
   readonly refusal: PackageRefusal;
 }
 
@@ -113,10 +118,21 @@ function collisions(entries: readonly LockEntry[]): Map<string, PackageRefusal> 
   return found;
 }
 
+/** The refused package of `entry`, refused with `refusal`. */
+function refusedPackage(entry: LockEntry, refusal: PackageRefusal): RefusedPackage {
+  return Object.freeze({
+    verified: false,
+    name: entry.name,
+    version: entry.version,
+    engines: Object.freeze([...entry.engines].sort()),
+    refusal,
+  });
+}
+
 /** One entry's package, past the collision check. */
 function readPackage(providers: string, entry: LockEntry): VerifiedPackage | RefusedPackage {
   const refuse = (fault: Parameters<typeof packageRefusal>[1]): RefusedPackage =>
-    Object.freeze({ verified: false, name: entry.name, version: entry.version, refusal: packageRefusal(entry, fault) });
+    refusedPackage(entry, packageRefusal(entry, fault));
   const resolved = resolveArtifactDirectory(providers, entry.name, entry.version);
   if (!resolved.ok) return refuse(resolved.fault);
   const walked = walkArtifact(resolved.directory);
@@ -173,9 +189,7 @@ export function readProvidersLock(directory: string): ProvidersLockRead {
   const collided = collisions(checked.entries);
   const packages = [...checked.entries].sort(byName).map((entry) => {
     const collision = collided.get(entry.name);
-    if (collision !== undefined) {
-      return Object.freeze({ verified: false as const, name: entry.name, version: entry.version, refusal: collision });
-    }
+    if (collision !== undefined) return refusedPackage(entry, collision);
     return readPackage(providers, entry);
   });
   return Object.freeze({ read: true, lockFile, packages: Object.freeze(packages) });

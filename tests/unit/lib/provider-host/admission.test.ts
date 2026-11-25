@@ -1063,6 +1063,7 @@ describe("what admission carries and reaches", () => {
       "PROVIDER_LOAD_FAILED",
       "PROVIDER_NATIVE_UNSUPPORTED",
       "PROVIDER_RECORD_INVALID",
+      "PROVIDER_CATALOG_CONFLICT",
     ]);
     expect(Object.keys(PROVIDER_REFUSAL_RULES).sort()).toEqual([...PROVIDER_REFUSAL_CODES].sort());
     for (const rules of Object.values(PROVIDER_REFUSAL_RULES)) {

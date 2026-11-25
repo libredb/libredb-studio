@@ -166,6 +166,7 @@ const CLAIM_READERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/claim-grants.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/claims.generated.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/projection.ts": CLAIM_REQUEST_MEMBERS,
+  "src/lib/db/server-catalog-compose.ts": CLAIM_REQUEST_MEMBERS,
 };
 
 /** The paths `CLAIM_READERS` lists, in its order, written out so a reader added to it is a reviewed change here too. */
@@ -173,6 +174,7 @@ const EXPECTED_CLAIM_READERS = [
   "src/lib/db/claim-grants.ts",
   "src/lib/db/engine-catalog/claims.generated.ts",
   "src/lib/db/engine-catalog/projection.ts",
+  "src/lib/db/server-catalog-compose.ts",
 ];
 
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
@@ -331,6 +333,26 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     members: SQL_GENERATOR_MEMBERS,
     reason:
       "each SQL engine's generator row, composed from the generated SQL generator forms and Studio's SQL generator function table, which binds each named function",
+  },
+  {
+    path: "src/lib/db/server-catalog-compose.ts",
+    members: [
+      ...CATALOG_MEMBERS,
+      ...CONNECTION_TABLE_MEMBERS,
+      ...CONNECTION_FLAG_MEMBERS,
+      ...CONNECTION_FORM_MEMBERS,
+      ...FENCE_ALIAS_MEMBERS,
+      ...QUERY_EDITOR_MEMBERS,
+      ...CLAIM_REQUEST_MEMBERS,
+    ],
+    reason:
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, and the claim requests it hands unread to Studio's grant reader, which grants each against Studio's review record",
+  },
+  {
+    path: "src/lib/db/server-catalog.ts",
+    members: [],
+    reason:
+      "the types of the catalog entry and the seed-only template of an admitted package's engine, which ./server-catalog-compose composes; it reads no member of a declaration",
   },
   {
     path: "src/lib/db/sql-grammar/index.ts",

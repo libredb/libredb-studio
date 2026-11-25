@@ -171,6 +171,17 @@ export interface ConnectionFormSpec {
   connectionImport?: ConnectionImportDeclaration;
 }
 
+/**
+ * The members of a form entry the field rule module reads (`connectionFieldRefusal` in ./connection-field-rules): the
+ * fields in the order they are checked, their rules, and the conditions and absent values that decide whether a field is
+ * shown. A bundled engine's entry is one; an admitted provider package's engine has only this, composed by
+ * `packageFieldRules`.
+ */
+export type FieldRuleSpec = Pick<
+  ConnectionFormSpec,
+  "connectionFields" | "fieldRules" | "fieldShownWhen" | "fieldDefaults"
+>;
+
 /** A check the connection dialog runs on one field before Test Connection and Save (`fieldRules`). */
 export interface ConnectionFieldRule {
   /**
@@ -236,7 +247,7 @@ export const CONNECTION_FORM_FUNCTIONS: ConnectionFormFunctions = Object.freeze(
  * @throws {Error} Naming the engine and the field, for a field the dialog does not draw, such as a seed-only field,
  * which the SDK's validator already refuses in a dialog entry or a field rule of an admitted declaration.
  */
-function dialogField(id: DatabaseType, field: FieldName): ConnectionField {
+function dialogField(id: string, field: FieldName): ConnectionField {
   if (!Object.hasOwn(CONNECTION_FIELD_DESCRIPTORS, field)) {
     throw new Error(
       `${id} declares a connection form entry for ${field}, which Studio's connection dialog does not draw.`,
@@ -247,7 +258,7 @@ function dialogField(id: DatabaseType, field: FieldName): ConnectionField {
 
 /** The entries of `list` as a frozen record keyed by each entry's field in list order, or undefined where it is empty. */
 function perField<Entry extends { readonly field: FieldName }, Value>(
-  id: DatabaseType,
+  id: string,
   list: readonly Entry[],
   read: (entry: Entry) => Value,
 ): Readonly<Partial<Record<ConnectionField, Value>>> | undefined {
@@ -272,8 +283,11 @@ function hostReaders(
   };
 }
 
-/** One declared field rule as the dialog checks it: its pattern compiled once, its check bound through `functions`. */
-function ruleOf(id: DatabaseType, rule: FieldRule, functions: ConnectionFormFunctions): ConnectionFieldRule {
+/** A field rule's check, as `ruleOf` takes it bound. */
+type FieldCheck = NonNullable<ConnectionFieldRule["check"]>;
+
+/** One declared field rule as the dialog checks it: its pattern compiled once, its check bound by `bind`. */
+function ruleOf(rule: FieldRule, bind: (name: string) => FieldCheck): ConnectionFieldRule {
   const { required, format, charRange, check } = rule;
   return Object.freeze({
     ...(required === null ? {} : { required }),
@@ -288,7 +302,7 @@ function ruleOf(id: DatabaseType, rule: FieldRule, functions: ConnectionFormFunc
     ...(charRange === null
       ? {}
       : { charRange: Object.freeze({ min: charRange.min, max: charRange.max, sentence: charRange.sentence }) }),
-    ...(check === null ? {} : { check: boundFunction(id, functions.checks, check) }),
+    ...(check === null ? {} : { check: bind(check) }),
   });
 }
 
@@ -315,7 +329,9 @@ export function composeConnectionForm(
   const fieldHints = perField(id, dialog.hints, ({ text }) => text);
   const fieldPlaceholders = perField(id, dialog.placeholders, ({ text }) => text);
   const fieldPlacement = perField(id, dialog.placement, ({ where }) => where);
-  const fieldRules = perField(id, entry.fieldRules, (rule) => ruleOf(id, rule, functions));
+  const fieldRules = perField(id, entry.fieldRules, (rule) =>
+    ruleOf(rule, (name) => boundFunction(id, functions.checks, name)),
+  );
   const fieldOptions = perField(id, dialog.options, ({ choices }) => choices);
   const fieldShownWhen = perField(id, dialog.shownWhen, ({ when }) =>
     Object.freeze({ field: dialogField(id, when.field), equals: when.equals }),
@@ -352,6 +368,47 @@ export function composeConnectionForm(
   };
   Object.defineProperty(spec, "credentialWarnings", { get: () => CREDENTIAL_WARNINGS[id], enumerable: true });
   return Object.freeze(spec);
+}
+
+/**
+ * The sentence a field rule of a provider package's engine that names a check answers for a field holding a value:
+ * Studio binds no function of a package (docs/providers/CONTRACT.md, clause C-99), so it cannot run the check, and a
+ * connection the check would read is not sent rather than sent unchecked. The field is a name of Studio's own field
+ * vocabulary, never a value the package chose.
+ */
+export function unboundCheckSentence(field: ConnectionField): string {
+  return `This LibreDB Studio cannot run the check the provider package declares for the field ${field}, so it does not send this connection.`;
+}
+
+/**
+ * The field rules of engine `id`, an admitted provider package's engine, composed from `entry`, its projected
+ * connection form, and `fields`, its declared connection fields, as `composeConnectionForm` composes a bundled engine's:
+ * each rule's pattern compiled once, and `fieldShownWhen` and `fieldDefaults` from its dialog's conditions and absent
+ * values. `connectionFields` is the declared fields a rule names, in declared order, which is the order the rules are
+ * checked in; a field no rule names is never checked, so it is not listed. A rule that names a check answers
+ * `unboundCheckSentence` for a field holding a value, since Studio binds no function of a package. Nothing else of the
+ * form is composed: no label, hint, placeholder, Host reader, import or connection string toggle, which only the
+ * connection dialog reads, and the dialog does not offer a package's engine yet.
+ *
+ * @throws {Error} Naming the engine and the field, for a field rule, condition or absent value of a field the connection
+ * dialog does not draw, which the SDK's validator already refuses in an admitted declaration.
+ */
+export function packageFieldRules(id: string, entry: ConnectionFormEntry, fields: readonly FieldName[]): FieldRuleSpec {
+  const ruled = new Set<FieldName>(entry.fieldRules.map((rule) => rule.field));
+  const fieldRules = perField(id, entry.fieldRules, (rule) => {
+    const unbound = unboundCheckSentence(dialogField(id, rule.field));
+    return ruleOf(rule, () => () => unbound);
+  });
+  const fieldShownWhen = perField(id, entry.dialog.shownWhen, ({ when }) =>
+    Object.freeze({ field: dialogField(id, when.field), equals: when.equals }),
+  );
+  const fieldDefaults = perField(id, entry.dialog.absentValues, ({ value }) => value);
+  return Object.freeze({
+    connectionFields: Object.freeze(fields.filter((field) => ruled.has(field)).map((field) => dialogField(id, field))),
+    ...(fieldRules === undefined ? {} : { fieldRules }),
+    ...(fieldShownWhen === undefined ? {} : { fieldShownWhen }),
+    ...(fieldDefaults === undefined ? {} : { fieldDefaults }),
+  });
 }
 
 /**
