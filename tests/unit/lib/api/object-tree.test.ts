@@ -337,7 +337,8 @@ describe("objectTree", () => {
         treeCall: async (): Promise<TreeRecord> => ({
           kind: "refused",
           called: false,
-          refusals: [{ rule: "facet-not-offered", pointer: "/objects/tree", name: "objects.tree" }],
+          // A rule none of the accessor's rows for a refusing package session reads (clause C-111).
+          refusals: [{ rule: "request-field-empty", pointer: "/objects/tree", name: "objects.tree" }],
         }),
       }),
       () => failure(() => objectTree(provider, new AbortController().signal, ROUTE).listObjects(["app"], "table")),
