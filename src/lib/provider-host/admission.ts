@@ -16,7 +16,8 @@
  *    a key); the manifest admitted is deep-frozen;
  * 4. its engine ids: one Studio's bundled catalog serves, one that is an own key of `Object.prototype` (a table keyed
  *    by plain object would answer an inherited member for it), one a package admitted earlier in this process serves,
- *    and a package name admitted earlier, each `PROVIDER_ID_COLLISION`;
+ *    and a package name admitted earlier, each `PROVIDER_ID_COLLISION`; the last two are checked again right before
+ *    registration (step 12), since an admission that overlaps this one may register while this one imports;
  * 5. its entry, an ES module: `.mjs`, or `.js` whose nearest package.json inside the package, read and bound to the
  *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); the lookup stops at a
  *    directory named `node_modules`, as Node.js's package scope lookup does, so a `.js` entry below one is CommonJS
@@ -33,8 +34,10 @@
  * 10. the implementation and its four segments, none a Proxy (`record-proxy`), since the SDK's check would run a nested
  *    Proxy's traps;
  * 11. the SDK's `checkProviderModule` (`PROVIDER_RECORD_INVALID`, the first refusal's rule and the count of the rest);
- * 12. the implementation and its segments frozen in place, and Studio's own record of them registered once under the
- *    package's name: `{ contract, manifest, impl }` with the manifest Studio validated and froze.
+ * 12. the implementation and its segments frozen in place, the registered engine ids and package names checked again
+ *    as in step 4 (`PROVIDER_ID_COLLISION`), and Studio's own record of them registered once under the package's name,
+ *    with no `await` between the check and the registration: `{ contract, manifest, impl }` with the manifest Studio
+ *    validated and froze.
  *
  * No step before the import runs any of the package's code. A package refused after its import has run its top level,
  * is never registered and serves no engine. The entry module is read by the runtime's loader, not by admission, so a
@@ -227,6 +230,16 @@ function checkServed(pkg: VerifiedPackage, manifest: ProviderManifest): void {
   if (ids.some((id) => Object.hasOwn(Object.prototype, id))) {
     throw new Refused(admittedCollisionRefusal(pkg, "inherited-name"));
   }
+  checkRegistered(pkg, manifest);
+}
+
+/**
+ * Refuses an engine id or a package name a package registered in this process serves. Admission runs it before the
+ * import and again right before it registers, with no `await` between that second run and `registerAdmitted`, so two
+ * admissions that overlap never register two packages serving one engine id or one name twice.
+ */
+function checkRegistered(pkg: VerifiedPackage, manifest: ProviderManifest): void {
+  const ids = manifest.engines.map((engine) => engine.id);
   const registered = registeredEngineIds();
   if (ids.some((id) => registered.has(id))) throw new Refused(admittedCollisionRefusal(pkg, "registered-engine"));
   if (admitted().some((record) => record.name === pkg.name)) {
@@ -356,6 +369,8 @@ async function admit(pkg: VerifiedPackage, options: AdmissionOptions): Promise<A
     manifest,
     impl: Object.freeze(impl as object),
   });
+  // An admission that overlapped this one may have registered during the import.
+  checkRegistered(pkg, manifest);
   registerAdmitted(pkg.name, admittedRecord);
   return admittedRecord;
 }

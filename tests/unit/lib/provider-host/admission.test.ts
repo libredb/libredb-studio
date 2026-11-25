@@ -416,6 +416,30 @@ describe("before the import", () => {
     expect(fs.existsSync(sameName.sentinel)).toBe(false);
   });
 
+  test("two admissions that overlap never register two packages serving one engine id, or one name twice", async () => {
+    // Both pass the checks before their imports; the check made again right before registration refuses the second.
+    const shared = names();
+    const pair = [write({ id: shared.id }), write({ id: shared.id })];
+    const answers = await Promise.all(pair.map((written) => admit(verified(written))));
+    const outcomes = answers.map((answer) =>
+      answer.admitted ? "admitted" : `${answer.refusal.code} ${answer.refusal.rule}`,
+    );
+    expect(outcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-engine", "admitted"]);
+    const servingShared = admitted().filter((entry) =>
+      (entry.record as { manifest: { engines: { id: string }[] } }).manifest.engines.some((e) => e.id === shared.id),
+    );
+    expect(servingShared.length).toBe(1);
+
+    const sameName = names();
+    const twins = [write({ name: sameName.name }), write({ name: sameName.name })];
+    const twinAnswers = await Promise.all(twins.map((written) => admit(verified(written))));
+    const twinOutcomes = twinAnswers.map((answer) =>
+      answer.admitted ? "admitted" : `${answer.refusal.code} ${answer.refusal.rule}`,
+    );
+    expect(twinOutcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-package", "admitted"]);
+    expect(admitted().filter((entry) => entry.name === sameName.name).length).toBe(1);
+  });
+
   test("a manifest the schema refuses is refused as PROVIDER_SCHEMA_INVALID, naming the first rule and its pointer and never a key", async () => {
     const own = names();
     const key = `k${randomUUID().replaceAll("-", "")}`;

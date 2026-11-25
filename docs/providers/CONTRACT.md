@@ -4256,8 +4256,10 @@ Its SQL writing names are read for their form, and Studio composes no SQL writin
 
 A package is refused as `PROVIDER_ID_COLLISION` when it serves an engine id Studio's bundled catalog serves, an engine id a package admitted earlier in the same process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was admitted earlier in the process.
 Each names its own rule.
+The engine ids and the name a package admitted earlier serves are checked before the import and again right before registration, with nothing awaited between that check and the registration, so of two admissions that overlap in one process the one that would register second is refused, after its import.
 
 - test `tests/unit/lib/provider-host/admission.test.ts` "an engine id already served is refused"
+- test `tests/unit/lib/provider-host/admission.test.ts` "two admissions that overlap never register two packages serving one engine id, or one name twice"
 
 ### C-101 (normative): The entry is an ES module
 
