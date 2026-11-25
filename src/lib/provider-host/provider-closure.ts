@@ -13,14 +13,17 @@
  *    `path.posix` joins it to the importing file's directory without leaving the package. Node's ES module loader
  *    decodes a percent-encoded `..` segment and `require` does not, so refusing those characters makes both loaders'
  *    paths the posix path computed here;
- * 3. it is a bare package specifier, `name` or `@scope/name`, then a subpath with no `.` or `..` segment, and some
- *    directory from the importing file's own up to the package's root, not itself named `node_modules`, holds
- *    `node_modules/<name>` as a directory of the listing. Both Node.js loaders take the first such folder walking up from
- *    the importer, and every ancestor inside the package comes before any outside it, so one found inside resolves
- *    inside.
+ * 3. it is an `import` of a bare package specifier, `name` or `@scope/name`, then a subpath with no `.` or `..`
+ *    segment, and some directory from the importing file's own up to the package's root, not itself named
+ *    `node_modules`, holds `node_modules/<name>` as a directory of the listing. Node.js's ES module resolver takes the
+ *    first such folder walking up from the importer and fails there when the folder lacks the file, and every ancestor
+ *    inside the package comes before any outside it, so one found inside resolves inside. A `require` of a bare
+ *    specifier is outside wherever the listing holds its folder: Node.js's CommonJS resolver, and Bun's, move on to the
+ *    next `node_modules` directory up when the folder found first lacks the file or its index, which is outside the
+ *    package, and telling whether it lacks them would mean reimplementing that resolver.
  *
  * Anything else is outside: an absolute path, a URL or another scheme, a subpath import (`#...`), a bare specifier
- * outside its form.
+ * outside its form, a bare specifier a `require` names.
  *
  * The limits: a computed `import()` or `require()` is not recorded, so not checked; a package's `main` or `exports` is not
  * read (an `exports` target cannot leave its package, a `main` can); a package importing itself by its own name without
@@ -84,9 +87,9 @@ export function closureOutside(
   imports: readonly ModuleImport[],
 ): boolean {
   const directories = directoriesOf(files);
-  return imports.some(({ from, specifier }) => {
+  return imports.some(({ from, specifier, kind }) => {
     if (isBuiltin(specifier)) return false;
     if (isRelative(specifier)) return !relativeInside(from, specifier);
-    return !packageInside(directories, from, specifier);
+    return kind === "require" || !packageInside(directories, from, specifier);
   });
 }

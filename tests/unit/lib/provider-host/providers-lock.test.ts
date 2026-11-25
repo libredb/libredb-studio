@@ -351,8 +351,8 @@ describe("the digest the lock pins", () => {
     writeArtifact(providers, pkg);
     const locked = lockEntryOf(providers, pkg);
     expect(locked.imports).toEqual([
-      { from: "dist/extra.mjs", specifier: "node:fs" },
-      { from: "dist/index.mjs", specifier: "./extra.mjs" },
+      { from: "dist/extra.mjs", specifier: "node:fs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "./extra.mjs", kind: "import" },
     ]);
     writeLock(providers, [locked]);
     expect(outcomes(providers)).toEqual({ "acme-record": "verified" });
@@ -360,10 +360,20 @@ describe("the digest the lock pins", () => {
     const edits: [string, LockEntry["imports"]][] = [
       ["the record emptied", []],
       ["a pair removed", locked.imports.slice(1)],
-      ["a pair added", [...locked.imports, { from: "dist/index.mjs", specifier: "node:path" }]],
+      ["a pair added", [...locked.imports, { from: "dist/index.mjs", specifier: "node:path", kind: "import" }]],
       [
         "a specifier changed",
-        [locked.imports[0] as LockEntry["imports"][number], { from: "dist/index.mjs", specifier: "./other.mjs" }],
+        [
+          locked.imports[0] as LockEntry["imports"][number],
+          { from: "dist/index.mjs", specifier: "./other.mjs", kind: "import" },
+        ],
+      ],
+      [
+        "a kind changed",
+        [
+          locked.imports[0] as LockEntry["imports"][number],
+          { from: "dist/index.mjs", specifier: "./extra.mjs", kind: "require" },
+        ],
       ],
     ];
     for (const [label, imports] of edits) {
@@ -388,8 +398,8 @@ describe("the digest the lock pins", () => {
     expect(only.verified).toBe(true);
     if (!only.verified) return;
     expect(only.imports).toEqual([
-      { from: "dist/index.mjs", specifier: "./b.mjs" },
-      { from: "dist/index.mjs", specifier: "node:fs" },
+      { from: "dist/index.mjs", specifier: "./b.mjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
     ]);
     expect(Object.isFrozen(only.imports)).toBe(true);
     expect(only.imports.every((pair) => Object.isFrozen(pair))).toBe(true);
@@ -700,18 +710,22 @@ describe("the lock's format", () => {
     );
   });
 
-  test("a lock entry's import record is closed and capped, each pair in its forms and listed once", () => {
+  test("a lock entry's import record is closed and capped, each import in its forms and listed once", () => {
     expect([LOCK_IMPORT_CAP, IMPORT_FROM_FORM.maxLength, IMPORT_SPECIFIER_FORM.maxLength]).toEqual([4096, 1024, 1024]);
     const providers = freshProviders();
     const withImports = (imports: unknown): string =>
       JSON.stringify({ lockVersion: 1, entries: [{ ...VALID_ENTRY, imports }] });
-    const pair = { from: "dist/index.mjs", specifier: "./a.mjs" };
+    const pair = { from: "dist/index.mjs", specifier: "./a.mjs", kind: "import" };
     const withoutImports = Object.fromEntries(Object.entries(VALID_ENTRY).filter(([key]) => key !== "imports"));
 
     // The count is checked before any item is read: 4,097 items that are not pairs are refused as too-many.
     lockOf(providers, { lockVersion: 1, entries: [{ ...VALID_ENTRY, imports: Array(LOCK_IMPORT_CAP + 1).fill(0) }] });
     expect(lockRefusal(providers)).toEqual({ rule: "too-many", pointer: "/entries/0/imports" });
-    const atCap = Array.from({ length: LOCK_IMPORT_CAP }, (_, index) => ({ from: "a.mjs", specifier: `./${index}` }));
+    const atCap = Array.from({ length: LOCK_IMPORT_CAP }, (_, index) => ({
+      from: "a.mjs",
+      specifier: `./${index}`,
+      kind: "import",
+    }));
     lockOf(providers, { lockVersion: 1, entries: [{ ...VALID_ENTRY, imports: atCap }] });
     expect(readProvidersLock(providers).read).toBe(true);
 
@@ -725,8 +739,8 @@ describe("the lock's format", () => {
       ["an item that is not a pair", withImports(["./a.mjs"]), { rule: "wrong-type", pointer: "/entries/0/imports/0" }],
       [
         "an item's unknown key",
-        withImports([{ ...pair, kind: "import-statement" }]),
-        { rule: "unknown-key", pointer: "/entries/0/imports/0", key: "kind" },
+        withImports([{ ...pair, type: "static" }]),
+        { rule: "unknown-key", pointer: "/entries/0/imports/0", key: "type" },
       ],
       [
         "an item's missing key",
@@ -784,13 +798,28 @@ describe("the lock's format", () => {
         { rule: "pattern-mismatch", pointer: "/entries/0/imports/0/specifier" },
       ],
       [
+        "a kind missing, as the record before kinds wrote it",
+        withImports([{ from: pair.from, specifier: pair.specifier }]),
+        { rule: "missing-key", pointer: "/entries/0/imports/0", key: "kind" },
+      ],
+      [
+        "a kind not a string",
+        withImports([{ ...pair, kind: 1 }]),
+        { rule: "wrong-type", pointer: "/entries/0/imports/0/kind" },
+      ],
+      [
+        "a kind the scanner reports but the lock does not record",
+        withImports([{ ...pair, kind: "import-statement" }]),
+        { rule: "value-not-allowed", pointer: "/entries/0/imports/0/kind" },
+      ],
+      [
         "a specifier over its length",
         withImports([{ ...pair, specifier: `./${"a".repeat(1023)}` }]),
         { rule: "out-of-range", pointer: "/entries/0/imports/0/specifier" },
       ],
       [
         "one pair twice",
-        withImports([pair, { from: "dist/index.mjs", specifier: "node:fs" }, pair]),
+        withImports([pair, { from: "dist/index.mjs", specifier: "node:fs", kind: "import" }, pair]),
         { rule: "duplicate", pointer: "/entries/0/imports/2" },
       ],
     ];
@@ -799,9 +828,15 @@ describe("the lock's format", () => {
       expect<unknown>([label, lockRefusal(providers)]).toEqual([label, expected]);
     }
     for (const fitting of [
-      [{ from: `${"a/".repeat(511)}a`, specifier: `./${"a".repeat(1022)}` }],
-      [pair, { from: pair.from, specifier: "node:fs" }, { from: "dist/a.mjs", specifier: "./a.mjs" }],
-      [{ from: "dist/.hidden.mjs", specifier: "#internal" }],
+      [{ from: `${"a/".repeat(511)}a`, specifier: `./${"a".repeat(1022)}`, kind: "import" }],
+      [
+        pair,
+        { from: pair.from, specifier: "node:fs", kind: "import" },
+        { from: "dist/a.mjs", specifier: "./a.mjs", kind: "import" },
+      ],
+      [{ from: "dist/.hidden.mjs", specifier: "#internal", kind: "require" }],
+      // One module importing one specifier in both kinds holds two imports.
+      [pair, { ...pair, kind: "require" }],
     ]) {
       writeLockText(providers, withImports(fitting));
       expect([fitting, readProvidersLock(providers).read]).toEqual([fitting, true]);

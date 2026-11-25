@@ -1,14 +1,16 @@
 /**
  * The import closure of a provider package (src/lib/provider-host/provider-closure.ts): every recorded import of its
  * module files is a built-in of the running runtime, a relative path that stays inside the package's directory, or a
- * package a `node_modules` directory of the package holds on the way up from the importing file. The check reads only
- * the listing and the record, never a file, so it answers the same on every platform.
+ * package a `node_modules` directory of the package holds on the way up from the importing file, named by an import
+ * and never by a `require`. The check reads only the listing and the record, never a file, so it answers the same on
+ * every platform.
  *
  * Built-ins here are names Node.js and Bun both answer true for in `isBuiltin`: Bun also answers true for `ws`,
  * `undici` and `bun`, which Node does not, and Studio's server runs under Node, so no case relies on those.
  */
 import { describe, expect, test } from "bun:test";
 import { closureOutside } from "@/lib/provider-host/provider-closure";
+import type { ImportKind } from "@/lib/provider-host/providers-lock-format";
 
 /** A listing of these paths; only the paths are read. */
 function listing(...paths: string[]) {
@@ -27,9 +29,9 @@ const FILES = listing(
   "node_modules/node_modules/hidden/index.js",
 );
 
-/** Whether the one import `specifier` of `from` is outside the package. */
-function outside(from: string, specifier: string): boolean {
-  return closureOutside(FILES, [{ from, specifier }]);
+/** Whether the one import `specifier` of `from`, of `kind`, is outside the package. */
+function outside(from: string, specifier: string, kind: ImportKind = "import"): boolean {
+  return closureOutside(FILES, [{ from, specifier, kind }]);
 }
 
 describe("the import closure", () => {
@@ -71,8 +73,8 @@ describe("the import closure", () => {
     // One import outside among others inside refuses the record.
     expect(
       closureOutside(FILES, [
-        { from: "dist/index.mjs", specifier: "./lib/util.mjs" },
-        { from: "dist/index.mjs", specifier: "../../x.mjs" },
+        { from: "dist/index.mjs", specifier: "./lib/util.mjs", kind: "import" },
+        { from: "dist/index.mjs", specifier: "../../x.mjs", kind: "import" },
       ]),
     ).toBe(true);
   });
@@ -87,6 +89,29 @@ describe("the import closure", () => {
     expect(outside("dist/index.mjs", "hidden")).toBe(true);
     // A package no node_modules directory of the artifact holds.
     expect(outside("dist/index.mjs", "absent")).toBe(true);
+  });
+
+  test("a bare package a require names is outside wherever the package holds it, and a built-in or relative require is judged like an import", () => {
+    // Node.js's CommonJS resolver, and Bun's, move on to the next node_modules directory up, outside the package, when
+    // the folder found first lacks the file, so a folder of the listing does not keep a require inside.
+    for (const [from, specifier] of [
+      ["dist/index.mjs", "dep"],
+      ["dist/index.mjs", "dep/lib/index.js"],
+      ["dist/index.mjs", "@scope/pkg"],
+      ["node_modules/dep/lib/index.js", "inner"],
+      ["dist/index.mjs", "absent"],
+    ] as const) {
+      expect([from, specifier, outside(from, specifier, "require")]).toEqual([from, specifier, true]);
+    }
+    for (const [from, specifier] of [
+      ["dist/index.mjs", "node:fs"],
+      ["dist/index.mjs", "fs"],
+      ["dist/index.mjs", "./lib/util.mjs"],
+      ["dist/lib/util.mjs", ".."],
+    ] as const) {
+      expect([from, specifier, outside(from, specifier, "require")]).toEqual([from, specifier, false]);
+    }
+    expect(outside("dist/index.mjs", "../../outside.cjs", "require")).toBe(true);
   });
 
   test("an absolute path, a URL, another scheme and a subpath import are outside", () => {
@@ -117,6 +142,6 @@ describe("the import closure", () => {
     for (const specifier of ["C:\\x.mjs", "C:/x.mjs", "\\\\server\\share\\x.mjs", "\\x.mjs"]) {
       expect([specifier, outside("dist/index.mjs", specifier)]).toEqual([specifier, true]);
     }
-    expect(closureOutside(listing("a.mjs"), [{ from: "a.mjs", specifier: "./a.mjs" }])).toBe(false);
+    expect(closureOutside(listing("a.mjs"), [{ from: "a.mjs", specifier: "./a.mjs", kind: "import" }])).toBe(false);
   });
 });

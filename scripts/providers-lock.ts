@@ -11,8 +11,9 @@
  * TypeScript extensions, `js` otherwise), after a leading `#!` line is removed, since the scanner refuses one. It
  * reports import declarations, side-effect imports, re-exports, `import()` of a string or a template without
  * substitution and `require()` of a string, in dead branches too; not `require.resolve` or `import.meta.resolve`, which
- * load nothing, and not a type-only import of a TypeScript file. The command records; Studio's admission judges the
- * record (src/lib/provider-host/provider-closure.ts).
+ * load nothing, and not a type-only import of a TypeScript file. Each import is recorded with its kind, `importKind`:
+ * `require` for a `require()` call, `import` for the rest. The command records; Studio's admission judges the record
+ * (src/lib/provider-host/provider-closure.ts).
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
  * (src/lib/provider-host/provider-artifact.ts), so a lock this command writes is read unchanged, and a later edit to a
@@ -53,6 +54,7 @@ import {
   LOCAL_SOURCE,
   LOCK_BYTE_CAP,
   LOCK_IMPORT_CAP,
+  type ImportKind,
   type LockEntry,
   type ModuleImport,
   PACKAGE_NAME_FORM,
@@ -99,8 +101,22 @@ const SCAN_TYPESCRIPT = new Bun.Transpiler({ loader: "ts" });
 /** UTF-8 that refuses an invalid byte. */
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
-/** The specifiers `text` imports statically, or null when it is not UTF-8 or the scanner cannot parse it. */
-function scanned(bytes: Buffer, typescript: boolean): string[] | null {
+/**
+ * The kind the lock records for an import the scanner reports as `scannerKind`: `require` for a `require()` call,
+ * `import` for an import declaration, a re-export or an `import()`.
+ *
+ * @throws {Error} For any other kind, which the scanner reports for no JavaScript or TypeScript file.
+ */
+export function importKind(scannerKind: string): ImportKind {
+  if (scannerKind === "require-call") return "require";
+  if (scannerKind === "import-statement" || scannerKind === "dynamic-import") return "import";
+  throw new Error(
+    `providers:lock: the scanner reported an import of the kind ${scannerKind}, which the lock does not record`,
+  );
+}
+
+/** The imports `text` makes statically, or null when it is not UTF-8 or the scanner cannot parse it. */
+function scanned(bytes: Buffer, typescript: boolean): { specifier: string; kind: ImportKind }[] | null {
   let text: string;
   try {
     text = STRICT_UTF8.decode(bytes).replace(/^#![^\n]*/, "");
@@ -109,7 +125,9 @@ function scanned(bytes: Buffer, typescript: boolean): string[] | null {
     return null;
   }
   try {
-    return (typescript ? SCAN_TYPESCRIPT : SCAN_JAVASCRIPT).scanImports(text).map((found) => found.path);
+    return (typescript ? SCAN_TYPESCRIPT : SCAN_JAVASCRIPT)
+      .scanImports(text)
+      .map((found) => ({ specifier: found.path, kind: importKind(found.kind) }));
   } catch (error) {
     if (!(error instanceof BuildMessage) && !(error instanceof AggregateError)) throw error;
     return null;
@@ -118,23 +136,23 @@ function scanned(bytes: Buffer, typescript: boolean): string[] | null {
 
 /**
  * The import record of the module files among `files`, the listing of the artifact at `directory`, sorted and each
- * pair once; or why the package cannot be locked, one sentence.
+ * import once; or why the package cannot be locked, one sentence.
  */
 export function moduleImports(directory: string, files: readonly ArtifactFile[]): ModuleImport[] | string {
   const pairs = new Map<string, ModuleImport>();
   for (const file of files) {
     if (!MODULE_FILE.test(file.path)) continue;
     if (!inForm(file.path, IMPORT_FROM_FORM)) return "a module path is longer than 1024 characters";
-    const specifiers = scanned(
+    const found = scanned(
       fs.readFileSync(path.join(directory, ...file.path.split("/"))),
       TYPESCRIPT_FILE.test(file.path),
     );
-    if (specifiers === null) return `${file.path}: its parser cannot read it, or it is not UTF-8`;
-    for (const specifier of specifiers) {
+    if (found === null) return `${file.path}: its parser cannot read it, or it is not UTF-8`;
+    for (const { specifier, kind } of found) {
       if (!inForm(specifier, IMPORT_SPECIFIER_FORM)) {
         return `${file.path}: it imports a specifier outside printable ASCII without spaces, or longer than 1024 characters`;
       }
-      pairs.set(`${file.path} ${specifier}`, { from: file.path, specifier });
+      pairs.set(`${file.path} ${specifier} ${kind}`, { from: file.path, specifier, kind });
     }
     if (pairs.size > LOCK_IMPORT_CAP) return `its module files hold more than ${LOCK_IMPORT_CAP} imports`;
   }

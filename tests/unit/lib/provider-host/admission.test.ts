@@ -341,7 +341,7 @@ describe("before the import", () => {
       source: `import ${JSON.stringify(planted)};\n${entrySource(manifest, own.sentinel)}`,
     });
     const pkg = verified(written);
-    expect(pkg.imports).toContainEqual({ from: "dist/index.mjs", specifier: planted });
+    expect(pkg.imports).toContainEqual({ from: "dist/index.mjs", specifier: planted, kind: "import" });
 
     const refusal = refusalOf(await admit(pkg));
     expect([refusal.code, refusal.rule]).toEqual(["PROVIDER_LOAD_FAILED", "closure-outside"]);
@@ -355,6 +355,44 @@ describe("before the import", () => {
     const loaded = await loadPackage(pkg.entryFile, { deadlineMs: DEADLINE_MS, onLateSettle: () => undefined });
     expect(loaded.loaded).toBe(true);
     expect(fs.existsSync(plantedSentinel)).toBe(true);
+  });
+
+  test("a bare require is refused as closure-outside even when the package's own node_modules holds the folder, since the resolver moves on past it", async () => {
+    // The package holds node_modules/<dep>/ without the subpath its CommonJS module requires; Node.js's resolver, and
+    // Bun's, then move on to the next node_modules directory up, outside the package, where a planted subpath runs.
+    const own = names();
+    const dep = `acme-fallthrough-${counter}`;
+    const outsideSentinel = path.join(scratch, `fallthrough-${counter}-${randomUUID()}`);
+    const outsideDirectory = path.join(scratch, "node_modules", dep);
+    fs.mkdirSync(outsideDirectory, { recursive: true });
+    fs.writeFileSync(
+      path.join(outsideDirectory, "sub.js"),
+      `require("node:fs").writeFileSync(${JSON.stringify(outsideSentinel)}, "ran");\n`,
+    );
+    const manifest = manifestFor(own.id);
+    const written = write({
+      name: own.name,
+      id: own.id,
+      manifest,
+      source: `import "./helper.cjs";\n${entrySource(manifest, own.sentinel)}`,
+      files: {
+        "dist/helper.cjs": `require(${JSON.stringify(`${dep}/sub`)});\n`,
+        [`node_modules/${dep}/package.json`]: JSON.stringify({ name: dep, version: "1.0.0" }),
+        [`node_modules/${dep}/index.js`]: "module.exports = {};\n",
+      },
+    });
+    const pkg = verified(written);
+    expect(pkg.imports).toContainEqual({ from: "dist/helper.cjs", specifier: `${dep}/sub`, kind: "require" });
+
+    const refusal = refusalOf(await admit(pkg));
+    expect([refusal.code, refusal.rule]).toEqual(["PROVIDER_LOAD_FAILED", "closure-outside"]);
+    expect(fs.existsSync(outsideSentinel)).toBe(false);
+    expect(fs.existsSync(written.sentinel)).toBe(false);
+
+    // The control: the loader alone, on the same artifact, runs the module outside the package.
+    const loaded = await loadPackage(pkg.entryFile, { deadlineMs: DEADLINE_MS, onLateSettle: () => undefined });
+    expect(loaded.loaded).toBe(true);
+    expect(fs.existsSync(outsideSentinel)).toBe(true);
   });
 
   test("a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED", async () => {

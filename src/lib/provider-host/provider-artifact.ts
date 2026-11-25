@@ -26,8 +26,8 @@
  * other bits follow the umask of whoever copied the files. Node.js and Bun read modes through libuv, whose Windows stat
  * never sets an execute bit, so every file reads `644` there, and an artifact holding an executable file has another
  * digest on Windows than on Linux and macOS; write the lock on the platform that reads it. After the file lines come
- * the lock entry's import record's lines, one per pair sorted by module path then specifier,
- * `import <module path> <specifier>\n`; a file line starts with its mode, so the two kinds never meet, and an empty
+ * the lock entry's import record's lines, one per import sorted by module path, then specifier, then kind,
+ * `import <module path> <specifier> <kind>\n`; a file line starts with its mode, so the two never meet, and an empty
  * record adds nothing. The digest is computed at every read; nothing is kept between reads.
  *
  * The identity. `package.json` and `libredb-provider.json` at the artifact's root, each read like the lock (opened
@@ -244,7 +244,7 @@ export function artifactDigest(files: readonly ArtifactFile[], imports: readonly
     .map((file) => `${file.mode} ${file.sha256} ${file.path}\n`)
     .join("");
   const record = sortImports(imports)
-    .map((pair) => `import ${pair.from} ${pair.specifier}\n`)
+    .map((pair) => `import ${pair.from} ${pair.specifier} ${pair.kind}\n`)
     .join("");
   return `sha256:${createHash("sha256")
     .update(listing + record)

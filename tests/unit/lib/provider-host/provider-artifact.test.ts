@@ -103,15 +103,18 @@ describe("the artifact digest", () => {
     expect(artifactDigest(files, [])).toBe(`sha256:${sha256(fileLines)}`);
 
     const imports = [
-      { from: "b.mjs", specifier: "node:fs" },
-      { from: "a.mjs", specifier: "./b.mjs" },
-      { from: "a.mjs", specifier: "./a.mjs" },
-    ];
-    const importLines = "import a.mjs ./a.mjs\nimport a.mjs ./b.mjs\nimport b.mjs node:fs\n";
+      { from: "b.mjs", specifier: "node:fs", kind: "import" },
+      { from: "a.mjs", specifier: "./b.mjs", kind: "require" },
+      { from: "a.mjs", specifier: "./b.mjs", kind: "import" },
+      { from: "a.mjs", specifier: "./a.mjs", kind: "import" },
+    ] as const;
+    const importLines =
+      "import a.mjs ./a.mjs import\nimport a.mjs ./b.mjs import\nimport a.mjs ./b.mjs require\nimport b.mjs node:fs import\n";
     expect(artifactDigest(files, imports)).toBe(`sha256:${sha256(fileLines + importLines)}`);
-    // The record's order decides nothing; one import more or less moves the digest.
+    // The record's order decides nothing; one import more or less, or another kind, moves the digest.
     expect(artifactDigest(files, [...imports].reverse())).toBe(artifactDigest(files, imports));
     expect(artifactDigest(files, imports.slice(1))).not.toBe(artifactDigest(files, imports));
+    expect(artifactDigest(files, [{ ...imports[0], kind: "require" }])).not.toBe(artifactDigest(files, [imports[0]]));
   });
 
   test("a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise", () => {

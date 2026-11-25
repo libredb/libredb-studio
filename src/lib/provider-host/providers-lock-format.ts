@@ -88,12 +88,23 @@ export const IMPORT_FROM_FORM: StringForm = Object.freeze({
 /** A specifier as written: 1 to 1,024 printable ASCII characters and no space, so a digest line is unambiguous. */
 export const IMPORT_SPECIFIER_FORM: StringForm = Object.freeze({ pattern: /^[\x21-\x7e]+$/, maxLength: 1024 });
 
+/**
+ * How a module reaches an import: `require` for a `require()` call, which Node.js's CommonJS resolver resolves, and
+ * `import` for an import declaration, a re-export or an `import()`, which its ES module resolver resolves.
+ */
+export const IMPORT_KINDS = ["import", "require"] as const;
+
+/** One of `IMPORT_KINDS`. */
+export type ImportKind = (typeof IMPORT_KINDS)[number];
+
 /** One static import of a module file of a package. */
 export interface ModuleImport {
   /** The module file's path in the package, `/` between names. */
   readonly from: string;
   /** The specifier as the module writes it. */
   readonly specifier: string;
+  /** How the module reaches it. */
+  readonly kind: ImportKind;
 }
 
 /** One entry of the lock. */
@@ -115,7 +126,7 @@ export type LockCheck =
 
 const TOP_KEYS: readonly string[] = ["lockVersion", "entries"];
 const ENTRY_KEYS: readonly string[] = ["name", "version", "engines", "entry", "digest", "source", "imports"];
-const IMPORT_KEYS: readonly string[] = ["from", "specifier"];
+const IMPORT_KEYS: readonly string[] = ["from", "specifier", "kind"];
 
 /** A shape violation found while checking. */
 class ShapeViolation {
@@ -161,7 +172,7 @@ function checkEngines(value: unknown, pointer: string): string[] {
   return engines;
 }
 
-/** An entry's import record, in the lock's order: at most `LOCK_IMPORT_CAP` distinct pairs, the count checked first. */
+/** An entry's import record, in the lock's order: at most `LOCK_IMPORT_CAP` distinct imports, the count checked first. */
 function checkImports(value: unknown, pointer: string): ModuleImport[] {
   if (!Array.isArray(value)) throw new ShapeViolation("wrong-type", pointer);
   if (value.length > LOCK_IMPORT_CAP) throw new ShapeViolation("too-many", pointer);
@@ -173,13 +184,22 @@ function checkImports(value: unknown, pointer: string): ModuleImport[] {
     checkKeys(item, IMPORT_KEYS, at);
     const from = checkString(item.from, IMPORT_FROM_FORM, `${at}/from`);
     const specifier = checkString(item.specifier, IMPORT_SPECIFIER_FORM, `${at}/specifier`);
-    // Neither form admits a space, so the pair's line is one key.
-    const key = `${from} ${specifier}`;
+    const kind = checkKind(item.kind, `${at}/kind`);
+    // Neither form admits a space, so the import's line is one key.
+    const key = `${from} ${specifier} ${kind}`;
     if (seen.has(key)) throw new ShapeViolation("duplicate", at);
     seen.add(key);
-    imports.push(Object.freeze({ from, specifier }));
+    imports.push(Object.freeze({ from, specifier, kind }));
   });
   return imports;
+}
+
+/** `value` as one of `IMPORT_KINDS`, or the violation. */
+function checkKind(value: unknown, pointer: string): ImportKind {
+  if (typeof value !== "string") throw new ShapeViolation("wrong-type", pointer);
+  const kind = IMPORT_KINDS.find((known) => known === value);
+  if (kind === undefined) throw new ShapeViolation("value-not-allowed", pointer);
+  return kind;
 }
 
 /** One entry, built from its checked values. */
@@ -243,9 +263,14 @@ function byCodeUnits(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** `imports` sorted by module path, then by specifier, in code-unit order: the order of the lock and of the digest. */
+/**
+ * `imports` sorted by module path, then by specifier, then by kind, in code-unit order: the order of the lock and of
+ * the digest.
+ */
 export function sortImports(imports: readonly ModuleImport[]): ModuleImport[] {
-  return [...imports].sort((a, b) => byCodeUnits(a.from, b.from) || byCodeUnits(a.specifier, b.specifier));
+  return [...imports].sort(
+    (a, b) => byCodeUnits(a.from, b.from) || byCodeUnits(a.specifier, b.specifier) || byCodeUnits(a.kind, b.kind),
+  );
 }
 
 /**
@@ -262,7 +287,11 @@ export function serializeProvidersLock(entries: readonly LockEntry[]): string {
       entry: entry.entry,
       digest: entry.digest,
       source: entry.source,
-      imports: sortImports(entry.imports).map((pair) => ({ from: pair.from, specifier: pair.specifier })),
+      imports: sortImports(entry.imports).map((pair) => ({
+        from: pair.from,
+        specifier: pair.specifier,
+        kind: pair.kind,
+      })),
     }));
   return `${JSON.stringify({ lockVersion: LOCK_VERSION, entries: sorted }, null, 2)}\n`;
 }

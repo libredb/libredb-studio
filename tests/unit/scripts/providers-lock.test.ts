@@ -19,7 +19,7 @@ import {
   scratchDirectory,
   writeArtifact,
 } from "../../helpers/provider-artifacts";
-import { moduleImports } from "../../../scripts/providers-lock";
+import { importKind, moduleImports } from "../../../scripts/providers-lock";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const USAGE = "Usage: bun run providers:lock -- --dir <absolute directory>";
@@ -207,7 +207,8 @@ describe("the lock command", () => {
           'const later = () => import("./late.mjs");',
           "const tagged = () => import(`./template.mjs`);",
           'import { a as again } from "./a.mjs";',
-          "export default { a, later, tagged, again };",
+          'const required = () => require("./a.mjs");',
+          "export default { a, later, tagged, again, required };",
           "",
         ].join("\n"),
         "dist/c.cjs":
@@ -225,17 +226,18 @@ describe("the lock command", () => {
     expect([run.exitCode, run.stderr]).toEqual([0, ""]);
     const lock = JSON.parse(fs.readFileSync(path.join(providers, LOCK_FILE_NAME), "utf8"));
     expect(lock.entries[0].imports).toEqual([
-      { from: "bin/run.js", specifier: "./main.js" },
-      { from: "dist/UPPER.MJS", specifier: "./upper.mjs" },
-      { from: "dist/c.cjs", specifier: "./dead.cjs" },
-      { from: "dist/c.cjs", specifier: "fs" },
-      { from: "dist/index.mjs", specifier: "./a.mjs" },
-      { from: "dist/index.mjs", specifier: "./b.mjs" },
-      { from: "dist/index.mjs", specifier: "./c.cjs" },
-      { from: "dist/index.mjs", specifier: "./late.mjs" },
-      { from: "dist/index.mjs", specifier: "./template.mjs" },
-      { from: "dist/index.mjs", specifier: "node:fs" },
-      { from: "dist/types.ts", specifier: "./v" },
+      { from: "bin/run.js", specifier: "./main.js", kind: "import" },
+      { from: "dist/UPPER.MJS", specifier: "./upper.mjs", kind: "import" },
+      { from: "dist/c.cjs", specifier: "./dead.cjs", kind: "require" },
+      { from: "dist/c.cjs", specifier: "fs", kind: "require" },
+      { from: "dist/index.mjs", specifier: "./a.mjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "./a.mjs", kind: "require" },
+      { from: "dist/index.mjs", specifier: "./b.mjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "./c.cjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "./late.mjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "./template.mjs", kind: "import" },
+      { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
+      { from: "dist/types.ts", specifier: "./v", kind: "import" },
     ]);
     expect(lock.entries[0]).toEqual({ ...lockEntryOf(providers, pkg), engines: ["acmescanned"] });
     const read = readProvidersLock(providers);
@@ -317,6 +319,17 @@ describe("the lock command", () => {
     const longPath = `${"a/".repeat(511)}abc.mjs`;
     expect(moduleImports(large, [{ path: longPath, mode: "644", sha256: "0".repeat(64) }])).toBe(
       "a module path is longer than 1024 characters",
+    );
+  });
+
+  test("an import's kind is require for a require call and import for every import form, and any other kind is a defect", () => {
+    expect(["import-statement", "dynamic-import", "require-call"].map(importKind)).toEqual([
+      "import",
+      "import",
+      "require",
+    ]);
+    expect(() => importKind("url-token")).toThrow(
+      "providers:lock: the scanner reported an import of the kind url-token, which the lock does not record",
     );
   });
 
