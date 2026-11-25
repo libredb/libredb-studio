@@ -18,8 +18,9 @@
  *    by plain object would answer an inherited member for it), one a package admitted earlier in this process serves,
  *    and a package name admitted earlier, each `PROVIDER_ID_COLLISION`;
  * 5. its entry, an ES module: `.mjs`, or `.js` whose nearest package.json inside the package, read and bound to the
- *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); a module's syntax is
- *    never read to decide;
+ *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); the lookup stops at a
+ *    directory named `node_modules`, as Node.js's package scope lookup does, so a `.js` entry below one is CommonJS
+ *    unless a package.json under it says otherwise; a module's syntax is never read to decide;
  * 6. its import closure (`./provider-closure`), over the import record its lock entry gives (`PROVIDER_LOAD_FAILED`,
  *    `closure-outside`);
  * 7. native addons: a `.node` file in any letter case, or a manifest declaring `runtime.native`
@@ -235,7 +236,7 @@ function checkServed(pkg: VerifiedPackage, manifest: ProviderManifest): void {
 
 /**
  * Refuses an entry that is not an ES module: an `.mjs` is one, and a `.js` only when the nearest package.json from its
- * directory up to the package's root declares `"type": "module"`.
+ * directory up to the package's root, or up to a directory named `node_modules`, declares `"type": "module"`.
  */
 function checkEntryFormat(pkg: VerifiedPackage, entry: string): void {
   if (entry.endsWith(".mjs")) return;
@@ -253,9 +254,13 @@ function checkEntryFormat(pkg: VerifiedPackage, entry: string): void {
   }
 }
 
-/** The listed package.json nearest the entry at `entry`, from its directory up to the package's root. */
+/**
+ * The listed package.json nearest the entry at `entry`, from its directory up to the package's root; none once the walk
+ * reaches a directory named `node_modules`, where Node.js's package scope lookup stops without reading one.
+ */
 function nearestPackageJson(pkg: VerifiedPackage, entry: string): ArtifactFile | undefined {
   for (let directory = path.posix.dirname(entry); ; directory = path.posix.dirname(directory)) {
+    if (path.posix.basename(directory) === "node_modules") return undefined;
     const found = listed(pkg, directory === "." ? "package.json" : `${directory}/package.json`);
     if (found !== undefined || directory === ".") return found;
   }

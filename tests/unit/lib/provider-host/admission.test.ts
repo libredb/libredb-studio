@@ -304,6 +304,19 @@ describe("before the import", () => {
       files: verifiedFromWalk(bare).files.filter((file) => file.path !== "package.json"),
     });
     expect(await outcome(pkg)).toBe("PROVIDER_MODULE_FORMAT entry-commonjs");
+
+    // Node.js stops its package scope lookup at a directory named node_modules, on every platform, so a .js entry below
+    // one is CommonJS unless a package.json under that directory declares the module type, whatever the root declares.
+    const vendored = names();
+    const underNodeModules = write({
+      name: vendored.name,
+      id: vendored.id,
+      entry: "node_modules/acme-vendored/index.js",
+      files: { "package.json": JSON.stringify({ name: vendored.name, version: "1.0.0", type: "module" }) },
+    });
+    const vendoredRefusal = refusalOf(await admit(verified(underNodeModules)));
+    expect([vendoredRefusal.code, vendoredRefusal.rule]).toEqual(["PROVIDER_MODULE_FORMAT", "entry-commonjs"]);
+    expect(fs.existsSync(underNodeModules.sentinel)).toBe(false);
   });
 
   test("a dependency only an ancestor node_modules holds is refused as closure-outside and its top level never runs", async () => {
@@ -584,6 +597,18 @@ describe("the import and the record", () => {
       },
     });
     expect(await outcome(verified(nestedScope))).toBe("admitted");
+    // A package.json under the node_modules directory is the scope of an entry below it.
+    const vendored = names();
+    const vendoredScope = write({
+      name: vendored.name,
+      id: vendored.id,
+      entry: "node_modules/acme-vendored/index.js",
+      files: {
+        "package.json": JSON.stringify({ name: vendored.name, version: "1.0.0" }),
+        "node_modules/acme-vendored/package.json": '{"type":"module"}\n',
+      },
+    });
+    expect(await outcome(verified(vendoredScope))).toBe("admitted");
   });
 
   test("a record whose manifest differs from its file is refused", async () => {

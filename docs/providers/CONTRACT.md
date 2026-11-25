@@ -4262,6 +4262,7 @@ Each names its own rule.
 ### C-101 (normative): The entry is an ES module
 
 The entry is an ES module when its name ends in `.mjs`, or in `.js` and the nearest `package.json` from its directory up to the package's root declares `"type": "module"`.
+The lookup stops at a directory named `node_modules` without reading a `package.json` there, as Node.js's package scope lookup does, so a `.js` entry below such a directory is an ES module only when a `package.json` below it declares the type, whatever the root declares.
 Any other entry is refused as `PROVIDER_MODULE_FORMAT` before the import, and so is one whose nearest `package.json` is over 1 MiB or not a JSON object.
 A module's syntax is never read to decide.
 
