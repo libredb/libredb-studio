@@ -99,7 +99,7 @@ So a refusal can be logged and shown without leaking what a package wrote.
 ### M-6 (normative): A package's identity is its package.json
 
 The manifest declares no package name, version, licence or publisher, and no driver list.
-Name, version, licence and the Node range are the package's `package.json`, which admission compares with the lock entry.
+Name, version, licence and the Node range are the package's `package.json`, and its name and version are compared with the lock entry, C-94.
 The publisher is computed from verified provenance and is never declared.
 The drivers are the package's `package.json` dependencies and its notices file.
 
@@ -2652,10 +2652,17 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 - test `tests/unit/package-imports.test.ts` "no workspace package imports or declares another provider package"
 - test `tests/unit/package-imports.test.ts` "a planted package that imports or declares another provider package fails by file and name, the kit admitted in its tests only"
 
-### C-43 (informative): A provider depends on no load order
+### C-43 (normative): A provider depends on no load order
 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
-The lock and boot admission hold this, and neither exists yet; the loader's registry lists records in the order they were registered, an order nothing reads.
+The lock's read answers the same for every order of the same entries, and lists its packages by name.
+With no providers directory set, no package is read, and a lock with no entries names none.
+Boot admission does not exist yet; the loader's registry lists records in the order they were registered, an order nothing reads.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the entries' order changes no result"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock with no entries names no package"
+- test `tests/unit/lib/provider-host/providers-dir.test.ts` "an unset, empty or blank LIBREDB_PROVIDERS_DIR is no providers directory"
+- test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
 
 ### C-44 (normative): The host owns each open
 
@@ -4120,6 +4127,83 @@ The loader registers nothing itself, and its registry lists the records in the o
 - test `tests/unit/lib/provider-loader/packaging.test.ts` "the installed loader is its source, file for file and byte for byte"
 - test `tests/unit/lib/provider-loader/packaging.test.ts` "Studio reaches the loader only by its package name, and only the loader's own tests import its source"
 - test `tests/unit/lib/provider-loader/packaging.test.ts` "the import scan names a planted file that imports the loader's source by path"
+
+### C-91 (normative): A package is read from the providers directory only where its lock entry names it
+
+An operator names the providers directory with `LIBREDB_PROVIDERS_DIR`; it holds the lock, `providers.lock.json`, and each package as `<name>/<version>/`, a scoped name as `@scope/<name>/<version>/`.
+The name is an npm package name of at most 214 characters, and the version an exact version of at most 64, never a range.
+The lock is written by Studio's command, `bun run providers:lock -- --dir <absolute directory>`, never by the package it vouches for.
+A package's directory is resolved by real path, and one that resolves outside the providers directory, through a symbolic link or junction included, is refused as `PROVIDER_PATH_OUTSIDE`.
+A link that stays inside the providers directory is followed, and the package is read at its real path.
+The entry its manifest names must be a regular file of that directory, compared by exact path, or the package is refused as `PROVIDER_PATH_OUTSIDE`.
+No connection's database file or host path may name the providers directory, a path in it or its lock.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry whose directory resolves outside the providers directory, a symbolic link included, is refused as PROVIDER_PATH_OUTSIDE"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a directory that resolves inside the providers directory through a link is read as its real path"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry the lock names that is not a regular file of the artifact is refused as PROVIDER_PATH_OUTSIDE"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a providers directory named through another spelling of itself reads as its real path does"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the lock's name, version, engine id and entry forms are the provider contract's"
+- test `tests/unit/lib/provider-host/providers-dir.test.ts` "the providers directory, everything in it and its lock, by real path too, are reserved in any letter case, normalization form or spelling"
+- test `tests/unit/lib/db/provider-files.test.ts` "a file or host path naming the providers directory, a path in it or its lock is refused by name before any provider is built"
+- test `tests/unit/scripts/providers-lock.test.ts` "the lock the command writes is admitted unchanged, and a later edit to the artifact is refused"
+
+### C-92 (normative): An artifact is a tree of regular files with portable names
+
+A package's directory holds only regular files and directories, each named by 1 to 255 letters, digits and `. _ - @ + ~`.
+It holds at most 10,000 files and 32 levels of directories.
+A symbolic link, a junction, a named pipe, a socket or a device anywhere in it, such as the links a package manager writes under `node_modules/.bin`, is refused as `PROVIDER_PATH_OUTSIDE`, and is never followed or opened.
+A name outside that set, or more files or levels, is refused as `PROVIDER_DIGEST_MISMATCH`.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact that holds a symbolic link or junction is refused as PROVIDER_PATH_OUTSIDE, and the link is never followed"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact that holds a named pipe or a link to a device is refused at once, and neither is opened"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a name outside letters, digits and . _ - @ + ~ is refused as PROVIDER_DIGEST_MISMATCH"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "more files or deeper directories than the limits are refused as PROVIDER_DIGEST_MISMATCH, and the limits are 10000 files and 32 levels"
+
+### C-93 (normative): Every file of a package is checked against the lock's digest at every read
+
+The lock pins each package by its digest: `sha256:` and the hex SHA-256 of a listing with one line per regular file, sorted by path, `<mode> <hex SHA-256 of the file> <path>` and a newline, the path relative to the package's directory with `/` between names.
+The mode is `755` when the file's owner execute bit is set and `644` otherwise, so the group and other bits and the umask of whoever copied the files change nothing, and empty directories are not listed.
+Windows reports no execute bit, so every file reads `644` there, and a package holding an executable file has another digest on Windows than on Linux and macOS: write the lock on the platform that reads it.
+The digest is computed at every read and nothing is kept between reads, so any changed, added, removed or renamed file is refused as `PROVIDER_DIGEST_MISMATCH` at the next read, and so is a package whose directory is missing or cannot be read.
+
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the digest is SHA-256 over each file's mode, SHA-256 and path, one line each in path order"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a fixed artifact has the same digest on every platform"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a file's mode is 755 where its owner execute bit is set, which Windows never reports, and 644 otherwise"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "only the owner execute bit moves the digest: group and other bits and the umask do not"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "an empty directory moves no digest"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an artifact whose files differ from the lock digest is refused as PROVIDER_DIGEST_MISMATCH"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a byte changed in any file of an artifact is refused at the next read, and nothing is kept between reads"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a missing or unreadable artifact is refused as PROVIDER_DIGEST_MISMATCH, naming why"
+
+### C-94 (normative): A package's identity is its package.json and its manifest, as its lock entry names them
+
+A package holds `package.json` and its manifest, `libredb-provider.json`, at the root of its directory.
+Its `package.json` is at most 1 MiB and its manifest at most 2 MiB, each UTF-8 JSON without a byte order mark and a JSON object.
+The name and version of its `package.json`, the engine ids of its manifest in any order, and its manifest's `runtime.entry` must equal its lock entry's.
+Each difference is refused as `PROVIDER_IDENTITY_MISMATCH` naming the field, and a `package.json` or manifest that cannot be read, or whose `engines` or `runtime.entry` is not in its form, is refused naming that file.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a package.json whose name, version or engine ids differ from its entry is refused naming the field"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "the identity is read from package.json and libredb-provider.json at the artifact's root, each within its byte limit"
+- test `tests/unit/lib/provider-host/provider-artifact.test.ts` "a manifest whose engines or runtime.entry are not in their form is refused naming the manifest, and its other members are never read"
+
+### C-95 (normative): A package serves no engine Studio already serves
+
+A package that serves an engine id Studio's bundled catalog serves is refused as `PROVIDER_ID_COLLISION`, so a package never takes over a shipped engine.
+Two packages that serve one engine id are both refused as `PROVIDER_ID_COLLISION`, each naming the others by name and version, so the lock's order decides nothing.
+Both are read from the lock alone, before any file of the package is read.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "an entry serving an engine id the bundled catalog serves is refused as PROVIDER_ID_COLLISION"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "two entries serving one engine id are both refused as PROVIDER_ID_COLLISION, each naming the other, before any of their files is read"
+
+### C-96 (normative): A refusal names the package and nothing it holds
+
+Every refusal carries one code of one closed list, `PROVIDER_LOCK_INVALID`, `PROVIDER_PATH_OUTSIDE`, `PROVIDER_DIGEST_MISMATCH`, `PROVIDER_IDENTITY_MISMATCH` and `PROVIDER_ID_COLLISION`, and one rule of that code's closed list, in a sentence on one line.
+A package's refusal names the package by the name and version its lock entry gives, and never carries a file name inside its directory, a value of its `package.json` or its manifest, or an engine id.
+No step of the read imports or runs a package's code.
+
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "no refusal carries a value read from the package beyond its name and version"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "the refusal codes are one closed list, and every refusal names a code and a rule of its lists"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "reading and writing a lock run no code of a package"
 
 ## Not yet in this contract
 
