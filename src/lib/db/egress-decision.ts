@@ -22,8 +22,10 @@
  *
  * No provider reads the decision here: the provider factory hands it to every provider that takes a context, in the
  * build context (`ProviderBuildContext` in `./types`), and every guard and transport takes it as an argument or an
- * option, so no other module reads it. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this
- * module, and that no provider module reaches it.
+ * option. For an engine a provider package serves, the package session path plays the factory's role:
+ * `./package-sessions` takes the decision in its open checks, and `@/lib/provider-host/open-context` hands it to the
+ * package's `open` in its open context. No other module reads it. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this
+ * module, that no provider module reaches it, and that no module under `packages/` imports it.
  *
  * `forgetEgressDecision` is a test seam.
  */

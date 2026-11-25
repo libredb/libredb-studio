@@ -8,7 +8,8 @@
  * 2026-11-22, the one such provider is Db2, whose driver verifies with rustls against the operating system's store.
  * Core owns that read (FND-2, the provider plugins design section 0.1): this module is the only database code that
  * reads the variable or the file, and the provider factory hands the material, as data, to the engines whose
- * `READS_TRUST_MATERIAL` row in `./compatibility` is true.
+ * `READS_TRUST_MATERIAL` row in `./compatibility` is true; for an engine a provider package serves, the package open
+ * context (`@/lib/provider-host/open-context`) hands it to the package's `open` when the engine's declaration reads it.
  *
  * What is read: an unset or empty variable is no certificate, as it is for Node.js. Otherwise the file is read as
  * UTF-8 and refused, with its reason, when it cannot be read, is empty or blank, holds a block under the legacy
@@ -37,8 +38,8 @@
  * (`./egress-decision` does the same for the same reason).
  *
  * Sign-in's token trust (`@/lib/openshift-auth/http`) reads the variable on its own, on every token call, by design;
- * it is not a provider. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who reads the variable and who
- * imports this module.
+ * it is not a provider. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who reads the variable, who
+ * imports this module, and that no module under `packages/` imports it.
  *
  * `forgetTrustMaterial` is a test seam.
  */

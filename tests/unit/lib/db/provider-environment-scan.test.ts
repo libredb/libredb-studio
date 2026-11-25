@@ -16,6 +16,13 @@ const READER = "src/lib/db/egress-decision.ts";
 const PROVIDERS = "src/lib/db/providers/";
 const FACTORY = "src/lib/db/factory.ts";
 const BOOT_PREFLIGHT = "src/lib/config/egress-preflight.ts";
+// The package session path is core and plays the factory's role for an engine an admitted provider package serves:
+// `src/lib/db/package-sessions.ts` takes the egress decision in its open checks, as the factory does before it builds,
+// so an invalid setting is refused before anything is opened, and `src/lib/provider-host/open-context.ts` hands the
+// decision to the package's `open` in its open context (docs/providers/CONTRACT.md, clause C-109).
+const PACKAGE_SESSIONS = "src/lib/db/package-sessions.ts";
+const PACKAGE_OPEN_CONTEXT = "src/lib/provider-host/open-context.ts";
+const PACKAGES = "packages/";
 
 function readsTheSetting(source: string, fileName = "probe.ts", variable = VARIABLE): boolean {
   // The script kind follows the extension: parsed as TSX, a generic arrow or an angle-bracket assertion in a .ts file
@@ -55,6 +62,11 @@ function factoryDynamicImports(): string[] {
     .scanImports(readFileSync(join(process.cwd(), FACTORY), "utf8"))
     .filter((entry) => entry.kind === "dynamic-import")
     .map((entry) => entry.path);
+}
+
+/** The tracked TypeScript modules under `packages/` that value-import `module`. */
+function packageImportersOf(module: string): string[] {
+  return trackedSources(PACKAGES).filter((name) => valueImportsOf(name).includes(module));
 }
 
 function importersOfTheReader(): string[] {
@@ -129,8 +141,13 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(importersOfTheReader().filter((name) => name.startsWith(PROVIDERS))).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/egress-decision.ts are the provider factory and the boot preflight", () => {
-    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY].sort());
+  test("no module under packages/ imports src/lib/db/egress-decision.ts", () => {
+    expect(trackedSources(PACKAGES)).not.toEqual([]);
+    expect(packageImportersOf(READER)).toEqual([]);
+  });
+
+  test("the modules that import src/lib/db/egress-decision.ts are the provider factory, the boot preflight, the package sessions and the package open context", () => {
+    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY, PACKAGE_SESSIONS, PACKAGE_OPEN_CONTEXT].sort());
   });
 
   test("no module under src/lib/db/providers/ reaches src/lib/db/egress-decision.ts through its imports", () => {
@@ -156,6 +173,8 @@ const CA_VARIABLE = "NODE_EXTRA_CA_CERTS";
 const TRUST_READER = "src/lib/db/trust-material.ts";
 const TOKEN_TRUST_READER = "src/lib/openshift-auth/http.ts";
 const CA_PREFLIGHT = "src/lib/config/ca-bundle-preflight.ts";
+// The package open context hands the material to a package's `open` when the engine's declaration reads it
+// (docs/providers/CONTRACT.md, clause C-109), as the factory hands it to a bundled engine, so it imports the reader.
 
 describe("the operator's CA bundle is read by core alone, and no provider reaches a module that reads it (FND-2 slice 4)", () => {
   test("the read detector finds NODE_EXTRA_CA_CERTS in a property, an element, a destructuring and the name as a string literal, and ignores a sentence that names it", () => {
@@ -199,8 +218,13 @@ describe("the operator's CA bundle is read by core alone, and no provider reache
     expect(importersOfTheTrustReader().filter((name) => name.startsWith(PROVIDERS))).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/trust-material.ts are the provider factory and the CA bundle preflight", () => {
-    expect(importersOfTheTrustReader()).toEqual([CA_PREFLIGHT, FACTORY].sort());
+  test("no module under packages/ imports src/lib/db/trust-material.ts", () => {
+    expect(trackedSources(PACKAGES)).not.toEqual([]);
+    expect(packageImportersOf(TRUST_READER)).toEqual([]);
+  });
+
+  test("the modules that import src/lib/db/trust-material.ts are the provider factory, the CA bundle preflight and the package open context", () => {
+    expect(importersOfTheTrustReader()).toEqual([CA_PREFLIGHT, FACTORY, PACKAGE_OPEN_CONTEXT].sort());
   });
 
   test("no module under src/lib/db/providers/ reaches a module that reads NODE_EXTRA_CA_CERTS, or the CA bundle preflight, through its imports", () => {
