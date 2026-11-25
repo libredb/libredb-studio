@@ -25,7 +25,7 @@ describe("decodeBytes", () => {
     expect(decodeBytes(bytes("[1,2]"), 1000).encoding).toBe("json");
   });
 
-  test("an integer JSON.parse would round keeps every digit sent, as a string (docs/ADDING_A_PROVIDER.md)", () => {
+  test("an integer JSON.parse would round keeps every digit sent, as a string", () => {
     expect(decodeBytes(bytes('{"id":12345678901234567890,"n":9007199254740993}'), 1000)).toEqual({
       value: { id: "12345678901234567890", n: "9007199254740993" },
       encoding: "json",

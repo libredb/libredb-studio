@@ -183,9 +183,7 @@ Each provider implements:
 
 A graph engine is the one family with a shared base of its own: `GraphBaseProvider` (`src/lib/db/graph/graph-base-provider.ts`) runs every statement through the shared Cypher read policy, the engine's statement gate (which an allowlisted SHOW form skips on the editor path, while agent handles classify every SHOW form) and one READ session over the Bolt transport, and the engine supplies a `GraphEngineProfile` (its policy lists, catalog reads, gate and error table) plus its declarations and monitoring reads.
 The graph core under `src/lib/db/graph/` is pure and shipped to the browser, where the editor's Cypher language and completion read it; `bolt/` and the base class are server only.
-[`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md#adding-a-graph-engine) describes the layers and the profile, and [`providers/neo4j.md`](./providers/neo4j.md) the one engine on them.
-
-Adding a new database type takes several steps, from registering the type to verifying it; [`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md) walks through each one.
+[`providers/neo4j.md`](./providers/neo4j.md) describes the one engine on them.
 
 Core code does not gain imports into a provider directory: the ones it holds today are listed by file, each with the change that removes it, in [`PROVIDER_IMPORTS.md`](./PROVIDER_IMPORTS.md), and `tests/unit/lib/db/provider-imports.test.ts` refuses any other.
 The same record gives every core module provider code imports a destination in the provider plugin program.
@@ -584,7 +582,7 @@ src/
     │   │   ├── objectstore/ # s3/ (a REST client of its own over the shared byte transport, signed by its own signing policy over the shared SigV4 core in db/auth/aws; an AWS CLI read-command console; object metadata and capped previews, Parquet through hyparquet)
     │   │   ├── platform/    # kubernetes/ (a REST client of its own over the shared node transport behind a read-only request allowlist; a kubectl read-command console; namespaces and kinds in the tree, a YAML view of every object, Secret values redacted)
     │   │   └── embedded/    # libredb (built-in embedded provider for the sample connection)
-    │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends (docs/ADDING_A_PROVIDER.md, "Adding a graph engine"):
+    │   ├── graph/           # The graph layer a Cypher-over-Bolt engine extends:
     │   │                    #   cypher/ (lexer, statements, quoting, read policy, generators, the confirmation row), objects.ts, values.ts and
     │   │                    #   profile.ts are pure and browser-safe; bolt/ (the GraphClient seam, the URI, the one
     │   │                    #   neo4j-driver-lite client, driver values to JSON) and graph-base-provider.ts are server only

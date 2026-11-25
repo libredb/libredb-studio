@@ -899,7 +899,6 @@ describe("provider docs that quote a label value verbatim", () => {
  * be rewritten on purpose.
  */
 const PLACEHOLDER_ATTRIBUTION_DOCS = [
-  "docs/ADDING_A_PROVIDER.md",
   "docs/DATABASE_PROVIDERS.md",
   // Every provider doc, so a sixth site in an unlisted doc cannot be invisible.
   ...PROVIDER_DOCS,
@@ -922,11 +921,6 @@ const sentenceAt = (collapsed: string, matchIndex: number): string => {
 
 /** SQLBaseProvider "provides / adds / gives for free" sections that must not list positionalPlaceholder. */
 const SQLBASE_PROVIDES_SECTIONS = [
-  {
-    doc: "docs/ADDING_A_PROVIDER.md",
-    heading: /### What SQLBaseProvider adds[\s\S]*?(?=\n### |\n## )/,
-    label: "### What SQLBaseProvider adds",
-  },
   {
     doc: "docs/providers/postgres.md",
     heading: /### 2\.2 What `SQLBaseProvider` provides[\s\S]*?(?=\n### |\n## )/,

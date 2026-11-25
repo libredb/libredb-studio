@@ -107,7 +107,7 @@ export function readChildren(buf: Uint8Array, parent: BerField, limit = 8): BerF
  * The reader above exists to inspect what the client produced. This half exists because there
  * is no client: the provider builds its own messages, so that nothing in this repository has to
  * carry a dependency whose write paths would then need keeping away from. The house doctrine is
- * explicit about the trade (the "Prerequisites" section of `docs/ADDING_A_PROVIDER.md`), and the precedent is S3's SigV4,
+ * explicit about the trade, and the precedent is S3's SigV4,
  * which is Studio's own `node:crypto` code rather than an SDK.
  *
  * Encoding is the narrower half of BER and this is the narrowest part of it: definite lengths,

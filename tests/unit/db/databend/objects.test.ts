@@ -606,7 +606,7 @@ describe("readObjectSource", () => {
     );
   });
 
-  test("an answer with no definition text raises naming the object, never a part [ADDING_A_PROVIDER]", async () => {
+  test("an answer with no definition text raises naming the object, never a part", async () => {
     await Promise.all(
       [[], [["o", "  "]], [["o", null]]].map(async (rows) => {
         const { runner } = scripted(outcome(SOURCE_SCHEMA, rows));
@@ -624,7 +624,7 @@ describe("readObjectSource", () => {
   const denied = (on: string) =>
     `Permission denied: privilege [Select] is required on ${on} for user 'analyst'@'%' with roles [public,analyst]`;
 
-  test("a definition Databend refuses with 1063 is a part holding Databend's own words, never a raise [ADDING_A_PROVIDER]", async () => {
+  test("a definition Databend refuses with 1063 is a part holding Databend's own words, never a raise", async () => {
     await Promise.all(
       [
         ["table", "'default'.'d'.'o'"],

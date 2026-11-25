@@ -9,8 +9,7 @@
  * It extends `SQLBaseProvider` rather than `BaseDatabaseProvider` because the
  * dialect really is standard on the points the shared helpers care about -
  * double-quoted identifiers and `LIMIT n OFFSET m` are both correct here
- * (live-verified) - which is exactly the case `docs/ADDING_A_PROVIDER.md` names
- * ClickHouse for. Only `prepareQuery()` is overridden, for the trailing-clause
+ * (live-verified). Only `prepareQuery()` is overridden, for the trailing-clause
  * trap below.
  *
  * Four live-verified behaviours shape almost everything here, and each one

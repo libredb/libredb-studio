@@ -120,7 +120,7 @@ export async function readGroupSource(
         latest.set(topic, await client.offsets(topic, "high-watermark"));
       } catch (error) {
         // An internal topic, one with a leaderless partition, or an assigned one the principal may
-        // not describe, whose refusal is an answer (docs/ADDING_A_PROVIDER.md): its rows stay,
+        // not describe, whose refusal is an answer: its rows stay,
         // without a latest offset and with the reason. Anything else fails the source.
         const keepsRows =
           error instanceof KafkaError && (error.category === "unreadable-topic" || error.category === "authorization");

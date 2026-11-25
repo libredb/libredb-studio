@@ -1917,28 +1917,6 @@ describe("the architecture, provider, editor and guide docs", () => {
       "Qdrant, Weaviate, Oxia, S3-compatible object storage and Kubernetes receive an explanatory",
     );
   });
-
-  test("59. ADDING_A_PROVIDER records what S3 shows about auth and dependencies", () => {
-    const guide = read("docs/ADDING_A_PROVIDER.md");
-    expect(guide).toContain(
-      "S3 shows it need not: its SigV4 is Studio's own `node:crypto` code, tested on the AWS suite vectors |",
-    );
-    expect(guide).toContain(
-      "      `s3` needs no driver but adds the Parquet decoders `hyparquet` and `hyparquet-compressors`, with their `//dependencies` note.",
-    );
-    expect(guide).toContain(
-      "      each add nothing here (`milvus` and `oxia` only extend the `//dependencies` note).\n      `s3` needs no driver",
-    );
-    expect(guide).toContain(
-      "is a library, and that is usually where the no-dependency promise ends. S3 shows it need not",
-    );
-    // The thirteen HTTP-only and built-in ids the paragraph names, plus s3 and kubernetes, which reach their servers over
-    // node:https.
-    expect(flat(guide)).toContain("Sixteen shipped type-ids need no driver:");
-    expect(flat(guide)).toContain(
-      "S3-compatible object storage over the S3 REST API, signed by Studio's own SigV4 code ([s3.md](./providers/s3.md)), Kubernetes over the API server's REST API ([kubernetes.md](./providers/kubernetes.md)), and RabbitMQ over its management HTTP API, with stream reads through the provider's own AMQP 0-9-1 client ([rabbitmq.md](./providers/rabbitmq.md)).",
-    );
-  });
 });
 
 /** The installed manifest of `name`: hoisted, or nested under hyparquet-compressors. */
@@ -2246,13 +2224,5 @@ describe("the complete engine lists outside the agent docs", () => {
       "Qdrant, Weaviate, Oxia, Databend, S3-compatible object storage, Kubernetes and LibreDB show no editing control at all",
     );
     expect(provider.getCapabilities().supportsInlineRowEdit).toBe(false);
-    const guide = read("docs/ADDING_A_PROVIDER.md");
-    expect(guide).toContain(
-      "'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq';",
-    );
-    expect(guide).toContain(
-      "'oxia' | 'databend' | 's3' | 'kubernetes' | 'bigquery' | 'mqtt' | 'firestore' | 'rabbitmq' | 'cockroachdb';",
-    );
-    expect(guide).toContain("· oxia · databend · s3 · kubernetes · mqtt · firestore · rabbitmq · libredb");
   });
 });

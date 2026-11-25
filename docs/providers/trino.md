@@ -117,7 +117,7 @@ DatabaseProvider (interface)
 
 Double-quoted identifiers are correct Trino SQL and `information_schema` is spelled the ANSI way, so
 `escapeIdentifier()`, `getInformationSchemaName()`, `isReadOnlyQuery()` and `isSchemaModifyingQuery()`
-are all inherited unchanged. This is the case `docs/ADDING_A_PROVIDER.md` names ClickHouse for.
+are all inherited unchanged.
 
 Exactly one shared helper is wrong here, and it is overridden: `prepareQuery()`
 ([§3.5](#35-offset-comes-before-limit)). The transport absorbs the other grammar quirk a caller can

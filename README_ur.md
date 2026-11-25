@@ -337,14 +337,14 @@ bun run test:coverage  # coverage report
 <ul dir="rtl" align="right">
 <li><span dir="rtl"><a href="docs/ARCHITECTURE.md">Architecture</a> · <a href="docs/DATABASE_PROVIDERS.md">Database providers</a> · <a href="docs/providers/README.md">Engine reference</a></span></li>
 <li><span dir="rtl"><a href="docs/API_DOCS.md">API documentation</a> · <a href="docs/OIDC.md">OIDC configuration</a> · <a href="docs/STORAGE.md">Storage layer</a></span></li>
-<li><span dir="rtl"><a href="docs/HELM_CHART.md">Helm Chart</a> · <a href="docs/CHANNELS.md">Distribution channels</a> · <a href="docs/ADDING_A_PROVIDER.md">Adding a database</a></span></li>
+<li><span dir="rtl"><a href="docs/HELM_CHART.md">Helm Chart</a> · <a href="docs/CHANNELS.md">Distribution channels</a></span></li>
 </ul>
 
 ## <span dir="rtl">تعاون</span>
 
 <span dir="rtl">Issues اور pull requests خوش آئند ہیں۔ آغاز [CONTRIBUTING.md](CONTRIBUTING.md) سے کریں۔</span>
 
-<span dir="rtl">Database engine شامل کرنے کے لیے [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) دیکھیں۔ Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
+<span dir="rtl">Code، documentation اور tests ایک ہی pull request میں ساتھ چلتے ہیں۔</span>
 
 ## <span dir="rtl">لائسنس</span>
 

@@ -348,7 +348,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 
 > 所有 SQL 数据库共有：schema 浏览器、ER 图、schema 对比与迁移、显示脱敏（预览）、监控面板和连接串导入。Druid、Elasticsearch、OpenSearch 和 Trino 每一个都是双重例外：它们的 HTTP SQL API 没有本构建能解析的 URI 约定，所以只能按 host 和 port 配置；而生成的迁移会说明该限制，而不是对一个 SQL 里根本没有列变更语句的引擎输出列变更 DDL，对 Couchbase 的无 schema 集合也是如此。搜索集群上的 ER 图只画方框不画连线：索引不声明外键，引擎的模型里也没有外键可声明，provider 会以 `declaresForeignKeys: false` 说明这一点，而不是留给空列表去猜。
 
-> **Provider 参考文档：** 每个数据库都有一份深入参考（设计、连接、查询格式、监控、限制），位于 [`docs/providers/`](docs/providers/README.md)。provider 架构见 [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md)，新增数据库见 [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md)。
+> **Provider 参考文档：** 每个数据库都有一份深入参考（设计、连接、查询格式、监控、限制），位于 [`docs/providers/`](docs/providers/README.md)。provider 架构见 [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md)。
 
 ## 技术栈
 
@@ -993,7 +993,7 @@ docker compose -f docker-compose.vault-demo.yml up
 - [ ] **阶段 16**：DBA 与监控（锁依赖图、Vacuum 调度器、Prometheus 导出）。
 - [ ] **阶段 17**：企业协作（用户身份、共享工作区、SAML 2.0）。
 - [ ] **阶段 18**：服务端强制数据脱敏（SQL 输出血缘、部署级全局策略、fail-closed 的 API 脱敏、别名/聚合覆盖）。
-- [x] **阶段 19**：免驱动 provider：Couchbase（通过 Query REST API 的 SQL++），第一个不引入任何运行时依赖的 provider。这套模式记录在[新增 provider](docs/ADDING_A_PROVIDER.md) 中。
+- [x] **阶段 19**：免驱动 provider：Couchbase（通过 Query REST API 的 SQL++），第一个不引入任何运行时依赖的 provider。
 - [x] **阶段 20**：分析型数据库：ClickHouse（[#264](https://github.com/libredb/libredb-studio/issues/264)）与 Apache Druid（[#265](https://github.com/libredb/libredb-studio/issues/265)），两者都通过 HTTP 且免驱动。Druid 天生只读（没有 `UPDATE`、没有 `DELETE`、没有 `CREATE TABLE`），所以它同时展示了一个诚实报告自身能力缺失的 provider：它不会给出那些注定失败的操作入口。
 - [x] **阶段 21**：联邦查询：Trino（[#424](https://github.com/libredb/libredb-studio/issues/424)，阶段 2），通过 Trino 自己的客户端协议实现且免驱动。一直挡住它的那个产品问题有了答案：一个连接固定**一个 catalog**，正如一个 PostgreSQL 连接固定一个数据库，而树保持两层：把 `information_schema` 铺开到每个 catalog 是无界的，因为仅 `jmx.current` 就为每个 MBean 发布一张表。跨 catalog 查询在编辑器里仍然可用，只要把名字完整限定。PrestoDB 将是另一个未来的 type-id；传输层已经从方言前缀构建响应头，所以那只是一个描述符，不是重写。
 
@@ -1014,7 +1014,6 @@ docker compose -f docker-compose.vault-demo.yml up
 | [登录页](docs/ui/login-page.md) | 登录页布局、OIDC/local 模式与设计系统 |
 | [编辑器文档](docs/editor/) | SQL 编辑器内部实现：补全、性能、查询优化 |
 | [架构](docs/ARCHITECTURE.md) | 系统架构与设计模式 |
-| [新增 provider](docs/ADDING_A_PROVIDER.md) | 逐步添加一个数据库，以及如何判断它到底需不需要驱动 |
 | [待办清单](docs/BACKLOG.md) | 已知缺陷以及尚未登记为 issue 的延期工作 |
 
 ### 跨浏览器测试
@@ -1067,7 +1066,7 @@ _成为第一个赞助 libredb-studio 的人！_
 
 - [架构](docs/ARCHITECTURE.md) · [数据库提供方](docs/DATABASE_PROVIDERS.md) · [各引擎参考](docs/providers/README.md)
 - [API 文档](docs/API_DOCS.md) · [OIDC 配置](docs/OIDC.md) · [存储层](docs/STORAGE.md)
-- [Helm Chart](docs/HELM_CHART.md) · [分发渠道](docs/CHANNELS.md) · [新增一个数据库](docs/ADDING_A_PROVIDER.md)
+- [Helm Chart](docs/HELM_CHART.md) · [分发渠道](docs/CHANNELS.md)
 
 ## 贡献
 

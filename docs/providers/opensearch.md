@@ -176,8 +176,7 @@ These are the non-obvious choices. Read this section before changing the provide
 OpenSearch ships `@opensearch-project/opensearch`, a first-class Node client. It is **not** a
 dependency here: everything this provider needs is four REST paths and one SQL endpoint, so
 `package.json` is untouched — no install step to fail, no native module in the Docker image or any
-distribution channel, and no N-API question for the Bun runtime. Same rubric
-([`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md)), same call Couchbase (#262), ClickHouse (#264)
+distribution channel, and no N-API question for the Bun runtime. Same call Couchbase (#262), ClickHouse (#264)
 and Druid (#265) made.
 
 What it costs: no sniffing, no failover and no retry (one statement is one `fetch` to one host); the
@@ -2011,7 +2010,6 @@ The refusal reason it prints, verbatim:
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`opensearch` service, host port 9201)
 - Tests: [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
 - API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
-- Adding a provider over HTTP: [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md)
 - Tracking issue: [#424 — Search providers](https://github.com/libredb/libredb-studio/issues/424)
 - OpenSearch SQL plugin: <https://docs.opensearch.org/latest/search-plugins/sql/index/>
 - SQL/PPL API: <https://docs.opensearch.org/latest/search-plugins/sql/sql-ppl-api/>

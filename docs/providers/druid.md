@@ -116,8 +116,7 @@ DruidProvider (druid/index.ts)
 
 `DruidProvider` extends `SQLBaseProvider` — not `BaseDatabaseProvider` directly, the way Couchbase
 does — because the dialect really is standard on the points the shared helpers care about:
-double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, live-verified. This is
-the case [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. Only
+double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL, live-verified. Only
 `prepareQuery()` is overridden, for the one trap in
 [§3.9](#39-the-preparequery-override-offset-with-no-limit).
 
@@ -173,8 +172,7 @@ there is no Node client in Druid's own distribution. Everything this provider ne
 `INFORMATION_SCHEMA`, `sys.*` monitoring, `EXPLAIN` — is reachable over the documented SQL HTTP
 endpoint, so the provider speaks that and nothing else. `package.json` is untouched: there is no
 install step to fail, no native module in the Docker image or in any distribution channel, and no
-N-API compatibility question for the Bun runtime. This is the rubric in
-[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) applied unchanged.
+N-API compatibility question for the Bun runtime.
 
 **What it costs, stated plainly**, because a driver is not free of charge in the other direction
 either:
@@ -630,7 +628,7 @@ it the live cluster disproved, and this is the record of why the code differs.
   grammar. Live: `400`, *"Incorrect syntax near the keyword 'CREATE' at line 1, column 1."*, and the
   parser then lists what it expected: `"INSERT"`, `"UPSERT"`, `"EXPLAIN"`, `"SET"`, `"RESET"`, … with
   no form of `CREATE` among them. A datasource comes into existence by being ingested into. Per the
-  capability-honesty rule in [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md), a flag that is
+  capability-honesty rule, a flag that is
   `true` but produces a control that can only emit invalid input is a defect, so it stays `false` and
   the Create Table modal never appears.
 - **`supportsMaintenance: false`, `maintenanceOperations: []`.** Nothing in `MaintenanceType`

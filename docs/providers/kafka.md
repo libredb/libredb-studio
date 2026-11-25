@@ -397,7 +397,7 @@ Applied in order to the key, to the value and to each header value; the first ru
 4. Other valid UTF-8: the string, encoding `text`.
 5. Anything else: base64 of the value's first bytes, as many whole 3-byte groups as fit in the cell limit beside the suffix, written `<base64> (<n> bytes)`, encoding `base64`; the byte length is always in the cell, and a cut value ends on a whole group.
 
-An integer past `Number.MAX_SAFE_INTEGER` either side of zero, which `JSON.parse` would round, is quoted before the parse, the rule of [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) for 64-bit integers, so a 64-bit id keeps every digit, as a string.
+An integer past `Number.MAX_SAFE_INTEGER` either side of zero, which `JSON.parse` would round, is quoted before the parse, the rule for 64-bit integers, so a 64-bit id keeps every digit, as a string.
 A document that repeats a member name, which `JSON.parse` answers with its last value alone, or that holds a number no double shows as sent, is answered by rule 4 as its text, exactly as sent: a number past the double's range, which the query route would send as `null`, one that underflows or loses digits, and `-0`, which it would send as `0`.
 Another spelling of the same number, such as `1.10` or `1e2`, is the same value, and so is another member order, since a JSON object is unordered.
 Rule 2 comes before rule 3 because a Confluent-framed payload can itself be valid UTF-8, so a text value that happens to start with `0x00` is labelled `confluent`: a false positive, stated here rather than guessed around.
@@ -522,7 +522,7 @@ Server text is data: a config value, a header value or a group member's client i
 
 A name that does not exist answers a `QueryError` naming it, and an internal topic's name answers the refusal of [§6.1](#kinds-folders-and-identity).
 
-A part whose own read the broker refuses is that refusal, and the parts that were read are kept: a refusal and an absence are different answers ([`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md)), and DescribeConfigs is a right of its own, apart from Describe.
+A part whose own read the broker refuses is that refusal, and the parts that were read are kept: a refusal and an absence are different answers, and DescribeConfigs is a right of its own, apart from Describe.
 So a principal without DescribeConfigs on a topic sees its partitions and offsets beside a configs part that carries the refusal and no text, and one without DescribeConfigs on the cluster, which `kafka-auth`'s `reader` lacks, sees a broker's source as that one refused part.
 A topic whose offsets are refused shows its partitions without offsets and says why, as a topic with a leaderless partition does.
 A group's two parts rest on two reads, its description and its committed offsets, and the broker can refuse either for a group it lists: ConsumerGroupDescribe refuses a consumer-protocol group whole while a member holds a topic the principal may not describe, and a principal that lists groups by its Describe on the cluster alone is refused both reads of every group.

@@ -390,7 +390,7 @@ Standalone 애플리케이션에서만 사용할 수 있습니다. 임베드용 
 
 > 모든 SQL 데이터베이스에서 공통으로 제공하는 기능은 schema 브라우저, ER 다이어그램, schema 비교 및 migration, 화면 데이터 마스킹(Preview), 모니터링 Panel, Connection string 가져오기입니다. Druid, Elasticsearch, OpenSearch, Trino에는 두 가지 예외가 있습니다. 이들의 HTTP SQL API에는 현재 빌드에서 해석할 수 있는 URI 형식이 없으므로 host와 port를 사용해 설정해야 합니다. 또한 생성된 migration에서는 이러한 제한을 명확하게 안내하며, SQL 자체에 컬럼 변경 statement가 존재하지 않는 엔진에 컬럼 변경 DDL을 생성하지 않습니다. schema가 없는 Couchbase collection도 마찬가지입니다. 검색 cluster의 ER 다이어그램에는 테이블만 표시되고 관계선은 표시되지 않습니다. index에서 foreign key를 정의하지 않으며 엔진의 데이터 모델에도 foreign key 자체가 없기 때문입니다. provider에서는 빈 목록만 반환해 이를 추측하게 하는 대신 `declaresForeignKeys: false`로 명시합니다.
 
-> **Provider 참고 문서:** 각 데이터베이스별 상세 문서(설계, Connection, 쿼리 형식, 모니터링, 제한 사항)는 [`docs/providers/`](docs/providers/README.md)에서 확인할 수 있습니다. provider 아키텍처는 [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md), 새로운 데이터베이스 추가 방법은 [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md)를 참고하세요.
+> **Provider 참고 문서:** 각 데이터베이스별 상세 문서(설계, Connection, 쿼리 형식, 모니터링, 제한 사항)는 [`docs/providers/`](docs/providers/README.md)에서 확인할 수 있습니다. provider 아키텍처는 [`docs/DATABASE_PROVIDERS.md`](docs/DATABASE_PROVIDERS.md)를 참고하세요.
 
 ## 기술 스택
 
@@ -1018,7 +1018,7 @@ docker compose -f docker-compose.vault-demo.yml up
 * [ ] **Phase 16**: DBA 및 모니터링(lock dependency graph, Vacuum scheduler, Prometheus export)
 * [ ] **Phase 17**: 엔터프라이즈 협업(user identity, 공유 Workspace, SAML 2.0)
 * [ ] **Phase 18**: 서버에서 강제 적용되는 데이터 마스킹(SQL output lineage, 배포 단위 global policy, fail-closed API masking, alias/aggregation 지원)
-* [x] **Phase 19**: Driverless provider: Couchbase(Query REST API를 통한 SQL++). runtime dependency를 추가하지 않는 최초의 provider입니다. 이 방식은 [새로운 provider 추가](docs/ADDING_A_PROVIDER.md)에 문서화되어 있습니다.
+* [x] **Phase 19**: Driverless provider: Couchbase(Query REST API를 통한 SQL++). runtime dependency를 추가하지 않는 최초의 provider입니다.
 * [x] **Phase 20**: 분석형 데이터베이스: ClickHouse([#264](https://github.com/libredb/libredb-studio/issues/264))와 Apache Druid([#265](https://github.com/libredb/libredb-studio/issues/265)). 두 엔진 모두 HTTP를 사용하며 별도의 driver가 필요하지 않습니다. Druid는 본래 읽기 전용으로 `UPDATE`, `DELETE`, `CREATE TABLE`을 지원하지 않습니다. 따라서 provider 역시 지원하지 않는 기능을 그대로 명시하고, 실행해도 실패할 작업을 UI에 제공하지 않습니다.
 * [x] **Phase 21**: Federated Query: Trino([#424](https://github.com/libredb/libredb-studio/issues/424), Phase 2). Trino 자체 client protocol을 사용하며 별도의 driver가 필요하지 않습니다. 그동안 해결되지 않았던 제품 설계 문제는 **하나의 Connection이 하나의 catalog를 사용하도록 하는 방식**으로 정리되었습니다. 하나의 PostgreSQL Connection이 하나의 데이터베이스를 사용하는 것과 같은 방식이며, 객체 tree 역시 두 단계 구조를 유지합니다. 각 catalog마다 `information_schema`를 모두 펼쳐 표시하는 방식은 규모가 무제한으로 커질 수 있습니다. 예를 들어 `jmx.current`만 해도 각 MBean마다 하나의 테이블을 제공합니다. Editor에서는 이름을 완전히 지정하면 catalog 간 쿼리도 계속 사용할 수 있습니다. PrestoDB는 향후 별도의 type-id로 추가될 예정입니다. Transport layer는 이미 dialect prefix를 기반으로 response header를 생성하므로 새로운 구현이 아니라 descriptor만 추가하면 됩니다.
 
@@ -1039,7 +1039,6 @@ docker compose -f docker-compose.vault-demo.yml up
 | [로그인 페이지](docs/ui/login-page.md)                                               | 로그인 페이지 layout, OIDC/local mode 및 디자인 시스템                                    |
 | [Editor 문서](docs/editor/)                                                      | SQL Editor 내부 구현: 자동 완성, 성능, 쿼리 최적화                                          |
 | [아키텍처](docs/ARCHITECTURE.md)                                                   | 시스템 아키텍처 및 디자인 패턴                                                            |
-| [새로운 provider 추가](docs/ADDING_A_PROVIDER.md)                                   | 데이터베이스 provider를 단계별로 추가하는 방법과 driver 필요 여부를 판단하는 방법                         |
 | [Backlog](docs/BACKLOG.md)                                                     | 알려진 문제와 아직 issue로 등록되지 않은 보류 작업                                              |
 
 ### 크로스 브라우저 테스트
@@ -1083,7 +1082,7 @@ libredb-studio는 무료 오픈소스 프로젝트입니다. 이 프로젝트가
 
 * [API 문서](docs/API_DOCS.md) · [OIDC 설정](docs/OIDC.md) · [Storage Layer](docs/STORAGE.md)
 
-* [Helm Chart](docs/HELM_CHART.md) · [배포 채널](docs/CHANNELS.md) · [새로운 데이터베이스 추가](docs/ADDING_A_PROVIDER.md)
+* [Helm Chart](docs/HELM_CHART.md) · [배포 채널](docs/CHANNELS.md)
 
 ## 기여
 

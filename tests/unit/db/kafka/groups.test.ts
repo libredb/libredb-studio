@@ -447,7 +447,7 @@ describe("readGroupSource", () => {
     // A principal with Describe on a classic group and not on a topic a member is assigned, as
     // measured on Apache Kafka 4.3.1: DescribeGroups answers the member's assignment, OffsetFetch
     // leaves that topic's committed offsets out, and its high watermark is refused
-    // (docs/ADDING_A_PROVIDER.md, a refusal is an answer; spec 4.3, such a topic keeps its rows).
+    // (a refusal is an answer; spec 4.3, such a topic keeps its rows).
     const denied = "The broker denied access to this topic";
     const source = await readGroupSource(
       client({
@@ -522,7 +522,7 @@ describe("readGroupSource", () => {
 });
 
 describe("readGroupSource, a part whose own read the broker refuses (spec 4.4)", () => {
-  // docs/ADDING_A_PROVIDER.md: a refusal and an absence are different answers, and must not arrive as
+  // A refusal and an absence are different answers, and must not arrive as
   // one. Measured on Apache Kafka 4.3.1 with StandardAuthorizer: a consumer-protocol group whose member
   // holds a topic the principal may not describe is refused whole by ConsumerGroupDescribe
   // (TOPIC_AUTHORIZATION_FAILED, no members) while OffsetFetch answers the committed offsets the

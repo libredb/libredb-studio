@@ -359,13 +359,13 @@ bun run test:coverage  # отчёт о покрытии
 
 - [Архитектура](docs/ARCHITECTURE.md) · [Провайдеры баз данных](docs/DATABASE_PROVIDERS.md) · [Справочник по СУБД](docs/providers/README.md)
 - [Документация по API](docs/API_DOCS.md) · [Настройка OIDC](docs/OIDC.md) · [Слой хранения](docs/STORAGE.md)
-- [Helm Chart](docs/HELM_CHART.md) · [Каналы распространения](docs/CHANNELS.md) · [Как добавить СУБД](docs/ADDING_A_PROVIDER.md)
+- [Helm Chart](docs/HELM_CHART.md) · [Каналы распространения](docs/CHANNELS.md)
 
 ## Участие в разработке
 
 Мы рады issues и pull requests. Начните с [CONTRIBUTING.md](CONTRIBUTING.md) и с задач с меткой [`good first issue`](https://github.com/libredb/libredb-studio/labels/good%20first%20issue): в каждой из них указана команда, которой можно проверить, что задача выполнена.
 
-Если вы хотите добавить СУБД, смотрите [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md). Код, документация и тесты отправляются вместе, одним pull request.
+Код, документация и тесты отправляются вместе, одним pull request.
 
 ## Лицензия
 

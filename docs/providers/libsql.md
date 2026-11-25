@@ -1330,6 +1330,5 @@ Every refusal reason it can print, verbatim:
 - libSQL — <https://github.com/tursodatabase/libsql>
 - Turso Database (the Rust engine) — <https://github.com/tursodatabase/turso>
 - Hrana protocol specification — <https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md>
-- [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the registration checklist this provider followed
 - [`docs/providers/sqlite.md`](sqlite.md) — the same dialect against a file
 - [`docs/providers/mongodb.md`](mongodb.md) — sibling provider doc reference

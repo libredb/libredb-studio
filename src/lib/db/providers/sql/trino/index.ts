@@ -11,8 +11,7 @@
  * It extends `SQLBaseProvider` rather than `BaseDatabaseProvider` because the
  * dialect is genuinely standard on the points the shared helpers care about -
  * double-quoted identifiers are correct Trino SQL, and `information_schema` is
- * spelled the ANSI way - which is the case `docs/ADDING_A_PROVIDER.md` names
- * ClickHouse for. Only `prepareQuery()` is overridden, for the one trap below.
+ * spelled the ANSI way. Only `prepareQuery()` is overridden, for the one trap below.
  *
  * Six behaviours measured against a live Trino 476 on 2026-08-20 shape almost
  * everything here, and each produces a wrong answer or a hard failure if

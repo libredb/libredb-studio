@@ -449,7 +449,7 @@ export async function describeObjects(
  * or for a materialized view on its source table (`visibility_checker.rs`, `privilege_access.rs`), so a listed
  * object's definition can be refused with 1063: that refusal is the part, Databend's own words through `serverWords`,
  * never a raise. An object Databend does not hold is Databend's own error (1025, 1003), and an answer with no
- * definition text is raised naming the object, never a part (`ADDING_A_PROVIDER.md`).
+ * definition text is raised naming the object, never a part.
  */
 export async function readObjectSource(
   runner: DatabendStatementRunner,
