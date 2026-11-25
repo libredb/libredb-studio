@@ -2754,7 +2754,7 @@ Its transaction call runs the provider's own method for the action, a begin with
 Every transaction answer's session state is the provider's `isInTransaction()` read after the call, so through the bridge a state is `in-transaction` or `not-in-transaction`, and the bridge keeps none between calls.
 A statement sent with `transaction` runs the provider's prepare, the probe row past the page and `queryInTransaction` with a new array of the request's params, with no run id, no scope and no transaction ender, since it runs on the transaction's own connection, and answers the session state read after it.
 A provider's error passes by reference.
-The transaction route's script of several statements still calls `queryInTransaction` itself, statement by statement, until it moves with `POST /api/db/multi-query`, and reads only the state after them through the host, C-59.
+The transaction route's script of several statements still calls `queryInTransaction` itself, statement by statement, and reads only the state after them through the host, C-59.
 Its execute hands the provider a fresh copy of the caller's own page options and a new array of the request's params, so a provider that writes what it receives changes nothing the host froze, and runs the provider's prepare, the probe row past the page and the statement as the editor query always ran them.
 It answers one source per result set, the main rows first.
 A source reads each row positionally under the result's columns in its value codec form, or, when the codec refuses a cell, in the JSON form the answer writes for that row, sizes it with the pull's measure, C-15, and answers that same array, so each row is measured once, in the form closest to its answer.
@@ -2772,7 +2772,19 @@ A statement Studio composed and its statement guard admitted, which must reach t
 Its calls offer execute alone, honouring no request field, and it is no read-only statement session.
 Its execute runs the provider's plain `query` with exactly one argument, the request's statement, and never the prepare, the probe, params, a run id or a scope, so no page bound is appended to the statement.
 It answers and limits its page as the read-only statement session does, and reads no engine row.
+Each unit of a script of `POST /api/db/multi-query` is served as a script unit session of its own, built per unit by its facade, C-83, opened with the unit and, for the script's last unit only, the dialect and the caller's page options its last statement is bounded with.
+Its execute takes only the unit's own text as the request's statement, and any other text is a defect of the host, thrown by name before anything is called.
+It sends the unit as the script route always sent it: every unit but the last as written, and the last with its last read statement bounded by the provider's prepare, on a fresh copy of the options, and spliced back in place, a write or a module body as written, and never the probe row past the page.
+It runs the provider's `query` with that text, no params, the run id only for a provider that can cancel a run, and the request's scope, and a failure that names the bound Studio added says so, passed by reference.
+Its calls offer execute honouring `offset`, and `console.cancel` and `console.endScope` exactly as the console session offers them, with the same members; it offers no transaction, tree, maintenance or monitoring facet and is no read-only statement session.
+It answers one source per result set, the main rows first, its page applied exactly when the prepare bounded the unit, and its page's row limit is every row the provider returned, at least one, within one page.
 
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sends an earlier unit as written, with the run id only where the provider cancels and the request's scope, and never prepares or probes it"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the script's last unit has its last read statement bounded by the provider's prepare and spliced back, never probed, and a write or a module body is sent as written"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session offers execute honouring offset, and cancel and endScope as the console session offers them, and nothing else"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit's failure that names the bound Studio added says so, and passes by reference"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit answers one source per result set, its page applied exactly when the prepare bounded it, and its page's row limit is every row it returned"
+- test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a script unit session sent a statement other than its unit's text is a host defect, named, and calls nothing"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session runs the provider's queryReadOnly with the request's rows, bytes and mode and the open's timeout and read allowance, and never its plain query"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "a read-only statement session over a provider without queryReadOnly is refused at its open by name, and nothing is called"
 - test `tests/unit/lib/provider-host/legacy-bridge.test.ts` "the bridge's console session is no read-only statement session, and the read-only one offers nothing but execute"
@@ -3103,7 +3115,7 @@ The editor query ends its run's scope once its execute answered or failed, befor
 An end that fails is answered in the run's place, its error by reference, and an end its deadline stopped answers `StudioTimeoutRefusal` naming the end, outcome unknown; after a stop, either is logged by kind and code, since the stop was already answered.
 The answer carries `openTransaction: "rolled-back"` only when the end answered it.
 `POST /api/db/query` and the VS Code backend's `query/run` end their run's scope so.
-`POST /api/db/multi-query` ends its script's scope so once every statement settled, its statements still calling the provider with the scope themselves, C-50, and answers 504 naming the end when its cleanup deadline stopped it.
+`POST /api/db/multi-query` ends its script's scope once after the last unit it ran, at once when that unit answered or failed and once its call settled when Studio stopped waiting for it, C-83, and answers 504 naming the end when its cleanup deadline stopped an end it waited for.
 Only the legacy bridge calls a provider's `endOpenQueryTransaction`.
 
 - test `tests/unit/lib/api/editor-query.test.ts` "the run on a session that offers console.endScope is sent a scope of its own, and that scope is ended once after the run"
@@ -3768,6 +3780,52 @@ The catalog session the database choice opens for a named database, the provider
 - test `tests/unit/mcp/schema-reads-census.test.ts` "no MCP module calls a provider's tree member: the schema reads go through the host core's tree call"
 - test `tests/unit/mcp/schema-reads-census.test.ts` "objectTreeWithinCall is called only by MCP's object tree, and that only by the database choice and inspect_schema"
 
+### C-83 (normative): The editor's script on the host
+
+`POST /api/db/multi-query` runs every unit of its script through the host core's console execute, C-48, one unit at a time in the script's order, each on a script unit session of its own that the legacy bridge serves, C-50.
+The route calls no provider statement member itself.
+The script reads the host core when it opens, after its connection opened and before any unit, so a script run before the core is installed fails by name and sends nothing.
+The route opens its connection within the engine's connect budget and while the request stays, C-55, so a request that leaves while its connection opens is answered at once and sends nothing, and an open past its budget is answered as the open's timeout.
+A connection whose statement timeout is not a whole number of milliseconds from 1 to the longest timer is refused with the query route's sentence before anything is split or opened.
+Each unit's request is fresh: the unit's text, every row for every unit but the last and the request's page for the last, the request's run id, and the script's scope only where the session offers `console.endScope`, the same scope on every unit.
+Each unit's context is fresh: the unit's own deadline, the connection's statement timeout plus ten seconds from the unit's start, a signal that aborts at that deadline or when the request's signal aborts first, and the empty environment.
+The bridge sends each unit's text as the route always sent it, C-50.
+The host pumps each unit's first result within one page, C-53, as the host's measure and wait and never a cut: the unit is answered with the provider's rows by reference, every row, and its page record is released once its answer is built, or once building it failed.
+A row larger than one page is that unit's byte budget refusal, outcome unknown, a value nested past the value codec's depth bound is that unit's error in the codec's sentence, and an answer over one batch waits for the host's large-page slot within the unit's deadline.
+A unit its deadline or the request's leaving stopped is answered as that unit's error inside the script's answer, the statement's timeout refusal in the editor's sentence for the wait it ended or the request's cancellation, the core sends the stopped run's cancel where the session offers `console.cancel`, and the script starts no further unit.
+A unit started after the request left is refused before its call, not-sent, and reaches no provider.
+A unit's failure after Studio stopped waiting for it is logged under the route by kind and code, never its text, and the engine's cancellation answer after the cancel the core sent is not logged.
+The script's scope is ended once after the last unit it ran, C-60: at once when that unit answered or failed, and, when Studio stopped waiting for it, once its call settled, in the background, its failure or stop logged by kind and code, the script answered with no `openTransaction`.
+A provider that ends nothing of its query path is sent no scope and asked to end none, and a script none of whose units reached its provider ends none.
+
+- test `tests/unit/lib/api/editor-script.test.ts` "each unit is one host core execute call on a script unit session of its own, on a fresh request and a context of deadline, signal and env alone"
+- test `tests/unit/lib/api/editor-script.test.ts` "every unit but the last asks every row, and the last asks the request's page"
+- test `tests/unit/lib/api/editor-script.test.ts` "the request names the run by its queryId, and carries the script's scope only on a session that offers console.endScope"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit's answer is built from the provider's result by reference before its page record is released exactly once"
+- test `tests/unit/lib/api/editor-script.test.ts` "a page record is released once even when building the unit's answer throws"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit's answer keeps every row, however many pages its rows would fill"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit row larger than one page is refused as StudioByteBudgetRefusal, outcome unknown"
+- test `tests/unit/lib/api/editor-script.test.ts` "a value nested past the value codec's depth bound in a unit's first result is the unit's error in the codec's sentence"
+- test `tests/unit/lib/api/editor-script.test.ts` "a script opened before the host core is installed throws by name and calls no provider"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit's deadline is its connection's statement timeout plus ten seconds from the unit's start"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit its deadline stops answers StudioTimeoutRefusal in the statement's sentence, outcome unknown, and its later failure is logged by kind and code only"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit whose request leaves answers QueryCancelledError at once, and the core sends its run's cancel once"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit whose page waits for the large-page slot past its deadline answers the slot's sentence"
+- test `tests/unit/lib/api/editor-script.test.ts` "a unit started after its request left is refused before the call and reaches no provider"
+- test `tests/unit/lib/api/editor-script.test.ts` "a provider's error passes as the same object"
+- test `tests/unit/lib/api/editor-script-bounds.test.ts` "a script unit whose provider never answers ends at its deadline in the statement's timeout refusal"
+- test `tests/unit/lib/api/editor-script.test.ts` "the script's scope is ended once after its last unit, under a cleanup context of its own"
+- test `tests/unit/lib/api/editor-script.test.ts` "a provider that ends nothing is sent no scope and asked to end none"
+- test `tests/unit/lib/api/editor-script.test.ts` "after a unit Studio stopped waiting for, the scope is ended once that unit settled, and an end that fails is logged by kind and code only"
+- test `tests/api/db/multi-query.test.ts` "every unit of a script runs through the host core's console execute, one call per unit"
+- test `tests/api/db/multi-query.test.ts` "a unit that does not answer within its deadline is answered as that unit's error with Studio's sentence, and no further unit starts"
+- test `tests/api/db/multi-query.test.ts` "a malformed connection queryTimeout is refused with the query route's sentence before anything is split or opened"
+- test `tests/api/db/multi-query.test.ts` "a request that leaves while its connection opens is answered 499 at once and runs no unit"
+- test `tests/api/db/multi-query.test.ts` "a script run before the host core is installed fails by name and sends no unit"
+- test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "the scan finds a call of a provider statement member, and not a comment or a field that names one"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the transaction route's script and the profile, whose statements still run on the provider"
+
 ## Not yet in this contract
 
 These chapters are added by the changes that bring their enforcers:
@@ -3888,3 +3946,10 @@ Against this contract's earlier text:
 - A statement tool's database listing on a connection that reaches every database ends at `timeout_ms` and when the client leaves, answered as the timeout or the cancel, C-82, where it waited for the listing with no bound.
 - inspect_schema reads the host core before anything else, C-82, so a call made before its install throws by name with no audit record.
 - Every policy and MCP gate reads Studio's grant of the claim, the more restrictive of the declaration's request and Studio's review record, M-54 and M-82, where each read the record itself; for every engine Studio ships the grant is the record's row.
+- The legacy bridge serves a script unit session that sends a script's unit as the script route always sent it, C-50.
+- Every unit of a script of `POST /api/db/multi-query` runs through the host core's console execute under its own deadline and the request's signal, C-83, where the route called the provider itself and waited for each unit without end: a unit that does not answer within its connection's statement timeout plus ten seconds is answered as that unit's error in the editor's sentence, and no further unit starts.
+- A request that leaves while a unit of its script runs is answered at once and the script's scope is ended once that unit settles, in the background, C-60 and C-83, where the route waited for the unit and ended the scope before answering.
+- A unit's row larger than one page is answered as that unit's byte budget refusal, a unit whose first result passes one batch waits for the host's large-page slot within its deadline, and a value nested past the value codec's depth bound in a unit's first result is that unit's error in the codec's sentence, C-83, where each was answered.
+- A connection whose statement timeout is malformed is refused before a script is split or opened, and a script's connection opens within its engine's connect budget and while its request stays, C-83, where the script ran and the open was waited for alone.
+- A script's units are sent the script's scope only where the session offers `console.endScope`, and such a provider's script is asked to end none, C-83, where every unit was sent a scope and the end was refused as not offered.
+- A unit's failure after Studio stopped waiting for it, and a failed end of a stopped script's scope, are logged by kind and code, C-83.

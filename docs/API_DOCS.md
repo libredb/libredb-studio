@@ -563,7 +563,16 @@ That rollback is waited for at most 10 seconds of its own, never ended by the re
 Past that the answer is `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`: "Ending the transaction this request may have left open did not answer within 10 seconds, so Studio stopped waiting for it."
 A rollback that fails is answered in the statement's place, its own error and status.
 After a caller went away, the transaction is rolled back once the statement's own end arrives, and a failure there is logged by its kind and code, never its text.
-`POST /api/db/multi-query` ends a transaction its script left open the same way, once every statement it ran has answered, under the same 10 seconds and the same 504.
+`POST /api/db/multi-query` ends a transaction its script left open the same way, once the last statement it ran has answered, under the same 10 seconds and the same 504.
+When the script's request went away while a statement ran, it ends the transaction once that statement's own end arrives, after the answer, and a failure there is logged by its kind and code, never its text.
+
+`POST /api/db/multi-query` runs each unit of its script through the same host core ([`docs/providers/CONTRACT.md`](providers/CONTRACT.md), clause C-83), one at a time, each under a deadline of its own: the connection's statement timeout plus 10 s from that unit's start.
+A unit still unanswered at its deadline is that unit's error inside the script's `200` answer, Studio's sentence above as its `error`, and no further unit starts; the server sends the run's cancel when the request named a `queryId` and the provider can cancel.
+Each unit's answer is every row its statement returned, measured against the same 32 MiB page: a single row larger than 32 MiB is that unit's error, naming the row's size and the page's budget, and a unit whose rows pass 1 MiB waits for the same one-at-a-time slot within its own deadline.
+A script's units are never cut at the page, since a script's answer has no field to say where a cut fell.
+The script's connection opens within the same connect budget and while the request stays, with the same 499 and 504.
+A connection whose `queryTimeout` is not a whole number of milliseconds from 1 to 2147483647 is refused with `400` and the sentence `POST /api/db/query` answers, before the script is split or its connection opened.
+A request that goes away while a unit runs ends the script at once: that unit's error inside the script's `200` answer is the cancellation, and no further unit starts.
 
 A caller that goes away while the statement runs, a browser that drops the request, is answered at once with `499 QUERY_CANCELLED` and `outcome: "unknown"`, and the server sends the run's cancel under the `queryId` the request named, when the provider can cancel.
 The statement's own end arrives after that answer; a failure there is logged by its kind and code, never its text, except the engine's cancellation answer to the cancel the server sent, which is the run's expected end.

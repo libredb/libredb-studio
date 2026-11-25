@@ -1708,8 +1708,9 @@ and, **only for `SELECT`/CTE-`SELECT` queries that don't already have a `LIMIT`*
 exactly the SQL it is handed.
 
 Which routes call it is a caller policy, not the provider's: `POST /api/db/query` and the transaction
-route's `query` action prepare every statement they are given, while `POST /api/db/multi-query` prepares
-the **last** statement of a script and only when it is a `SELECT` — so a non-final `SELECT` returns its
+route's `query` action prepare every statement they are given, while `POST /api/db/multi-query` has the
+host core's script unit session prepare the **last** statement of a script
+([`CONTRACT.md`](CONTRACT.md), C-50 and C-83), and only when it is a `SELECT`, so a non-final `SELECT` returns its
 full result set, which that route's own
 [section](../editor/query-optimization.md#multi-statement-runs) records rather than claims closed. It
 decided "is this a `SELECT`" with its own `/^\s*SELECT\b/i` until #281 and so skipped preparation for a

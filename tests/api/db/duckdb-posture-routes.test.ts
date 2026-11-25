@@ -28,7 +28,8 @@ import { createMockRequest } from "../../helpers/mock-next";
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
 
-const mockProvider = createMockProvider();
+// Every connection this file opens is a DuckDB one, so the stand-in carries that engine's type.
+const mockProvider = createMockProvider({ type: "duckdb" });
 const mockGetOrCreateProvider = mock(async (...args: unknown[]) => {
   void args;
   return mockProvider;

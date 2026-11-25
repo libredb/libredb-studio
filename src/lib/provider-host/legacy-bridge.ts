@@ -99,6 +99,13 @@
  * src/lib/api/composed-statement.ts: its calls offer execute alone, honouring no request field, and its execute runs
  * the plain `query` with the statement alone, never `prepareQuery` or the probe, so no page bound is appended. It
  * answers and limits its page as the read-only statement session does, through the same result record.
+ *
+ * Each unit of a script of `POST /api/db/multi-query` is served by `bridgedScriptUnit`, a session of its own built per
+ * unit by `openEditorScript` in src/lib/api/editor-script.ts: its execute sends the unit's text as the script route
+ * always sent it, every unit as written but the last, whose last read statement is bounded by `prepareQuery` and
+ * spliced back unless the unit is a module body, never probed, with the run id where the provider cancels and the
+ * request's scope. Its calls offer execute honouring `offset`, and cancel and endScope as the console session offers
+ * them; it answers through the same result record, `pageApplied` exactly when the prepare bounded the unit.
  */
 import {
   BATCH_MAX_BYTES,
@@ -155,11 +162,13 @@ import {
   type TransactionProvider,
 } from "@/lib/db/types";
 import type { RunReadAllowance } from "@/lib/db/read-allowance";
-import { noteAppendedBound } from "@/lib/db/utils/query-limiter";
+import { isSelectQuery, noteAppendedBound } from "@/lib/db/utils/query-limiter";
 import type { ConsoleSession } from "@/lib/provider-host/core/console";
 import type { MaintenanceSession } from "@/lib/provider-host/core/maintenance";
 import type { HealthSession, MonitoringSession } from "@/lib/provider-host/core/monitoring";
 import type { ObjectsSession } from "@/lib/provider-host/core/objects";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { type ExecutionUnit, unitIsModuleBody } from "@/lib/sql/statement-splitter";
 import type { DatabaseType, QueryResult, QueryWarning } from "@/lib/types";
 
 /**
@@ -742,7 +751,7 @@ export function bridgedReadOnlyStatements(
       maxResultBytes: readOnly.budget.maxBytes,
       ...(open.readAllowance === undefined ? {} : { readAllowance: open.readAllowance }),
     };
-    return record.keep(await queryReadOnly(request.statement, budget, readOnly.mode));
+    return record.keep(await queryReadOnly(request.statement, budget, readOnly.mode), false);
   }
 
   return {
@@ -754,11 +763,11 @@ export function bridgedReadOnlyStatements(
 
 /**
  * The legacy result one statement session's execute answered: `keep` records it and answers its execute answer, one
- * source per result set, `pageApplied` false; `answered` reads it back, and `pumpLimits` reads every row it holds, at
- * least one, within one page. `session` names the session in the defect a read before execute answered is.
+ * source per result set, `pageApplied` as the session says; `answered` reads it back, and `pumpLimits` reads every row
+ * it holds, at least one, within one page. `session` names the session in the defect a read before execute answered is.
  */
 function resultRecord(session: string): {
-  readonly keep: (result: QueryResult) => ExecuteAnswer;
+  readonly keep: (result: QueryResult, pageApplied: boolean) => ExecuteAnswer;
   readonly answered: () => QueryResult;
   readonly pumpLimits: (answer: ExecuteAnswer) => PumpLimits;
 } {
@@ -770,9 +779,9 @@ function resultRecord(session: string): {
     return kept;
   }
   return {
-    keep: (result) => {
+    keep: (result, pageApplied) => {
       kept = result;
-      return answerOf(result, false);
+      return answerOf(result, pageApplied);
     },
     answered,
     pumpLimits: () => ({
@@ -804,9 +813,140 @@ export function bridgedComposedStatements(provider: DatabaseProvider): BridgedCo
       calls: COMPOSED_STATEMENT_CALLS,
       readOnlyStatements: false,
       execute: async (request: ExecuteRequest): Promise<ExecuteAnswer> =>
-        record.keep(await provider.query(request.statement)),
+        record.keep(await provider.query(request.statement), false),
     }),
     answered: record.answered,
     pumpLimits: record.pumpLimits,
+  };
+}
+
+/**
+ * What a script unit session is opened with: the unit it serves, and, for the script's last unit only, `tailBound`,
+ * the dialect its last statement is read under and the caller's own page options it is bounded with.
+ */
+export interface ScriptUnitOpen {
+  readonly unit: ExecutionUnit;
+  readonly tailBound?: { readonly dialect: DatabaseType; readonly options: QueryPrepareOptions };
+}
+
+/** A bridged script unit session, the legacy result and page limits it answered, and whether its cancel was sent. */
+export interface BridgedScriptUnit extends BridgedReadOnlyStatements {
+  /** Whether the session's cancel was sent, so the cancellation answer to it is not logged as a late failure. */
+  readonly cancelSent: () => boolean;
+}
+
+/** The text a script's unit is sent as, and whether the provider's prepare bounded it. */
+interface UnitText {
+  readonly text: string;
+  readonly wasLimited: boolean;
+}
+
+/**
+ * The text the script's LAST unit is sent as: its last statement bounded when that statement is a read, and everything
+ * else as written.
+ *
+ * A unit of several statements is a T-SQL batch sent as one request (#1312). Its last statement is bounded by the
+ * provider's prepare, on a fresh copy of the caller's options, and spliced back in place, so `SELECT 1; SELECT * FROM
+ * big` is as bounded as it was when the two were separate requests - unless the batch is a module definition (`CREATE
+ * PROCEDURE … AS …`), whose last statement is part of the body the server stores, where a `TOP` would change the
+ * procedure rather than the result. No row past the page is probed: a script's answer is every row its statement
+ * returned.
+ */
+function boundedText(
+  provider: DatabaseProvider,
+  unit: ExecutionUnit,
+  dialect: DatabaseType,
+  options: QueryPrepareOptions,
+): UnitText {
+  const asWritten = { text: unit.sql, wasLimited: false };
+  const tail = unit.statements[unit.statements.length - 1];
+  if (!isSelectQuery(tail.sql, dialect)) return asWritten;
+  if (unit.statements.length > 1 && unitIsModuleBody(unit, resolveSqlGrammar(dialect))) return asWritten;
+  const { query, wasLimited } = provider.prepareQuery(tail.sql, { ...options });
+  return {
+    text: unit.sql.slice(0, tail.start - unit.start) + query + unit.sql.slice(tail.end - unit.start),
+    wasLimited,
+  };
+}
+
+/**
+ * One unit of a script of `POST /api/db/multi-query` served as a script unit session (clause C-50), built per unit by
+ * `openEditorScript` in src/lib/api/editor-script.ts: its execute takes only the unit's own text as the request's
+ * statement, any other text a host defect thrown by name before anything is called, and sends it as the script route
+ * always sent it: as written, or, for a unit opened with `tailBound`, the text `boundedText` builds, never probed. It
+ * calls `query` with that text, no params, the run id only for a provider that cancels, and the request's scope, absent
+ * when the request carries none, and throws `noteAppendedBound` on a failure, by reference. Its calls offer execute
+ * honouring `offset`, the last unit's page, and `console.cancel` and `console.endScope` exactly as `bridgedConsole`
+ * offers them, with the same members; it offers no transaction, tree, maintenance or monitoring facet and is no
+ * read-only statement session. It answers one source per result set, the main rows first, `pageApplied` exactly when
+ * the prepare bounded the unit, and its page's row limit is every row the provider returned, at least one.
+ */
+export function bridgedScriptUnit(provider: DatabaseProvider, open: ScriptUnitOpen): BridgedScriptUnit {
+  const canceller: QueryCancelProvider | undefined = supportsQueryCancel(provider) ? provider : undefined;
+  const ender = endsOpenQueryTransactions(provider) ? provider : undefined;
+  const record = resultRecord("script unit");
+  let cancelSent = false;
+
+  async function execute(request: ExecuteRequest): Promise<ExecuteAnswer> {
+    const { unit, tailBound } = open;
+    if (request.statement !== unit.sql) {
+      throw new Error(
+        "The bridge's script unit session was sent a statement other than its unit's text, a defect of the host.",
+      );
+    }
+    const sent =
+      tailBound === undefined
+        ? { text: unit.sql, wasLimited: false }
+        : boundedText(provider, unit, tailBound.dialect, tailBound.options);
+    const cancelId = canceller === undefined ? undefined : request.runId;
+    let result: QueryResult;
+    try {
+      result = await provider.query(sent.text, undefined, cancelId, request.scope);
+    } catch (error) {
+      // An error that names the bound the limiter added says so, rather than pointing into text the user never wrote.
+      throw noteAppendedBound(error, unit.sql, sent.text);
+    }
+    return record.keep(result, sent.wasLimited);
+  }
+
+  const calls = sessionCalls(
+    {
+      console: {
+        execute: { honours: ["offset"] },
+        cancel: canceller === undefined ? "not-offered" : "offered",
+        endScope: ender === undefined ? "not-offered" : "offered",
+        transaction: "not-offered",
+      },
+      objects: { tree: "not-offered" },
+      maintenance: { run: "not-offered", preview: "not-offered" },
+      monitoring: { panel: "not-offered", poolStats: "not-offered" },
+    },
+    undefined,
+  );
+
+  return {
+    session: Object.freeze({
+      calls,
+      readOnlyStatements: false,
+      execute,
+      ...(canceller === undefined
+        ? {}
+        : {
+            cancel: async (request: CancelRequest): Promise<CancelAnswer> => {
+              cancelSent = true;
+              return { cancelled: await canceller.cancelQuery(request.runId) };
+            },
+          }),
+      ...(ender === undefined
+        ? {}
+        : {
+            endScope: async (request: EndScopeRequest): Promise<EndScopeAnswer> => ({
+              openTransaction: await ender.endOpenQueryTransaction(request.scope),
+            }),
+          }),
+    }),
+    answered: record.answered,
+    pumpLimits: record.pumpLimits,
+    cancelSent: () => cancelSent,
   };
 }

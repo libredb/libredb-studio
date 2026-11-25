@@ -2,7 +2,7 @@ import "../setup-dom";
 import { mockToastSuccess } from "../helpers/mock-sonner";
 import "../helpers/mock-navigation";
 
-import { describe, test, expect, mock, beforeEach } from "bun:test";
+import { afterAll, beforeAll, describe, test, expect, mock, beforeEach } from "bun:test";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { createMockProvider } from "../helpers/mock-provider";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
@@ -24,6 +24,13 @@ import {
 import { mapDatabaseError } from "@/lib/db/map-database-error";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
+import { createHostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+
+// The script's units run through the process's host core (src/lib/provider-host/instance.ts), so this file composes
+// its own.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 /**
  * The id the editor's Stop posts must be the id the multi-query route bound for the unit in flight: the hook mints
@@ -169,6 +176,8 @@ describe("Stop on a script and the multi-query route's binding", () => {
 
   test("the id Stop posts is the id the route bound for the unit in flight", async () => {
     const cancelledIds: string[] = [];
+    // What the route answered, read after the run: a route that throws past its own catch would answer 500 unseen.
+    const answers: Promise<Response>[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -182,6 +191,7 @@ describe("Stop on a script and the multi-query route's binding", () => {
             signal,
           }) as never,
         );
+        answers.push(answer);
         // A real fetch rejects once its signal aborts, whatever the server goes on to answer.
         return new Promise<Response>((resolve, reject) => {
           signal?.addEventListener("abort", () => reject(new DOMException("The operation was aborted.", "AbortError")));
@@ -209,6 +219,8 @@ describe("Stop on a script and the multi-query route's binding", () => {
       expect(seen[0]).toMatch(/^q-\d+-/);
       expect(cancelledIds).toEqual([seen[0] as string]);
       expect(seen).toHaveLength(1);
+      expect(answers).toHaveLength(1);
+      expect((await answers[0])?.status).toBe(200);
       expect(mockToastSuccess).toHaveBeenCalledWith("Query Cancelled", expect.anything());
     } finally {
       globalThis.fetch = originalFetch;

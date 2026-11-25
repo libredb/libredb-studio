@@ -28,7 +28,9 @@ import { CONFIRMATION_FIELD_MESSAGE } from "@/lib/api/run-confirmation";
 import { forgetUsedRunConfirmations } from "@/lib/api/run-confirmation-token";
 import type { EndScopeRecord } from "@/lib/provider-host/core/console";
 import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
-import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import type { OpenWait } from "@/lib/provider-host/core/open-once";
+import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import type { DatabaseConnection } from "@/lib/types";
 
 // The script's end reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -49,7 +51,12 @@ async function withCore<T>(core: HostCore, body: () => Promise<T>): Promise<T> {
 
 // ─── Create mock objects ────────────────────────────────────────────────────
 const mockProvider = createMockProvider();
-const mockGetOrCreateProvider = mock(async () => mockProvider as never);
+/** The stand-in the factory hands out: the file's own provider, typed as the engine of the connection it opens. */
+const standInFor = async (connection: DatabaseConnection) => ({ ...mockProvider, type: connection.type }) as never;
+const mockGetOrCreateProvider =
+  mock<(connection: DatabaseConnection, options?: unknown, context?: unknown, wait?: OpenWait) => Promise<never>>(
+    standInFor,
+  );
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -134,6 +141,7 @@ mock.module("@/lib/query-events/postgres-sink", () => ({
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/multi-query/route");
+const { executeViews, queryTimeoutError } = await import("@/lib/api/editor-query");
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 const validConnection = {
@@ -158,7 +166,7 @@ describe("POST /api/db/multi-query", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateProvider.mockImplementation(standInFor);
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
       rows: [{ id: 1, name: "Alice" }],
       fields: ["id", "name"],
@@ -659,17 +667,13 @@ describe("POST /api/db/multi-query", () => {
       ["an unlimited run", { unlimited: true }, { unlimited: true }],
     ];
 
+    // The file's provider ends nothing of its query path, so its units are sent no scope (clause C-83).
     test.each(accepted)("runs %s as before", async (_name, options, prepared) => {
       const res = await send(options);
 
       expect(res.status).toBe(200);
       expect(mockProvider.prepareQuery).toHaveBeenCalledWith("SELECT * FROM users", prepared);
-      expect(mockProvider.query).toHaveBeenCalledWith(
-        "SELECT * FROM users LIMIT 50",
-        undefined,
-        undefined,
-        expect.any(String),
-      );
+      expect(mockProvider.query).toHaveBeenCalledWith("SELECT * FROM users LIMIT 50", undefined, undefined, undefined);
     });
   });
 
@@ -946,12 +950,7 @@ describe("POST /api/db/multi-query", () => {
       expect(mockProvider.prepareQuery).toHaveBeenCalledWith(finalStatement, { limit: 50 });
       // The response echoes the original text, so the engine-visible bound is the
       // only honest assertion that the statement was actually limited.
-      expect(mockProvider.query).toHaveBeenCalledWith(
-        `${finalStatement} LIMIT 50`,
-        undefined,
-        undefined,
-        expect.any(String),
-      );
+      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`, undefined, undefined, undefined);
     });
 
     test("final statement that is not a SELECT is executed unprepared", async () => {
@@ -970,7 +969,7 @@ describe("POST /api/db/multi-query", () => {
         "-- annotated write\nUPDATE users SET name = 'b'",
         undefined,
         undefined,
-        expect.any(String),
+        undefined,
       );
     });
 
@@ -990,7 +989,7 @@ describe("POST /api/db/multi-query", () => {
         "-- first read\nSELECT * FROM a",
         undefined,
         undefined,
-        expect.any(String),
+        undefined,
       );
     });
 
@@ -1007,12 +1006,7 @@ describe("POST /api/db/multi-query", () => {
 
       await POST(req as never);
 
-      expect(mockProvider.query).toHaveBeenCalledWith(
-        `${finalStatement} LIMIT 50`,
-        undefined,
-        undefined,
-        expect.any(String),
-      );
+      expect(mockProvider.query).toHaveBeenCalledWith(`${finalStatement} LIMIT 50`, undefined, undefined, undefined);
     });
 
     test("comment-led final data-modifying CTE is executed unprepared", async () => {
@@ -1032,7 +1026,7 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, expect.any(String));
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, undefined);
     });
 
     // The route resolves its connection before it asks the classifier, so it asks
@@ -1055,7 +1049,7 @@ describe("POST /api/db/multi-query", () => {
       await POST(req as never);
 
       expect(mockProvider.prepareQuery).not.toHaveBeenCalled();
-      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, expect.any(String));
+      expect(mockProvider.query).toHaveBeenCalledWith(finalStatement, undefined, undefined, undefined);
     });
   });
 
@@ -1358,8 +1352,8 @@ describe("POST /api/db/multi-query", () => {
     expect(end?.ctx.deadline).toBeLessThanOrEqual(after + CLEANUP_DEADLINE_MS);
     expect(end?.ctx.signal.aborted).toBe(false);
 
-    // A provider without the ender: the host refuses the end as not offered, and the body says nothing.
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    // A provider without the ender is sent no scope and asked to end none, and the body says nothing.
+    mockGetOrCreateProvider.mockImplementation(standInFor);
     const plain = await withCore(spying, () =>
       POST(
         createMockRequest("/api/db/multi-query", {
@@ -1370,11 +1364,8 @@ describe("POST /api/db/multi-query", () => {
     );
     expect(plain.status).toBe(200);
     expect("openTransaction" in (await parseResponseJSON<Record<string, unknown>>(plain))).toBe(false);
-    expect(ends[1]?.record).toEqual({
-      kind: "refused",
-      called: false,
-      refusals: [{ rule: "facet-not-offered", pointer: "/console/endScope", name: "console.endScope" }],
-    });
+    // It is sent no scope, so the host core is asked to end none.
+    expect(ends).toHaveLength(1);
   });
 
   test("a script whose end does not answer within 10 s answers 504 naming the end", async () => {
@@ -1431,8 +1422,11 @@ describe("POST /api/db/multi-query", () => {
       order.push("statement settled");
       return { rows: [], fields: [], rowCount: 0, executionTime: 1 };
     });
+    // The route answers a request that left at once, and ends the scope once the statement settled, after the answer.
+    const ended = Promise.withResolvers<void>();
     const endOpenQueryTransaction = mock(async () => {
       order.push("end");
+      ended.resolve();
       return "rolled-back" as const;
     });
     Object.assign(provider, { endOpenQueryTransaction });
@@ -1447,7 +1441,9 @@ describe("POST /api/db/multi-query", () => {
       controller.abort(new DOMException("The request went away.", "AbortError"));
       expect(order).toEqual([]);
       statement.resolve();
-      return answer;
+      const response = await answer;
+      await ended.promise;
+      return response;
     });
     await answered;
 
@@ -1801,7 +1797,7 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     resolveConnectionOverride = async () => governedConnection;
     mockGetSession.mockImplementation(async () => governedSession);
     mockGetOrCreateProvider.mockClear();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateProvider.mockImplementation(standInFor);
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
       if (sql.includes("missing")) {
@@ -1884,12 +1880,7 @@ describe("POST /api/db/multi-query: query events under governance", () => {
     await run({ connectionId: "seed:orders", sql: "SELECT id FROM orders" });
 
     const events = await recordedEvents();
-    expect(mockProvider.query).toHaveBeenCalledWith(
-      "SELECT id FROM orders LIMIT 50",
-      undefined,
-      undefined,
-      expect.any(String),
-    );
+    expect(mockProvider.query).toHaveBeenCalledWith("SELECT id FROM orders LIMIT 50", undefined, undefined, undefined);
     expect(events.map((event) => event.statement)).toEqual(["SELECT id FROM orders"]);
   });
 
@@ -2046,7 +2037,7 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
     clearRateLimitState();
     forgetUsedRunConfirmations();
     mockGetOrCreateProvider.mockClear();
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateProvider.mockImplementation(standInFor);
     (mockProvider.query as ReturnType<typeof mock>).mockClear();
     mockGetSession.mockImplementation(async () => session);
     warn = spyOn(logger, "warn").mockImplementation(() => {});
@@ -2222,5 +2213,200 @@ describe("POST /api/db/multi-query: the server's confirmation of a run", () => {
       expect(ran.status).toBe(200);
       expect(await parseResponseJSON<{ executedCount: number }>(ran)).toMatchObject({ executedCount: 2 });
     });
+  });
+});
+
+/**
+ * The script's units on the host core (docs/providers/CONTRACT.md, clause C-83): each unit is one host core console
+ * execute, under its own deadline and the request's signal; the connection opens within its engine's connect budget
+ * and while the request stays; a malformed statement timeout is refused before anything is split or opened; and a
+ * script run before the host core is installed sends nothing. The unit deadline itself is held by
+ * tests/unit/lib/api/editor-script.test.ts and its bounded child; here a core of the test's answers the stop.
+ */
+describe("POST /api/db/multi-query: the host core", () => {
+  /** A request to this route that the test can abort. */
+  function leavingRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+    return new Request("http://localhost:3000/api/db/multi-query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(standInFor);
+    (mockProvider.query as ReturnType<typeof mock>).mockClear();
+    (mockProvider.prepareQuery as ReturnType<typeof mock>).mockClear();
+    (mockProvider.query as ReturnType<typeof mock>).mockImplementation(async () => ({
+      rows: [{ n: 1 }],
+      fields: ["n"],
+      rowCount: 1,
+      executionTime: 1,
+    }));
+  });
+
+  test("every unit of a script runs through the host core's console execute, one call per unit", async () => {
+    const real = hostCore();
+    const statements: string[] = [];
+    const counting: HostCore = {
+      ...real,
+      executeCall: (session, request, ctx, limits, ports) => {
+        statements.push(request.statement);
+        return real.executeCall(session, request, ctx, limits, ports);
+      },
+    };
+
+    const res = await withCore(counting, () =>
+      POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1; SELECT 2; SELECT 3" },
+        }) as never,
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    expect(statements).toEqual(["SELECT 1", "SELECT 2", "SELECT 3"]);
+    expect((mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0])).toEqual([
+      "SELECT 1",
+      "SELECT 2",
+      "SELECT 3 LIMIT 50",
+    ]);
+    expect((mockProvider.prepareQuery as ReturnType<typeof mock>).mock.calls.map((call) => call[0])).toEqual([
+      "SELECT 3",
+    ]);
+  });
+
+  test("a unit that does not answer within its deadline is answered as that unit's error with Studio's sentence, and no further unit starts", async () => {
+    const real = hostCore();
+    const settled = Promise.withResolvers<void>();
+    const endReached = Promise.withResolvers<void>();
+    const endOpenQueryTransaction = mock<(scope: string) => Promise<string>>(async () => {
+      endReached.resolve();
+      return "rolled-back";
+    });
+    mockGetOrCreateProvider.mockImplementation(
+      async (connection) => ({ ...mockProvider, type: connection.type, endOpenQueryTransaction }) as never,
+    );
+    let calls = 0;
+    const stopping: HostCore = {
+      ...real,
+      executeCall: (...args) => {
+        calls += 1;
+        if (calls !== 2) return real.executeCall(...args);
+        return Promise.resolve({
+          kind: "stopped",
+          reason: new DOMException("The call's deadline has passed.", "TimeoutError"),
+          settled: settled.promise,
+        });
+      },
+    };
+
+    const res = await withCore(stopping, async () => {
+      const answered = await POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "BEGIN; SELECT 2; SELECT 3" },
+        }) as never,
+      );
+      // The scope is ended once the stopped unit settled, after the answer.
+      expect(endOpenQueryTransaction).not.toHaveBeenCalled();
+      settled.resolve();
+      await endReached.promise;
+      return answered;
+    });
+    const data = await parseResponseJSON<{
+      executedCount: number;
+      hasError: boolean;
+      openTransaction?: string;
+      statements: { status: string; error?: string }[];
+    }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.executedCount).toBe(2);
+    expect(data.hasError).toBe(true);
+    expect(data.statements[1]).toMatchObject({
+      status: "error",
+      error: executeViews(mockProvider, new AbortController().signal).view.deadlineSentence,
+    });
+    expect("openTransaction" in data).toBe(false);
+    expect(calls).toBe(2);
+    const scopes = (mockProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[3]);
+    expect(scopes).toHaveLength(1);
+    expect(endOpenQueryTransaction.mock.calls).toEqual([[scopes[0] as string]]);
+  });
+
+  test("a malformed connection queryTimeout is refused with the query route's sentence before anything is split or opened", async () => {
+    for (const queryTimeout of ["abc", 0, 1.5]) {
+      // oxlint-disable-next-line no-await-in-loop -- one value at a time, so each answer is read alone.
+      const res = await POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: { ...validConnection, queryTimeout }, sql: "SELECT 1; SELECT 2" },
+        }) as never,
+      );
+
+      expect(res.status).toBe(400);
+      // oxlint-disable-next-line no-await-in-loop -- the answer of the value just sent.
+      expect((await parseResponseJSON<{ error: string }>(res)).error).toBe(queryTimeoutError(queryTimeout) as string);
+    }
+    expect(queryTimeoutError("abc")).toBe(
+      "The connection's queryTimeout must be a whole number of milliseconds from 1 to 2147483647.",
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("a request that leaves while its connection opens is answered 499 at once and runs no unit", async () => {
+    const opening = Promise.withResolvers<void>();
+    mockGetOrCreateProvider.mockImplementation((_connection, _options, _context, wait) => {
+      // A factory that never opens: only the request's wait can end it, and a route that hands none fails at once.
+      opening.resolve();
+      if (wait === undefined) return Promise.reject(new Error("The route handed the open no wait."));
+      return new Promise<never>((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    });
+    const controller = new AbortController();
+
+    const answer = POST(
+      leavingRequest({ connection: validConnection, sql: "SELECT 1; SELECT 2" }, controller.signal) as never,
+    );
+    await opening.promise;
+    controller.abort(new DOMException("The request went away.", "AbortError"));
+    const res = await answer;
+
+    expect(res.status).toBe(499);
+    expect(mockProvider.query).not.toHaveBeenCalled();
+  });
+
+  test("a script run before the host core is installed fails by name and sends no unit", async () => {
+    const real = hostCore();
+    const errors: unknown[][] = [];
+    const error = spyOn(logger, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    forgetHostCore();
+    let res: Response;
+    try {
+      res = await POST(
+        createMockRequest("/api/db/multi-query", {
+          method: "POST",
+          body: { connection: validConnection, sql: "SELECT 1; SELECT 2" },
+        }) as never,
+      );
+    } finally {
+      installHostCore(real, "test");
+      error.mockRestore();
+    }
+
+    expect(res.status).toBe(500);
+    expect(errors.some((args) => args.some((arg) => arg instanceof HostCoreBootOrderError))).toBe(true);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(mockProvider.query).not.toHaveBeenCalled();
   });
 });
