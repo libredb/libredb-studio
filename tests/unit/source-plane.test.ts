@@ -4,7 +4,9 @@
  * A test that imports a built artifact proves the build, not the code, and passes against a stale dist. So every
  * workspace package's entry points resolve under its `src/`, and no test under `tests/` or `packages/<name>/tests/`
  * names a `dist/` path, the root package (`@libredb/studio`, whose exports are `dist/`) or a workspace package's
- * `dist/`. `bun run lib:load` (scripts/check-lib-load.mjs) is the only path through a built artifact.
+ * `dist/`. `bun run lib:load` (scripts/check-lib-load.mjs) and the SDK's pack test
+ * (packages/provider-sdk/tests/pack.test.ts), which builds the tarball it reads in a temporary directory, are the only
+ * paths through a built artifact.
  *
  * Out of scope, by design: `e2e/`, since Playwright drives a built server; `vscode-extension/test`, which is not a bun
  * workspace package; and a computed specifier in a test, which cannot be read without running it.

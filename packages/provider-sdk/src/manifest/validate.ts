@@ -2,9 +2,11 @@
  * The provider manifest validator (docs/providers/CONTRACT.md, the manifest chapter).
  *
  * `compileManifestValidator` takes the bytes of the schema file, refuses them unless their SHA-256 is
- * `MANIFEST_SCHEMA_SHA256`, and compiles them with ajv's documented JSON Schema 2020-12 entry, `ajv/dist/2020`, in
+ * `MANIFEST_SCHEMA_SHA256`, and compiles them with ajv's documented JSON Schema 2020-12 entry, `ajv/dist/2020.js`, in
  * strict mode with every error reported. The caller reads the bytes: the SDK reads no file and keeps no state, so each
- * call builds its own ajv instance and two validators share nothing.
+ * call builds its own ajv instance and two validators share nothing. The specifier carries its `.js` because ajv 8 has
+ * no `exports` map and Node's ES module loader adds no extension, so the packed SDK (scripts/sdk-pack.ts) would fail to
+ * load under Node without it; Bun and every bundler resolve the same file either way.
  *
  * A manifest is read in three steps. The envelope first, `{ contract }`, which every contract keeps, so a host can tell
  * a manifest built against another contract from a broken one. Then, only for the contract this schema serves, the
@@ -14,7 +16,7 @@
  * not serve, which names the contract the envelope declares.
  */
 import { createHash } from "node:crypto";
-import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020";
+import Ajv2020, { type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import { AGENT_READING_PANELS } from "../calls/types";
 import {
   type AgentCredentialForm,
