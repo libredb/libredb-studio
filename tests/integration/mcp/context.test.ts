@@ -11,9 +11,16 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { ExecutionProfileError, UnknownProviderError } from "@/lib/db/errors";
+import {
+  ExecutionProfileError,
+  PackageEngineUnsupportedError,
+  ProviderUnavailableError,
+  UnknownProviderError,
+} from "@/lib/db/errors";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { getOrCreateProvider } from "@/lib/db/factory";
+import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
@@ -40,6 +47,7 @@ import {
   resetMcpTestState,
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
@@ -788,6 +796,60 @@ describe("the context's source", () => {
       expect(source).not.toContain(seam);
     }
     expect(existsSync(join(ROOT, "src/lib/mcp/guards/cancellation.ts"))).toBe(false);
+  });
+});
+
+// A connection of an engine only a provider package serves (docs/providers/CONTRACT.md, clause C-107): the open's two
+// checks read the server's engine catalog, so a refused package's engine is answered PROVIDER_UNAVAILABLE naming the
+// refusal code, as every route answers it, and an admitted package's engine as one no session opens on yet.
+describe("a connection of an engine a provider package serves or a refused package names", () => {
+  const listed = (type: string): ManagedConnection =>
+    ({
+      id: "seed:acme",
+      name: "Acme Store",
+      type,
+      host: "db.acme.internal",
+      createdAt: new Date(),
+      managed: true,
+      roles: ["*"],
+      seedId: "acme",
+    }) as unknown as ManagedConnection;
+
+  beforeEach(() => {
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-mcp-served", admittedManifest("acmemcpserved"))],
+        [{ name: "acme-mcp-gone", version: "1.0.0", engines: ["acmemcpgone"], code: "PROVIDER_LOAD_FAILED" }],
+      ),
+    );
+  });
+
+  afterEach(() => {
+    forgetServerCatalog();
+  });
+
+  test("both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it", () => {
+    for (const check of [assertAgentCredentialWhereRequired, assertReadRootsWhereRequired]) {
+      let gone: unknown;
+      try {
+        check(listed("acmemcpgone"));
+      } catch (error) {
+        gone = error;
+      }
+      expect(gone).toBeInstanceOf(ProviderUnavailableError);
+      expect((gone as ProviderUnavailableError).code).toBe("PROVIDER_UNAVAILABLE");
+      expect((gone as ProviderUnavailableError).codes).toEqual(["PROVIDER_LOAD_FAILED"]);
+      let served: unknown;
+      try {
+        check(listed("acmemcpserved"));
+      } catch (error) {
+        served = error;
+      }
+      expect(served).toBeInstanceOf(PackageEngineUnsupportedError);
+      expect((served as Error).message).toBe(
+        "This LibreDB Studio opens no session on an engine of a provider package yet.",
+      );
+    }
   });
 });
 

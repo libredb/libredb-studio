@@ -4390,6 +4390,7 @@ The published `DatabaseType` and `isDatabaseType` are unchanged.
 
 A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, on every route and at every factory entry point, before any cache, tunnel or build.
 An admitted package's engine is served by Test Connection, which validates its connection against the engine's field rules, and is refused on every other request, and at the open of a session, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+MCP answers both with the same sentences: `list_connections` lists such a connection with no read tool and the sentence as its `unavailable`, every MCP tool refuses it with that sentence before any open, and the open's own checks refuse it as the factory does.
 Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported`, E-1.
 
 - test `tests/unit/seed/resolve-connection-package-engines.test.ts` "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code"
@@ -4399,6 +4400,9 @@ Both are core's error kinds, `provider-unavailable` and `package-engine-unsuppor
 - test `tests/isolated/factory-package-engines.test.ts` "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build"
 - test `tests/isolated/factory-package-engines.test.ts` "an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet"
 - test `tests/unit/lib/api/error-body.test.ts` "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501"
+- test `tests/unit/mcp/availability.test.ts` "answers the server catalog's refusal for an engine a provider package serves or a refused package names"
+- test `tests/unit/mcp/statement-arms.test.ts` "lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact"
+- test `tests/integration/mcp/context.test.ts` "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it"
 
 ### C-108 (normative): The exit-70 line names the provider package in the error's stack
 

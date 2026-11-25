@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { isFileBased } from "@/lib/db-ui-config";
-import { typeIdRefusal } from "@/lib/db/type-id";
+import { bundledEngineRefusal } from "@/lib/db/server-catalog";
 import type { ManagedConnection } from "@/lib/seed";
 import { newMcpCorrelationId, recordMcpDecision, type McpCallRecord } from "../audit";
 import { mcpConnectionUnavailable } from "../availability";
@@ -34,7 +34,9 @@ import { MCP_STATEMENT_TOOLS, mcpStatementToolFor, mcpWithholdsDatabase } from "
  * as its language's facet says, lists no database.
  * A connection whose type names no provider this Studio has (FND-1), such as a seed entry of a newer Studio, lists its
  * type as written in `engine`, null in `read_tool` and the refusal's sentence in `unavailable`, and no per-engine fact
- * is read for it, so it lists no database.
+ * is read for it, so it lists no database. So does a connection of an engine only a provider package serves, with the
+ * server's engine catalog's refusal (`bundledEngineRefusal`), which for a refused package's engine names the refusal
+ * codes (C-107).
  *
  * Connection metadata comes from the operator's seed file, not from anyone who can write to a
  * database, so the result carries no untrusted-content notice. No provider is called, so one audit
@@ -78,7 +80,7 @@ function fileName(path: string): string {
 
 function listed(connection: ManagedConnection, caller: McpCaller): ListedConnection {
   const { database, environment } = connection;
-  const refusal = typeIdRefusal(connection.type);
+  const refusal = bundledEngineRefusal(connection.type, "open");
   if (refusal !== null) {
     return {
       id: connection.id,
@@ -86,7 +88,7 @@ function listed(connection: ManagedConnection, caller: McpCaller): ListedConnect
       engine: connection.type,
       ...(environment === undefined ? {} : { environment }),
       read_tool: null,
-      unavailable: refusal.sentence,
+      unavailable: refusal.message,
     };
   }
   const unavailable = mcpConnectionUnavailable(caller, connection);

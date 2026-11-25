@@ -15,8 +15,10 @@
  * `"constructor"`, is unknown and never an inherited member.
  *
  * Every server path that checks a connection's type before it reads a per-engine table checks it through
- * `assertBundledEngine`: `resolveConnection` (src/lib/seed/resolve-connection.ts), the choke point of every route, and
- * the provider factory's entry points (./factory). A refused package's engine is refused there as
+ * `assertBundledEngine`: `resolveConnection` (src/lib/seed/resolve-connection.ts), the choke point of every route, the
+ * provider factory's entry points (./factory) and the open checks of MCP's connection context
+ * (src/lib/mcp/context.ts); MCP's availability (src/lib/mcp/availability.ts), which `list_connections` and every MCP
+ * tool answer before any open, reads `bundledEngineRefusal`'s message. A refused package's engine is refused there as
  * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
  * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection serves an admitted
  * engine in this Studio, through `resolvePackageAwareConnection`, which validates its connection against the engine's
@@ -40,8 +42,13 @@ import type { ClaimGrants } from "@/lib/db/claim-grants";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
-import { PackageEngineUnsupportedError, ProviderUnavailableError, type TypeIdRefusal } from "./errors";
-import { assertDatabaseType, isDatabaseType, quoteTypeId, typeIdRefusal } from "./type-id";
+import {
+  PackageEngineUnsupportedError,
+  ProviderUnavailableError,
+  type TypeIdRefusal,
+  UnknownProviderError,
+} from "./errors";
+import { isDatabaseType, quoteTypeId, typeIdRefusal } from "./type-id";
 
 declare const PACKAGE_ENGINE: unique symbol;
 
@@ -156,25 +163,39 @@ export function packageEngineRefusal(id: string, need: EngineNeed): PackageEngin
 }
 
 /**
- * Refuses a connection type that is no bundled type id: a refused package's engine with `ProviderUnavailableError`, an
- * admitted package's engine with `PackageEngineUnsupportedError` for `need`, and every other value as
- * `assertDatabaseType` refuses it.
+ * The refusal of a connection type that is no bundled type id, or null for a bundled one: a refused package's engine
+ * as `ProviderUnavailableError`, an admitted package's engine as `PackageEngineUnsupportedError` for `need`, and every
+ * other value as `UnknownProviderError`, exactly as `assertDatabaseType` refuses it. A surface that answers a refusal
+ * as text, as MCP's `list_connections` and its tools do, reads its message; every other one throws it through
+ * `assertBundledEngine`.
+ */
+export function bundledEngineRefusal(
+  value: unknown,
+  need: EngineNeed,
+): ProviderUnavailableError | PackageEngineUnsupportedError | UnknownProviderError | null {
+  const engine = serverEngine(value);
+  if (engine.kind === "bundled") return null;
+  if (engine.kind === "unavailable") {
+    return new ProviderUnavailableError(
+      `The connection type ${quoteTypeId(engine.id)} is served by a provider package this LibreDB Studio refused when it started (${engine.codes.join(", ")}), so no provider can open it; the server's log names the package and why.`,
+      engine.id,
+      engine.codes,
+    );
+  }
+  if (engine.kind === "package") return packageEngineRefusal(engine.engine.id, need);
+  return new UnknownProviderError(engine.refusal);
+}
+
+/**
+ * Refuses a connection type that is no bundled type id with `bundledEngineRefusal`'s answer.
  *
  * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  * @throws {PackageEngineUnsupportedError} When an admitted package serves the engine.
  * @throws {UnknownProviderError} When the type is absent, not text, or names no engine the server knows.
  */
 export function assertBundledEngine(value: unknown, need: EngineNeed): asserts value is DatabaseType {
-  const engine = serverEngine(value);
-  if (engine.kind === "unavailable") {
-    throw new ProviderUnavailableError(
-      `The connection type ${quoteTypeId(engine.id)} is served by a provider package this LibreDB Studio refused when it started (${engine.codes.join(", ")}), so no provider can open it; the server's log names the package and why.`,
-      engine.id,
-      engine.codes,
-    );
-  }
-  if (engine.kind === "package") throw packageEngineRefusal(engine.engine.id, need);
-  if (engine.kind === "refused") assertDatabaseType(value);
+  const refusal = bundledEngineRefusal(value, need);
+  if (refusal !== null) throw refusal;
 }
 
 /**

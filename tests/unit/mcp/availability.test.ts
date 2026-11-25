@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { REFUSES_DENIED_FILE_ACCESS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { MCP_CONNECTION_UNAVAILABLE_TEXT, mcpConnectionUnavailable } from "@/lib/mcp/availability";
 import type { McpCaller } from "@/lib/mcp/context";
@@ -9,6 +11,7 @@ import { filterByRoles } from "@/lib/seed/connection-filter";
 import { seedRolesOf } from "@/lib/seed/roles";
 import type { SeedConnection } from "@/lib/seed/types";
 import type { DatabaseType } from "@/lib/types";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { namedLabels } from "../../helpers/repo-text-scope";
 
 const ADMIN: McpCaller = { username: "alice", role: "admin" };
@@ -31,6 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  forgetServerCatalog();
   if (savedGovernance === undefined) delete process.env.GOVERNANCE_SOURCE;
   else process.env.GOVERNANCE_SOURCE = savedGovernance;
 });
@@ -65,6 +69,24 @@ describe("mcpConnectionUnavailable", () => {
     const copy = copyFor(ADMIN, "sqlite", ["admin", "user"]);
     expect(copy.roles).toEqual(["admin"]);
     expect(mcpConnectionUnavailable(ADMIN, copy)).toBe(MCP_CONNECTION_UNAVAILABLE_TEXT);
+  });
+
+  // An engine only a provider package serves has no row in any table either (docs/providers/CONTRACT.md, clause C-107):
+  // a refused package's engine answers the sentence naming the refusal code, an admitted one the open's own sentence.
+  test("answers the server catalog's refusal for an engine a provider package serves or a refused package names", () => {
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-avail-served", admittedManifest("acmeavailserved"))],
+        [{ name: "acme-avail-gone", version: "1.0.0", engines: ["acmeavailgone"], code: "PROVIDER_LOAD_FAILED" }],
+      ),
+    );
+    const listed = (type: string) => ({ ...copyFor(ADMIN, "sqlite", ["admin"]), type }) as unknown as ManagedConnection;
+    expect(mcpConnectionUnavailable(ADMIN, listed("acmeavailgone"))).toBe(
+      'The connection type "acmeavailgone" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_LOAD_FAILED), so no provider can open it; the server\'s log names the package and why.',
+    );
+    expect(mcpConnectionUnavailable(USER, listed("acmeavailserved"))).toBe(
+      "This LibreDB Studio opens no session on an engine of a provider package yet.",
+    );
   });
 
   // A connection whose type names no provider (FND-1) has no row in any table, so its refusal is the one sentence every
