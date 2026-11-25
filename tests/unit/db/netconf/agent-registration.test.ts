@@ -11,7 +11,8 @@ import { fingerprintNetconfrpc, netconfrpcRowCapAdvice } from "@/lib/agent/langu
 import { NETCONFRPC_CLIENT_PACK } from "@/lib/agent/languages/netconfrpc/client";
 import { NETCONFRPC_TOOL_OVERRIDES } from "@/lib/agent/languages/netconfrpc/definitions";
 import { NETCONFRPC_SERVER_PACK } from "@/lib/agent/languages/netconfrpc/server";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {

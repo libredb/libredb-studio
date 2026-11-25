@@ -1,7 +1,7 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { MCP_AGENT_CREDENTIAL_REQUIRED, READ_ROOTS_REQUIRED } from "@/lib/db/compatibility";
+import { GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED, GRANTED_READ_ROOTS_REQUIRED } from "@/lib/db/claim-grants";
 import { StudioProfileRefusal } from "@/lib/db/errors";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { acquireExecutionProfileProvider, type ExecutionProfile } from "@/lib/db/factory";
@@ -107,7 +107,7 @@ async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedCo
  */
 export function assertAgentCredentialWhereRequired(
   connection: ManagedConnection,
-  required: Readonly<Record<ManagedConnection["type"], boolean>> = MCP_AGENT_CREDENTIAL_REQUIRED,
+  required: Readonly<Record<ManagedConnection["type"], boolean>> = GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
 ): void {
   assertDatabaseType(connection.type);
   if (!required[connection.type]) return;
@@ -127,7 +127,7 @@ export function assertAgentCredentialWhereRequired(
  */
 export function assertReadRootsWhereRequired(
   connection: ManagedConnection,
-  required: Readonly<Record<ManagedConnection["type"], boolean>> = READ_ROOTS_REQUIRED,
+  required: Readonly<Record<ManagedConnection["type"], boolean>> = GRANTED_READ_ROOTS_REQUIRED,
 ): void {
   assertDatabaseType(connection.type);
   if (!required[connection.type] || connection.agentReadRoots !== undefined) return;

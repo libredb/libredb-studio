@@ -111,6 +111,7 @@ import type { AgentRunMode, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 import { detectConnectionStringType, parseConnectionString, pasteText } from "@/lib/connection-string-parser";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
   CONNECTION_FORM_URI_MODE,
@@ -123,7 +124,6 @@ import {
   MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ONLY_ENFORCED,
   READ_ROOTS_REQUIRED,
   READS_FILE_ACCESS_POSTURE,
   READS_TRUST_MATERIAL,

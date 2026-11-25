@@ -25,12 +25,8 @@ import { IMPORT_NO_TARGET, importRefusal } from "@/components/DataImportModal";
 import { SOURCE_BILLED_COMPUTE_HOLD } from "@/components/object-source/ObjectSourceView";
 import { BILLED_COMPUTE_HOLD } from "@/components/object-tree/ObjectTree";
 import { DB_UI_CONFIG, DATABEND_FIELD_HINTS } from "@/lib/db-ui-config";
-import {
-  CONNECTION_STRING_ACCEPTED,
-  MCP_EXPOSABLE,
-  READ_ONLY_ENFORCED,
-  READS_FILE_ACCESS_POSTURE,
-} from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { CONNECTION_STRING_ACCEPTED, MCP_EXPOSABLE, READS_FILE_ACCESS_POSTURE } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";

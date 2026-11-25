@@ -1,5 +1,6 @@
 import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { GRANTED_MCP_EXPOSABLE, GRANTED_MCP_STATEMENT_READ } from "@/lib/db/claim-grants";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -8,22 +9,22 @@ import type { DatabaseType } from "@/lib/types";
  * not name, and no type-id table is read outside the records below.
  *
  * An engine is served when Studio's review record of the engines agent and MCP statements run on
- * (`AGENT_EXECUTION_ENGINES`) lists it, `MCP_EXPOSABLE` offers it to MCP, `MCP_STATEMENT_READ` opens statement reads on
- * it, and its statement language is the tool's. The second record is what keeps an engine whose agent PR has merged
- * closed to MCP until its own change opens it. The acquisition and the core read path read the first record again at
- * run time, so an engine off it is refused by name there too.
+ * (`AGENT_EXECUTION_ENGINES`) lists it, Studio's grant `GRANTED_MCP_EXPOSABLE` offers it to MCP,
+ * `GRANTED_MCP_STATEMENT_READ` opens statement reads on it, and its statement language is the tool's. The second grant
+ * is what keeps an engine whose agent PR has merged closed to MCP until its own change opens it. The acquisition and
+ * the core read path read the first record again at run time, so an engine off it is refused by name there too.
  */
 export interface McpExposure {
   readonly executes: readonly DatabaseType[];
-  readonly exposable: typeof MCP_EXPOSABLE;
-  readonly statementRead: typeof MCP_STATEMENT_READ;
+  readonly exposable: typeof GRANTED_MCP_EXPOSABLE;
+  readonly statementRead: typeof GRANTED_MCP_STATEMENT_READ;
   readonly language: typeof AGENT_STATEMENT_LANGUAGE;
 }
 
 const SHIPPED_EXPOSURE: McpExposure = {
   executes: AGENT_EXECUTION_ENGINES,
-  exposable: MCP_EXPOSABLE,
-  statementRead: MCP_STATEMENT_READ,
+  exposable: GRANTED_MCP_EXPOSABLE,
+  statementRead: GRANTED_MCP_STATEMENT_READ,
   language: AGENT_STATEMENT_LANGUAGE,
 };
 

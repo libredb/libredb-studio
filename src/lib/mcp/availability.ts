@@ -1,5 +1,5 @@
 import { editorExecutionContext } from "@/lib/api/execution-context";
-import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
+import { GRANTED_DENIED_FILE_ACCESS_REFUSAL } from "@/lib/db/claim-grants";
 import { typeIdRefusal } from "@/lib/db/type-id";
 import type { ManagedConnection } from "@/lib/seed";
 import type { McpCaller } from "./context";
@@ -31,7 +31,7 @@ export const MCP_CONNECTION_UNAVAILABLE_TEXT =
 export function mcpConnectionUnavailable(
   caller: McpCaller,
   connection: ManagedConnection,
-  refuses: Readonly<Record<ManagedConnection["type"], string | null>> = REFUSES_DENIED_FILE_ACCESS,
+  refuses: Readonly<Record<ManagedConnection["type"], string | null>> = GRANTED_DENIED_FILE_ACCESS_REFUSAL,
 ): string | null {
   const refusal = typeIdRefusal(connection.type);
   if (refusal !== null) return refusal.sentence;

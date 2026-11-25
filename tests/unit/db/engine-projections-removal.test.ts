@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
  * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
- * M-75, M-77, M-78, M-79, M-80 and M-81).
+ * M-75, M-77, M-78, M-79, M-80, M-81 and M-82).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -40,6 +40,7 @@ import {
   renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
+import { grantClaims, STUDIO_CLAIM_RECORDS, UNGRANTED_DENIED_FILE_ACCESS_SENTENCE } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CONNECTION_FORM_FUNCTIONS, composeConnectionForm } from "@/lib/db/connection-form";
 import { CONNECTION_STRING_FUNCTIONS, composeConnectionString } from "@/lib/db/connection-string";
@@ -480,6 +481,46 @@ describe("each projection of the admitted declarations, built with and without a
       expect(requests).toEqual(built);
       expect(Object.keys(requests)).toEqual(Object.keys(built));
       expect(JSON.stringify(requests)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set", () => {
+    const shipped = grantClaims(projectClaimRequests(ADMITTED), STUDIO_CLAIM_RECORDS);
+    const withFixture = grantClaims(projectClaimRequests([...ADMITTED, FIXTURE]), STUDIO_CLAIM_RECORDS);
+    const fixtureRow = Object.fromEntries(
+      Object.entries(withFixture).map(([table, rows]) => [
+        table,
+        (rows as Readonly<Record<string, unknown>>)[FIXTURE.id],
+      ]),
+    );
+
+    // postgres's requests, which Studio's records hold no row of under the fixture's id.
+    expect(FIXTURE.policy).toEqual(POSTGRES.policy);
+    expect(FIXTURE.mcp).toEqual(POSTGRES.mcp);
+    expect(fixtureRow).toEqual({
+      writeReach: "open",
+      readsFileAccessPosture: true,
+      deniedFileAccessRefusal: UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+      singleWriterFile: false,
+      readRootsRequired: true,
+      agentCredentialForm: "none",
+      maskingExemptColumns: null,
+      exposable: false,
+      statementRead: false,
+      metadataReadChangesState: true,
+      agentCredentialRequired: true,
+      readOnlyEnforced: false,
+      ungrantedRefusals: null,
+    });
+
+    const removed = grantClaims(
+      projectClaimRequests([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id)),
+      STUDIO_CLAIM_RECORDS,
+    );
+    expect(removed).toEqual(shipped);
+    for (const rows of Object.values(removed)) {
+      expect(Object.hasOwn(rows, FIXTURE.id)).toBe(false);
+      expect(Object.keys(rows)).toEqual([...SHIPPED_DATABASE_TYPES]);
     }
   });
 

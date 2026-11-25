@@ -7,7 +7,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { NAMESPACE_CAP_NOTICE } from "@/lib/db/providers/platform/kubernetes/connect-warnings";
 import { KUBERNETES_CONNECTION_SENTENCES } from "@/lib/db/providers/platform/kubernetes/connection-options";
 import {

@@ -19,6 +19,7 @@ export interface InventoryEntry {
   readonly destination: string;
 }
 
+const CLAIM_GRANTS_MODULE = "src/lib/db/claim-grants.ts";
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
 const CONNECTION_FIELDS_MODULE = "src/lib/db/connection-fields.ts";
 const CONNECTION_MODULE = "src/lib/db/engine-catalog/connection.generated.ts";
@@ -32,6 +33,9 @@ function claim(member: string): string {
 function projected(member: string): string {
   return `engine declaration: ${member}, authored in each declaration and projected into this generated record, which tests/unit/db/engine-catalog.test.ts holds to them`;
 }
+/** The destination of a granted table: Studio's grant, computed from the declared request and Studio's record. */
+const GRANTED =
+  "core-owned: Studio's grant of a claim, computed from the engine's request and Studio's review record of the claim (docs/providers/CONTRACT.md, clause M-54)";
 const STATEMENT_FAMILY =
   "core-owned: the vocabulary of a statement language family, which core keeps once for every engine that speaks it";
 
@@ -57,6 +61,19 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "DB_UI_CONFIG",
     destination: "planned segment: presentation, the icon as an SVG asset and the colour",
   },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_CREDENTIAL_FORM", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_DENIED_FILE_ACCESS_REFUSAL", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MASKING_EXEMPT_COLUMNS", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_EXPOSABLE", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_METADATA_READ_CHANGES_STATE", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MCP_STATEMENT_READ", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READ_ROOTS_REQUIRED", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_READS_FILE_ACCESS_POSTURE", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_SINGLE_WRITER_FILE", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_WRITE_REACH", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "READ_ONLY_ENFORCED", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "UNGRANTED_CLAIM_REFUSALS", destination: GRANTED },
   { module: COMPATIBILITY, name: "WRITE_REACH", destination: claim("policy.writeReach") },
   { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: claim("policy.readsFileAccessPosture") },
   {

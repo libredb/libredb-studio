@@ -735,9 +735,11 @@ An engine states in `policy` and `mcp`, and in the members of its other segments
 Each such member is a claim: a request, never a fact Studio believes as declared.
 A declared fact is a claim when a gate Studio decides reads it, a value lets that gate pass what another value stops on the strength of what the provider or the engine does, and it has a restrictive value; any other declared fact is not a claim.
 A fact whose values only add to what a gate stops, from an open-ended vocabulary, such as a credential warning, has no restrictive value and is not a claim, and where it is absent the gate answers at core's own default.
-Studio's review record of each claim is the table of Studio's source the declaration is generated from, except the confirmation gate's claims, whose record is `CONFIRMATION_CLAIM_REVIEW` (S-8), and every gate reads that record.
+Studio's review record of each claim is a table of Studio's source, except the confirmation gate's claims, whose record is `CONFIRMATION_CLAIM_REVIEW` (S-8).
+A declaration authors its policy and MCP claims, M-15, and every gate reads each of them only as Studio's grant of it, M-54, which the grant reader `src/lib/db/claim-grants.ts`, the one module that reads their records, computes, M-82.
+Each claim of the other segments is generated into the declaration from its record, and every gate reads that record.
 Each per-engine record of a claim Studio keeps in core is written by hand, a literal never computed, so no projection of the declarations can feed one; `CONFIRMATION_CLAIM_REVIEW` is written by hand too.
-Only the modules `tests/unit/db/engine-declaration-readers.test.ts` lists read a declaration or a projection of the declarations, and none of them reads a claim but the modules its `CLAIM_READERS` lists, the claim projection and its generated module, which carry the policy and MCP requests as declared, M-82; no member a declaration authors is a claim, M-15, but the policy and MCP claims and the confirmation gate's two, `sqlText.readsSqlText` and an exempt form, which the gate counts only where `CONFIRMATION_CLAIM_REVIEW` lists them, S-8, so a declared claim alone never reaches a gate.
+Only the modules `tests/unit/db/engine-declaration-readers.test.ts` lists read a declaration or a projection of the declarations, and none of them reads a claim but the modules its `CLAIM_READERS` lists, the claim projection and its generated module, which carry the policy and MCP requests as declared, and the grant reader, which grants them, M-82; no member a declaration authors is a claim, M-15, but the policy and MCP claims and the confirmation gate's two, `sqlText.readsSqlText` and an exempt form, which the gate counts only where `CONFIRMATION_CLAIM_REVIEW` lists them, S-8, so a declared claim alone never reaches a gate.
 For every engine Studio ships, each request is its record's row.
 Read-only enforcement is no member: Studio keeps a connection's read-only mode wherever the write reach is not `open`.
 The engines agent and MCP statements run on are Studio's record alone, C-39, and S-8 applies the same rule to the confirmation gate's claims.
@@ -757,6 +759,7 @@ The engines agent and MCP statements run on are Studio's record alone, C-39, and
 - test `tests/unit/db/engine-declaration-readers.test.ts` "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module and the SQL grammar, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW"
 - test `tests/unit/mcp/served-engines.test.ts` "an engine agent mode does not execute on is not served, whatever its rows say"
+- test `tests/unit/db/claim-record-readers.test.ts` "every policy and MCP claim record is read only by the grant reader"
 - test `tests/unit/db/write-reach-capability.test.ts` "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries"
 
 ### M-53 (normative): The restrictive value of each claim
@@ -812,20 +815,40 @@ Every restrictive value is a request the schema admits.
 - test `tests/unit/lib/agent/composed-catalog-admission-drive.test.ts` "an overlay that does not declare its catalog read a command gets the ordinary refusal"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a catalog read that claims no command, the claim's restrictive value, is admitted"
 
-### M-54 (informative): How a host grants a claim
+### M-54 (normative): How a host grants a claim
 
 A host reads each claim as the more restrictive of the manifest's request and the grant.
 The grant is the row of Studio's review record for the engine, or an operator's audited grant for the package, and the claim's restrictive value, M-53, where neither exists.
+An operator's audited grant of a masking exemption names the protected column names the exemption reaches.
 So a restrictive request is read as made, a looser one only as far as a grant allows, and a declared claim alone never loosens a gate.
-A write reach request is capped at the grant: a request of `none` on an engine whose record grants `guarded` is read as `guarded`.
+A record's row is the engine's own property of the record, so a key the record inherits is no row.
+A write reach request is capped at the grant: a request of `none` on an engine whose record grants `guarded` is read as `guarded`, and any request on an engine with no grant is read as `open`.
+Studio keeps a connection's read-only mode exactly where the granted write reach is not `open`.
+A claim whose restrictive value is true, `readsFileAccessPosture`, `readRootsRequired`, `metadataReadChangesState` and `agentCredentialRequired`, is read as true where the request or the grant is true; one whose restrictive value is false, `exposable` and `statementRead`, is read as true only where both are.
+A denied file access refusal that is requested keeps its own sentence, one offered against a refusing grant takes the record's sentence, and one offered where no grant exists takes the host's own sentence.
+A single-writer file request is read as its grant where it equals the grant, false where no grant exists; any other request leaves the engine refused by name at every open, before any cache lookup, tunnel or build, since a second read-write handle on one file and one handle shared between users both overreach.
+The agent credential form's record writes the pair form as null, and a request of `pair` equals that row.
+A request value outside its claim's vocabulary is refused by name, naming the claim and the engine.
 A set of things a gate admits, refuses or keeps apart, `connection.hostPathFields`, is read as the union of the request and the grant, and a set of things a gate offers, `facets.agentReadings`, as their intersection.
 A claim whose values M-53 does not order, such as two statement languages, two agent credential forms or two redactions other than `none`, is read as its grant where the request equals it, and at its restrictive value otherwise.
 An SSH tunnel request that is refused keeps its own sentence, a request offered against a refused grant takes the record's sentence, and one offered where no grant exists takes the host's own sentence.
 A record whose rows are declared beside each provider or engine in Studio's source, `ENGINE_FACETS` and the agent overlay registry, is Studio's review record while those rows are outside any provider package.
 The `sqlText.redaction` row is kept in `SQL_TEXT_REDACTION`, a core record keyed by the engine and written by hand, its command reader held by name and bound through Studio's grammar function table, since Studio's SQL grammar is projected from the declarations, M-78.
 The change that moves a provider whose row records a claim into a package, or the first change that makes Studio read that claim from a declaration, whichever comes first, keeps the claim's row in a core record keyed by the engine, so a package never carries its own grant.
-Studio reads no declaration's claims yet, M-52, so nothing checks this rule, and the change that first makes Studio read them applies it and adds its enforcer.
+Studio reads the policy and MCP claims from the admitted declarations through its grant reader by these rules, M-82; the claims of the other segments are not read from a declaration yet, M-52, and the change that first reads one applies this clause to it and extends its enforcer.
 
+- test `tests/unit/db/claim-grants.test.ts` "a write reach request is capped at the grant, and read open where no record exists"
+- test `tests/unit/db/claim-grants.test.ts` "a claim whose restrictive value is true is granted true where the request or the record is, or no record exists: %s, request %p, record %p"
+- test `tests/unit/db/claim-grants.test.ts` "a claim whose restrictive value is false is granted true only where both the request and the record are: %s, request %p, record %p"
+- test `tests/unit/db/claim-grants.test.ts` "a denied file access refusal requested keeps its own sentence, one offered against a record's refusal takes the record's, and one offered where no record exists takes core's own"
+- test `tests/unit/db/claim-grants.test.ts` "a single-writer file request equal to its grant is read as granted, and any other request leaves the engine refused at every open, by name"
+- test `tests/unit/db/claim-grants.test.ts` "an agent credential form request equal to the record, pair for its null row, is read as the record's, and any other, or one with no record, as none"
+- test `tests/unit/db/claim-grants.test.ts` "a masking exemption request equal to the record's row is granted, and any other, or one with no record, is read as null"
+- test `tests/unit/db/claim-grants.test.ts` "a claim value outside its vocabulary is refused by name, naming the claim and the engine"
+- test `tests/unit/db/claim-grants.test.ts` "READ_ONLY_ENFORCED is true exactly where the granted write reach is not open"
+- test `tests/unit/db/claim-grants.test.ts` "the granted tables are frozen, each row too, keyed exactly by the shipped engines"
+- test `tests/unit/lib/db/claim-grant-refusal.test.ts` "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none"
+- test `tests/isolated/claim-grant-open-refusal.test.ts` "each of the factory's four entry points refuses an engine left refused at open before any cache lookup, tunnel or build"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one"
 - test `tests/unit/db/sql-grammar/compose.test.ts` "the redaction is the record's row, a command reader bound through the function table, never the entry's"
 - test `tests/unit/db/engine-declarations.test.ts` "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it"
@@ -839,7 +862,7 @@ A request of `none` refuses every agent acquisition, so it is held to no seed fo
 Read roots are required only of an engine whose seed-only fields name `agentReadRoots`.
 A denied file access refusal is stated only for an engine that reads the file-access posture.
 The rules check requests, never a host's reading of them: a request of every policy and MCP claim at its restrictive value meets them where the engine's connection allows it.
-An engine a host reads as requiring an agent credential it takes none of is closed to MCP.
+An engine a host reads as requiring an agent credential it takes none of is closed to MCP: Studio's grant of `exposable` is false where its grant of `agentCredentialRequired` is true and the engine's `SEED_AGENT_CREDENTIAL` row is null or absent, M-54.
 
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a statement read on an engine not exposed to MCP is refused as statement-read-unexposed"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential required of an engine whose seeds take none is refused as agent-credential-form-missing"
@@ -848,6 +871,7 @@ An engine a host reads as requiring an agent credential it takes none of is clos
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a denied file access refusal on an engine that reads no file-access posture is refused as denied-file-access-unread"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an engine declaration's claims are held to the rules the schema cannot state, at pointers into it"
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "a policy and an MCP segment at every claim's restrictive value are admitted"
+- test `tests/unit/db/claim-grants.test.ts` "an engine read as requiring an agent credential its seeds take none of is closed to MCP"
 
 ### M-56 (normative): The trust material a provider is handed
 
@@ -863,9 +887,9 @@ No gate reads it, the material is the operator's public certificates, and a prov
 ### M-57 (normative): A built provider's own declaration of a claim this clause names reaches no gate
 
 A provider's capabilities restate, once it is built, some claims an engine declaration requests: its write reach on each write path, whether it reads the file-access posture, whether it keeps one handle per file, the form the agent's own credential takes, the result columns it exempts from the masking rules, and whether it opens a session per database a caller names.
-Studio's gates read each from Studio's review record of the claim, never from the provider.
-Read-only mode reads `WRITE_REACH`, the file-access posture's cache key and borrow read `READS_FILE_ACCESS_POSTURE`, the provider cache key's owner and the single-writer borrow read `SINGLE_WRITER_FILE`, and every agent acquisition reads the agent credential's shape from `AGENT_CREDENTIAL_FORM`, null where the provider declares no form.
-Studio's producers of client capabilities, `readProviderDeclarations` and the VS Code backend's connection description, answer the masking exemption from `MASKING_EXEMPT_COLUMNS`, absent where its row is null, in place of the provider's own, so the browser and the webview read Studio's record at `capabilities.maskingExemptColumns`, and a client with no answer yet exempts nothing.
+Studio's gates read each from Studio's grant of the claim, M-54, never from the provider.
+Read-only mode reads `GRANTED_WRITE_REACH` and `READ_ONLY_ENFORCED`, the file-access posture's cache key and borrow read `GRANTED_READS_FILE_ACCESS_POSTURE`, the provider cache key's owner and the single-writer borrow read `GRANTED_SINGLE_WRITER_FILE`, and every agent acquisition reads the agent credential's shape from `GRANTED_AGENT_CREDENTIAL_FORM`, null where the provider declares no form, each in `src/lib/db/claim-grants.ts`.
+Studio's producers of client capabilities, `readProviderDeclarations` and the VS Code backend's connection description, answer the masking exemption from `GRANTED_MASKING_EXEMPT_COLUMNS`, absent where its row is null, in place of the provider's own, so the browser and the webview read Studio's grant at `capabilities.maskingExemptColumns`, and a client with no answer yet exempts nothing.
 Catalog sessions, `catalogSessions`, are answered per connection, so no record replaces the provider's answer, and Studio bounds it instead.
 The places that honour a caller's choice of database, `scopeToCatalog` (every editor route, the VS Code backend and MCP through it), `providerInDatabase` and the agent runs route, read it through `catalogChoice`, only where `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` holds the engine and the connection names no database and no connection string, and otherwise refuse the choice, saying why.
 `assertNotWholeServer` reads the provider's own answer, since there a declaration only refuses more.
@@ -902,7 +926,7 @@ For every engine Studio ships, each provider's own declaration is its record's r
 
 `policy.agentCredentialForm` is one of the forms Studio's agent credential takes, with `pair` for the user and password together, the form Studio's record writes null.
 The secret-only forms and the dedicated user's are the record's own forms, named as the record names them.
-Every agent acquisition reads the record, M-57, and a host reads the request against it, M-54.
+Every agent acquisition reads Studio's grant of the request, M-57, which is the more restrictive of the request and Studio's record, M-54.
 
 - schema `/$defs/agentCredentialFormClaim`
 - test `packages/provider-sdk/tests/manifest/validate.test.ts` "an agent credential form outside the claim's values is refused as value-not-allowed, and null as wrong-type beside it"
@@ -1392,7 +1416,7 @@ Removing a declaration gives exactly the SQL generator forms a fresh build from 
 - test `tests/unit/db/engine-projections-removal.test.ts` "the SQL generator forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the SQL generator forms are the same whatever order the declarations are admitted in"
 
-### M-82 (normative): Studio's policy and MCP claims are projected from the admitted declarations
+### M-82 (normative): Studio's policy and MCP claims are projected from the admitted declarations and read through one grant
 
 Each admitted declaration's `policy` and `mcp` segments, members it authors, M-15, are projected by `projectClaimRequests` in `src/lib/db/engine-catalog/projection.ts`, which reads only those two segments and holds one entry per declaration, `{ policy, mcp }` as the declaration states them, every member its own property and an agent credential form in the declaration's vocabulary, `pair` included, keyed in ascending id order, frozen at every level, and is a pure function of the set; two declarations of one id are refused by name.
 It is rendered by the command M-70 names, from the same authored members and held by the same admission, into `src/lib/db/engine-catalog/claims.generated.ts`, held byte for byte to what the command renders and typed over `DatabaseType`.
@@ -1400,6 +1424,11 @@ Every member it holds is a claim, a request, M-52, so the module is read only wh
 The authored `safeguards` segment is not projected: no gate reads it, M-60.
 For every engine Studio ships, each request is its record's row, M-52.
 Removing a declaration gives exactly the claim requests a fresh build from the remaining set gives.
+One grant reader, `src/lib/db/claim-grants.ts`, reads the claim requests and Studio's review record of each policy and MCP claim, and computes `grantClaims` over them by M-54's rules when it loads: one granted table per claim, `READ_ONLY_ENFORCED` from the granted write reach, and `UNGRANTED_CLAIM_REFUSALS`, the sentence each engine left refused at open is refused with, each keyed by `DatabaseType`, frozen, each row too.
+Every gate that reads a policy or MCP claim, on the server, in the browser and through the client capabilities the VS Code webview receives, reads a granted table, and the factory's four entry points refuse an engine `UNGRANTED_CLAIM_REFUSALS` names right after `assertReadOnlyHonoured`.
+No other module of Studio's source or of the VS Code extension's reads a policy or MCP claim record, and no module of the MCP layer names the write reach, recorded or granted.
+For every engine Studio ships, each granted table is its record's row and no engine is refused at open.
+A loader that admits a package computes the same grant over its admitted set.
 
 - test `tests/unit/db/engine-declarations.test.ts` "the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments"
 - test `tests/unit/db/engine-declarations.test.ts` "every claim of the policy and MCP segments is the row of Studio's review record of it"
@@ -1411,6 +1440,12 @@ Removing a declaration gives exactly the claim requests a fresh build from the r
 - test `tests/unit/db/engine-projections-removal.test.ts` "the claim requests built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module"
 - test `tests/unit/db/engine-projections-removal.test.ts` "the claim requests are the same whatever order the declarations are admitted in"
 - test `tests/unit/db/engine-declaration-readers.test.ts` "a listed reader reads a claim only where CLAIM_READERS lists it, so a declared claim reaches a gate only as Studio's grant of it"
+- test `tests/unit/db/claim-grants.test.ts` "for every shipped engine, each granted policy and MCP claim is its record's row, and no engine is refused at open"
+- test `tests/unit/db/engine-projections-removal.test.ts` "the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set"
+- test `tests/unit/db/claim-record-readers.test.ts` "every policy and MCP claim record is read only by the grant reader"
+- test `tests/unit/db/claim-record-readers.test.ts` "the scan finds each way a module could reference a claim record, and passes over an error code and an object key of the same name"
+- test `tests/unit/mcp/no-write-reach.test.ts` "no file under src/lib/mcp names the write reach, recorded or granted, or imports write-reach"
+- test `tests/isolated/claim-grant-open-refusal.test.ts` "each of the factory's four entry points refuses an engine left refused at open before any cache lookup, tunnel or build"
 
 ## Values
 
@@ -3852,3 +3887,4 @@ Against this contract's earlier text:
 - inspect_schema's container listings, relation listings and descriptions run through the host core's tree call under the call's deadline and its request's signal, C-82, where they called the provider's members under MCP's own race; a read that fails after MCP stopped waiting is logged by kind and code, where it was dropped silently.
 - A statement tool's database listing on a connection that reaches every database ends at `timeout_ms` and when the client leaves, answered as the timeout or the cancel, C-82, where it waited for the listing with no bound.
 - inspect_schema reads the host core before anything else, C-82, so a call made before its install throws by name with no audit record.
+- Every policy and MCP gate reads Studio's grant of the claim, the more restrictive of the declaration's request and Studio's review record, M-54 and M-82, where each read the record itself; for every engine Studio ships the grant is the record's row.

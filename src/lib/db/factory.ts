@@ -46,18 +46,20 @@ import { trustMaterial } from "./trust-material";
 import { admittedFileConnection, admittedHostPathConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
 import { sessionCapacity } from "./session-capacity";
+import { READS_TRUST_MATERIAL } from "./compatibility";
 import {
+  GRANTED_AGENT_CREDENTIAL_FORM,
+  GRANTED_DENIED_FILE_ACCESS_REFUSAL,
+  GRANTED_READS_FILE_ACCESS_POSTURE,
+  GRANTED_SINGLE_WRITER_FILE,
   READ_ONLY_ENFORCED,
-  READS_FILE_ACCESS_POSTURE,
-  READS_TRUST_MATERIAL,
-  REFUSES_DENIED_FILE_ACCESS,
-  SINGLE_WRITER_FILE,
-} from "./compatibility";
+  UNGRANTED_CLAIM_REFUSALS,
+} from "./claim-grants";
 import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
 import { requiredSecretRefusal } from "./connection-field-rules";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
-import { AGENT_CREDENTIAL_FORM, REFUSED_CONNECTION_FIELDS } from "./connection-fields";
+import { REFUSED_CONNECTION_FIELDS } from "./connection-fields";
 import { assertDatabaseType, typeIdRow } from "./type-id";
 import { enabledProviderTypes } from "./enabled-providers";
 import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
@@ -259,6 +261,26 @@ export function assertReadOnlyHonoured(connection: DatabaseConnection): void {
 }
 
 /**
+ * Refuse every open of an engine whose claims leave a refusal no grant covers (docs/providers/CONTRACT.md, clause
+ * M-54), with the sentence `UNGRANTED_CLAIM_REFUSALS` in ./claim-grants holds for it: an engine whose single-writer
+ * file request is not Studio's grant, whose second read-write handle on one file could lose committed rows.
+ *
+ * It runs right after `assertReadOnlyHonoured`, in all four places that function runs and for the reason it gives, so
+ * a refused engine opens no cache entry, tunnel or provider. The row is read through `typeIdRow` (FND-1), so a type
+ * outside the `DatabaseType` union is refused by name. No engine Studio ships is refused here, since each of its
+ * requests is its record's row; the table is a parameter so the tests can refuse one.
+ * Exported for the tests, as `assertReadOnlyHonoured` is.
+ */
+export function assertClaimsGranted(
+  connection: DatabaseConnection,
+  refusals: Readonly<Record<DatabaseType, string | null>> = UNGRANTED_CLAIM_REFUSALS,
+): void {
+  const refusal = typeIdRow(refusals, connection.type);
+  if (refusal === null) return;
+  throw new DatabaseConfigError(refusal, connection.type);
+}
+
+/**
  * Refuse an owner without a pool size its provider can open with (docs/GOVERNANCE.md#per-user-providers), before
  * anything is built or dialled.
  *
@@ -290,7 +312,7 @@ function assertOwnerPoolHonoured(connection: DatabaseConnection, execution: Prov
  * provider reads it.
  */
 function assertFileAccessPostureHonoured(connection: DatabaseConnection, execution: ProviderExecutionContext): void {
-  const refusal = typeIdRow(REFUSES_DENIED_FILE_ACCESS, connection.type);
+  const refusal = typeIdRow(GRANTED_DENIED_FILE_ACCESS_REFUSAL, connection.type);
   if (refusal === null || execution.allowExternalFileAccess !== false) return;
   throw new DatabaseConfigError(refusal, connection.type);
 }
@@ -367,7 +389,7 @@ export interface ProviderDeclarations {
  * package (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
  *
  * Its capabilities are the provider's as `clientCapabilities` (./client-capabilities) answers them: the masking
- * exemption is `MASKING_EXEMPT_COLUMNS`'s row for the connection's type, never the provider's own.
+ * exemption is `GRANTED_MASKING_EXEMPT_COLUMNS`'s row for the connection's type, never the provider's own.
  */
 export async function readProviderDeclarations(
   connection: DatabaseConnection,
@@ -424,6 +446,7 @@ async function buildProvider(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertClaimsGranted(connection);
   // The provider is handed a copy of the context (below), so only plain data is taken: a copy of anything else could
   // answer differently from the object core reads here.
   assertExecutionContextIsPlainData(execution);
@@ -948,6 +971,7 @@ export async function withOneShotTunnel<T>(
   assertDatabaseType(connection.type);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertClaimsGranted(connection);
   // Before the callback is handed the record or a copy of it: a copy of a record that is not plain data would reach the
   // build as plain data (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);
@@ -1299,7 +1323,7 @@ export function findOpenSingleWriterProvider(
     // `typeIdRow`, answers which engines, so this is not a `connection.type` branch (CLAUDE.md); today DuckDB
     // and SQLite do, and of the two only DuckDB is a single-writer engine.
     if (
-      typeIdRow(READS_FILE_ACCESS_POSTURE, connection.type) &&
+      typeIdRow(GRANTED_READS_FILE_ACCESS_POSTURE, connection.type) &&
       (entry.allowExternalFileAccess === true) !== wantAccess
     ) {
       continue;
@@ -1767,6 +1791,7 @@ async function openWritable(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertClaimsGranted(connection);
   // Ahead of the cache key, so no cached provider is handed to a record that is not plain data, and of the copy made
   // for the tunnel (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);
@@ -1927,10 +1952,10 @@ async function openEditorProvider(
     });
     // Cache it, remembering the file when this engine admits only one handle on it -
     // that is what lets the callers that would otherwise open a second one find this. Which engines do is
-    // `SINGLE_WRITER_FILE`, Studio's review record of the claim, never the built provider's own declaration
+    // `GRANTED_SINGLE_WRITER_FILE`, Studio's grant of the claim, never the built provider's own declaration
     // (docs/providers/CONTRACT.md, clause M-57).
     const admit = () => {
-      const singleWriterFile = typeIdRow(SINGLE_WRITER_FILE, connection.type) ? fileIdentity(connection) : null;
+      const singleWriterFile = typeIdRow(GRANTED_SINGLE_WRITER_FILE, connection.type) ? fileIdentity(connection) : null;
       if (tunnel) tunnelProviderOpened(tunnel);
       cache.set(cacheKey, {
         provider,
@@ -2142,14 +2167,14 @@ function resolveAgentCredential(connection: DatabaseConnection): { user?: string
  * Refuses an agent credential in a form the engine does not take, before the provider connects. The forms are
  * `AgentCredentialForm` in `src/lib/db/types.ts`: null takes `agentUser` and `agentPassword` together, `"token"`
  * and `"service-account-key"` take `agentPassword` alone, `"dedicated-user"` takes both with a user other than the
- * connection's own, and `"none"` takes nothing. The form is the engine's row of `AGENT_CREDENTIAL_FORM`
- * (./connection-fields), Studio's review record of the claim, read through `typeIdRow` and never from the built
+ * connection's own, and `"none"` takes nothing. The form is the engine's row of `GRANTED_AGENT_CREDENTIAL_FORM`
+ * (./claim-grants), Studio's grant of the claim, read through `typeIdRow` and never from the built
  * provider's own `agentCredential` (docs/providers/CONTRACT.md, clause M-57). `password` is the agent secret
  * `resolveAgentCredential` resolved, never echoed.
  */
 function assertAgentCredentialForm(connection: DatabaseConnection, password: string | undefined): void {
   const { agentUser, agentPassword } = connection;
-  const form = typeIdRow(AGENT_CREDENTIAL_FORM, connection.type);
+  const form = typeIdRow(GRANTED_AGENT_CREDENTIAL_FORM, connection.type);
   if (form === "none") {
     throw new StudioProfileRefusal(
       `Connection "${connection.id}" configures an agent credential, and this engine takes none: it has no user for the agent to sign in as, so clear the agent user and password`,
@@ -2273,6 +2298,7 @@ export async function acquireExecutionProfileProvider(
   assertConnectionIdPresent(connection);
   assertProviderEnabled(connection);
   assertReadOnlyHonoured(connection);
+  assertClaimsGranted(connection);
   // As in getOrCreateProvider, and ahead of the copy that carries the agent credential, which would hand the build plain
   // data (assertConnectionIsPlainData in ./provider-connection).
   assertConnectionIsPlainData(connection);

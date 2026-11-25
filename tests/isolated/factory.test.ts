@@ -71,7 +71,8 @@ import {
   UnknownProviderError,
 } from "@/lib/db/errors";
 import { ABSENT_TYPE_SENTENCE, unknownTypeSentence } from "@/lib/db/type-id";
-import { MASKING_EXEMPT_COLUMNS, READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MASKING_EXEMPT_COLUMNS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { secretForms } from "@/lib/db/utils/server-text";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";

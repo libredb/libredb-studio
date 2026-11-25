@@ -70,11 +70,6 @@ export function isExternalDatabaseType(type: DatabaseType): boolean {
   return Object.hasOwn(BUNDLED_CATALOG, type) && BUNDLED_CATALOG[type].location === "external";
 }
 
-/** A total record with every value mapped, keyed exactly as the record it was mapped from. */
-function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map: (value: V) => W): Record<K, W> {
-  return Object.fromEntries(Object.entries<V>(record).map(([key, value]) => [key, map(value)])) as Record<K, W>;
-}
-
 /**
  * What Studio can write on each shipped engine, one of `WriteReach`'s three values (`./write-reach.ts`): `none`, no
  * code in the provider can send a write on any write path; `guarded`, every write path it has is refused by a named
@@ -82,17 +77,19 @@ function mapEntries<K extends string, V, W>(record: Readonly<Record<K, V>>, map:
  * Studio's code, not about the engine or the role a connection signs in as. The static answer
  * `summarizeWriteReach(ProviderCapabilities.writeReach)` gives once a provider is built.
  *
- * Static because its readers decide before a provider exists, as `READ_ONLY_ENFORCED`'s do, which is derived from it
- * below. An exhaustive Record over the union, so a new type-id cannot join without someone answering,
+ * Static because its readers decide before a provider exists, as `READ_ONLY_ENFORCED`'s do, which is derived from its
+ * grant (./claim-grants). An exhaustive Record over the union, so a new type-id cannot join without someone answering,
  * and `tests/unit/db/write-reach-capability.test.ts` holds every entry equal to what that engine's provider declares,
  * and holds a `none` provider to declaring no write capability on any path. Frozen like the records above it.
  *
  * It is not an MCP criterion and no MCP code reads it: whether a machine client may read an engine is
  * `MCP_EXPOSABLE`'s answer, which holds on every engine whatever its reach.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `policy.writeReach`, and every
- * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.writeReach`. Only
+ * Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.freeze({
   postgres: "open",
@@ -194,23 +191,6 @@ export const WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = Object.fr
 });
 
 /**
- * Which shipped engines keep a read-only connection's promise: their provider refuses every write,
- * object edit and maintenance operation before any request while the connection's `readOnly` is true
- * (#1089). The static answer `summarizeWriteReach` gives from a built provider's `writeReach`.
- *
- * Static because its reader decides before a provider exists: `assertReadOnlyHonoured` in
- * `src/lib/db/factory.ts` refuses `readOnly: true` before anything is built or dialled where this answers
- * false. The seed schema and the connection form read `WRITE_REACH` itself, which gives the same answer.
- * Refused rather than ignored, because a mode an engine ignores lists a connection as read-only and sends its
- * writes.
- *
- * Derived from `WRITE_REACH`, so there is one hand-written answer: true wherever the reach is not `open`.
- * `tests/unit/db/read-only-enforced-capability.test.ts` holds every entry equal to the summary of that engine's
- * provider's `writeReach`, so the two cannot drift. Frozen like the records above it.
- */
-export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) => reach !== "open"));
-
-/**
  * Which shipped engines open their editor handle under a file-access posture: their provider reads
  * `ProviderExecutionContext.allowExternalFileAccess` and opens with external access off when it is
  * denied, while the database stays writable for DuckDB. SQLite refuses denied access entirely
@@ -228,9 +208,11 @@ export const READ_ONLY_ENFORCED = Object.freeze(mapEntries(WRITE_REACH, (reach) 
  * answering, and `tests/unit/db/reads-file-access-posture-capability.test.ts` holds every entry equal
  * to what that engine's provider declares. Frozen like the records above it.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `policy.readsFileAccessPosture`,
- * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
- * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.readsFileAccessPosture`.
+ * Only Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -334,9 +316,11 @@ export const READS_TRUST_MATERIAL: Readonly<Record<DatabaseType, boolean>> = BUN
  * `connect()` do under the context an MCP open gives a caller whose file access is denied. Frozen like the records
  * above it.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `policy.deniedFileAccessRefusal`,
- * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
- * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.deniedFileAccessRefusal`.
+ * Only Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
   postgres: null,
@@ -405,9 +389,11 @@ export const REFUSES_DENIED_FILE_ACCESS: Readonly<Record<DatabaseType, string | 
  * though it decides once a provider is built: the built provider's own `singleWriterFile` reaches no gate
  * (docs/providers/CONTRACT.md, clause M-57).
  *
- * This table is Studio's review record of the claim an engine declaration requests at `policy.singleWriterFile`, and
- * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
- * a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.singleWriterFile`. Only
+ * Studio's grant reader reads it, granting the request only where it equals this table's row and refusing every open of
+ * an engine whose request differs (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each
+ * shipped engine's declaration requests this table's row, and the table is never a projection of declarations
+ * (docs/providers/CONTRACT.md, clause M-52).
  */
 export const SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -543,7 +529,9 @@ export const SERVES_ONE_SESSION: Readonly<Record<DatabaseType, string | null>> =
  *
  * This table is Studio's review record of the claim a provider declares at `ProviderCapabilities.maskingExemptColumns`
  * (docs/providers/CONTRACT.md, clause M-57), and that an engine declaration requests at `policy.maskingExemptColumns`,
- * which the generator writes from this row (clause M-59); it is never computed from providers.
+ * which each shipped engine's declaration requests as this row (clause M-59). Only Studio's grant reader reads it,
+ * granting the request only where it equals this row (src/lib/db/claim-grants.ts, clause M-54), and it is never
+ * computed from providers.
  */
 export const MASKING_EXEMPT_COLUMNS: Readonly<
   Record<DatabaseType, NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null>
@@ -772,9 +760,11 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze([
  * true. An exhaustive Record over the union, so a new type-id cannot join
  * without someone answering, and frozen like the records above it.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `mcp.exposable`, and every gate
- * reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.exposable`. Only Studio's
+ * grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -888,9 +878,11 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `mcp.statementRead`, and every
- * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.statementRead`. Only
+ * Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: true,
@@ -1052,9 +1044,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
  * `tests/unit/mcp/annotations.test.ts`, which also holds its true rows to the engines docs/MCP.md and the provider
  * docs name for the hint.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `mcp.metadataReadChangesState`,
- * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
- * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.metadataReadChangesState`.
+ * Only Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1115,9 +1109,11 @@ export const MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, bool
  * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
  * agent credential, by `tests/unit/db/compatibility.test.ts`.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `mcp.agentCredentialRequired`,
- * and every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is
- * never a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `mcp.agentCredentialRequired`.
+ * Only Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1178,9 +1174,11 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
  * An exhaustive Record over the union, frozen like the records above it, and held true exactly where
  * `SEED_ONLY_FIELDS` (src/lib/db/connection-fields.ts) names `agentReadRoots`, by `tests/unit/db/compatibility.test.ts`.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `policy.readRootsRequired`, and
- * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
- * a projection of declarations (docs/providers/CONTRACT.md, clause M-52).
+ * This table is Studio's review record of the claim an engine declaration requests at `policy.readRootsRequired`. Only
+ * Studio's grant reader reads it, granting the request as the more restrictive of the request and this table's row
+ * (src/lib/db/claim-grants.ts, clause M-54), and every gate reads that grant: each shipped engine's declaration
+ * requests this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clause
+ * M-52).
  */
 export const READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,

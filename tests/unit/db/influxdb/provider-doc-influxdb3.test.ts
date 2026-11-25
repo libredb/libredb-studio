@@ -13,7 +13,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYAML } from "yaml";
 import { DB_UI_CONFIG, READ_ONLY_FIXED_HINT } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { createInfluxClient, type InfluxAnswer } from "@/lib/db/providers/timeseries/influxdb/client";
 import {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { READ_ONLY_ENFORCED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";

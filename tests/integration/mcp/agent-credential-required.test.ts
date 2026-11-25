@@ -1,9 +1,10 @@
 /**
  * An engine MCP reads only under a seed's own agent credential, refused without one at load and at open.
  *
- * The shipped `MCP_AGENT_CREDENTIAL_REQUIRED` registry names S3 alone, whose reads run-s3-read.test.ts drives, so this
- * file replaces it, in its own process, with a copy whose Postgres row the test sets. The seed schema and the MCP context both read the replaced
- * registry, so a refusal either one stopped making is a failure here, with the shipped rows unchanged.
+ * Studio's grant of the claim, `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` (src/lib/db/claim-grants.ts), names S3 alone,
+ * whose reads run-s3-read.test.ts drives, so this file replaces it, in its own process, with a copy whose Postgres row
+ * the test sets. The seed schema and the MCP context both read the replaced grant, so a refusal either one stopped
+ * making is a failure here, with the shipped rows unchanged.
  *
  * The load is the seed file's: the schema refuses it by name. The open is MCP's: a connection that was loaded while the
  * row was false is still in the seed cache when the row turns true, which is a connection loaded past the schema, and
@@ -15,7 +16,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { DatabaseType } from "@/lib/types";
-import * as realCompatibility from "@/lib/db/compatibility";
+import * as realGrants from "@/lib/db/claim-grants";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 
@@ -24,9 +25,9 @@ afterAll(forgetHostCore);
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
-const required: Record<DatabaseType, boolean> = { ...realCompatibility.MCP_AGENT_CREDENTIAL_REQUIRED };
+const required: Record<DatabaseType, boolean> = { ...realGrants.GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED };
 
-mock.module("@/lib/db/compatibility", () => ({ ...realCompatibility, MCP_AGENT_CREDENTIAL_REQUIRED: required }));
+mock.module("@/lib/db/claim-grants", () => ({ ...realGrants, GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: required }));
 
 const route = await import("@/app/api/mcp/route");
 const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");

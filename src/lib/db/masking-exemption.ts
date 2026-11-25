@@ -16,7 +16,7 @@ import type { ProviderCapabilities } from "@/lib/db/types";
  * each one carries (`ProviderCapabilities.maskingExemptColumns`).
  *
  * The declaration it takes is the one Studio's producers of client capabilities answered from
- * `MASKING_EXEMPT_COLUMNS` (`clientCapabilities` in `./client-capabilities`), not the provider's own.
+ * `GRANTED_MASKING_EXEMPT_COLUMNS` (`clientCapabilities` in `./client-capabilities`), not the provider's own.
  *
  * Takes the declaration rather than the whole capabilities for the reason
  * `inlineEditRefusedColumns` is passed that way: the grid is handed one field, not a provider. An

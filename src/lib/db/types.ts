@@ -936,8 +936,9 @@ export interface KindRowAction {
 
 /**
  * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
- * `agentUser` and `agentPassword`. The factory reads each engine's form from `AGENT_CREDENTIAL_FORM` in
- * `src/lib/db/connection-fields.ts`, where null is the absent form. An agent credential beside a connection string is
+ * `agentUser` and `agentPassword`. The factory reads each engine's form from `GRANTED_AGENT_CREDENTIAL_FORM` in
+ * `src/lib/db/claim-grants.ts`, Studio's grant of `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, where
+ * null is the absent form. An agent credential beside a connection string is
  * refused in every form, because the connection string's own credential would win.
  *
  * - absent: `agentUser` and `agentPassword`, both required.
@@ -1145,9 +1146,10 @@ export interface ProviderCapabilities {
    *
    * ANCHOR IT. Measured: an unanchored `address` reaches `ip_address` too, which belongs to the
    * IP rule, so an exemption written for one column of one engine crosses into a second rule.
-   * Studio reads it from `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts`, never from
-   * the provider: its producers of client capabilities answer that row (`clientCapabilities`,
-   * docs/providers/CONTRACT.md clause M-57), and `tests/unit/db/masking-exemption-guard.test.ts`
+   * Studio reads it from `GRANTED_MASKING_EXEMPT_COLUMNS` in `src/lib/db/claim-grants.ts`, its
+   * grant against `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts`, never from the
+   * provider: its producers of client capabilities answer that row (`clientCapabilities`,
+   * docs/providers/CONTRACT.md clauses M-54 and M-57), and `tests/unit/db/masking-exemption-guard.test.ts`
    * holds the record equal to this declaration and measures the protected names each row reaches.
    * The embedded workspace and the published grid components take it from their embedder instead,
    * as the record's own docblock says, so the record does not bind them.
@@ -1169,8 +1171,8 @@ export interface ProviderCapabilities {
    * travel to `DataProfiler.tsx` with it, or the same column reads one way in the grid and
    * another in the profiler.
    *
-   * An engine declaration requests it at `policy.maskingExemptColumns`, which the generator writes
-   * from the record's row (docs/providers/CONTRACT.md, clause M-59).
+   * An engine declaration requests it at `policy.maskingExemptColumns`, and what Studio answers is
+   * its grant of that request (docs/providers/CONTRACT.md, clauses M-54 and M-59).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`; absent exempts
    * no column.
@@ -1416,10 +1418,11 @@ export interface ProviderCapabilities {
    * second opener is usually a different connection record pointing at the same file.
    *
    * Studio never reads this declaration where it decides: the provider cache key and the
-   * single-writer borrow read `SINGLE_WRITER_FILE` in `src/lib/db/compatibility.ts`,
-   * Studio's review record of the claim, which `tests/unit/db/compatibility.test.ts` holds
-   * equal to this declaration for every shipped type-id (docs/providers/CONTRACT.md,
-   * clause M-57). Absent reads as "this engine serves as many handles as we open", the
+   * single-writer borrow read `GRANTED_SINGLE_WRITER_FILE` in `src/lib/db/claim-grants.ts`,
+   * Studio's grant of the claim against its review record, `SINGLE_WRITER_FILE` in
+   * `src/lib/db/compatibility.ts`, which `tests/unit/db/compatibility.test.ts` holds equal to
+   * this declaration for every shipped type-id (docs/providers/CONTRACT.md, clauses M-54 and
+   * M-57). Absent reads as "this engine serves as many handles as we open", the
    * ordinary case, and the one every client-server engine is in.
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`
@@ -1440,7 +1443,8 @@ export interface ProviderCapabilities {
    * A read-only mode a provider ignores would be a promise nobody keeps: the connection would be listed as read-only
    * and send its writes (#1089). So `readOnly: true` is accepted only where the summary is not `open`, and refused
    * everywhere else: by `assertReadOnlyHonoured` in `src/lib/db/factory.ts`, which reads `READ_ONLY_ENFORCED`, and by
-   * the seed schema and the connection form, which read `WRITE_REACH`, each before a provider exists.
+   * the seed schema and the connection form, which read `GRANTED_WRITE_REACH`, each before a provider exists; both
+   * tables are in `src/lib/db/claim-grants.ts`, derived from Studio's grant of the engine's `WRITE_REACH` row.
    * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration as well.
    *
    * Absent means open on every path; every provider whose reach is not open declares all four paths. Optional for the
@@ -1454,11 +1458,12 @@ export interface ProviderCapabilities {
   /**
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
    * user-and-password form. Studio never reads this declaration where it decides: every agent acquisition
-   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine's row of `AGENT_CREDENTIAL_FORM`
-   * in `src/lib/db/connection-fields.ts`, Studio's review record of the claim, and refuses a credential in a shape
-   * the form does not take before the provider connects (docs/providers/CONTRACT.md, clause M-57).
+   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine's row of
+   * `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, Studio's grant of the claim against its review
+   * record, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, and refuses a credential in a shape the form
+   * does not take before the provider connects (docs/providers/CONTRACT.md, clauses M-54 and M-57).
    * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
-   * type-id. An engine declaration requests it at `policy.agentCredentialForm`, which the generator writes from the
+   * type-id. An engine declaration requests it at `policy.agentCredentialForm`, each shipped engine's request the
    * record's row, `pair` for the user-and-password form (clause M-58).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`.
@@ -1507,7 +1512,7 @@ export interface ProviderCapabilities {
    *
    * It is what tells `src/lib/db` that an editor handle of this engine must be split by posture: the
    * writable cache key carries the deny posture as a segment, and the single-writer borrow lends a
-   * handle only to a caller of its own posture. Both read `READS_FILE_ACCESS_POSTURE` in
+   * handle only to a caller of its own posture. Both read Studio's grant of `READS_FILE_ACCESS_POSTURE` in
    * `src/lib/db/compatibility.ts` rather than this field, because each decides before a provider
    * exists (the cache key is computed to find or open one), and
    * `tests/unit/db/reads-file-access-posture-capability.test.ts` holds that map equal to this

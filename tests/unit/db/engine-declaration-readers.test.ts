@@ -147,18 +147,26 @@ const CLAIM_REQUEST_MEMBERS = ["policy", "mcp"] as const;
  * and never a request. A closed list: a reader of a claim not listed here fails.
  */
 const CLAIM_READERS: Readonly<Record<string, readonly string[]>> = {
+  "src/lib/db/claim-grants.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/claims.generated.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/projection.ts": CLAIM_REQUEST_MEMBERS,
 };
 
 /** The paths `CLAIM_READERS` lists, in its order, written out so a reader added to it is a reviewed change here too. */
 const EXPECTED_CLAIM_READERS = [
+  "src/lib/db/claim-grants.ts",
   "src/lib/db/engine-catalog/claims.generated.ts",
   "src/lib/db/engine-catalog/projection.ts",
 ];
 
 /** Every module of Studio's source that reads a declaration or a projection of the declarations. */
 const DECLARATION_READERS: readonly DeclarationReader[] = [
+  {
+    path: "src/lib/db/claim-grants.ts",
+    members: CLAIM_REQUEST_MEMBERS,
+    reason:
+      "Studio's grant reader: each engine's policy and MCP claim requests, read from the claim requests and granted against Studio's review record of each claim",
+  },
   {
     path: "src/lib/db/compatibility.ts",
     members: [
@@ -502,7 +510,9 @@ function overlaps(member: string, claim: string): boolean {
 const CLAIM_READ_RULE =
   "but a claim reaches a gate only as Studio's grant of it, read by the modules CLAIM_READERS lists (docs/providers/CONTRACT.md, clause M-54)";
 
-/** What an authored member holding a claim breaks, unless the claim is a policy or MCP claim, which only grants read. */
+/**
+ * What an authored member holding a claim breaks, unless the claim is a policy or MCP claim, which only grants read.
+ */
 const AUTHORED_CLAIM_RULE =
   "but an authored member feeds a projection Studio reads, and a claim reaches a gate only as Studio's grant of it (docs/providers/CONTRACT.md, clause M-54)";
 

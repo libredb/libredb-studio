@@ -22,6 +22,7 @@ import {
   offersSshTunnel,
   READ_ONLY_FIXED_HINT,
 } from "@/lib/db-ui-config";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
   connectableProductCount,
@@ -29,7 +30,6 @@ import {
   MCP_AGENT_CREDENTIAL_REQUIRED,
   MCP_EXPOSABLE,
   MCP_STATEMENT_READ,
-  READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
   WIRE_COMPATIBLE_ENGINES,
 } from "@/lib/db/compatibility";

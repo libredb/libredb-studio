@@ -32,12 +32,11 @@
  */
 import type { z } from "zod";
 import {
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-} from "@/lib/db/compatibility";
+  GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
+  GRANTED_MCP_EXPOSABLE,
+  GRANTED_READ_ROOTS_REQUIRED,
+} from "@/lib/db/claim-grants";
+import { OPENS_LOCAL_FILE, OPENS_SERVER_LEVEL_WITHOUT_DATABASE } from "@/lib/db/compatibility";
 import { isDatabaseType } from "@/lib/db/type-id";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { type ManagedConnection, SeedConnectionSchema } from "@/lib/seed/types";
@@ -239,7 +238,9 @@ function mergedRecord({ row, id, engine, definition }: RowContext, secret: Opene
     // Only where the product offers the engine to MCP clients (#246): elsewhere the seed schema refuses the opt-in.
     // An engine MCP reads only under a seed agent credential, or only beneath read roots a seed declares, is left off
     // too, since a governed record carries neither.
-    ...(MCP_EXPOSABLE[engine] && !MCP_AGENT_CREDENTIAL_REQUIRED[engine] && !READ_ROOTS_REQUIRED[engine]
+    ...(GRANTED_MCP_EXPOSABLE[engine] &&
+    !GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED[engine] &&
+    !GRANTED_READ_ROOTS_REQUIRED[engine]
       ? { mcp: row.mcp_enabled }
       : {}),
     ...definition,
