@@ -218,6 +218,33 @@ describe("buildQueryEvent", () => {
     });
   });
 
+  test("an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER", () => {
+    // An engine only a provider package serves: Studio's review record holds no redaction row for it (S-7), so the
+    // restrictive reading keeps nothing of its text, whatever the capture mode.
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+    for (const capture of [NONE, REDACTED, FULL]) {
+      const row = build(
+        input({
+          connection: kv,
+          statement: "DELETE FROM orders WHERE id = 7",
+          status: "error",
+          errorCode: "INTERNAL_ERROR",
+          errorMessage: "the package's own words",
+        }),
+        capture,
+      );
+      expect(row).toMatchObject({
+        engine: "acmeevents",
+        statement_type: "OTHER",
+        statement: null,
+        statement_truncated: false,
+        statement_fingerprint: null,
+        error_code: "INTERNAL_ERROR",
+        error_message: null,
+      });
+    }
+  });
+
   test("a statement type the route gives is kept whatever the text reads as, and the text is still captured", () => {
     const mongodb = { ...ORDERS, id: "seed:catalog", engine: "mongodb" } as const;
 

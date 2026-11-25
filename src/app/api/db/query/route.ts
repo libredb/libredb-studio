@@ -9,7 +9,20 @@ import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
-import { checkEditorQuery, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
+import {
+  checkEditorQuery,
+  openWithinBudget,
+  openWithinCall,
+  queryTimeoutError,
+  runEditorQuery,
+} from "@/lib/api/editor-query";
+import { packageCallError } from "@/lib/api/package-errors";
+import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
+import { pageOptionError } from "@/lib/api/page-probe";
+import { PackageEngineUnsupportedError } from "@/lib/db/errors";
+import { getOrCreatePackageSession } from "@/lib/db/package-sessions";
+import { type PackageConnection, type PackageEngine, serverEngine } from "@/lib/db/server-catalog";
+import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -19,7 +32,7 @@ import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
-import { gateRun } from "@/lib/api/run-confirmation";
+import { gatePackageRun, gateRun } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
 import { queryEventStart } from "@/lib/query-events/build";
 import {
@@ -62,6 +75,25 @@ function readExplainRequest(value: unknown): ExplainRequestResult {
   return { valid: true, explain: { mode } };
 }
 
+/**
+ * The request fields a query on an engine of a provider package does not serve yet, by the name the answer gives each,
+ * or null when it sets none: a plan (`explain`), whose statement is built by the connected provider's strategy, keyed by
+ * a legacy plan format; a key-space `database`, read from a legacy provider's declarations; a server-level `catalog`,
+ * a legacy catalog session; and an unbounded page (`options.unlimited`), since the host always pumps a bounded one
+ * (clause C-16). Each malformed field keeps its 400, read before this.
+ */
+function unservedPackageField(fields: {
+  explain: boolean;
+  database: number | undefined;
+  catalog: string | undefined;
+  unlimited: boolean;
+}): string | null {
+  if (fields.explain) return "explain";
+  if (fields.database !== undefined) return "database";
+  if (fields.catalog !== undefined) return "catalog";
+  return fields.unlimited ? "options.unlimited" : null;
+}
+
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
   // behalf, and the rate limiter sees the request before any work is done for it.
@@ -91,7 +123,14 @@ export async function POST(req: NextRequest) {
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
-    connection = await resolveConnection(body, guard.session);
+    // An engine of an admitted provider package is served too (docs/providers/CONTRACT.md, clause C-113): its connection
+    // resolves with every guard of every route, the server catalog's record of its engine is read after the resolve, and
+    // it runs on the package's session below.
+    const resolved = await resolveConnection(body, guard.session, undefined, "bundled-and-package");
+    const served = serverEngine(resolved.type);
+    // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
+    // by its type, so a package's connection is read as any other.
+    connection = resolved as DatabaseConnection;
 
     // A `sql` that is present but not a string, a falsy one (0, false) included, is refused in words: a truthy one
     // reached the provider and answered 500 with its own TypeError. A missing (null) or empty one keeps its answer.
@@ -105,6 +144,64 @@ export async function POST(req: NextRequest) {
     // sends it on to the engine (ClickHouse) or keys a Map with it, so only a string (#1364).
     if (queryId !== undefined && typeof queryId !== "string") {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
+    }
+
+    if (served.kind === "package") {
+      // THE QUERY ON A PACKAGE'S ENGINE (clause C-113): the page bounds and the statement timeout as for any engine, no
+      // console text bound (a row of Studio's keyed by engine, which a package has none of); the fields it does not serve
+      // refused by name; the gate over the package's declared grammar; then the package's session, cached per key, and
+      // the run through the host core.
+      const { engine } = served;
+      const packaged = resolved as PackageConnection;
+      const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);
+      if (bounds !== null) return NextResponse.json({ error: bounds }, { status: 400 });
+      const bound = readBoundParams(body.params);
+      if (!bound.valid) return NextResponse.json({ error: bound.message }, { status: 400 });
+      const explain = readExplainRequest(body.explain);
+      if (!explain.valid) return NextResponse.json({ error: explain.message }, { status: 400 });
+      let database: number | undefined;
+      try {
+        database = optionalDatabase(body, "database");
+      } catch (error) {
+        if (!(error instanceof ObjectRouteError)) throw error;
+        return NextResponse.json(objectRouteErrorBody(error), { status: error.status });
+      }
+      const unserved = unservedPackageField({
+        explain: explain.explain !== undefined,
+        database,
+        catalog: requestCatalog(body),
+        unlimited: options.unlimited === true,
+      });
+      if (unserved !== null) {
+        throw new PackageEngineUnsupportedError(
+          `This LibreDB Studio does not serve ${unserved} in a query on an engine of a provider package yet.`,
+          engine.id,
+        );
+      }
+      const gate = await gatePackageRun({
+        route: "query",
+        issuer: runConfirmationIssuerForSession(guard.session),
+        connection: packaged,
+        catalog: undefined,
+        sql,
+        params: bound.params,
+        confirmation: body.confirmation,
+        explain: false,
+        grammar: engine.statementGrammar,
+      });
+      if (gate.kind === "answer") return NextResponse.json(gate.body, { status: gate.status });
+
+      stage = "admission";
+      admitQueryExecution();
+      stage = "execution";
+      const answered = await runOnPackageSession(req, guard.session, packaged, engine, {
+        statement: sql,
+        options,
+        params: bound.params,
+        queryId,
+      });
+      recordExecutedUnit(events, { connection, statement: submitted, started, ended: { rowCount: answered.rowCount } });
+      return NextResponse.json({ ...answered, ...(gate.unconfirmed && { confirmation: "unconfirmed" }) });
     }
 
     // The page bounds, the connection's statement timeout and the console text bound, before any provider resolves
@@ -340,4 +437,36 @@ export async function POST(req: NextRequest) {
       scrub: connection === undefined ? undefined : providerTextScrub(connection, "any"),
     });
   }
+}
+
+/**
+ * Opens the editor's session of `engine` for `connection` within the engine's connect budget and while the request
+ * stays, and runs `run` on it through the host core (`runPackageEditorQuery`). A provider package's own error is
+ * answered with Studio's sentence naming its code and logged once, its words through core's scrub (`packageCallError`).
+ */
+async function runOnPackageSession(
+  req: NextRequest,
+  session: Parameters<typeof editorExecutionContext>[0],
+  connection: PackageConnection,
+  engine: PackageEngine,
+  run: { statement: string; options: QueryPrepareOptions; params: unknown[] | undefined; queryId: string | undefined },
+) {
+  const record = connection as unknown as DatabaseConnection;
+  const scrub = providerTextScrub(record, "any");
+  const route = "api/db/query";
+  const cached = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
+    getOrCreatePackageSession(connection, engine, editorExecutionContext(session, connection), wait),
+  ).catch((error: unknown) => {
+    throw packageCallError("open", error, scrub, route);
+  });
+  const { body } = await runPackageEditorQuery(cached, {
+    ...run,
+    signal: req.signal,
+    route,
+    scrub,
+    queryTimeout: connection.queryTimeout,
+  }).catch((error: unknown) => {
+    throw packageCallError("execute", error, scrub, route);
+  });
+  return body;
 }

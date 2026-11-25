@@ -33,6 +33,8 @@ import {
 import { assertDatabaseType, isDatabaseType, typeIdRefusal } from "@/lib/db/type-id";
 import { catalogConflictRefusal } from "@/lib/provider-host/provider-refusals";
 import type { DatabaseConnection } from "@/lib/types";
+import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
+import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import { admittedFor, admittedManifest, type EditableEngine, withFieldRules } from "../../../helpers/package-catalog";
 
 afterEach(() => {
@@ -91,7 +93,7 @@ describe("the accessor", () => {
     const route = thrown(() => assertBundledEngine("acmeserved", "route"));
     expect(route).toBeInstanceOf(PackageEngineUnsupportedError);
     expect((route as Error).message).toBe(
-      "This request is served for an engine of a provider package only by Test Connection in this LibreDB Studio, and this is another request.",
+      "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
     );
     const open = thrown(() => assertBundledEngine("acmeserved", "open"));
     expect((open as Error).message).toBe(
@@ -214,6 +216,7 @@ describe("what the catalog composes", () => {
       "id",
       "package",
       "session",
+      "statementGrammar",
     ]);
     expect(Object.keys(engine.fieldRules).sort()).toEqual(["connectionFields"]);
     expect(Object.keys(engine.connection).sort()).toEqual([
@@ -230,6 +233,33 @@ describe("what the catalog composes", () => {
     for (const value of [engine, engine.package, engine.catalog, engine.connection, engine.fieldRules, engine.grants]) {
       expect(Object.isFrozen(value)).toBe(true);
     }
+  });
+
+  test("a package engine's statement grammar is its declaration's facts, composed once, each trailing clause compiled once", () => {
+    const manifest = admittedManifest("acmegrammar", (engine) => {
+      const grammar = (engine.sqlText as { grammar: Record<string, unknown> }).grammar;
+      grammar.trailingLimitClauses = [{ source: "\\s+FORMAT\\s+\\w+\\s*$", flags: "i" }];
+      grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+      grammar.dollarTags = false;
+    });
+    installServerCatalog(composeServerCatalog([admittedFor("acme-grammar", manifest)], []));
+    const answer = serverEngine("acmegrammar");
+    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
+    const { statementGrammar } = answer.engine;
+    const declared = (manifest.engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar;
+    // The same record Studio composes its own engines' grammars with, from the package's facts as declared: the gate
+    // drops the exempt forms when it reads them (packageStatementAsks), so the record keeps them as data.
+    expect(statementGrammar).toEqual(grammarFromFacts(declared));
+    expect(statementGrammar.confirmExemptForms).toEqual([["ALTER", "SESSION", "SET"]]);
+    expect(statementGrammar.dollarTags).toBe(false);
+    expect(Object.isFrozen(statementGrammar)).toBe(true);
+    // Compiled at composition, once: every read of the record answers the same expression.
+    const [clause] = statementGrammar.trailingLimitClauses ?? [];
+    expect(clause).toBeInstanceOf(RegExp);
+    expect([clause?.source, clause?.flags]).toEqual(["\\s+FORMAT\\s+\\w+\\s*$", "i"]);
+    const again = serverEngine("acmegrammar");
+    if (again.kind !== "package") throw new Error(`answered ${again.kind}`);
+    expect(again.engine.statementGrammar.trailingLimitClauses?.[0]).toBe(clause as RegExp);
   });
 
   test("composing a set that still conflicts, or an engine both served and unavailable, is a host defect", () => {

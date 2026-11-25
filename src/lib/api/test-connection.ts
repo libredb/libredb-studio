@@ -5,6 +5,7 @@ import {
   withOneShotTunnel,
 } from "@/lib/db/factory";
 import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import { logPackageError, packageErrorSentence } from "@/lib/api/package-errors";
 import { type HealthWithin, readHealthWithin, readSessionHealthWithin } from "@/lib/api/provider-monitoring";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { connectionFieldRefusal, fieldRuleRefusal } from "@/lib/db/connection-field-rules";
@@ -111,16 +112,6 @@ function untilDeadline<T>(work: Promise<T>, deadline: AbortSignal, expired: () =
 /** The test's sentence for a test its engine's connect budget of `budgetMs` ended. */
 function testDeadlineSentence(budgetMs: number): string {
   return `The connection test got no answer within ${waitedSeconds(budgetMs)}: check the address, the port, the network path and that the server is running.`;
-}
-
-/** Studio's sentence for a provider package's error, which names its code; its words go to the server's log only. */
-function packageErrorSentence(call: string, error: unknown): string {
-  return `The provider package's ${call} failed (${errorCode(error)}); the server's log holds its words.`;
-}
-
-/** Logs a provider package's error once, its words through core's scrub of the connection, under `route`. */
-function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub, route: string): void {
-  logger.error(`A provider package's ${call} failed`, withholdProviderError(scrub, error), { route });
 }
 
 /**

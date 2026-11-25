@@ -25,6 +25,7 @@
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { grantPackageClaims } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
+import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
 import {
   projectCatalog,
@@ -235,6 +236,9 @@ export function composeServerCatalog(
           }),
           panels: engine.facets.monitoring,
         }),
+        // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
+        // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause C-113).
+        statementGrammar: grammarFromFacts(engine.sqlText.grammar),
       }) as PackageEngine,
     );
   }

@@ -14,7 +14,9 @@
  *
  * A stored statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, with
  * `statement_truncated` set. A refused request whose connection did not resolve keeps no statement and no error text
- * in any mode, because the engine that would read them is unknown.
+ * in any mode, because the engine that would read them is unknown. Nor does a unit of an engine only a provider package
+ * serves: Studio's review record holds no redaction for such an engine (docs/providers/CONTRACT.md, S-7), so the
+ * restrictive reading keeps none of its text, and its statement is read as `OTHER`.
  *
  * Every row has exactly the columns of the manifest and keeps their rules, so the governance source never refuses a
  * row for its shape: a bounded text column is cut to its limit by character, the unit PostgreSQL's `char_length`
@@ -27,6 +29,7 @@ import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { readsSqlText } from "@/lib/sql/grammar";
+import { isDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { maskCredentials, redactStatement } from "./redact";
 import type {
@@ -181,22 +184,34 @@ function clientIp(address: string | undefined): string | null {
 }
 
 /**
- * What the statement is as `analyzeQuery()` reads it under the engine's grammar, and OTHER for a unit without text and
- * for an engine whose statements are not SQL. A refused request whose connection did not resolve is read under the
- * compatibility grammar, because its engine is unknown.
+ * The engine a row's statement and error text are read under: the connection's own for an engine Studio ships, null
+ * for a request whose connection did not resolve, and `undefined` for an engine only a provider package serves, whose
+ * text Studio holds no reading row for, so none of it is kept.
  */
-function statementType(text: string | null, engine: DatabaseType | null): StatementType {
-  if (text === null || (engine !== null && !readsSqlText(engine))) return "OTHER";
+function readingEngine(engine: string | null): DatabaseType | null | undefined {
+  if (engine === null) return null;
+  return isDatabaseType(engine) ? engine : undefined;
+}
+
+/**
+ * What the statement is as `analyzeQuery()` reads it under the engine's grammar, and OTHER for a unit without text, for
+ * an engine whose statements are not SQL and for an engine only a provider package serves. A refused request whose
+ * connection did not resolve is read under the compatibility grammar, because its engine is unknown.
+ */
+function statementType(text: string | null, engine: DatabaseType | null | undefined): StatementType {
+  if (text === null || engine === undefined || (engine !== null && !readsSqlText(engine))) return "OTHER";
   return analyzeQuery(text, engine ?? undefined).type;
 }
 
 /** What the capture mode keeps of the statement, read the way `engine` reads it. */
 function captureStatement(
   text: string | null,
-  engine: DatabaseType | null,
+  engine: DatabaseType | null | undefined,
   policy: QueryEventPolicy,
 ): CapturedStatement {
-  if (policy.statementCapture === "none" || text === null || engine === null) return NOTHING_CAPTURED;
+  if (policy.statementCapture === "none" || text === null || engine === null || engine === undefined) {
+    return NOTHING_CAPTURED;
+  }
   if (policy.statementCapture === "redacted") {
     const redacted = redactStatement(text, engine);
     const cut = cutToBytes(redacted.statement, policy.maxStatementBytes);
@@ -209,10 +224,12 @@ function captureStatement(
 /** The error text, which only capture `full` keeps: masked as the statement is, then cut to its column's limit. */
 function captureErrorMessage(
   message: string | undefined,
-  engine: DatabaseType | null,
+  engine: DatabaseType | null | undefined,
   policy: QueryEventPolicy,
 ): string | null {
-  if (policy.statementCapture !== "full" || message === undefined || engine === null) return null;
+  if (policy.statementCapture !== "full" || message === undefined || engine === null || engine === undefined) {
+    return null;
+  }
   return clampCharacters(maskCredentials(storable(message), engine), LIMITS.error_message);
 }
 
@@ -242,7 +259,8 @@ export function buildQueryEvent(
   }
   wholeNumber("queryLog.maxStatementBytes", policy.maxStatementBytes, STATEMENT_MAX_BYTES);
   const statement = input.statement === null ? null : storable(input.statement);
-  const captured = captureStatement(statement, connection.engine, policy);
+  const reading = readingEngine(connection.engine);
+  const captured = captureStatement(statement, reading, policy);
   return {
     event_id: uuidv7(),
     started_at: new Date(input.started.wallClockMs).toISOString(),
@@ -258,7 +276,7 @@ export function buildQueryEvent(
     engine: connection.engine,
     access_level: connection.accessLevel,
     source: input.source,
-    statement_type: input.statementType ?? statementType(statement, connection.engine),
+    statement_type: input.statementType ?? statementType(statement, reading),
     explain: input.explain === undefined ? null : EXPLAIN[input.explain],
     statement_capture: policy.statementCapture,
     statement: captured.statement,
@@ -269,7 +287,7 @@ export function buildQueryEvent(
     duration_ms: wholeNumber("duration_ms", durationMs, INTEGER_MAX),
     status: input.status,
     error_code: boundedText(input.errorCode, LIMITS.error_code),
-    error_message: captureErrorMessage(input.errorMessage, connection.engine, policy),
+    error_message: captureErrorMessage(input.errorMessage, reading, policy),
     correlation_id: boundedText(input.correlationId, LIMITS.correlation_id),
     transaction_id: boundedText(input.transactionId, LIMITS.transaction_id),
     transaction_outcome: input.transactionOutcome ?? null,

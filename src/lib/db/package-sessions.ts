@@ -6,7 +6,8 @@
  * refuses a package's engine by name (`assertBundledEngine` in ./server-catalog) and imports no legacy module for it.
  * This module is the package path beside them: `getOrCreatePackageSession`, the editor's session, cached, and
  * `openPackageSessionOnce`, Test Connection's, never cached. A caller that serves a package's engine resolves its
- * connection with `resolvePackageAwareConnection` (src/lib/seed/resolve-connection.ts) and calls one of them.
+ * connection with `resolveConnection` (src/lib/seed/resolve-connection.ts), `engines` `bundled-and-package`, and calls
+ * one of them.
  *
  * Before anything is read from the host, keyed or opened, `assertPackageOpenable` refuses what core cannot hand a
  * package, each as a not-sent `DatabaseConfigError`, in the order the factory checks a bundled engine: a set

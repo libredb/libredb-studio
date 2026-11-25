@@ -23,7 +23,7 @@ import {
   type OpenContext,
 } from "@libredb/provider-sdk/calls";
 import { boundedChild } from "../helpers/bounded-node-child";
-import { admitSessionPackages, setHooks } from "../helpers/package-session-fixture";
+import { admitSessionPackages, hooksKey, type SessionHooks, setHooks } from "../helpers/package-session-fixture";
 import { removeScratch, scratchDirectory } from "../helpers/provider-artifacts";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..");
@@ -55,11 +55,17 @@ const { openDeadlineSentence } = await import("@/lib/db/connect-budget");
 const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { refusalError } = await import("@/lib/provider-host/access");
 const { logger } = await import("@/lib/logger");
+const { installHostCore } = await import("@/lib/provider-host/instance");
+const { runPackageEditorQuery } = await import("@/lib/api/package-editor-query");
+const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
+const { encodeValue } = await import("@libredb/provider-sdk/values");
 type PackageEngine = import("@/lib/db/server-catalog").PackageEngine;
 type PackageConnection = import("@/lib/db/server-catalog").PackageConnection;
 
 const MAIN = "acmepsmain";
 const BARE = "acmepsbare";
+const ROWS = "acmepsrows";
+const SCOPE = "acmepsscope";
 const providers = scratchDirectory("studio-package-sessions-");
 let engines: Map<string, PackageEngine>;
 
@@ -67,7 +73,10 @@ beforeAll(async () => {
   engines = await admitSessionPackages(providers, [
     { name: "acme-ps-main", engine: MAIN, offered: ["console.cancel"] },
     { name: "acme-ps-bare", engine: BARE },
+    { name: "acme-ps-rows", engine: ROWS, honours: ["offset"], env: ["LIBREDB_TEST_PS_ROWS"] },
+    { name: "acme-ps-scope", engine: SCOPE, offered: ["console.endScope"] },
   ]);
+  installHostCore(createHostCore(), "test");
 });
 afterAll(async () => {
   await factory.clearProviderCache();
@@ -151,6 +160,13 @@ function record(id: string, options: { hold?: boolean; close?: () => Promise<voi
   return recorder;
 }
 
+/** The arguments of the first call named `name` that `recorder` saw. */
+function argsOf(recorder: Recorder, name: string): unknown[] {
+  const call = recorder.calls.find((seen) => seen.name === name);
+  if (call === undefined) throw new Error(`the package saw no ${name}`);
+  return call.args;
+}
+
 /** The names of the calls `recorder` saw. */
 const names = (recorder: Recorder) => recorder.calls.map(({ name }) => name);
 
@@ -225,6 +241,124 @@ describe("the sessions of a provider package's engine", () => {
     expect(sessions.packageSessionStats().size).toBe(before + 1);
     expect(await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN)).toBe(a);
     expect(names(hooks)).toEqual(["open"]);
+  });
+
+  test("a console execute on a package session answers the package's rows through the host core", async () => {
+    const columns = [{ name: "key" }, { name: "value", type: "text" }];
+    const rows = [
+      ["alpha", 1],
+      ["beta", BigInt(10)],
+      ["gamma", null],
+    ];
+    /** A result source that answers `rows` in batches no larger than the pump asks for, and records its close. */
+    const source = () => {
+      let at = 0;
+      return {
+        columns,
+        next: (limit: { maxRows: number }) => {
+          const batch = rows.slice(at, at + limit.maxRows);
+          at += batch.length;
+          return Promise.resolve({ rows: batch, done: at >= rows.length });
+        },
+        close: () => Promise.resolve(),
+      };
+    };
+    const scrub = providerTextScrub(connectionOf(BARE) as never, "any");
+    const run = (queryId: string) => ({
+      statement: "list",
+      options: { limit: 2 },
+      queryId,
+      signal: new AbortController().signal,
+      route: "test",
+      scrub,
+      queryTimeout: undefined,
+    });
+
+    for (const [id, honoursOffset] of [
+      [BARE, false],
+      [ROWS, true],
+    ] as const) {
+      const hooks = record(id);
+      let running = -1;
+      const cached = await sessions.getOrCreatePackageSession(connectionOf(id), engineOf(id), ADMIN);
+      setHooks(id, {
+        ...((globalThis as Record<symbol, unknown>)[hooksKey(id)] as SessionHooks),
+        execute: (...args) => {
+          hooks.calls.push({ name: "execute", args });
+          running = cached.running;
+          return Promise.resolve({ results: [source()], warnings: [], executionTimeMs: 7, pageApplied: false });
+        },
+      });
+      const queryId = randomUUID();
+      const { body } = await runPackageEditorQuery(cached, run(queryId));
+      expect(body).toEqual({
+        rows: [
+          { key: "alpha", value: 1 },
+          { key: "beta", value: encodeValue(BigInt(10)) },
+        ],
+        fields: ["key", "value"],
+        columnTypes: { value: "text" },
+        rowCount: 2,
+        executionTime: 7,
+        // The probe row came back, so the page was bounded; a next page only where the package takes an offset.
+        pagination: { limit: 2, offset: 0, hasMore: honoursOffset, totalReturned: 2, wasLimited: true },
+      });
+      // The package was asked for one row past the page under the run's id, with its declared environment.
+      const [request, ctx] = argsOf(hooks, "execute").slice(1) as [Record<string, unknown>, CallContext];
+      expect(request).toEqual({ statement: "list", page: { limit: 3, offset: 0 }, runId: queryId });
+      if (id === ROWS) expect(ctx.env.get("LIBREDB_TEST_PS_ROWS")).toBeUndefined();
+      expect(() => ctx.env.get("PATH")).toThrow();
+      // The run was counted while its call ran, so the idle sweep kept the session, and is not counted after it.
+      expect([running, cached.running]).toEqual([1, 0]);
+    }
+  });
+
+  test("a session that offers endScope is sent the run's scope and its rollback is answered, and columns that cannot key a row are the package's defect", async () => {
+    const hooks = record(SCOPE);
+    const cached = await sessions.getOrCreatePackageSession(connectionOf(SCOPE), engineOf(SCOPE), ADMIN);
+    let columns: unknown[] = [{ name: "key" }];
+    const emptySource = () => ({
+      columns,
+      next: () => Promise.resolve({ rows: [], done: true }),
+      close: () => Promise.resolve(),
+    });
+    setHooks(SCOPE, {
+      ...((globalThis as Record<symbol, unknown>)[hooksKey(SCOPE)] as SessionHooks),
+      execute: (...args) => {
+        hooks.calls.push({ name: "execute", args });
+        return Promise.resolve({ results: [emptySource()], warnings: [], executionTimeMs: 1, pageApplied: false });
+      },
+      endScope: (...args) => {
+        hooks.calls.push({ name: "endScope", args });
+        return Promise.resolve({ openTransaction: "rolled-back" });
+      },
+    });
+    const run = {
+      statement: "BEGIN",
+      options: {},
+      signal: new AbortController().signal,
+      route: "test",
+      scrub: providerTextScrub(connectionOf(SCOPE) as never, "any"),
+      queryTimeout: 30_000,
+    };
+    const { body } = await runPackageEditorQuery(cached, run);
+    expect(body).toMatchObject({ rows: [], fields: ["key"], openTransaction: "rolled-back" });
+    const { scope } = argsOf(hooks, "execute")[1] as { scope: string };
+    expect(typeof scope).toBe("string");
+    expect(hooks.calls.find(({ name }) => name === "endScope")?.args[1]).toEqual({ scope });
+
+    for (const [answered, defect] of [
+      [[{ name: "key" }, { name: "key" }], "two columns of one name"],
+      [[{ name: "" }], "a column with no name"],
+      [[{ name: 7 }], "a column with no name"],
+    ] as const) {
+      columns = [...answered];
+      const failure = await rejection(runPackageEditorQuery(cached, run));
+      expect((failure as Error).message).toBe(
+        `The provider package answered ${defect}, so Studio cannot key its rows; this is its defect.`,
+      );
+    }
+    expect(cached.running).toBe(0);
   });
 
   test("teardown cuts a close that never settles at the deadline", async () => {

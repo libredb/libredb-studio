@@ -20,10 +20,12 @@
  * (src/lib/mcp/context.ts); MCP's availability (src/lib/mcp/availability.ts), which `list_connections` and every MCP
  * tool answer before any open, reads `bundledEngineRefusal`'s message. A refused package's engine is refused there as
  * `ProviderUnavailableError`, an admitted one as `PackageEngineUnsupportedError` until the request serves package
- * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection serves an admitted
- * engine in this Studio: it resolves its connection through `resolveConnection` with `engines` `bundled-and-package`,
- * then `testPackageConnection` (src/lib/api/test-connection.ts, over src/lib/db/package-sessions.ts) validates it
- * against the engine's field rules and opens one session through the package.
+ * engines, and every other value exactly as `assertDatabaseType` refuses it. Only Test Connection and the query route
+ * serve an admitted engine in this Studio: each resolves its connection through `resolveConnection` with `engines`
+ * `bundled-and-package`; Test Connection then validates the connection against the engine's field rules and opens one
+ * session through the package (`testPackageConnection` in src/lib/api/test-connection.ts), and the query route runs a
+ * statement on the engine's cached session (`runPackageEditorQuery` in src/lib/api/package-editor-query.ts), both over
+ * src/lib/db/package-sessions.ts.
  *
  * The published `DatabaseType`, `isDatabaseType`, `typeIdRefusal` and `assertDatabaseType` (./type-id) are unchanged:
  * server code that holds an admitted engine's id holds a `PackageEngineId`, never a `DatabaseType`.
@@ -39,6 +41,7 @@
  * serves (src/lib/provider-host/boot.ts).
  */
 import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
 import type { ClaimGrants } from "@/lib/db/claim-grants";
 import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
 import type { DeclaredSession } from "@/lib/provider-host/core/contract-session";
@@ -110,6 +113,13 @@ export interface PackageEngine {
   readonly grants: PackageGrants;
   /** What a session of the engine is declared to answer: the package's calls, its maintenance and monitoring panels. */
   readonly session: DeclaredSession;
+  /**
+   * The grammar the declaration states its statements in (`sqlText.grammar`), composed once by `grammarFromFacts`
+   * (./sql-grammar), which the confirmation gate reads them under with every claim that loosens it uncounted
+   * (`packageStatementAsks` in src/lib/sql/dangerous-query.ts). The package's own data, never a row of Studio's grammar
+   * table.
+   */
+  readonly statementGrammar: SqlGrammar;
 }
 
 /** The composed catalog: the engines admitted packages serve, and the codes of the refused packages naming the others. */
@@ -149,7 +159,7 @@ type CatalogHolder = { [CATALOG_KEY]?: ServerCatalog };
 /** The refusal of a package engine, by the path that refused it. */
 const UNSUPPORTED_SENTENCES: Readonly<Record<EngineNeed, string>> = Object.freeze({
   route:
-    "This request is served for an engine of a provider package only by Test Connection in this LibreDB Studio, and this is another request.",
+    "This request is served for an engine of a provider package only by Test Connection and the query route in this LibreDB Studio, and this is another request.",
   open: "LibreDB Studio's provider factory builds no provider for an engine of a provider package; that engine's session opens through its package, and this caller does not serve one.",
 });
 

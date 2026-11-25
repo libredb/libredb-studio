@@ -3,7 +3,9 @@ import {
   CONFIRMATION_FIELD_MESSAGE,
   CONFIRMATION_REQUIRED_MESSAGE,
   CONFIRMATION_TYPED_MESSAGE,
+  gatePackageRun,
   gateRun,
+  type PackageRunGateRequest,
   type RunGateRequest,
 } from "@/lib/api/run-confirmation";
 import {
@@ -16,7 +18,12 @@ import { ApiErrorCode } from "@/lib/api/error-codes";
 import { INVALID_RUN_CONFIRMATION_SETTING } from "@/lib/config/run-confirmation";
 import { TYPED_NAME_MISSING_REFUSAL } from "@/lib/editor/statement-analysis";
 import { logger } from "@/lib/logger";
+import type { EngineConnection } from "@/lib/db/server-catalog";
+import { grammarFromFacts } from "@/lib/db/sql-grammar";
 import type { DatabaseConnection } from "@/lib/types";
+import type { GrammarFacts } from "@libredb/provider-sdk/manifest";
+import type { SqlGrammar } from "@libredb/provider-sdk/sql";
+import { admittedManifest, type EditableEngine } from "../../../helpers/package-catalog";
 import { installStandInVocabulary, STAND_IN_TYPE } from "../../../helpers/stand-in-vocabulary";
 
 const NOW = Date.UTC(2026, 10, 22, 12, 0, 0);
@@ -529,3 +536,123 @@ describe("the production escalation and the typed check (6c)", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 });
+
+/* oxlint-disable no-await-in-loop -- each gate call runs after the one before, so a token is spent in its order. */
+describe("the gate on an engine a provider package serves", () => {
+  const original = process.env.LIBREDB_RUN_CONFIRMATION;
+  let warn: ReturnType<typeof spyOn>;
+  let error: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    process.env.LIBREDB_RUN_CONFIRMATION = "required";
+    forgetUsedRunConfirmations();
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
+    error = spyOn(logger, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    error.mockRestore();
+    if (original === undefined) delete process.env.LIBREDB_RUN_CONFIRMATION;
+    else process.env.LIBREDB_RUN_CONFIRMATION = original;
+  });
+
+  /** A connection of the package's engine, its type an id Studio does not ship. */
+  const kv = {
+    id: "pkg-gate",
+    name: "Keys",
+    type: "acmegate",
+    host: "kv.internal",
+    createdAt: new Date(0),
+  } as unknown as EngineConnection;
+
+  /** The grammar the minimal manifest declares, as the server catalog composes it for the package's engine. */
+  const declared = (edit: (engine: EditableEngine) => void = () => undefined) =>
+    grammarFromFacts(
+      (admittedManifest("acmegate", edit).engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar,
+    );
+
+  function packageRequest(overrides: Partial<PackageRunGateRequest> = {}): PackageRunGateRequest {
+    return { ...request({ connection: kv as never }), connection: kv, grammar: declared(), ...overrides };
+  }
+
+  test("a package run is classified under its declared grammar: a read runs, a write asks, a production connection asks its name", async () => {
+    for (const sql of ["SELECT 1", "-- a note\nSELECT id FROM t"]) {
+      expect(await gatePackageRun(packageRequest({ sql }), clock)).toEqual({ kind: "run", unconfirmed: false });
+    }
+    // A write, a write in a later statement of the split, and text the declared grammar cannot close each ask.
+    for (const [sql, unreadable] of [
+      ["DELETE FROM t", false],
+      ["SELECT 1; DROP TABLE x", false],
+      ["SELECT 'never closed", true],
+    ] as const) {
+      const asked = await gatePackageRun(packageRequest({ sql }), clock);
+      expect(asked).toMatchObject({
+        kind: "answer",
+        status: 428,
+        body: {
+          error: CONFIRMATION_REQUIRED_MESSAGE,
+          code: ApiErrorCode.CONFIRMATION_REQUIRED,
+          confirmation: { unreadable, typedConfirmation: null, classificationFailed: false },
+        },
+      });
+      // The token binds the package's connection by its fields, and runs the request it was issued for once.
+      const retry = packageRequest({ sql, confirmation: { token: tokenOf(asked) } });
+      expect(await gatePackageRun(retry, clock)).toEqual({ kind: "run", unconfirmed: false });
+      expect(await gatePackageRun(retry, clock)).toMatchObject({ kind: "answer", status: 400 });
+    }
+
+    const production = { ...kv, environment: "production" } as EngineConnection;
+    expect(
+      await gatePackageRun(
+        packageRequest({ connection: production, sql: "DELETE FROM t", confirmation: "ask" }),
+        clock,
+      ),
+    ).toMatchObject({
+      status: 428,
+      body: {
+        error: CONFIRMATION_TYPED_MESSAGE,
+        confirmation: { typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] } },
+      },
+    });
+    expect(
+      await gatePackageRun(packageRequest({ connection: { ...production, name: "" }, sql: "DELETE FROM t" }), clock),
+    ).toEqual({ kind: "answer", status: 400, body: { error: TYPED_NAME_MISSING_REFUSAL } });
+    // A read still runs on production.
+    expect(await gatePackageRun(packageRequest({ connection: production, sql: "SELECT 1" }), clock)).toEqual({
+      kind: "run",
+      unconfirmed: false,
+    });
+  });
+
+  test("a package's loosening claims are not counted: text-not-SQL and an exempt form still ask", async () => {
+    // The declaration claims its text is not SQL and exempts ALTER SESSION SET: Studio's review record lists neither
+    // claim for an engine it does not ship, so the gate reads the text as SQL and the form asks as ALTER does.
+    const grammar = declared((engine) => {
+      const sqlText = engine.sqlText as { readsSqlText: boolean; grammar: { confirmExemptForms: string[][] } };
+      sqlText.readsSqlText = false;
+      sqlText.grammar.confirmExemptForms = [["ALTER", "SESSION", "SET"]];
+    });
+    expect(grammar.confirmExemptForms).toEqual([["ALTER", "SESSION", "SET"]]);
+    for (const sql of ["ALTER SESSION SET search_path = x", "DELETE FROM t", "SELECT 1; DROP TABLE x"]) {
+      expect(await gatePackageRun(packageRequest({ grammar, sql }), clock)).toMatchObject({
+        kind: "answer",
+        status: 428,
+      });
+    }
+    expect(await gatePackageRun(packageRequest({ grammar, sql: "SELECT 1" }), clock)).toEqual({
+      kind: "run",
+      unconfirmed: false,
+    });
+  });
+
+  test("a package reader that throws asks, marked classificationFailed, and logs the engine, never the statement", async () => {
+    const broken = { ...declared(), script: undefined } as unknown as SqlGrammar;
+    const asked = await gatePackageRun(packageRequest({ grammar: broken, sql: "SELECT secret_value" }), clock);
+    expect(asked).toMatchObject({ status: 428, body: { confirmation: { classificationFailed: true } } });
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(error.mock.calls[0])).not.toContain("secret_value");
+    expect(error.mock.calls[0]?.[2]).toMatchObject({ route: "api/db/query", type: "acmegate" });
+  });
+});
+/* oxlint-enable no-await-in-loop */

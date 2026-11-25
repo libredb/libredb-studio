@@ -815,6 +815,14 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // was read just above. A text-not-SQL claim the review record does not list is read as
   // SQL, so its statements are split and read below.
   if (gateReadsTextAsNotSql(databaseType)) return false;
+  return writesInLaterStatements(query, grammar);
+}
+
+/**
+ * Whether a statement of `query` other than the whole text writes under `grammar`, as the splitter the multi-statement
+ * route runs reads it: the last step of `isDangerousQuery`, and of `packageStatementAsks`.
+ */
+function writesInLaterStatements(query: string, grammar: SqlGrammar): boolean {
   // One exception to "exactly what the runner will run": a procedural body is ONE
   // statement to the runner (#1312), and its operative keyword is `BEGIN`, `DECLARE` or
   // `CREATE`, none of which asks. The writes inside it are still writes, so the gate keeps
@@ -824,5 +832,42 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // A statement that is the whole text, as a statement under the caret is, was read above.
   return splitStatements(query, statementsInsideBodies).some(
     (statement) => statement.sql !== query && writesUnderGrammar(statement.sql, grammar),
+  );
+}
+
+/**
+ * `grammar` as the gate reads an engine a provider package serves: with no exempt form. Each form is a claim that
+ * loosens the gate, counted only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`), and the record
+ * holds no row for an engine Studio does not ship (docs/providers/CONTRACT.md, S-8).
+ */
+function packageGateGrammar(grammar: SqlGrammar): SqlGrammar {
+  return grammar.confirmExemptForms === undefined ? grammar : { ...grammar, confirmExemptForms: [] };
+}
+
+/**
+ * Whether part of `text` could not be read under `grammar`, the grammar an engine a provider package serves declares:
+ * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. The text
+ * is read as SQL whatever the declaration says of it: its text-not-SQL claim loosens the gate, and Studio's review
+ * record holds no row for such an engine (S-8).
+ */
+export function packageUnreadableRun(text: string, grammar: SqlGrammar): boolean {
+  return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
+}
+
+/**
+ * Whether the confirmation gate asks about `statement` on an engine a provider package serves, read under `grammar`,
+ * the grammar its declaration states, composed into the server catalog's record of the engine
+ * (docs/providers/CONTRACT.md, clause C-113). Every claim that would loosen the gate is read at its restrictive value,
+ * since Studio's review record holds no row for such an engine (S-8): the text is read as SQL, and no exempt form is
+ * counted. No vocabulary row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks where
+ * part of the text cannot be read, where the statement writes, and where a later statement of the split writes:
+ * `isDangerousQuery`'s own answer for an engine with no row and no reviewed claim, read from the package's data.
+ */
+export function packageStatementAsks(statement: string, grammar: SqlGrammar): boolean {
+  const read = packageGateGrammar(grammar);
+  return (
+    packageUnreadableRun(statement, read) ||
+    writesUnderGrammar(statement, read) ||
+    writesInLaterStatements(statement, read)
   );
 }

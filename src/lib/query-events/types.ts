@@ -11,7 +11,6 @@
  */
 import type { ExplainMode } from "@/lib/explain";
 import type { RuntimeSettingValues } from "@/lib/governance/settings";
-import type { DatabaseType } from "@/lib/types";
 
 /**
  * Which surface ran the unit (docs/GOVERNANCE.md, "Query events"). The column is an open vocabulary checked by format
@@ -73,8 +72,11 @@ export interface QueryEventConnection {
   /** Studio's id of the connection, `seed:<connection id>`, as resolved or as requested. */
   readonly id: string;
   readonly name: string | null;
-  /** The engine that runs the statement; null only when the connection did not resolve. */
-  readonly engine: DatabaseType | null;
+  /**
+   * The engine that runs the statement, a type id Studio ships or the id of an engine a provider package serves; null
+   * only when the connection did not resolve.
+   */
+  readonly engine: string | null;
   /** The level of the credential the connection opened with; null only when the connection did not resolve. */
   readonly accessLevel: AccessLevel | null;
 }
@@ -141,7 +143,7 @@ export interface QueryEventRow {
   readonly session_role: QueryEventPrincipal["role"];
   readonly connection_id: string;
   readonly connection_name: string | null;
-  readonly engine: DatabaseType | null;
+  readonly engine: string | null;
   readonly access_level: AccessLevel | null;
   readonly source: QueryEventSource;
   readonly statement_type: StatementType;
