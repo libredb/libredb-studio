@@ -8,12 +8,12 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { randomUUID } from "node:crypto";
-import type { CallRefusal } from "@libredb/provider-sdk/calls";
+import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { createErrorResponse } from "@/lib/api/errors";
-import { packageCallError, packageWarnings } from "@/lib/api/package-errors";
+import { PACKAGE_DEFECT_PREFIX, packageCallError, packageWarnings } from "@/lib/api/package-errors";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
 import { logger } from "@/lib/logger";
-import { HOST_DEFECT_PREFIX, refusalError } from "@/lib/provider-host/access";
+import { HOST_DEFECT_PREFIX, HostDefectError, refusalError } from "@/lib/provider-host/access";
 import type { DatabaseConnection } from "@/lib/types";
 import { parseResponseJSON } from "../../../helpers/mock-next";
 
@@ -24,11 +24,13 @@ const scrub = providerTextScrub(
 );
 
 /** The error the accessor builds for a call the host refused with `refusals`, after the package was called. */
-function refused(refusals: CallRefusal[]): Error {
-  return refusalError(
+function refused(refusals: CallRefusal[]): HostDefectError {
+  const error = refusalError(
     { kind: "refused", called: true, refusals },
     { caller: new AbortController().signal, deadlineSentence: "The query ran past its timeout." },
   );
+  if (!(error instanceof HostDefectError)) throw new Error(`expected a host defect, got ${error.name}`);
+  return error;
 }
 
 let spies: { mockRestore(): void }[] = [];
@@ -84,6 +86,23 @@ describe("packageCallError", () => {
       "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
     );
     expect(lines).toEqual(["A provider package's execute failed"]);
+  });
+
+  test("the log line of a refusal of what the package answered names the package as its author, never Studio", () => {
+    const key = `k${randomUUID().replaceAll("-", "")}`;
+    const malformed = refused([{ rule: "batch-malformed", pointer: `/${key}` }]);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    spies.push(error);
+
+    packageCallError("execute", malformed, scrub, ROUTE);
+
+    expect(error.mock.calls.length).toBe(1);
+    const logged = error.mock.calls[0]?.[1] as Error;
+    expect(logged.message).toBe(
+      `${PACKAGE_DEFECT_PREFIX} ${callRefusalSentence(malformed.refusals[0] as CallRefusal)}`,
+    );
+    expect(logged.message).not.toContain("defect of Studio");
+    expect(error.mock.calls[0]?.[2]).toEqual({ route: ROUTE });
   });
 
   test("a value the package rejects with is the package's failure, whatever its message says", () => {

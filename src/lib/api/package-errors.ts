@@ -7,11 +7,12 @@
  * connection. A package's error is any value one of its calls rejects with that is not Studio's own `DatabaseError`: the
  * SDK gives a package no error class to raise, and Studio's classes are outside a package's closure, so a package cannot
  * construct one. A value the host core builds about a package's answer it cannot read is answered the same way, since
- * it is the package's defect too; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
+ * it is the package's defect too, and its log line names the package as the author (`PACKAGE_DEFECT_PREFIX`), where
+ * the accessor's message names Studio; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
  * defect, and is answered as Studio's own internal error. A package's warnings reach the client only as Studio's
  * sentence naming their count, each logged once through the same scrub.
  */
-import type { CallRefusalRule } from "@libredb/provider-sdk/calls";
+import { type CallRefusalRule, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
 import { ConnectionError, DatabaseError, markNotSent } from "@/lib/db/errors";
 import {
@@ -54,10 +55,24 @@ const REFUSAL_AUTHOR: Readonly<Record<CallRefusalRule, "studio" | "package">> = 
   "transaction-answer-unreadable": "package",
 });
 
+/** The words that open the message of the error logged for a refusal of what a provider package answered. */
+export const PACKAGE_DEFECT_PREFIX =
+  "The provider host refused what a provider package answered, which is a defect of the package:";
+
 /** Whether `error` is a defect of Studio's own: a `HostDefectError` none of whose refusals is about the package's answer. */
 function isStudioDefect(error: unknown): error is HostDefectError {
   return (
     error instanceof HostDefectError && error.refusals.every((refusal) => REFUSAL_AUTHOR[refusal.rule] === "studio")
+  );
+}
+
+/**
+ * The error logged for `error`, a host defect with a refusal of what the package answered: the same refusals' sentences
+ * under `PACKAGE_DEFECT_PREFIX`, so the log names the package as the author, where the accessor's message names Studio.
+ */
+function packageDefect(error: HostDefectError): Error {
+  return new Error(
+    `${PACKAGE_DEFECT_PREFIX} ${error.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`,
   );
 }
 
@@ -93,7 +108,7 @@ export function packageWarnings(
 /**
  * The error a request answers for `error`, a failure of a provider package's `call` on its query route: Studio's own
  * `DatabaseError`, and a host defect of Studio's own (`isStudioDefect`), as itself, and any other value logged once
- * (`logPackageError`) and answered with Studio's sentence naming its code: a `ConnectionError` marked not-sent for the
+ * (`logPackageError`), a host defect with a refusal of what the package answered as `packageDefect`, and answered with Studio's sentence naming its code: a `ConnectionError` marked not-sent for the
  * open, since nothing was sent, and a plain `Error`, kind internal and outcome unknown, for the execute, since the
  * statement may have run.
  */
@@ -104,7 +119,7 @@ export function packageCallError(
   route: string,
 ): unknown {
   if (error instanceof DatabaseError || isStudioDefect(error)) return error;
-  logPackageError(call, error, scrub, route);
+  logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
   if (call === "execute") return new Error(packageErrorSentence(call, error));
   const failed = new ConnectionError(packageErrorSentence(call, error));
   markNotSent(failed);
