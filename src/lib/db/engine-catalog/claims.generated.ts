@@ -3,7 +3,7 @@
 import type { DatabaseType } from "@/lib/types";
 import type { ClaimRequestEntry } from "./projection";
 
-/** Each engine's policy and MCP claim requests, read only by Studio's grant reader, claim-grants.ts (M-82). */
+/** Each engine's policy, MCP and connection claim requests, read only by the grant reader, claim-grants.ts (M-83). */
 export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestEntry>> = Object.freeze({
   bigquery: Object.freeze({
     policy: Object.freeze({
@@ -20,6 +20,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "BigQuery does not run through an SSH tunnel: every request goes over HTTPS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   cassandra: Object.freeze({
@@ -38,6 +49,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "Apache Cassandra does not run through an SSH tunnel: the tunnel forwards one address, and the driver reaches every other node of the ring at the address that node advertises. Connect to the cluster directly, or turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   clickhouse: Object.freeze({
     policy: Object.freeze({
@@ -54,6 +76,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   couchbase: Object.freeze({
@@ -72,6 +101,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "Couchbase does not run through an SSH tunnel: the tunnel forwards one port, and queries go to the query service, on another port, at the address the cluster's node map advertises. Turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   databend: Object.freeze({
     policy: Object.freeze({
@@ -88,6 +128,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: true,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   db2: Object.freeze({
@@ -106,6 +153,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   druid: Object.freeze({
     policy: Object.freeze({
@@ -122,6 +176,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   duckdb: Object.freeze({
@@ -140,6 +201,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "DuckDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: true,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   elasticsearch: Object.freeze({
     policy: Object.freeze({
@@ -156,6 +228,16 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({
+        form: "pair",
+        supersededBy: Object.freeze(["apiKeyId", "apiKeySecret"] as const),
+      }),
     }),
   }),
   etcd: Object.freeze({
@@ -174,6 +256,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   firestore: Object.freeze({
     policy: Object.freeze({
@@ -190,6 +279,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "Firestore does not run through an SSH tunnel: every request goes over TLS to Google's API hosts, and a tunnel forwards one address of the several the provider reaches. Turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
     }),
   }),
   influxdb: Object.freeze({
@@ -208,6 +308,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   influxdb3: Object.freeze({
     policy: Object.freeze({
@@ -224,6 +331,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   kafka: Object.freeze({
@@ -242,6 +356,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   kubernetes: Object.freeze({
     policy: Object.freeze({
@@ -258,6 +383,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   libredb: Object.freeze({
@@ -276,6 +408,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: true,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: true,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   libsql: Object.freeze({
     policy: Object.freeze({
@@ -293,6 +436,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   milvus: Object.freeze({
     policy: Object.freeze({
@@ -309,6 +459,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   modbus: Object.freeze({
@@ -330,6 +487,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   mongodb: Object.freeze({
     policy: Object.freeze({
@@ -346,6 +510,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   mqtt: Object.freeze({
@@ -364,6 +535,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   mssql: Object.freeze({
     policy: Object.freeze({
@@ -380,6 +558,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   mtconnect: Object.freeze({
@@ -398,6 +583,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   mysql: Object.freeze({
     policy: Object.freeze({
@@ -414,6 +606,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   neo4j: Object.freeze({
@@ -432,6 +631,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   netconf: Object.freeze({
     policy: Object.freeze({
@@ -448,6 +654,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   opcua: Object.freeze({
@@ -466,6 +679,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze(["clientCertificatePath", "clientPrivateKeyPath"] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   opensearch: Object.freeze({
     policy: Object.freeze({
@@ -482,6 +702,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   oracle: Object.freeze({
@@ -500,6 +727,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   oxia: Object.freeze({
     policy: Object.freeze({
@@ -516,6 +750,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
     }),
   }),
   postgres: Object.freeze({
@@ -534,6 +775,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: true,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   prometheus: Object.freeze({
     policy: Object.freeze({
@@ -550,6 +798,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   qdrant: Object.freeze({
@@ -568,6 +823,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   rabbitmq: Object.freeze({
     policy: Object.freeze({
@@ -584,6 +846,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "RabbitMQ connections cannot use an SSH tunnel: one tunnel carries one port, and the management API and AMQP use two.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   redis: Object.freeze({
@@ -602,6 +875,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   s3: Object.freeze({
     policy: Object.freeze({
@@ -618,6 +898,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: true,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "dedicated-pair", supersededBy: Object.freeze([] as const) }),
     }),
   }),
   snmp: Object.freeze({
@@ -636,6 +923,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "SNMP does not run through an SSH tunnel: the tunnel forwards TCP, and SNMP reads travel as UDP datagrams. Turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   snowflake: Object.freeze({
     policy: Object.freeze({
@@ -652,6 +950,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: false,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "Snowflake does not run through an SSH tunnel: the driver reaches the account's Snowflake hosts over HTTPS, and a tunnel forwards one address. Turn the tunnel off.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
     }),
   }),
   spark: Object.freeze({
@@ -670,6 +979,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   sparkplug: Object.freeze({
     policy: Object.freeze({
@@ -686,6 +1002,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
     }),
   }),
   sqlite: Object.freeze({
@@ -705,6 +1028,17 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({
+        offered: false,
+        refusal:
+          "SQLite opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
+      }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: true,
+      serverLevelWithoutDatabase: false,
+      agentCredential: null,
+    }),
   }),
   trino: Object.freeze({
     policy: Object.freeze({
@@ -722,6 +1056,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       metadataReadChangesState: false,
       agentCredentialRequired: false,
     }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze([] as const) }),
+    }),
   }),
   weaviate: Object.freeze({
     policy: Object.freeze({
@@ -738,6 +1079,13 @@ export const BUNDLED_CLAIM_REQUESTS: Readonly<Record<DatabaseType, ClaimRequestE
       statementRead: true,
       metadataReadChangesState: false,
       agentCredentialRequired: false,
+    }),
+    connection: Object.freeze({
+      sshTunnel: Object.freeze({ offered: true }),
+      hostPathFields: Object.freeze([] as const),
+      opensLocalFile: false,
+      serverLevelWithoutDatabase: false,
+      agentCredential: Object.freeze({ form: "secret", supersededBy: Object.freeze([] as const) }),
     }),
   }),
 });

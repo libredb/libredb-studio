@@ -46,7 +46,7 @@ import {
 import type { HostUriScheme } from "@/lib/connection-host-uri";
 import type { ConnectionField } from "@/lib/db/connection-fields";
 import { CONNECTION_FORM, type ConnectionFormSpec } from "@/lib/db/connection-form";
-import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { GRANTED_SSH_TUNNEL_REFUSAL } from "@/lib/db/claim-grants";
 import { assertDatabaseType, typeIdRow } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 
@@ -360,11 +360,12 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
 }
 
 /**
- * Whether this engine's connections may carry an SSH tunnel: true exactly where core's `SSH_TUNNEL_REFUSAL` row
- * (`src/lib/db/compatibility.ts`) is null, so the dialog offers a tunnel exactly where core takes one (FND-2 slice 5).
- * The row says why each other engine takes none: Kafka, Apache Cassandra and Couchbase reach addresses the server
- * advertises, RabbitMQ uses two ports, BigQuery, Firestore and Snowflake reach several vendor API hosts, SNMP sends
- * datagrams, and SQLite, DuckDB and LibreDB open a file with no address to forward to.
+ * Whether this engine's connections may carry an SSH tunnel: true exactly where Studio's grant of its tunnel claim,
+ * `GRANTED_SSH_TUNNEL_REFUSAL` (`src/lib/db/claim-grants.ts`), is null, so the dialog offers a tunnel exactly where
+ * core takes one (FND-2 slice 5). Studio's record of the claim, `SSH_TUNNEL_REFUSAL`, says why each other engine it
+ * ships takes none: Kafka, Apache Cassandra and Couchbase reach addresses the server advertises, RabbitMQ uses two
+ * ports, BigQuery, Firestore and Snowflake reach several vendor API hosts, SNMP sends datagrams, and SQLite, DuckDB and
+ * LibreDB open a file with no address to forward to.
  *
  * One rule, two readers, as the engine's field list is: the connection modal renders the SSH
  * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says
@@ -373,5 +374,5 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
  * never written onto a connection whose engine takes none, which core would refuse.
  */
 export function offersSshTunnel(type: DatabaseType): boolean {
-  return typeIdRow(SSH_TUNNEL_REFUSAL, type) === null;
+  return typeIdRow(GRANTED_SSH_TUNNEL_REFUSAL, type) === null;
 }

@@ -564,10 +564,11 @@ const SECRET: SeedAgentCredential = Object.freeze({ form: "secret", supersededBy
 const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pair", supersededBy: Object.freeze([]) });
 
 /**
- * Which agent credential a seed of each engine may carry, read by the seed schema at load and by the projection's
- * gates. A hand-written literal and never computed from the providers, because this module imports none;
- * `tests/unit/db/agent-credential-capability.test.ts` holds each row to its provider's declared form and to the
- * engine's `CONNECTION_FIELDS` row, so a provider that changes its form fails there until its row here follows.
+ * Which agent credential a seed of each engine may carry, which the seed schema at load and the projection's gates read
+ * through Studio's grant of it, `GRANTED_SEED_AGENT_CREDENTIAL` in ./claim-grants. A hand-written literal and never
+ * computed from the providers, because this module imports none; `tests/unit/db/agent-credential-capability.test.ts`
+ * holds each row to its provider's declared form and to the engine's `CONNECTION_FIELDS` row, so a provider that
+ * changes its form fails there until its row here follows.
  *
  * A null row where the engine's `AGENT_CREDENTIAL_FORM` row is null too is a row the factory would ask for a user and
  * a password, on an engine that has no field to put one in (SQLite, DuckDB, MTConnect, Modbus and Sparkplug B have no
@@ -575,8 +576,10 @@ const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pai
  * (Snowflake, whose key-pair sign-in ignores the password and whose statements all run as the connection's role).
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.agentCredential`, and
- * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
- * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ * only Studio's grant reader, src/lib/db/claim-grants.ts, reads it: the seed schema and the projection's gates read
+ * `GRANTED_SEED_AGENT_CREDENTIAL`, this table's row where the request equals it and null otherwise, which is the row
+ * for every engine Studio ships. The table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
+ * M-52, M-53 and M-83).
  */
 export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> = Object.freeze({
   postgres: PAIR,

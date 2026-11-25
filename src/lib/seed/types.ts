@@ -3,6 +3,7 @@ import {
   GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
   GRANTED_MCP_EXPOSABLE,
   GRANTED_READ_ROOTS_REQUIRED,
+  GRANTED_SEED_AGENT_CREDENTIAL,
   GRANTED_WRITE_REACH,
 } from "@/lib/db/claim-grants";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
@@ -12,7 +13,6 @@ import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/li
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import {
   CONNECTION_FIELDS,
-  SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELDS,
   type SeedAgentCredential,
   type SeedOnlyFields,
@@ -138,10 +138,10 @@ const isLiteral = (value: string | undefined): value is string => isSet(value) &
 
 /**
  * The load's refusals of an agent credential its engine's row does not take, read from the table it is handed,
- * `SEED_AGENT_CREDENTIAL` in `SeedConnectionSchema`, never a type-id branch. Each names the connection and the field,
- * never the value, and a reference is unknown here: load refuses what the file shows, and the factory refuses the rest
- * at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record, so each
- * form is tested on an engine of the test's choosing.
+ * `GRANTED_SEED_AGENT_CREDENTIAL` in `SeedConnectionSchema`, never a type-id branch. Each names the connection and the
+ * field, never the value, and a reference is unknown here: load refuses what the file shows, and the factory refuses
+ * the rest at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record,
+ * so each form is tested on an engine of the test's choosing.
  */
 export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType, SeedAgentCredential | null>>) {
   return (conn: AgentCredentialFields, ctx: z.RefinementCtx): void => {
@@ -456,9 +456,9 @@ export const SeedConnectionSchema = z
     // whole credential (a bearer token, a service-account key JSON). Declared for the reason skipObjectScan is: zod
     // strips an undeclared key silently, and a seed file's agent credential would validate and vanish, leaving its
     // agent and MCP calls under the connection's own login. Strings, because both are resolvable (RESOLVABLE_FIELDS)
-    // and the file is validated before anything is resolved. Which engines take which is SEED_AGENT_CREDENTIAL in
-    // src/lib/db/connection-fields.ts, read by the refine below; only on a managed seed (SeedConfigSchema), and never
-    // in defaults.
+    // and the file is validated before anything is resolved. Which engines take which is Studio's grant,
+    // GRANTED_SEED_AGENT_CREDENTIAL in src/lib/db/claim-grants.ts, read by the refine below; only on a managed seed
+    // (SeedConfigSchema), and never in defaults.
     agentUser: z.string().optional(),
     agentPassword: z.string().optional(),
     // OPC UA only: the read roots, the node ids beneath which agent mode and MCP read. Declared for the reason
@@ -497,8 +497,8 @@ export const SeedConnectionSchema = z
   .superRefine(refuseMcpWithoutAgentCredential(GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED))
   // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from GRANTED_READ_ROOTS_REQUIRED.
   .superRefine(refuseMcpWithoutReadRoots(GRANTED_READ_ROOTS_REQUIRED))
-  // An agent credential the engine's row does not take, read from SEED_AGENT_CREDENTIAL.
-  .superRefine(refuseInvalidAgentCredential(SEED_AGENT_CREDENTIAL))
+  // An agent credential the engine's row does not take, read from Studio's grant, GRANTED_SEED_AGENT_CREDENTIAL.
+  .superRefine(refuseInvalidAgentCredential(GRANTED_SEED_AGENT_CREDENTIAL))
   // A read-only mode on an engine Studio can write unguarded, read from GRANTED_WRITE_REACH.
   .superRefine(refuseReadOnlyWhereOpen(GRANTED_WRITE_REACH))
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a

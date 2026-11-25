@@ -1272,18 +1272,20 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
  * ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says, because a grant would hand its users a file of the
  * host Studio runs on.
  *
- * Static because admission decides from a row before any provider exists, and reads this record rather than a type
- * id. Kept here because the governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React
- * icon components; `tests/unit/db/compatibility.test.ts` holds every entry equal to that file's `isFileBased()`, the
- * connection form's own answer. An exhaustive Record over the union, frozen like the records above it.
+ * Static because admission decides from a row before any provider exists, and reads Studio's grant of this claim,
+ * `GRANTED_OPENS_LOCAL_FILE`, rather than a type id. Kept here because the governance layer must not load
+ * `src/lib/db-ui-config.ts`, which value-imports the React icon components; `tests/unit/db/compatibility.test.ts` holds
+ * every entry equal to that file's `isFileBased()`, the connection form's own answer. An exhaustive Record over the
+ * union, frozen like the records above it.
  *
- * The provider factory reads it too: it admits the file such a connection names before the provider is built
+ * The provider factory reads the grant too: it admits the file such a connection names before the provider is built
  * (`admittedFileConnection` in `./provider-files`), refusing Studio's own storage files there, and hands the provider
  * the absolute path it admitted.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.opensLocalFile`, and
- * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
- * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ * only Studio's grant reader, src/lib/db/claim-grants.ts, reads it: every gate reads `GRANTED_OPENS_LOCAL_FILE`, the
+ * more restrictive of the request and this table's row, which is the row for every engine Studio ships. The table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
  */
 export const OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -1344,13 +1346,14 @@ const NO_HOST_PATH_FIELDS: readonly HostPathField[] = Object.freeze([]);
  * when it names one of Studio's own storage files, and handed to the provider as an absolute path under
  * `ADMITTED_HOST_PATHS` (`@/lib/types`).
  *
- * Kept apart from `OPENS_LOCAL_FILE` because that record also decides governance row admission: an engine that reads a
+ * Kept apart from `OPENS_LOCAL_FILE` because that claim also decides governance row admission: an engine that reads a
  * certificate from the host is still a server a governance source may grant. An exhaustive Record over the union,
  * frozen with every row, like the records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at `connection.hostPathFields`, and
- * every gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never
- * a projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ * only Studio's grant reader, src/lib/db/claim-grants.ts, reads it: every gate reads `GRANTED_HOST_PATH_FIELDS`, the
+ * more restrictive of the request and this table's row, which is the row for every engine Studio ships. The table is
+ * never a projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
  */
 export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> = Object.freeze({
   postgres: NO_HOST_PATH_FIELDS,
@@ -1403,11 +1406,11 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  * Which shipped engines take no SSH tunnel, and why (FND-2 slice 5): `null` where a connection of the engine may reach
  * its server through one, otherwise the whole sentence Studio refuses a connection whose tunnel is on with.
  *
- * The one source for that fact. Core reads it in `decideTunnel` (`./tunnel-decision`), on every entry point before any
- * cache lookup, bastion dial or provider build, so no provider refuses a tunnel itself; the connection dialog reads it
- * through `offersSshTunnel` in `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`, exactly
- * where this answers `null`, so the dialog and core cannot disagree. Kept here, UI-free, for the reason
- * `OPENS_LOCAL_FILE` is.
+ * Studio's review record of that fact. Core reads Studio's grant of it, `GRANTED_SSH_TUNNEL_REFUSAL`, in `decideTunnel`
+ * (`./tunnel-decision`), on every entry point before any cache lookup, bastion dial or provider build, so no provider
+ * refuses a tunnel itself; the connection dialog reads the same grant through `offersSshTunnel` in
+ * `src/lib/db-ui-config.ts`, which offers the SSH panel, and writes `sshTunnel`, exactly where the grant answers
+ * `null`, so the dialog and core cannot disagree. Kept here, UI-free, for the reason `OPENS_LOCAL_FILE` is.
  *
  * The refused groups:
  *
@@ -1424,9 +1427,10 @@ export const HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathFi
  * No sentence quotes a value of the connection. An exhaustive Record over the union, frozen like the
  * records above it.
  *
- * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and every
- * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
+ * This table is Studio's review record of the claim an engine declaration requests at `connection.sshTunnel`, and only
+ * Studio's grant reader, src/lib/db/claim-grants.ts, reads it: every gate reads `GRANTED_SSH_TUNNEL_REFUSAL`, the more
+ * restrictive of the request and this table's row, which is the row for every engine Studio ships. The table is never a
+ * projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
  */
 export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = Object.freeze({
   postgres: null,
@@ -1497,13 +1501,16 @@ export const SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
  * records above it.
  *
  * This table is Studio's review record of the claim an engine declaration requests at
- * `connection.serverLevelWithoutDatabase`, and every gate reads it: the declaration states each shipped engine's
- * request as this table's row, and the table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
- * M-52 and M-53).
+ * `connection.serverLevelWithoutDatabase`, and only Studio's grant reader, src/lib/db/claim-grants.ts, reads it. Its
+ * two gates refuse at opposite values, so the claim is granted per gate: governance admission reads
+ * `GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION`, true where the request or this table's row is, and the choice of database
+ * `GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE`, true only where both are; each is the row for every engine Studio
+ * ships. The table is never a projection of declarations (docs/providers/CONTRACT.md, clauses M-52, M-53 and M-83).
  *
- * It is also the bound of the catalog sessions a provider declares: the places that honour a caller's choice of
- * database read it through `catalogChoice` in `src/lib/db/catalog-scope.ts`, and honour that choice only where this
- * table holds the engine and the connection names no database and no connection string (M-57).
+ * Its grant at the choice of database is also the bound of the catalog sessions a provider declares: the places that
+ * honour a caller's choice of database read it through `catalogChoice` in `src/lib/db/catalog-scope.ts`, and honour
+ * that choice only where the grant holds the engine and the connection names no database and no connection string
+ * (M-57).
  */
 export const OPENS_SERVER_LEVEL_WITHOUT_DATABASE: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   // An empty `database` on discrete fields reaches the whole server (`serverLevel` in providers/sql/postgres.ts);

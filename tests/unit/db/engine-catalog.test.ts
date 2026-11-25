@@ -970,19 +970,40 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.policy)).toBeGreaterThan(0);
   });
 
-  test("projectClaimRequests answers each declaration's policy and MCP claims as it authors them, frozen, in ascending id order", () => {
-    const set = ["sqlite", "modbus", "etcd", "s3"].map(admitted);
+  test("projectClaimRequests answers each declaration's policy, MCP and connection claims as it authors them, frozen, in ascending id order", () => {
+    const set = ["sqlite", "modbus", "etcd", "s3", "opcua", "elasticsearch", "postgres"].map(admitted);
     const requests = projectClaimRequests(set);
+    const expected = (declaration: EngineDeclaration) => ({
+      policy: declaration.policy,
+      mcp: declaration.mcp,
+      connection: {
+        sshTunnel: declaration.connection.sshTunnel,
+        hostPathFields: declaration.connection.hostPathFields,
+        opensLocalFile: declaration.connection.opensLocalFile,
+        serverLevelWithoutDatabase: declaration.connection.serverLevelWithoutDatabase,
+        agentCredential: declaration.connection.agentCredential,
+      },
+    });
 
-    expect(Object.keys(requests)).toEqual(["etcd", "modbus", "s3", "sqlite"]);
+    expect(Object.keys(requests)).toEqual(["elasticsearch", "etcd", "modbus", "opcua", "postgres", "s3", "sqlite"]);
     for (const declaration of set) {
-      expect(requests[declaration.id]).toEqual({ policy: declaration.policy, mcp: declaration.mcp });
+      expect(requests[declaration.id]).toEqual(expected(declaration));
       // Each member in the declaration's order, every key its own property.
-      expect(JSON.stringify(requests[declaration.id])).toBe(
-        JSON.stringify({ policy: declaration.policy, mcp: declaration.mcp }),
-      );
-      expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp"]);
+      expect(JSON.stringify(requests[declaration.id])).toBe(JSON.stringify(expected(declaration)));
+      expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp", "connection"]);
     }
+    // The connection claims in the declaration's vocabulary: a tunnel offered or refused with its sentence, the host
+    // path fields, and a seed agent credential with its superseding fields, or null.
+    expect(requests.sqlite?.connection.sshTunnel).toEqual({ offered: false, refusal: expect.any(String) });
+    expect(requests.postgres?.connection.sshTunnel).toEqual({ offered: true });
+    expect(requests.opcua?.connection.hostPathFields).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(requests.sqlite?.connection.opensLocalFile).toBe(true);
+    expect(requests.postgres?.connection.serverLevelWithoutDatabase).toBe(true);
+    expect(requests.elasticsearch?.connection.agentCredential).toEqual({
+      form: "pair",
+      supersededBy: ["apiKeyId", "apiKeySecret"],
+    });
+    expect(requests.sqlite?.connection.agentCredential).toBeNull();
     // The declaration's vocabulary: a pair agent credential is `pair`, a refusal its sentence, an exemption its
     // pattern and reason.
     expect(requests.etcd?.policy.agentCredentialForm).toBe("pair");
@@ -1006,16 +1027,33 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const copied = projectClaimRequests([modbus]);
     (modbus.policy as { writeReach: string }).writeReach = "open";
     (modbus.policy.maskingExemptColumns as { column: string }).column = "^x$";
+    (modbus.connection as { opensLocalFile: boolean }).opensLocalFile = true;
     expect(copied.modbus?.policy.writeReach).toBe(admitted("modbus").policy.writeReach);
+    expect(copied.modbus?.connection.opensLocalFile).toBe(false);
     expect(copied.modbus?.policy.maskingExemptColumns).toEqual(admitted("modbus").policy.maskingExemptColumns);
   });
 
   test("the claim requests read only the members a declaration authors", () => {
-    // Every member but the authored policy and MCP segments replaced with postgres's: the requests the generator writes
-    // first, before the declaration generator rewrites the other members, are therefore already the final ones, and the
-    // authored safeguards, which no gate reads, are not read either.
+    // Every member but the authored policy and MCP segments and connection claims replaced with postgres's: the
+    // requests the generator writes first, before the declaration generator rewrites the other members, are therefore
+    // already the final ones, and the authored safeguards, which no gate reads, are not read either.
     const postgres = admitted("postgres");
-    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...postgres, id: d.id, policy: d.policy, mcp: d.mcp }));
+    const replaced = ADMITTED.map(
+      (d): EngineDeclaration => ({
+        ...postgres,
+        id: d.id,
+        connection: {
+          ...postgres.connection,
+          sshTunnel: d.connection.sshTunnel,
+          hostPathFields: d.connection.hostPathFields,
+          opensLocalFile: d.connection.opensLocalFile,
+          serverLevelWithoutDatabase: d.connection.serverLevelWithoutDatabase,
+          agentCredential: d.connection.agentCredential,
+        },
+        policy: d.policy,
+        mcp: d.mcp,
+      }),
+    );
 
     expect(projectClaimRequests(replaced)).toEqual(projectClaimRequests(ADMITTED));
     // Vacuity: the replacement changed members the claim requests would read if they read them.
@@ -1882,8 +1920,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
   test("bun run engines:generate exits 1 with the validator's refusal when Studio's tables do not follow an authored change", () => {
     const copy = generatingCopy();
     try {
-      // The authored side drops a host path field from OPC UA's seed-only fields, and Studio's HOST_PATH_FIELDS record
-      // still lists it: every generator writes, and the final admission refuses the declaration the run wrote.
+      // The authored side drops a host path field from OPC UA's seed-only fields, and its authored host path fields
+      // still list it: every generator writes, and the final admission refuses the declaration the run wrote.
       const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "opcua.json");
       const opcua = JSON.parse(readFileSync(file, "utf8"));
       const seedOnly = {
@@ -2417,7 +2455,63 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(readFileSync(file, "utf8")).toBe(`${JSON.stringify(mysql, null, 2)}\n`);
       const claimsModule = readFileSync(path.join(copy.root, ENGINE_CLAIMS_MODULE), "utf8");
       expect(claimsModule).toBe(renderClaimRequests(projectClaimRequests(regenerated)));
-      expect(projectClaimRequests(regenerated).mysql).toEqual({ policy: mysql.policy, mcp: mysql.mcp });
+      expect(projectClaimRequests(regenerated).mysql).toMatchObject({ policy: mysql.policy, mcp: mysql.mcp });
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
+        ENGINE_SQL_WRITING_MODULE,
+        ENGINE_MIGRATION_DDL_MODULE,
+        ENGINE_SQL_GENERATORS_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "mysql")) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored connection claim change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const file = path.join(directory, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      expect(committed.connection.sshTunnel).toEqual({ offered: true });
+      // mysql's tunnel refused with a sentence of its own: the request its own declaration states, whatever Studio's
+      // record of the claim holds.
+      const refusal = "MySQL does not run through an SSH tunnel in this fixture. Turn the tunnel off.";
+      const mysql: EngineDeclaration = {
+        ...committed,
+        connection: { ...committed.connection, sshTunnel: { offered: false, refusal } },
+      };
+      writeFileSync(file, `${JSON.stringify(mysql, null, 2)}\n`);
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      // The declaration generator writes the authored members back unchanged.
+      expect(regenerated.find((d) => d.id === "mysql")).toEqual(mysql);
+      expect(readFileSync(file, "utf8")).toBe(`${JSON.stringify(mysql, null, 2)}\n`);
+      const claimsModule = readFileSync(path.join(copy.root, ENGINE_CLAIMS_MODULE), "utf8");
+      expect(claimsModule).toBe(renderClaimRequests(projectClaimRequests(regenerated)));
+      expect(projectClaimRequests(regenerated).mysql?.connection.sshTunnel).toEqual({ offered: false, refusal });
+      expect(claimsModule).toContain(refusal);
       for (const generated of [
         ENGINE_CATALOG_MODULE,
         ENGINE_CONNECTION_MODULE,

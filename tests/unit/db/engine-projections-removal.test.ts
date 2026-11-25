@@ -40,7 +40,12 @@ import {
   renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
-import { grantClaims, STUDIO_CLAIM_RECORDS, UNGRANTED_DENIED_FILE_ACCESS_SENTENCE } from "@/lib/db/claim-grants";
+import {
+  grantClaims,
+  STUDIO_CLAIM_RECORDS,
+  UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+  UNGRANTED_SSH_TUNNEL_SENTENCE,
+} from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CONNECTION_FORM_FUNCTIONS, composeConnectionForm } from "@/lib/db/connection-form";
 import { CONNECTION_STRING_FUNCTIONS, composeConnectionString } from "@/lib/db/connection-string";
@@ -462,7 +467,17 @@ describe("each projection of the admitted declarations, built with and without a
     const shipped = projectClaimRequests(ADMITTED);
     const withFixture = projectClaimRequests([...ADMITTED, FIXTURE]);
     // The fixture states postgres's requests, so its entry is postgres's under its own id.
-    expect(withFixture.acmefoo).toEqual({ policy: POSTGRES.policy, mcp: POSTGRES.mcp });
+    expect(withFixture.acmefoo).toEqual({
+      policy: POSTGRES.policy,
+      mcp: POSTGRES.mcp,
+      connection: {
+        sshTunnel: POSTGRES.connection.sshTunnel,
+        hostPathFields: POSTGRES.connection.hostPathFields,
+        opensLocalFile: POSTGRES.connection.opensLocalFile,
+        serverLevelWithoutDatabase: POSTGRES.connection.serverLevelWithoutDatabase,
+        agentCredential: POSTGRES.connection.agentCredential,
+      },
+    });
     expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
 
     const removed = projectClaimRequests([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
@@ -485,8 +500,11 @@ describe("each projection of the admitted declarations, built with and without a
   });
 
   test("the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set", () => {
-    const shipped = grantClaims(projectClaimRequests(ADMITTED), STUDIO_CLAIM_RECORDS);
-    const withFixture = grantClaims(projectClaimRequests([...ADMITTED, FIXTURE]), STUDIO_CLAIM_RECORDS);
+    // Each set's grant reads the seed-only fields its own declarations project, as a loader's would.
+    const grantsOf = (set: readonly EngineDeclaration[]) =>
+      grantClaims(projectClaimRequests(set), STUDIO_CLAIM_RECORDS, projectConnectionTables(set).seedOnly);
+    const shipped = grantsOf(ADMITTED);
+    const withFixture = grantsOf([...ADMITTED, FIXTURE]);
     const fixtureRow = Object.fromEntries(
       Object.entries(withFixture).map(([table, rows]) => [
         table,
@@ -497,6 +515,9 @@ describe("each projection of the admitted declarations, built with and without a
     // postgres's requests, which Studio's records hold no row of under the fixture's id.
     expect(FIXTURE.policy).toEqual(POSTGRES.policy);
     expect(FIXTURE.mcp).toEqual(POSTGRES.mcp);
+    expect(FIXTURE.connection.seedOnly).toBeNull();
+    expect(FIXTURE.connection.sshTunnel).toEqual({ offered: true });
+    expect(FIXTURE.connection.serverLevelWithoutDatabase).toBe(true);
     expect(fixtureRow).toEqual({
       writeReach: "open",
       readsFileAccessPosture: true,
@@ -511,12 +532,15 @@ describe("each projection of the admitted declarations, built with and without a
       agentCredentialRequired: true,
       readOnlyEnforced: false,
       ungrantedRefusals: null,
+      opensLocalFile: true,
+      hostPathFields: [],
+      serverLevelAtAdmission: true,
+      serverLevelAtCatalogChoice: false,
+      sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
+      agentCredential: null,
     });
 
-    const removed = grantClaims(
-      projectClaimRequests([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id)),
-      STUDIO_CLAIM_RECORDS,
-    );
+    const removed = grantsOf([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
     expect(removed).toEqual(shipped);
     for (const rows of Object.values(removed)) {
       expect(Object.hasOwn(rows, FIXTURE.id)).toBe(false);

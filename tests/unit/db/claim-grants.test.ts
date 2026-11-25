@@ -6,30 +6,41 @@
  * against Studio's records for every shipped engine.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   type ClaimRecords,
   GRANTED_AGENT_CREDENTIAL_FORM,
   GRANTED_DENIED_FILE_ACCESS_REFUSAL,
+  GRANTED_HOST_PATH_FIELDS,
   GRANTED_MASKING_EXEMPT_COLUMNS,
   GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
   GRANTED_MCP_EXPOSABLE,
   GRANTED_MCP_METADATA_READ_CHANGES_STATE,
   GRANTED_MCP_STATEMENT_READ,
+  GRANTED_OPENS_LOCAL_FILE,
+  GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
+  GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
   GRANTED_READ_ROOTS_REQUIRED,
   GRANTED_READS_FILE_ACCESS_POSTURE,
+  GRANTED_SEED_AGENT_CREDENTIAL,
   GRANTED_SINGLE_WRITER_FILE,
+  GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantClaims,
+  HOST_PATH_FIELD_NAMES,
   READ_ONLY_ENFORCED,
   STUDIO_CLAIM_RECORDS,
   UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
+  UNGRANTED_SSH_TUNNEL_SENTENCE,
 } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
-import type { ClaimRequestEntry } from "@/lib/db/engine-catalog/projection";
+import type { ClaimRequestEntry, ConnectionClaims } from "@/lib/db/engine-catalog/projection";
 
 /** An id no shipped engine uses, for a request no record row covers. */
 const UNRECORDED = "acmefoo";
@@ -37,10 +48,21 @@ const UNRECORDED = "acmefoo";
 /** postgres's requests, the base every hand-made request changes one claim of. */
 const BASE: ClaimRequestEntry = BUNDLED_CLAIM_REQUESTS.postgres;
 
-/** One engine's requests: postgres's with `policy` and `mcp` members changed. */
-function request(policy: Partial<PolicyClaims> = {}, mcp: Partial<McpClaims> = {}): ClaimRequestEntry {
-  return { policy: { ...BASE.policy, ...policy }, mcp: { ...BASE.mcp, ...mcp } };
+/** One engine's requests: postgres's with `policy`, `mcp` and `connection` members changed. */
+function request(
+  policy: Partial<PolicyClaims> = {},
+  mcp: Partial<McpClaims> = {},
+  connection: Partial<ConnectionClaims> = {},
+): ClaimRequestEntry {
+  return {
+    policy: { ...BASE.policy, ...policy },
+    mcp: { ...BASE.mcp, ...mcp },
+    connection: { ...BASE.connection, ...connection },
+  };
 }
+
+/** The seed-only fields `grantClaims` reads the restrictive host path fields from: the shipped ones by default. */
+type SeedOnlyRows = Parameters<typeof grantClaims>[2];
 
 /** Studio's records with one row of each named record set for `engine`, every other row as shipped. */
 function records(engine: string, rows: { readonly [K in keyof ClaimRecords]?: ClaimRecords[K][string] }): ClaimRecords {
@@ -51,9 +73,16 @@ function records(engine: string, rows: { readonly [K in keyof ClaimRecords]?: Cl
   return changed as unknown as ClaimRecords;
 }
 
-/** The grants of one engine `engine` requesting `requested` against `against`. */
-function grantOf(engine: string, requested: ClaimRequestEntry, against: ClaimRecords = STUDIO_CLAIM_RECORDS) {
-  const grants = grantClaims({ [engine]: requested }, against);
+/**
+ * The grants of one engine `engine` requesting `requested` against `against`, with `seedOnly` as its seed-only rows.
+ */
+function grantOf(
+  engine: string,
+  requested: ClaimRequestEntry,
+  against: ClaimRecords = STUDIO_CLAIM_RECORDS,
+  seedOnly: SeedOnlyRows = { ...SEED_ONLY_FIELDS, [UNRECORDED]: null },
+) {
+  const grants = grantClaims({ [engine]: requested }, against, seedOnly);
   return Object.fromEntries(Object.entries(grants).map(([table, rows]) => [table, rows[engine]])) as {
     readonly [K in keyof typeof grants]: (typeof grants)[K][string];
   };
@@ -231,8 +260,12 @@ describe("Studio's grant of each policy and MCP claim", () => {
     const open = request({}, { exposable: true, agentCredentialRequired: true });
 
     // s3 requires an agent credential and its seeds take one, so it stays exposed.
-    expect(STUDIO_CLAIM_RECORDS.seedAgentCredential.s3).not.toBeNull();
-    expect(grantOf("s3", open)).toMatchObject({ exposable: true, agentCredentialRequired: true });
+    const s3 = BUNDLED_CLAIM_REQUESTS.s3;
+    expect(STUDIO_CLAIM_RECORDS.agentCredential.s3).not.toBeNull();
+    expect(grantOf("s3", { ...s3, mcp: { ...s3.mcp, exposable: true, agentCredentialRequired: true } })).toMatchObject({
+      exposable: true,
+      agentCredentialRequired: true,
+    });
     // postgres's seeds take one too; read as required, it stays exposed.
     expect(grantOf("postgres", open, records("postgres", { agentCredentialRequired: true }))).toMatchObject({
       exposable: true,
@@ -240,9 +273,9 @@ describe("Studio's grant of each policy and MCP claim", () => {
     });
     // Seeds that take none: closed, whatever the request and the exposure record.
     expect(
-      grantOf("postgres", open, records("postgres", { agentCredentialRequired: true, seedAgentCredential: null })),
+      grantOf("postgres", open, records("postgres", { agentCredentialRequired: true, agentCredential: null })),
     ).toMatchObject({ exposable: false, agentCredentialRequired: true });
-    expect(STUDIO_CLAIM_RECORDS.seedAgentCredential.libredb).toBeNull();
+    expect(STUDIO_CLAIM_RECORDS.agentCredential.libredb).toBeNull();
     expect(grantOf("libredb", open, records("libredb", { exposable: true }))).toMatchObject({
       exposable: false,
       agentCredentialRequired: true,
@@ -253,7 +286,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
 
   test("a claim value outside its vocabulary is refused by name, naming the claim and the engine", () => {
     const refused = (asked: ClaimRequestEntry, claim: string, value: string) =>
-      expect(() => grantClaims({ [UNRECORDED]: asked }, STUDIO_CLAIM_RECORDS)).toThrow(
+      expect(() => grantOf(UNRECORDED, asked)).toThrow(
         `${UNRECORDED} requests ${claim} ${value}, which is not a value of the claim`,
       );
     const wrong = (value: unknown) => value as never;
@@ -303,6 +336,12 @@ describe("Studio's grant of each policy and MCP claim", () => {
       GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
       READ_ONLY_ENFORCED,
       UNGRANTED_CLAIM_REFUSALS,
+      GRANTED_OPENS_LOCAL_FILE,
+      GRANTED_HOST_PATH_FIELDS,
+      GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
+      GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
+      GRANTED_SSH_TUNNEL_REFUSAL,
+      GRANTED_SEED_AGENT_CREDENTIAL,
     ];
 
     for (const table of tables) {
@@ -327,5 +366,255 @@ describe("Studio's grant of each policy and MCP claim", () => {
       grantOf(UNRECORDED, request({ writeReach: "none" }), { ...STUDIO_CLAIM_RECORDS, writeReach: inherited })
         .writeReach,
     ).toBe("open");
+  });
+});
+
+/** The schema's `hostPathField` enum, the host path field vocabulary a declaration may name. */
+function schemaHostPathFields(): readonly string[] {
+  const schema = JSON.parse(
+    readFileSync(
+      path.resolve(import.meta.dir, "../../../packages/provider-sdk/src/manifest/manifest.schema.json"),
+      "utf8",
+    ),
+  ) as { $defs: { hostPathField: { enum: string[] } } };
+  return schema.$defs.hostPathField.enum;
+}
+
+describe("Studio's grant of each connection claim", () => {
+  test("for every shipped engine, each granted connection claim is its record's row, at each gate that reads it", () => {
+    const differing = (granted: Readonly<Record<string, unknown>>, record: Readonly<Record<string, unknown>>) =>
+      SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
+    const tables = [
+      [GRANTED_OPENS_LOCAL_FILE, STUDIO_CLAIM_RECORDS.opensLocalFile],
+      [GRANTED_HOST_PATH_FIELDS, STUDIO_CLAIM_RECORDS.hostPathFields],
+      [GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION, STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase],
+      [GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE, STUDIO_CLAIM_RECORDS.serverLevelWithoutDatabase],
+      [GRANTED_SSH_TUNNEL_REFUSAL, STUDIO_CLAIM_RECORDS.sshTunnel],
+      [GRANTED_SEED_AGENT_CREDENTIAL, STUDIO_CLAIM_RECORDS.agentCredential],
+    ] as const;
+
+    expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
+    // The granted rows are the record's own: the host path fields and the seed agent credential are its objects.
+    expect(GRANTED_HOST_PATH_FIELDS.opcua).toBe(STUDIO_CLAIM_RECORDS.hostPathFields.opcua);
+    expect(GRANTED_SEED_AGENT_CREDENTIAL.elasticsearch).toBe(STUDIO_CLAIM_RECORDS.agentCredential.elasticsearch);
+    // Vacuity: each record holds rows that differ from its claim's restrictive value.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_LOCAL_FILE[type])).toEqual([
+      "duckdb",
+      "libredb",
+      "sqlite",
+    ]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_HOST_PATH_FIELDS[type].length > 0)).toEqual(["opcua"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE[type])).toEqual([
+      "postgres",
+    ]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SSH_TUNNEL_REFUSAL[type] === null).length).toBe(32);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SEED_AGENT_CREDENTIAL[type] === null).length).toBe(11);
+    expect(GRANTED_MCP_EXPOSABLE).toEqual(STUDIO_CLAIM_RECORDS.exposable);
+  });
+
+  const LOCAL_FILE_CASES = [
+    [false, false, false],
+    [false, true, true],
+    [true, false, true],
+    [true, true, true],
+    [false, undefined, true],
+  ] as const;
+
+  test.each(LOCAL_FILE_CASES)(
+    "a local file request is granted true where the request or the record is, or no record exists: request %p, record %p",
+    (requested, row, granted) => {
+      const engine = row === undefined ? UNRECORDED : "postgres";
+      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { opensLocalFile: row });
+
+      expect(grantOf(engine, request({}, {}, { opensLocalFile: requested }), against).opensLocalFile).toBe(granted);
+    },
+  );
+
+  test("the host path fields granted are the union of the request and the record, and every host path field among the seed-only fields where no record exists", () => {
+    const of = (engine: string, hostPathFields: ConnectionClaims["hostPathFields"], against = STUDIO_CLAIM_RECORDS) =>
+      grantOf(engine, request({}, {}, { hostPathFields }), against).hostPathFields;
+    const row = STUDIO_CLAIM_RECORDS.hostPathFields.opcua;
+
+    expect(row).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    // A request adding nothing to the record is the record's own row.
+    expect(of("opcua", [])).toBe(row);
+    expect(of("opcua", ["clientPrivateKeyPath"])).toBe(row);
+    // A request naming a field the record does not: the record's fields first, then the request's others.
+    const certificate = records("postgres", { hostPathFields: ["clientCertificatePath"] });
+    expect(of("postgres", ["clientPrivateKeyPath"], certificate)).toEqual([
+      "clientCertificatePath",
+      "clientPrivateKeyPath",
+    ]);
+    expect(of("postgres", ["clientPrivateKeyPath", "clientCertificatePath"], certificate)).toEqual([
+      "clientCertificatePath",
+      "clientPrivateKeyPath",
+    ]);
+    expect(of("postgres", [])).toEqual([]);
+    // No record: every host path field among the engine's seed-only fields, OPC UA's two, or none.
+    const opcuaSeedOnly = { ...SEED_ONLY_FIELDS, [UNRECORDED]: SEED_ONLY_FIELDS.opcua };
+    expect(
+      grantOf(UNRECORDED, request({}, {}, { hostPathFields: [] }), STUDIO_CLAIM_RECORDS, opcuaSeedOnly).hostPathFields,
+    ).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(of(UNRECORDED, [])).toEqual([]);
+    expect(of(UNRECORDED, ["clientPrivateKeyPath"])).toEqual(["clientPrivateKeyPath"]);
+    // Every answer frozen.
+    expect(Object.isFrozen(of("postgres", ["clientPrivateKeyPath"], certificate))).toBe(true);
+    expect(Object.isFrozen(of(UNRECORDED, []))).toBe(true);
+  });
+
+  test("the host path field vocabulary is the schema's hostPathField enum", () => {
+    expect<readonly string[]>([...HOST_PATH_FIELD_NAMES]).toEqual([...schemaHostPathFields()]);
+    expect(Object.isFrozen(HOST_PATH_FIELD_NAMES)).toBe(true);
+  });
+
+  const SERVER_LEVEL_CASES = [
+    [false, false, false, false],
+    [false, true, true, false],
+    [true, false, true, false],
+    [true, true, true, true],
+    [false, undefined, true, false],
+    [true, undefined, true, false],
+  ] as const;
+
+  test.each(SERVER_LEVEL_CASES)(
+    "a server level request is read per gate: true at governance admission where either is or no record exists, true at the choice of database only where both are: request %p, record %p",
+    (requested, row, atAdmission, atCatalogChoice) => {
+      const engine = row === undefined ? UNRECORDED : "postgres";
+      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { serverLevelWithoutDatabase: row });
+      const granted = grantOf(engine, request({}, {}, { serverLevelWithoutDatabase: requested }), against);
+
+      expect([granted.serverLevelAtAdmission, granted.serverLevelAtCatalogChoice]).toEqual([
+        atAdmission,
+        atCatalogChoice,
+      ]);
+    },
+  );
+
+  test("a refused tunnel request keeps its own sentence, one offered against a refusing record takes the record's, and one offered where no record exists takes core's own", () => {
+    const own = "This engine does not run through an SSH tunnel for a reason of its own. Turn the tunnel off.";
+    const sqlite = STUDIO_CLAIM_RECORDS.sshTunnel.sqlite;
+    const of = (engine: string, sshTunnel: ConnectionClaims["sshTunnel"]) =>
+      grantOf(engine, request({}, {}, { sshTunnel })).sshTunnel;
+
+    expect(sqlite).toEqual(expect.any(String));
+    expect(STUDIO_CLAIM_RECORDS.sshTunnel.postgres).toBeNull();
+    expect(of("postgres", { offered: false, refusal: own })).toBe(own);
+    expect(of("sqlite", { offered: false, refusal: own })).toBe(own);
+    expect(of(UNRECORDED, { offered: false, refusal: own })).toBe(own);
+    expect(of("sqlite", { offered: true })).toBe(sqlite);
+    expect(of(UNRECORDED, { offered: true })).toBe(UNGRANTED_SSH_TUNNEL_SENTENCE);
+    expect(of("postgres", { offered: true })).toBeNull();
+    expect(UNGRANTED_SSH_TUNNEL_SENTENCE).toBe(
+      "This engine does not run through an SSH tunnel: Studio holds no grant that its provider reaches its server only through the one address a tunnel forwards. Turn the tunnel off.",
+    );
+  });
+
+  test("a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null", () => {
+    const elasticsearch = STUDIO_CLAIM_RECORDS.agentCredential.elasticsearch;
+    if (elasticsearch === null || elasticsearch === undefined)
+      throw new Error("elasticsearch takes no agent credential");
+    const of = (engine: string, agentCredential: ConnectionClaims["agentCredential"]) =>
+      grantOf(engine, request({}, {}, { agentCredential })).agentCredential;
+    const pair = { form: "pair" as const, supersededBy: [] };
+
+    expect(elasticsearch.supersededBy).toEqual(["apiKeyId", "apiKeySecret"]);
+    expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeyId", "apiKeySecret"] })).toBe(elasticsearch);
+    expect(of("postgres", pair)).toBe(STUDIO_CLAIM_RECORDS.agentCredential.postgres);
+    expect(of("postgres", { form: "secret", supersededBy: [] })).toBeNull();
+    expect(of("elasticsearch", pair)).toBeNull();
+    expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeySecret", "apiKeyId"] })).toBeNull();
+    expect(of("elasticsearch", { form: "pair", supersededBy: ["apiKeyId"] })).toBeNull();
+    expect(of("postgres", { form: "pair", supersededBy: ["apiKeyId"] })).toBeNull();
+    expect(of("postgres", null)).toBeNull();
+    expect(of("sqlite", pair)).toBeNull();
+    expect(of(UNRECORDED, pair)).toBeNull();
+    expect(of(UNRECORDED, null)).toBeNull();
+  });
+
+  test("an engine read as requiring an agent credential whose granted credential is null, or whose granted form is none, is closed to MCP", () => {
+    const open = (policy: Partial<PolicyClaims> = {}, connection: Partial<ConnectionClaims> = {}) =>
+      request(policy, { exposable: true, agentCredentialRequired: true }, connection);
+    const required = records("postgres", { agentCredentialRequired: true });
+
+    // Both granted: exposed as before.
+    expect(grantOf("postgres", open(), required)).toMatchObject({ exposable: true, agentCredentialRequired: true });
+    // A seed agent credential request the record does not grant: closed.
+    expect(
+      grantOf("postgres", open({}, { agentCredential: { form: "secret", supersededBy: [] } }), required),
+    ).toMatchObject({
+      exposable: false,
+      agentCredentialRequired: true,
+    });
+    // A granted form of none refuses every agent acquisition: closed.
+    expect(
+      grantOf(
+        "postgres",
+        open({ agentCredentialForm: "none" }),
+        records("postgres", {
+          agentCredentialRequired: true,
+          agentCredentialForm: "dedicated-user",
+        }),
+      ),
+    ).toMatchObject({ exposable: false, agentCredentialForm: "none", agentCredentialRequired: true });
+    // Not required: the form and the seed credential leave the exposure as granted.
+    expect(grantOf("postgres", request({ agentCredentialForm: "none" }, { exposable: true }))).toMatchObject({
+      exposable: true,
+      agentCredentialRequired: false,
+    });
+  });
+
+  test("a connection claim value outside its vocabulary is refused by name, naming the claim and the engine", () => {
+    const refused = (connection: Partial<ConnectionClaims>, claim: string, value: string) =>
+      expect(() => grantOf(UNRECORDED, request({}, {}, connection))).toThrow(
+        `${UNRECORDED} requests ${claim} ${value}, which is not a value of the claim`,
+      );
+    const wrong = (value: unknown) => value as never;
+
+    refused({ opensLocalFile: wrong("yes") }, "connection.opensLocalFile", '"yes"');
+    refused({ serverLevelWithoutDatabase: wrong(null) }, "connection.serverLevelWithoutDatabase", "null");
+    refused({ hostPathFields: wrong(["caCertPath"]) }, "connection.hostPathFields", '["caCertPath"]');
+    refused({ hostPathFields: wrong("clientCertificatePath") }, "connection.hostPathFields", '"clientCertificatePath"');
+    refused({ sshTunnel: wrong({ offered: "no" }) }, "connection.sshTunnel", '{"offered":"no"}');
+    refused({ sshTunnel: wrong({ offered: false }) }, "connection.sshTunnel", '{"offered":false}');
+    refused({ sshTunnel: wrong(null) }, "connection.sshTunnel", "null");
+    refused(
+      { agentCredential: wrong({ form: "token", supersededBy: [] }) },
+      "connection.agentCredential",
+      '{"form":"token","supersededBy":[]}',
+    );
+    refused({ agentCredential: wrong({ form: "pair" }) }, "connection.agentCredential", '{"form":"pair"}');
+    refused(
+      { agentCredential: wrong({ form: "pair", supersededBy: [1] }) },
+      "connection.agentCredential",
+      '{"form":"pair","supersededBy":[1]}',
+    );
+  });
+
+  test("a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request", () => {
+    const wrong = (value: unknown) => value as never;
+
+    expect(() => grantOf("postgres", request(), records("postgres", { writeReach: wrong("partial") }))).toThrow(
+      'Studio\'s record of policy.writeReach holds "partial" for postgres, which is not a value of the claim',
+    );
+    expect(() =>
+      grantOf("postgres", request(), records("postgres", { hostPathFields: wrong(["caCertPath"]) })),
+    ).toThrow(
+      'Studio\'s record of connection.hostPathFields holds ["caCertPath"] for postgres, which is not a value of the claim',
+    );
+    // A request outside the vocabulary still names the request.
+    expect(() => grantOf("postgres", request({ writeReach: wrong("partial") }))).toThrow(
+      'postgres requests policy.writeReach "partial", which is not a value of the claim',
+    );
+  });
+
+  test("an engine whose seed-only row is missing is refused by name", () => {
+    expect(() => grantOf(UNRECORDED, request(), STUDIO_CLAIM_RECORDS, SEED_ONLY_FIELDS)).toThrow(
+      `${UNRECORDED} has no seed-only row, so Studio cannot grant its host path fields`,
+    );
+    // A row on the prototype chain is no row.
+    const inherited = Object.create({ [UNRECORDED]: null }) as SeedOnlyRows;
+    expect(() => grantOf(UNRECORDED, request(), STUDIO_CLAIM_RECORDS, inherited)).toThrow(
+      `${UNRECORDED} has no seed-only row, so Studio cannot grant its host path fields`,
+    );
   });
 });

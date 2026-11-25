@@ -1,14 +1,15 @@
 /**
- * Every policy and MCP claim record Studio keeps in core is read only by Studio's grant reader,
- * `src/lib/db/claim-grants.ts` (docs/providers/CONTRACT.md, clauses M-54 and M-82): every gate reads the grant, the
- * more restrictive of the engine's request and the record, so a gate that read a record again would read a claim no
+ * Every policy, MCP and connection claim record Studio keeps in core is read only by Studio's grant reader,
+ * `src/lib/db/claim-grants.ts` (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): every gate reads the grant,
+ * the more restrictive of the engine's request and the record, so a gate that read a record again would read a claim no
  * grant covers once a loader admits a package's declaration.
  *
  * The scan parses every `.ts` and `.tsx` file under Studio's `src/` and the VS Code extension's `src/` with the
  * TypeScript compiler (a `.tsx` file as TSX) and finds each reference to a record: an import or re-export specifier
  * naming it from its module, an `export *` of its module, a property access or a string-literal element access naming
- * it on a namespace import of its module or on a dynamic import or require of it, a destructuring of such an import or
- * require, and, inside the record's own module, any use of its name but the declaration. A module specifier names a
+ * it on a namespace import of its module, on a dynamic import or require of it, or on a `const` alias of either, a
+ * destructuring of such an import, require or alias, and, inside the record's own module, any use of its name but the
+ * declaration. A module specifier names a
  * record module when it resolves to it, written relative to the importing file or through the `@/` alias for `src/`.
  * An object literal key, a type member key, a property of another object and a string such as an error code are not
  * references, and a comment is trivia the parser attaches to no node, so the record's name in either is passed over.
@@ -25,9 +26,13 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 /** The grant reader: the one module that may read a claim record. */
 const GRANT_READER = "src/lib/db/claim-grants.ts";
 
-/** Each module holding a policy or MCP claim record, without its extension, and the records it holds. */
+/** Each module holding a policy, MCP or connection claim record, without its extension, and the records it holds. */
 const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/compatibility": [
+    "OPENS_LOCAL_FILE",
+    "HOST_PATH_FIELDS",
+    "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
+    "SSH_TUNNEL_REFUSAL",
     "WRITE_REACH",
     "READS_FILE_ACCESS_POSTURE",
     "REFUSES_DENIED_FILE_ACCESS",
@@ -39,7 +44,7 @@ const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
     "MCP_METADATA_READ_CHANGES_STATE",
     "MCP_AGENT_CREDENTIAL_REQUIRED",
   ],
-  "src/lib/db/connection-fields": ["AGENT_CREDENTIAL_FORM"],
+  "src/lib/db/connection-fields": ["AGENT_CREDENTIAL_FORM", "SEED_AGENT_CREDENTIAL"],
   "src/lib/db/claim-grants": ["STUDIO_CLAIM_RECORDS"],
 };
 
@@ -120,6 +125,16 @@ function recordReferences(file: SourceText): string[] {
     if (records.includes(name)) read(name);
   };
 
+  /**
+   * The records of the module `initializer` binds: a dynamic import or require of a record module, or an identifier
+   * naming a namespace or loaded module already bound, so an alias of one is followed.
+   */
+  const boundRecords = (initializer: ts.Expression): readonly string[] => {
+    const target = unwrapped(initializer);
+    if (ts.isIdentifier(target)) return namespaces.get(target.text) ?? [];
+    return loadedRecords(file.path, target);
+  };
+
   const collect = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const records = recordsOf(resolvedModule(file.path, node.moduleSpecifier.text));
@@ -136,7 +151,7 @@ function recordReferences(file: SourceText): string[] {
         for (const element of node.exportClause.elements)
           readNamed(records, (element.propertyName ?? element.name).text);
     } else if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
-      const records = loadedRecords(file.path, node.initializer);
+      const records = boundRecords(node.initializer);
       if (records.length > 0 && ts.isIdentifier(node.name)) namespaces.set(node.name.text, records);
       if (records.length > 0 && ts.isObjectBindingPattern(node.name)) {
         for (const element of node.name.elements) {
@@ -186,7 +201,7 @@ function recordReaders(files: readonly SourceText[]): string[] {
 }
 
 describe("the claim record readers", () => {
-  test("every policy and MCP claim record is read only by the grant reader", () => {
+  test("every policy, MCP and connection claim record is read only by the grant reader", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
 
     expect(recordReaders(files)).toEqual([]);
@@ -196,13 +211,17 @@ describe("the claim record readers", () => {
     const grantReader = files.find((file) => file.path === GRANT_READER);
     if (grantReader === undefined) throw new Error(`${GRANT_READER} is not in the source read`);
     expect(recordReferences(grantReader).sort()).toEqual(
-      [...(CLAIM_RECORD_MODULES["src/lib/db/compatibility"] ?? []), "AGENT_CREDENTIAL_FORM", "STUDIO_CLAIM_RECORDS"]
+      [
+        ...(CLAIM_RECORD_MODULES["src/lib/db/compatibility"] ?? []),
+        ...(CLAIM_RECORD_MODULES["src/lib/db/connection-fields"] ?? []),
+        "STUDIO_CLAIM_RECORDS",
+      ]
         .map((record) => `${GRANT_READER} reads ${record}`)
         .sort(),
     );
   }, 60_000);
 
-  test("the scan finds each way a module could reference a claim record, and passes over an error code and an object key of the same name", () => {
+  test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code and an object key of the same name", () => {
     const planted = (file: string, text: string) => recordReaders([{ path: file, text }]);
 
     expect(planted("src/lib/a.ts", 'import { WRITE_REACH } from "@/lib/db/compatibility";')).toEqual([
@@ -216,7 +235,33 @@ describe("the claim record readers", () => {
     ]);
     expect(planted("src/lib/a.ts", 'export * from "@/lib/db/connection-fields";')).toEqual([
       "src/lib/a.ts reads AGENT_CREDENTIAL_FORM",
+      "src/lib/a.ts reads SEED_AGENT_CREDENTIAL",
     ]);
+    expect(planted("src/lib/db/a.ts", 'import { SSH_TUNNEL_REFUSAL } from "./compatibility";')).toEqual([
+      "src/lib/db/a.ts reads SSH_TUNNEL_REFUSAL",
+    ]);
+    expect(
+      planted("vscode-extension/src/backend/a.ts", 'import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";'),
+    ).toEqual(["vscode-extension/src/backend/a.ts reads OPENS_LOCAL_FILE"]);
+    // An alias of a namespace or loaded module binding is followed, however many times it is renamed.
+    expect(
+      planted(
+        "src/lib/a.ts",
+        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst n = (m);\nn.WRITE_REACH;',
+      ),
+    ).toEqual(["src/lib/a.ts reads WRITE_REACH"]);
+    expect(
+      planted(
+        "src/lib/a.ts",
+        'const loaded = await import("@/lib/db/connection-fields");\nconst m = loaded;\nm["SEED_AGENT_CREDENTIAL"];',
+      ),
+    ).toEqual(["src/lib/a.ts reads SEED_AGENT_CREDENTIAL"]);
+    expect(
+      planted(
+        "src/lib/a.ts",
+        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst { HOST_PATH_FIELDS: h } = m;',
+      ),
+    ).toEqual(["src/lib/a.ts reads HOST_PATH_FIELDS"]);
     expect(
       planted("src/lib/a.ts", 'import * as records from "@/lib/db/compatibility";\nrecords.READ_ROOTS_REQUIRED.opcua;'),
     ).toEqual(["src/lib/a.ts reads READ_ROOTS_REQUIRED"]);
@@ -260,7 +305,8 @@ describe("the claim record readers", () => {
           "type Codes = { READ_ROOTS_REQUIRED: boolean };",
           "codes.READ_ROOTS_REQUIRED;",
           "// WRITE_REACH, read from compatibility.ts",
-          'import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";',
+          'import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";',
+          "const other = { WRITE_REACH: 1 };\nconst alias = other;\nalias.WRITE_REACH;",
           'import { WRITE_REACH } from "@/lib/db/write-reach-elsewhere";',
         ].join("\n"),
       ),

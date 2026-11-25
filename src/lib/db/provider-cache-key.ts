@@ -129,7 +129,7 @@ export async function providerCacheKey(
  * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
  * the first one's committed rows and LibreDB refuses, so `GRANTED_SINGLE_WRITER_FILE` decides it before any provider
  * exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
- * (`OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
+ * (`GRANTED_OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
  * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
  * under always name the same owner. The row is read through `typeIdRow` (FND-1), so a type outside the
  * `DatabaseType` union is refused by name rather than read as an engine that keeps the owner, or, for a prototype

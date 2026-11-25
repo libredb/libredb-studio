@@ -1,5 +1,5 @@
 import { TUNNEL_FAR_END, type DatabaseConnection, type SSHTunnelConfig, type WithTunnelFarEnd } from "@/lib/types";
-import { SSH_TUNNEL_REFUSAL } from "./compatibility";
+import { GRANTED_SSH_TUNNEL_REFUSAL } from "./claim-grants";
 import { DatabaseConfigError } from "./errors";
 import { assertTunnelRecordIsPlainData } from "./provider-connection";
 import { typeIdRow } from "./type-id";
@@ -57,8 +57,8 @@ function fieldRefusal(connection: DatabaseConnection, field: string, expected: s
  *    must be the bastion's non-empty name or address, `port` absent (the bastion's 22, as `src/lib/ssh/tunnel.ts` dials
  *    it) or a whole number from 1 to 65535, and `authMethod` `password` or `privateKey`. Nothing else is checked: a
  *    secret's or a host key fingerprint's shape is the dial's to judge.
- * 4. A tunnel that is on, on an engine whose `SSH_TUNNEL_REFUSAL` row (`./compatibility`) names a reason, is refused
- *    with that row's sentence.
+ * 4. A tunnel that is on, on an engine whose `GRANTED_SSH_TUNNEL_REFUSAL` row (`./claim-grants`), Studio's grant of
+ *    its tunnel claim, names a reason, is refused with that row's sentence.
  * 5. A tunnel that is on, for a connection that names no `host` or no `port` (a connection-string record, for one),
  *    is refused: there is nothing to forward to, so no tunnel can be opened, and a provider built anyway would reach
  *    its server past the tunnel the connection asked for.
@@ -94,7 +94,7 @@ export function decideTunnel(connection: DatabaseConnection): TunnelDecision {
     throw fieldRefusal(connection, "authMethod", "password or privateKey");
   }
 
-  const refusal = typeIdRow(SSH_TUNNEL_REFUSAL, connection.type);
+  const refusal = typeIdRow(GRANTED_SSH_TUNNEL_REFUSAL, connection.type);
   if (refusal !== null) throw new DatabaseConfigError(refusal, connection.type);
   if (!connection.host || !connection.port) throw new DatabaseConfigError(UNOPENABLE, connection.type);
   return { open: true, tunnel: tunnel as SSHTunnelConfig, host: connection.host, port: connection.port };
