@@ -43,6 +43,10 @@ scripts/generate-governance-vectors.ts
 # under tests/, so it would fail the image build's type check the same way. The
 # declaration generator runs it as a developer tool; no image runs it.
 scripts/read-engine-capabilities.ts
+# The isolation ratchet reads the inward import allowlist under tests/, so it
+# would fail the image build's type check the same way. It is a developer and CI
+# tool that no image runs.
+scripts/isolation-ratchet.ts
 playwright-report
 test-results
 data-e2e-offline
