@@ -18,7 +18,7 @@
  *
  * Three rows are reached only by a provider package's session, which may offer less than Studio's bridge (clause C-111),
  * each refused before the call and answered `not-sent`: a non-zero offset the session does not honour is
- * `OffsetUnsupportedError`, bound params it does not honour are `FacetNotOfferedError` naming the field, and a facet it
+ * `StudioOffsetRefusal`, Studio's own offset refusal, bound params it does not honour are `FacetNotOfferedError` naming the field, and a facet it
  * does not offer is `FacetNotOfferedError` naming the call by its contract name, never a value of the package's.
  *
  * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
@@ -30,9 +30,9 @@ import {
   type DeclaredFacet,
   FacetNotOfferedError,
   markNotSent,
-  OffsetUnsupportedError,
   QueryCancelledError,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioTimeoutRefusal,
 } from "@/lib/db/errors";
 import type { RefusedRecord } from "@/lib/provider-host/core/console";
@@ -110,7 +110,7 @@ function notOfferedError(refusals: readonly CallRefusal[]): Error | undefined {
   const field = refusals.find((refusal) => refusal.rule === "request-field-not-honoured");
   const facet = refusals.find((refusal) => refusal.rule === "facet-not-offered");
   let error: Error;
-  if (field?.name === "offset") error = new OffsetUnsupportedError(OFFSET_NOT_HONOURED);
+  if (field?.name === "offset") error = new StudioOffsetRefusal(OFFSET_NOT_HONOURED);
   else if (field?.name === "params")
     error = new FacetNotOfferedError(PARAMS_NOT_HONOURED, undefined, "console", "params");
   else if (facet?.name !== undefined) {

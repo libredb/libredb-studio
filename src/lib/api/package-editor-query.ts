@@ -135,7 +135,7 @@ function packagePageBody(
  * @throws {QueryCancelledError} When the caller left.
  * @throws {StudioTimeoutRefusal} When the deadline ended the run.
  * @throws {FacetNotOfferedError} Not-sent, for bound params the session does not honour.
- * @throws {OffsetUnsupportedError} Not-sent, for a non-zero offset the session does not honour.
+ * @throws {StudioOffsetRefusal} Not-sent, for a non-zero offset the session does not honour.
  */
 export async function runPackageEditorQuery(
   cached: CachedPackageSession,

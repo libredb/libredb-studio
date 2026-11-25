@@ -12,9 +12,9 @@ import { errorKind, errorOutcome } from "@/lib/db/error-record";
 import {
   DatabaseError,
   FacetNotOfferedError,
-  OffsetUnsupportedError,
   QueryCancelledError,
   StudioByteBudgetRefusal,
+  StudioOffsetRefusal,
   StudioTimeBudgetRefusal,
   StudioTimeoutRefusal,
   TimeoutError,
@@ -103,11 +103,13 @@ describe("the accessor", () => {
     expect(errorOutcome(error)).toBe("unknown");
   });
 
-  test("a refused offset of a session that refuses it is OffsetUnsupportedError, not-sent", () => {
+  test("a refused offset of a session that refuses it is Studio's own offset refusal, not-sent", () => {
     const refusal: CallRefusal = { rule: "request-field-not-honoured", pointer: "/page/offset", name: "offset" };
     const error = refusalError(refused([refusal], false), { caller: callerOf(), deadlineSentence });
 
-    expect(error).toBeInstanceOf(OffsetUnsupportedError);
+    // Studio wrote the sentence, so the error is the class only core constructs, never a provider's plain one.
+    expect(error).toBeInstanceOf(StudioOffsetRefusal);
+    expect(errorKind(error)).toBe("studio-offset-refusal");
     expect(error.message).toBe(
       "This connection's provider package does not take an offset, so Studio asks for no page after the first.",
     );
