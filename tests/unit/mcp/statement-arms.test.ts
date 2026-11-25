@@ -8,14 +8,14 @@ import { describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import {
   AGENT_LANGUAGE_MCP_FACETS,
   type AgentLanguageMcpFacet,
   type AgentLanguageMcpTool,
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
-import { MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_STATEMENT_LANGUAGE, MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";

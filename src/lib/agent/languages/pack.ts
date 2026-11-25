@@ -4,12 +4,8 @@
 import type { CuratedOperationKind } from "@/lib/db/operations/descriptors";
 import type { ClusterUsageInput } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
-import type {
-  AGENT_STATEMENT_LANGUAGE,
-  AgentLanguageCopy,
-  AgentStatementLanguageId,
-  AgentWorkflowVariant,
-} from "../agent-manifest";
+import type { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
+import type { AgentLanguageCopy, AgentStatementLanguageId, AgentWorkflowVariant } from "../agent-manifest";
 import type { AgentCatalogCapture } from "../catalog-rows";
 import type { AgentCatalogRead, AgentPlanEstimate } from "../composed-sql-primitives";
 import type { AgentGoalShortfall, VerifiableAgentRun } from "../goal-verifier";

@@ -27,7 +27,7 @@ import { describeAgentCapability } from "@/lib/agent/capability-labels";
   variant says whether its answer may be handed over. It gates nothing: the refusal is
   the route's, and this is a notice about it.
 */
-import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId, agentVariant } from "@/lib/agent/agent-manifest";
+import { type AgentStatementLanguageId, agentVariant } from "@/lib/agent/agent-manifest";
 import {
   AGENT_MAX_OBJECTIVE_LENGTH,
   AGENT_REPORT_RESERVE_MS,
@@ -58,6 +58,7 @@ import { AGENT_TERMINAL_STATUSES } from "@/lib/agent/types";
 */
 import type { AgentWorkflowClassification } from "@/lib/agent/workflow-classifier";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import type { DatabaseType } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AnswerCard, answerCardState } from "./AnswerCard";
@@ -1136,7 +1137,7 @@ export const AgentRail = React.memo(function AgentRail({
     engine that has none. `canHandOver` is the yes.
   */
   const handOverLanguage = (candidate: AgentRunWorkflowType): AgentStatementLanguageId | null => {
-    const language = connectionType === null ? "sql" : AGENT_STATEMENT_LANGUAGE[connectionType];
+    const language = connectionType === null ? "sql" : GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType];
     const offered =
       mode === "agent" &&
       language !== null &&
@@ -1923,7 +1924,7 @@ export const AgentRail = React.memo(function AgentRail({
     state, which is what is true.
   */
   const engineUnsupported =
-    mode === "agent" && connectionType !== null && AGENT_STATEMENT_LANGUAGE[connectionType] === null;
+    mode === "agent" && connectionType !== null && GRANTED_AGENT_STATEMENT_LANGUAGE[connectionType] === null;
 
   /*
     Whether the amber card above is ALREADY saying what the refused start would say, which

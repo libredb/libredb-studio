@@ -20,6 +20,7 @@ import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { agentPosture, autoExecuteTerms } from "@/lib/agent/posture";
 import type { AgentRunWorkflowType, AgentThreadContext } from "@/lib/agent/types";
 import { getDBConfig } from "@/lib/db-ui-config";
+import * as grants from "@/lib/db/claim-grants";
 import type { DatabaseConnection } from "@/lib/types";
 import { mockGlobalFetch, restoreGlobalFetch } from "../../helpers/mock-fetch";
 import { holdWorkspaceOwner } from "@/lib/config/base-path";
@@ -6227,6 +6228,34 @@ describe("AgentRail", () => {
         // the operations workflow sends no statement at all, and plan mode drafts.
         expect(notice).toContain("The operations workflow still runs here");
         expect(notice).toContain("Plan mode drafts on every engine");
+      });
+
+      /*
+        The rail reads Studio's grant of the engine's statement language, never the record: this one test substitutes a
+        grant of none for PostgreSQL, whose record row is SQL. Restored in `finally`: `mock.module` reaches every
+        importer in this process.
+      */
+      test("the rail reads Studio's grant of the engine's statement language: an engine granted none shows the unsupported card", () => {
+        const granted = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+        fireEvent.click(granted.getByTestId("agent-mode-agent"));
+        expect(granted.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
+        cleanup();
+
+        const real = { ...grants };
+        try {
+          mock.module("@/lib/db/claim-grants", () => ({
+            ...real,
+            GRANTED_AGENT_STATEMENT_LANGUAGE: { ...real.GRANTED_AGENT_STATEMENT_LANGUAGE, postgres: null },
+          }));
+          const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="postgres" />);
+          fireEvent.click(view.getByTestId("agent-mode-agent"));
+
+          expect(view.getByTestId("agent-engine-unsupported-notice").textContent ?? "").toContain(
+            "no read-only statement path",
+          );
+        } finally {
+          mock.module("@/lib/db/claim-grants", () => real);
+        }
       });
 
       test("it does not gate Start, because the refusal is the server's and one workflow is unaffected", () => {

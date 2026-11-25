@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { AGENT_STATEMENT_LANGUAGE, openWorkflows } from "@/lib/agent/agent-manifest";
+import { openWorkflows } from "@/lib/agent/agent-manifest";
 import { isAgentRuntimeEnabled } from "@/lib/agent/config";
 import { AGENT_MAX_OBJECTIVE_LENGTH } from "@/lib/agent/execution-policy";
 import { type AgentWorkflowClassification, classifyAgentWorkflow } from "@/lib/agent/workflow-classifier";
 import { createErrorResponse } from "@/lib/api/errors";
 import { guardRoute } from "@/lib/api/require-session";
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 
 /**
@@ -107,7 +108,7 @@ export async function POST(req: Request) {
       }
       const connection = await resolveConnection({ connectionId }, guard.session);
       classification = await classifyAgentWorkflow(objective, {
-        statementLanguage: AGENT_STATEMENT_LANGUAGE[connection.type] ?? undefined,
+        statementLanguage: GRANTED_AGENT_STATEMENT_LANGUAGE[connection.type] ?? undefined,
         workflows: openWorkflows(mode, connection.type),
       });
     }

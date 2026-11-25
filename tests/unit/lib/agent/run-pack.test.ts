@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
+import { AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "@/lib/agent/languages/client";
 import { engineFamily } from "@/lib/agent/languages/engines/client";
 import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";

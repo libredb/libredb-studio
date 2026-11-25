@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { composeEstimatingExplain } from "@/lib/agent/composed-sql";
 import { languageClientPack } from "@/lib/agent/languages/client";
 import { engineClientPack, enginesSupporting } from "@/lib/agent/languages/engines/client";

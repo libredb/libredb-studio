@@ -96,7 +96,6 @@ import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
 import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
   workflowAvailability,
@@ -114,6 +113,7 @@ import { detectConnectionStringType, parseConnectionString, pasteText } from "@/
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,

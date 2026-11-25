@@ -15,8 +15,7 @@ import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { INWARD_IMPORTS } from "./provider-imports/inward-allowlist";
 import {
   type AllowlistEntry,

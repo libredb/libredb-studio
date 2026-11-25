@@ -1,7 +1,6 @@
 import { z } from "zod";
 import {
   AGENT_LANGUAGE_COPY,
-  AGENT_STATEMENT_LANGUAGE,
   type AgentStatementArgument,
   type AgentStatementLanguageId,
 } from "@/lib/agent/agent-manifest";
@@ -15,6 +14,7 @@ import {
 } from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import type { McpReach } from "../context";
@@ -266,7 +266,7 @@ export function listedStatementArms(
  */
 function servingArmFor(type: DatabaseType): McpStatementArm | null {
   assertDatabaseType(type);
-  const language = AGENT_STATEMENT_LANGUAGE[type];
+  const language = GRANTED_AGENT_STATEMENT_LANGUAGE[type];
   const arm = language === null ? null : MCP_STATEMENT_ARMS[language];
   return arm !== null && arm.types.includes(type) ? arm : null;
 }
@@ -286,7 +286,7 @@ export function mcpStatementToolFor(type: DatabaseType): McpStatementTool | null
  */
 export function mcpWithholdsDatabase(type: DatabaseType): boolean {
   assertDatabaseType(type);
-  const language = AGENT_STATEMENT_LANGUAGE[type];
+  const language = GRANTED_AGENT_STATEMENT_LANGUAGE[type];
   return language !== null && MCP_STATEMENT_ARMS[language]?.withholdsDatabase === true;
 }
 

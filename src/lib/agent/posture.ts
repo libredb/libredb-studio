@@ -19,8 +19,8 @@
  *    title and the body of its arms (`AgentPostureCopy` in `languages/pack.ts`) and cannot write a
  *    tone or a headline; the arm decides both, and the arm is read here from the review record and
  *    from the language's workflow variants, so no pack ranks its own claim.
- *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, the manifest's
- *    `AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
+ *  - **Client-safe imports only** - types, `AGENT_EXECUTION_ENGINES`, Studio's grant
+ *    `GRANTED_AGENT_STATEMENT_LANGUAGE`, the language packs' client facets (`languages/client.ts`, where each
  *    language's reads, widened and hand-over words live), the engines' client facets (`languages/engines/client.ts`), `getDBConfig`, the type-id guard (`assertDatabaseType`) and the policy constants. A provider module here would drag `oracledb`/`mssql` toward a bundle
  *    that must not have them, which is the rule the review record's docblock in `src/lib/db/compatibility.ts` records.
  *  - **Every engine name and every number is DERIVED.** Not one is typed as a literal, and
@@ -35,12 +35,12 @@
  */
 
 import {
-  AGENT_STATEMENT_LANGUAGE,
   type AgentStatementLanguageId,
   notReviewedSentence,
   operationsWorkflowOpens,
 } from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { assertDatabaseType } from "@/lib/db/type-id";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -299,7 +299,7 @@ function readsPosture(language: AgentStatementLanguageId): AgentPosture {
  * Each arm decides its tone and its headline here; a language pack supplies the words of the plan,
  * reads and widened arms and nothing that ranks them.
  *
- * Whether the engine executes is `AGENT_STATEMENT_LANGUAGE`'s answer and then
+ * Whether the engine executes is `GRANTED_AGENT_STATEMENT_LANGUAGE`'s answer and then
  * `AGENT_EXECUTION_ENGINES`'s, in the order the start route refuses from them (`workflowAvailability`),
  * so the strip and the refusal cannot disagree about an engine. Both are read on every call,
  * not folded into a constant at module load, so the copy follows the lists in the process
@@ -321,7 +321,7 @@ export function agentPosture(input: {
   readonly refusedHere?: string | null;
 }): AgentPosture {
   if (input.engine !== null) assertDatabaseType(input.engine);
-  const language = input.engine === null ? null : AGENT_STATEMENT_LANGUAGE[input.engine];
+  const language = input.engine === null ? null : GRANTED_AGENT_STATEMENT_LANGUAGE[input.engine];
   if (input.mode === "planning") return planPosture(language);
   if (input.engine === null) return unresolvedPosture();
   if (language === null) return unsupportedPosture(input.engineLabel);

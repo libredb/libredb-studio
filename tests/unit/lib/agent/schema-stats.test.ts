@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { composeCatalogRead, composeStatisticsAvailabilityProbe } from "@/lib/agent/composed-sql";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";

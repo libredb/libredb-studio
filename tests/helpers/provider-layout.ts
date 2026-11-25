@@ -24,7 +24,7 @@
  */
 import { existsSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { workspacePackageDirectories } from "../../scripts/workspace-packages.mjs";
 import { PROVIDER_DIRECTORY_MAP } from "./provider-directory-map";

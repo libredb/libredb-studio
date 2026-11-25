@@ -4,15 +4,19 @@
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
  * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
- * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts` and the engine facets registry
- * `@/lib/db/engine-facets` (its rows, their types and the type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a provider module or
- * `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its advice, its admission) is
- * server code and lives in `languages/server.ts`.
+ * check `@/lib/db/type-id.ts`, the review record in `@/lib/db/compatibility.ts`, Studio's grant reader
+ * `@/lib/db/claim-grants.ts` and the engine facets registry `@/lib/db/engine-facets` (its rows, their types and the
+ * type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
+ * provider module or `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its
+ * advice, its admission) is server code and lives in `languages/server.ts`.
  *
- * `AGENT_STATEMENT_LANGUAGE` is the list of engines agent mode reads statements on, keyed by type-id so no dialect
- * comparison is written anywhere. `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
+ * The statement language each engine speaks is Studio's grant of the claim its declaration requests,
+ * `GRANTED_AGENT_STATEMENT_LANGUAGE` (docs/providers/CONTRACT.md, clause M-83), keyed by type-id so no dialect
+ * comparison is written anywhere; Studio's review record of it, `AGENT_STATEMENT_LANGUAGE`, lives in
+ * `@/lib/db/compatibility.ts`, and `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
  * has a language exactly when its provider has `queryReadOnly`.
  */
+import { GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { assertDatabaseType } from "@/lib/db/type-id";
@@ -56,59 +60,6 @@ export type AgentStatementLanguageId =
   | "mtconnectread"
   | "mqttread"
   | "sparkplugread";
-
-/**
- * Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type.
- *
- * This table is Studio's review record of the claim an engine declaration requests at `agent.statementLanguage`, and every
- * gate reads it: the declaration states each shipped engine's request as this table's row, and the table is never a
- * projection of declarations (docs/providers/CONTRACT.md, clauses M-52 and M-53).
- */
-export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
-  postgres: "sql",
-  bigquery: null,
-  snowflake: null,
-  spark: null,
-  mysql: "sql",
-  sqlite: "sql",
-  libsql: "sql",
-  duckdb: "sql",
-  oracle: "sql",
-  db2: "sql",
-  mssql: "sql",
-  clickhouse: "sql",
-  druid: "sql",
-  trino: "sql",
-  cassandra: "sql",
-  elasticsearch: "sql",
-  opensearch: "sql",
-  mongodb: "mongo",
-  couchbase: "sql",
-  redis: "rediscli",
-  prometheus: "promql",
-  kafka: "kafkaread",
-  etcd: "etcdctl",
-  neo4j: "cypher",
-  milvus: "milvusrpc",
-  qdrant: "qdrantapi",
-  weaviate: "weaviateapi",
-  influxdb: "influxql",
-  influxdb3: "sql",
-  oxia: "oxiacli",
-  databend: null,
-  s3: "s3api",
-  kubernetes: "kubectl",
-  mqtt: "mqttread",
-  firestore: "fsquery",
-  rabbitmq: "rabbitread",
-  opcua: "opcuaread",
-  mtconnect: "mtconnectread",
-  modbus: "modbusread",
-  netconf: "netconfrpc",
-  snmp: "snmpget",
-  sparkplug: "sparkplugread",
-  libredb: "libredbkv",
-} as const satisfies Record<DatabaseType, AgentStatementLanguageId | null>);
 
 /** The name of the model argument a language's statement arrives in: one type for every reader of it. */
 export type AgentStatementArgument = "sql" | "statement" | "command";
@@ -320,9 +271,8 @@ export function planObjectiveOf(
  * Whether a run of one workflow opens on one engine in one mode, and under what.
  *
  * Read by the start route, which refuses before a run id or a model turn is spent. The rail and the strip read
- * `AGENT_STATEMENT_LANGUAGE` directly to say the same thing before Start is pressed, and an engine has a language
- * exactly when the review record lists it (`tests/unit/lib/agent/agent-manifest.test.ts`), so the notice and the
- * refusal cannot disagree about a shipped engine.
+ * `GRANTED_AGENT_STATEMENT_LANGUAGE` directly to say the same thing before Start is pressed, the same grant this
+ * reads, so the notice and the refusal cannot disagree about an engine.
  */
 export type AgentWorkflowAvailability =
   | {
@@ -353,7 +303,7 @@ interface AgentAvailabilityTables {
 }
 
 const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
-  languages: AGENT_STATEMENT_LANGUAGE,
+  languages: GRANTED_AGENT_STATEMENT_LANGUAGE,
   variants: AGENT_WORKFLOW_VARIANTS,
   requirementEngines: AGENT_REQUIREMENT_ENGINES,
   reviewed: AGENT_EXECUTION_ENGINES,

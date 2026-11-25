@@ -41,11 +41,6 @@ const STATEMENT_FAMILY =
 
 export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
-    module: "src/lib/agent/agent-manifest.ts",
-    name: "AGENT_STATEMENT_LANGUAGE",
-    destination: claim("agent.statementLanguage"),
-  },
-  {
     module: "src/lib/agent/languages/engines/server.ts",
     name: "ENGINE_SERVER_FACETS",
     destination:
@@ -62,6 +57,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     destination: "planned segment: presentation, the icon as an SVG asset and the colour",
   },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_CREDENTIAL_FORM", destination: GRANTED },
+  { module: CLAIM_GRANTS_MODULE, name: "GRANTED_AGENT_STATEMENT_LANGUAGE", destination: GRANTED },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_DENIED_FILE_ACCESS_REFUSAL", destination: GRANTED },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_HOST_PATH_FIELDS", destination: GRANTED },
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_MASKING_EXEMPT_COLUMNS", destination: GRANTED },
@@ -127,6 +123,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     destination: claim("connection.serverLevelWithoutDatabase"),
   },
+  { module: COMPATIBILITY, name: "AGENT_STATEMENT_LANGUAGE", destination: claim("agent.statementLanguage") },
   { module: CONNECTION_FIELDS_MODULE, name: "CONNECTION_FIELDS", destination: "engine declaration: connection.fields" },
   {
     module: CONNECTION_FIELDS_MODULE,

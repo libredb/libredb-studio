@@ -1,5 +1,5 @@
 /**
- * Every policy, MCP and connection claim record Studio keeps in core is read only by Studio's grant reader,
+ * Every policy, MCP, connection and agent mode claim record Studio keeps in core is read only by Studio's grant reader,
  * `src/lib/db/claim-grants.ts` (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): every gate reads the grant,
  * the more restrictive of the engine's request and the record, so a gate that read a record again would read a claim no
  * grant covers once a loader admits a package's declaration.
@@ -9,8 +9,11 @@
  * naming it from its module, an `export *` of its module, a property access or a string-literal element access naming
  * it on a namespace import of its module, on a dynamic import or require of it, or on a `const` alias of either, a
  * destructuring of such an import, require or alias, and, inside the record's own module, any use of its name but the
- * declaration. A module specifier names a
- * record module when it resolves to it, written relative to the importing file or through the `@/` alias for `src/`.
+ * declaration. A module specifier names a record module when it resolves to it, written relative to the importing file
+ * or through the `@/` alias for `src/`. A type-only import or export, `import type`, `import { type X }`,
+ * `export type { X } from` or `import type * as ns`, is passed over: it carries no value to any gate, and is how the
+ * agent packs read `AGENT_STATEMENT_LANGUAGE`'s literal type (`AgentEngineType` in src/lib/agent/languages/pack.ts). A
+ * value import stays a reference wherever the name is then used, a `typeof` in a type position included.
  * An object literal key, a type member key, a property of another object and a string such as an error code are not
  * references, and a comment is trivia the parser attaches to no node, so the record's name in either is passed over.
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
@@ -26,7 +29,10 @@ const ROOT = path.resolve(import.meta.dir, "../../..");
 /** The grant reader: the one module that may read a claim record. */
 const GRANT_READER = "src/lib/db/claim-grants.ts";
 
-/** Each module holding a policy, MCP or connection claim record, without its extension, and the records it holds. */
+/**
+ * Each module holding a policy, MCP, connection or agent mode claim record, without its extension, and the records it
+ * holds.
+ */
 const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/compatibility": [
     "OPENS_LOCAL_FILE",
@@ -43,6 +49,7 @@ const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
     "MCP_STATEMENT_READ",
     "MCP_METADATA_READ_CHANGES_STATE",
     "MCP_AGENT_CREDENTIAL_REQUIRED",
+    "AGENT_STATEMENT_LANGUAGE",
   ],
   "src/lib/db/connection-fields": ["AGENT_CREDENTIAL_FORM", "SEED_AGENT_CREDENTIAL"],
   "src/lib/db/claim-grants": ["STUDIO_CLAIM_RECORDS"],
@@ -138,18 +145,24 @@ function recordReferences(file: SourceText): string[] {
   const collect = (node: ts.Node): void => {
     if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
       const records = recordsOf(resolvedModule(file.path, node.moduleSpecifier.text));
-      const bindings = node.importClause?.namedBindings;
-      if (records.length > 0 && bindings !== undefined) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      // A type-only import carries no value, so it reads no record.
+      if (records.length > 0 && bindings !== undefined && clause?.isTypeOnly !== true) {
         if (ts.isNamespaceImport(bindings)) namespaces.set(bindings.name.text, records);
-        else for (const element of bindings.elements) readNamed(records, (element.propertyName ?? element.name).text);
+        else
+          for (const element of bindings.elements)
+            if (!element.isTypeOnly) readNamed(records, (element.propertyName ?? element.name).text);
       }
     } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       const records = recordsOf(resolvedModule(file.path, node.moduleSpecifier.text));
-      if (node.exportClause === undefined) for (const record of records) read(record);
+      if (node.isTypeOnly) {
+        // A type-only re-export carries no value, so it reads no record.
+      } else if (node.exportClause === undefined) for (const record of records) read(record);
       else if (ts.isNamespaceExport(node.exportClause)) for (const record of records) read(record);
       else
         for (const element of node.exportClause.elements)
-          readNamed(records, (element.propertyName ?? element.name).text);
+          if (!element.isTypeOnly) readNamed(records, (element.propertyName ?? element.name).text);
     } else if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
       const records = boundRecords(node.initializer);
       if (records.length > 0 && ts.isIdentifier(node.name)) namespaces.set(node.name.text, records);
@@ -201,7 +214,7 @@ function recordReaders(files: readonly SourceText[]): string[] {
 }
 
 describe("the claim record readers", () => {
-  test("every policy, MCP and connection claim record is read only by the grant reader", () => {
+  test("every policy, MCP, connection and agent mode claim record is read only by the grant reader", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
 
     expect(recordReaders(files)).toEqual([]);
@@ -221,7 +234,7 @@ describe("the claim record readers", () => {
     );
   }, 60_000);
 
-  test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code and an object key of the same name", () => {
+  test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import", () => {
     const planted = (file: string, text: string) => recordReaders([{ path: file, text }]);
 
     expect(planted("src/lib/a.ts", 'import { WRITE_REACH } from "@/lib/db/compatibility";')).toEqual([
@@ -312,5 +325,42 @@ describe("the claim record readers", () => {
       ),
     ).toEqual([]);
     expect(planted(GRANT_READER, 'import { WRITE_REACH } from "./compatibility";')).toEqual([]);
+
+    // A type-only import or re-export carries no value to a gate, so it is passed over in every form.
+    const language = "AGENT_STATEMENT_LANGUAGE";
+    expect(
+      planted(
+        "src/lib/agent/languages/a.ts",
+        [
+          `import type { ${language} } from "@/lib/db/compatibility";`,
+          `import { type ${language} as L } from "@/lib/db/compatibility";`,
+          `export type { ${language} } from "@/lib/db/compatibility";`,
+          'import type * as records from "@/lib/db/compatibility";',
+          `type T = typeof ${language};`,
+          `type U = (typeof records)["${language}"];`,
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    // A value import is a reference however the name is used: in a type position, renamed, through a namespace or an
+    // alias of one, loaded dynamically, or re-exported.
+    expect(
+      planted(
+        "src/lib/agent/languages/a.ts",
+        `import { ${language} } from "@/lib/db/compatibility";\ntype T = typeof ${language};`,
+      ),
+    ).toEqual([`src/lib/agent/languages/a.ts reads ${language}`]);
+    expect(
+      planted("src/lib/a.ts", `import { type WRITE_REACH, ${language} as L } from "@/lib/db/compatibility";`),
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
+    expect(
+      planted("src/lib/a.ts", `import * as records from "@/lib/db/compatibility";\nconst m = records;\nm.${language};`),
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
+    expect(planted("src/lib/a.ts", `const { ${language}: l } = await import("@/lib/db/compatibility");`)).toEqual([
+      `src/lib/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/a.ts", `export { ${language} } from "@/lib/db/compatibility";`)).toEqual([
+      `src/lib/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/a.ts", 'export type * from "@/lib/db/compatibility";')).toEqual([]);
   });
 });
