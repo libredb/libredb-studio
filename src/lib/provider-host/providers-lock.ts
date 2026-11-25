@@ -102,6 +102,11 @@ function byName(a: PackageName, b: PackageName): number {
   return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
 }
 
+/** Code-unit order, the same on every machine and locale; engine ids are ASCII by their form. */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /** The collision refusal of each entry that has one, by name. */
 function collisions(entries: readonly LockEntry[]): Map<string, PackageRefusal> {
   const found = new Map<string, PackageRefusal>();
@@ -124,7 +129,7 @@ function refusedPackage(entry: LockEntry, refusal: PackageRefusal): RefusedPacka
     verified: false,
     name: entry.name,
     version: entry.version,
-    engines: Object.freeze([...entry.engines].sort()),
+    engines: Object.freeze([...entry.engines].sort(byCodeUnit)),
     refusal,
   });
 }
