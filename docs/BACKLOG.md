@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D940, U17 · 386
+- [Drivers and connections](#drivers-and-connections) — D1-D950, U17 · 387
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1-R5 · 4
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
@@ -5096,6 +5096,17 @@ It is not new with that move: `begin`, `commit` and `rollback` have answered so 
 Found 2026-11-25 while moving the transaction route's script onto the host core.
 
 **Done when:** every action that sends a statement refuses a malformed connection `queryTimeout` with the query route's 400 sentence before the open, with a route test for each.
+
+### D950. A contract provider's read-only page with a non-zero offset is not checked to be applied or refused
+
+Clause C-85 states that a session sent a bounded page applies it, or refuses a non-zero offset it does not apply, before it sends anything.
+The legacy bridge keeps it: `bridgedReadOnlyStatements` in `src/lib/provider-host/legacy-bridge.ts` refuses such an offset with `StudioOffsetRefusal`.
+`runReadOnlyPage` in `src/lib/api/read-only-execute.ts` answers a native session's `pageApplied` as it comes, so a provider that ignored the offset, the ignored field clause C-8 describes, would have run_read_query answer the first rows as the page the offset names.
+No native provider pages yet, and the kit that would check C-8 does not exist.
+
+Found 2026-11-25 while moving run_read_query's paging onto the host core.
+
+**Done when:** the provider kit checks that a provider sent a non-zero offset it cannot apply refuses `offset-unsupported` before sending anything, or the paged read-only execute refuses a page answered not applied for a non-zero offset as a contract breach, with a test either way.
 
 ## Value interpolation
 
