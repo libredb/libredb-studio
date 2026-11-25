@@ -12,7 +12,7 @@
  *
  * A JSON document is answered as its parse only when the parse shows every value sent (spec
  * 5.3): an integer JSON.parse would round is quoted before the parse, so it keeps its digits as
- * a string (docs/ADDING_A_PROVIDER.md), and a document that repeats a member name, or holds a
+ * a string, and a document that repeats a member name, or holds a
  * number no double shows as sent, is answered as its text.
  */
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";

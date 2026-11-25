@@ -1876,7 +1876,6 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec section 2).
 
 The etcd connection has one Host and one Port (`buildEtcdConnectionOptions` in `src/lib/db/providers/keyvalue/etcd/connection-options.ts`); grpc-js's `pick_first` fails over across the addresses one name resolves to, which the etcd live check measures (KE13), but a cluster addressed by member IPs has no such name.
 etcdctl takes `--endpoints` as a list.
-A list field needs a new connection field through the whole checklist of `docs/ADDING_A_PROVIDER.md`, which the etcd PR did not open.
 
 Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
 
@@ -8237,15 +8236,6 @@ Amended 2026-10-19: its mongodb half closed when the connection dialog's two `==
 
 **Done when:** `CLAUDE.md` describes the Redis key walk by the method that exists, and the Redis comments name it too.
 
-### DOC20. docs/ADDING_A_PROVIDER.md carries stale counts and an incomplete label table
-
-The guide says seven translated READMEs are gated by `readme:check` where `scripts/readme-check.mjs` gates eight (`README_ko.md` joined in 3d9689aaf); its `getCapabilities()` bullet names two query languages (`sql` | `json`) where its own `ProviderCapabilities` table lists all five; has no row for `sessionsEmptyState`, `tableStatsCaption` or `vacuumActionOperation` in its `ProviderLabels` table; and gives two driver-free counts, thirteen in its first decision and fifteen in its checklist.
-Its count of the language modules `QueryEditor` registers is gone: the guide now names the editor language registry, `EDITOR_LANGUAGES`, in place of a count.
-
-Found 2026-10-09 while designing the S3 provider; pre-existing.
-
-**Done when:** each count is derived from the code it describes, the label table matches `ProviderLabels`, and the guide states one driver-free count with the list it counts.
-
 ### DOC21. docs/TOOLCHAIN.md counts the providers the factory tests construct as seventeen
 
 `docs/TOOLCHAIN.md` says two `tests/unit` files "construct all seventeen providers through the real factory"; the shipped type-ids have grown well past seventeen since, the S3 provider among them, so the number no longer counts what those files construct.
@@ -8254,15 +8244,6 @@ The other stale fleet counts the same sweep found (`docs/providers/mongodb.md` t
 Found 2026-10-10 by the documentation sweep of the S3 provider; pre-existing.
 
 **Done when:** the TOOLCHAIN.md sentence names the set those two files construct, or the number that set has, derived from the factory, and DOC6's entries are settled by its own Done when.
-
-### DOC22. docs/ADDING_A_PROVIDER.md names none of six guards a new provider meets
-
-A new type-id turns these guards red, and the guide names none of them, so an author finds each one only when it fails: `tests/unit/lib/table-count.test.ts` (the count statement per engine), `tests/unit/db/test-data-generation-capability.test.ts`, `tests/isolated/dialect-golden.test.ts` with its golden dialect outputs, `tests/unit/db/s3/provider-doc.test.ts` (the pinned chart description and engine lists), `CONNECTION_FORM_URI_MODE` and `CONNECTION_STRING_ACCEPTED` (`src/lib/db/compatibility.ts`).
-The guide's two driver-free counts are DOC20's.
-
-Found 2026-10-12 while designing the Firestore provider; pre-existing.
-
-**Done when:** the guide's checklist names each of these guards beside the step that trips it, or a test derives the checklist's guard list from the files that read `DatabaseType`, so the next guard added is named too.
 
 ### DOC23. `docs/providers/README.md` went without an MQTT row, and no guard caught it
 
@@ -8273,13 +8254,13 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** the modules note names MQTT and a test holds the table's type ids equal to `SHIPPED_DATABASE_TYPES`.
 
-### DOC24. Two docs undercount what `readme:check` gates
+### DOC24. `scripts/readme-check.mjs` undercounts what it gates in its own docblock
 
-`docs/ADDING_A_PROVIDER.md` says `readme:check` gates "the seven translations" and lists seven, omitting `README_ko.md`, which `scripts/readme-check.mjs` gates as the eighth; the script's own docblock speaks of "Three invariants" and "all three files" while it lists four invariants over nine files.
+The script's docblock speaks of "Three invariants" and "all three files" while it lists four invariants over nine files.
 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
-**Done when:** both texts name the eight translations and the four invariants, with the guide's list read from the script's `LOCALIZED` array by a test.
+**Done when:** the docblock names the four invariants and the files it gates.
 
 ### DOC25. docs/providers/bigquery.md says a dropped connection cancels the job
 
@@ -8409,14 +8390,6 @@ B9 says `driveAgentRun`'s only callers are the start route and the drive route, 
 Found 2026-11-05 while designing MCP phase 1 (#2252).
 
 **Done when:** each count names what it counts from the tree or `docs/llms/README.md` rather than a number that moves, `tests/unit/agent-documentation.test.ts` holds it, and B9 states the resume path as it is or leaves the backlog.
-
-### DOC37. ADDING_A_PROVIDER.md says only DuckDB reads the file-access posture
-
-The `readsFileAccessPosture` row of the capability table in `docs/ADDING_A_PROVIDER.md` says only DuckDB opens its editor handle under the server-derived file-access posture.
-`SQLiteProvider.getCapabilities` in `src/lib/db/providers/sql/sqlite.ts` declares `readsFileAccessPosture: true` as well, and `READS_FILE_ACCESS_POSTURE` in `src/lib/db/compatibility.ts` holds it true: SQLite refuses a denied handle at `connect()` where DuckDB confines it, as `REFUSES_DENIED_FILE_ACCESS` records.
-Found 2026-11-05 in the review of #2255.
-
-**Done when:** the row names both engines and what each does with a denied handle, and a test holds the engines the row names to the true rows of `READS_FILE_ACCESS_POSTURE`.
 
 ### DOC38. No test holds the safety strip table or the two "every engine but" lists to what the posture module renders
 

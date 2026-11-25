@@ -126,8 +126,7 @@ ClickHouseProvider (clickhouse/index.ts)
 `ClickHouseProvider` extends `SQLBaseProvider` — not `BaseDatabaseProvider` directly, the way
 Couchbase does — because the dialect really is standard on the points the shared helpers care
 about: double-quoted identifiers and `LIMIT n OFFSET m` are both correct here, live-verified
-(`SELECT "id" FROM "probe"` and the bare unquoted form both parse). This is exactly the case
-[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) names ClickHouse for. `escapeIdentifier()`
+(`SELECT "id" FROM "probe"` and the bare unquoted form both parse). `escapeIdentifier()`
 carries one dialect correction, below; `prepareQuery()` is overridden for the trailing-clause trap
 in [§3.8](#38-the-preparequery-override).
 
@@ -188,7 +187,7 @@ maintenance — is reachable over the documented HTTP interface on `8123`, the s
 `clickhouse-client --host ... --send_logs_level` and every third-party BI tool that supports
 ClickHouse use. There is no install step to fail, no native module in the Docker image or any
 distribution channel, and no N-API compatibility question for the Bun runtime — the same case
-Couchbase makes in [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md).
+Couchbase makes.
 
 ### 3.2 The transport seam: one interface, one implementation
 
@@ -587,8 +586,7 @@ The real blocker is what `CreateTableModal` actually emits:
 | `id Int32 PRIMARY KEY, name VARCHAR(255) NOT NULL` | works — `VARCHAR(255)` aliases to `String` |
 
 The modal's *default* state produces invalid SQL before a user changes anything, and it offers no
-ClickHouse type list. Per the capability-honesty rule in
-[`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md#capability-honesty) — a flag that is `true`
+ClickHouse type list. Per the capability-honesty rule — a flag that is `true`
 but produces a control that can only emit invalid input is a defect, not a feature — the flag stays
 `false`. DDL typed directly into the query editor works normally; that is how a ClickHouse user
 creates a table today.

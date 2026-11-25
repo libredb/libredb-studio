@@ -293,13 +293,13 @@ El material en profundidad está por ahora solo en inglés:
 
 - [Arquitectura](docs/ARCHITECTURE.md) · [Proveedores de bases de datos](docs/DATABASE_PROVIDERS.md) · [Referencia por motor](docs/providers/README.md)
 - [Documentación de la API](docs/API_DOCS.md) · [Configuración de OIDC](docs/OIDC.md) · [Capa de almacenamiento](docs/STORAGE.md)
-- [Helm Chart](docs/HELM_CHART.md) · [Canales de distribución](docs/CHANNELS.md) · [Agregar una base de datos](docs/ADDING_A_PROVIDER.md)
+- [Helm Chart](docs/HELM_CHART.md) · [Canales de distribución](docs/CHANNELS.md)
 
 ## Contribuir
 
 Los issues y los pull requests son bienvenidos, y podés escribirlos en español sin problema. Empezá por [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Para agregar un motor de base de datos, ver [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md). El código, la documentación y las pruebas viajan juntos en el mismo pull request.
+El código, la documentación y las pruebas viajan juntos en el mismo pull request.
 
 ## Licencia
 

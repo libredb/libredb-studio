@@ -1769,7 +1769,6 @@ Every refusal reason it can print, verbatim:
 
 - DuckDB — <https://duckdb.org>
 - `@duckdb/node-api` — <https://www.npmjs.com/package/@duckdb/node-api>
-- [`docs/ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) — the registration checklist this provider followed
 - [`docs/providers/sqlite.md`](sqlite.md) — the other embedded, file-based engine, and the same deployment constraint
 - [`docs/providers/postgres.md`](postgres.md) — the canonical SQL-family walkthrough
 

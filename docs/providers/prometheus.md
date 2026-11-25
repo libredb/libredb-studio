@@ -312,7 +312,7 @@ The constants are read by [`tests/unit/db/prometheus/provider-doc.test.ts`](../.
 
 ### 3.9 Shared records with no `prometheus` entry, and why
 
-Adding the type-id meant classifying every hit of the three searches `docs/ADDING_A_PROVIDER.md` names.
+Adding the type-id meant classifying every hit of three searches of the shared records.
 The exhaustive records all have an entry, because the compiler refuses one without it.
 These partial records deliberately have none:
 

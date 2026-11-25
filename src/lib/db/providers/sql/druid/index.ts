@@ -10,8 +10,7 @@
  * It extends `SQLBaseProvider` rather than `BaseDatabaseProvider` because the
  * dialect really is standard on the points the shared helpers care about -
  * double-quoted identifiers and `LIMIT n OFFSET m` are both correct Druid SQL
- * (live-verified on 37.0.0) - which is the case `docs/ADDING_A_PROVIDER.md` names
- * ClickHouse for. Only `prepareQuery()` is overridden, for the one trap below.
+ * (live-verified on 37.0.0). Only `prepareQuery()` is overridden, for the one trap below.
  *
  * Five live-verified behaviours shape almost everything here, and each one
  * produces a wrong answer or a hard failure if forgotten:

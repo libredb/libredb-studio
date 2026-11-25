@@ -29,7 +29,6 @@ const ENTRIES = [
   "### U115. A billed engine has no read budget meter",
   "### U116. The grid shows an absent field and a stored null alike",
   "### U117. The Keys panel counts a key and its folder as two entries",
-  "### DOC22. docs/ADDING_A_PROVIDER.md names none of six guards a new provider meets",
   "### B107. Firestore's agent reads are metadata only, and it has no MCP surface",
 ];
 

@@ -54,7 +54,7 @@ export type PartRead<T> = { readonly answer: T } | { readonly refused: string };
 
 /**
  * A read one part of an answer rests on, with the broker's refusal of it as an answer: a refusal and
- * an absence are different answers (docs/ADDING_A_PROVIDER.md), so a principal the broker refuses one
+ * an absence are different answers, so a principal the broker refuses one
  * read still sees the parts it may read, and the refused part says why (spec 4.4). Only the domain's
  * authorization refusal is one; any other failure, of another category or none, rejects as itself.
  */

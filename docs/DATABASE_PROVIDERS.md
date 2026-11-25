@@ -209,7 +209,7 @@ BaseDatabaseProvider (abstract)
 
 `SQLBaseProvider` provides SQL-specific helpers (LIMIT injection, identifier escaping). Non-SQL databases like MongoDB, Redis, and LibreDB extend `BaseDatabaseProvider` directly. LibreDB is embedded (opened in-process from a file, like SQLite) but, having no SQL, it is a key-value-style provider rather than a SQL one.
 
-Neo4j extends `GraphBaseProvider`, which extends `BaseDatabaseProvider` and runs the query path every graph engine shares; the engine supplies a profile. See [ADDING_A_PROVIDER.md](./ADDING_A_PROVIDER.md#adding-a-graph-engine) and [providers/neo4j.md](./providers/neo4j.md).
+Neo4j extends `GraphBaseProvider`, which extends `BaseDatabaseProvider` and runs the query path every graph engine shares; the engine supplies a profile. See [providers/neo4j.md](./providers/neo4j.md).
 
 Couchbase is the one provider that speaks a SQL dialect (SQL++) without extending `SQLBaseProvider`: SQL++ quotes identifiers with doubled backticks, which `escapeIdentifier()` produces for no existing type, so it owns its quoting and expresses its SQL-ness through `queryLanguage: 'sql'` in the capabilities instead. See [providers/couchbase.md](./providers/couchbase.md).
 
@@ -697,11 +697,3 @@ end to end. See [providers/trino.md](./providers/trino.md).
 - Query timeouts prevent runaway queries
 - Schema queries are optimized with LIMIT clauses
 - MongoDB uses estimated document counts for performance
-
----
-
-## Adding a New Provider
-
-This document describes the architecture and the providers that ship today. The step-by-step guide
-to adding a new one — including how to decide whether it needs a driver at all — lives in
-[`ADDING_A_PROVIDER.md`](./ADDING_A_PROVIDER.md).

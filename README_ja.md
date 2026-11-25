@@ -357,13 +357,13 @@ bun run test:coverage  # カバレッジレポート
 
 - [アーキテクチャ](docs/ARCHITECTURE.md) · [データベースプロバイダ](docs/DATABASE_PROVIDERS.md) · [エンジン別リファレンス](docs/providers/README.md)
 - [APIドキュメント](docs/API_DOCS.md) · [OIDC設定](docs/OIDC.md) · [ストレージ](docs/STORAGE.md)
-- [Helm Chart](docs/HELM_CHART.md) · [配布チャネル](docs/CHANNELS.md) · [データベースの追加](docs/ADDING_A_PROVIDER.md)
+- [Helm Chart](docs/HELM_CHART.md) · [配布チャネル](docs/CHANNELS.md)
 
 ## コントリビューション
 
 IssueもPRも歓迎です。日本語でも構いません。まず [CONTRIBUTING.md](CONTRIBUTING.md) をご覧ください。
 
-データベースエンジンを追加する場合は [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) を参照してください。コード・ドキュメント・テストは同じPRの中で揃っている必要があります。
+コード・ドキュメント・テストは同じPRの中で揃っている必要があります。
 
 ## ライセンス
 

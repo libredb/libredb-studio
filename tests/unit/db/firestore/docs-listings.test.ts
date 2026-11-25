@@ -1,7 +1,7 @@
 /**
  * The Firestore rows and names the docs and listings carry beyond the provider doc: the providers README (its
- * Firestore and MQTT rows), ADDING_A_PROVIDER's id lists (the Firestore, BigQuery and MQTT ids), the API docs, the
- * seed docs, `.env.example`, the READMEs and Docker Hub. Counts and exhaustive lists are held by the existing guards.
+ * Firestore and MQTT rows), the API docs, the seed docs, `.env.example`, the READMEs and Docker Hub. Counts and
+ * exhaustive lists are held by the existing guards.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -43,45 +43,6 @@ describe("docs/providers/README.md", () => {
   test("names Firestore among the providers split across modules", () => {
     // OPC UA joins the same sentence (#1677), so the tail this asserts moves with it.
     expect(index).toContain("Kubernetes, MQTT, Firestore, RabbitMQ and OPC UA are). The official product name");
-  });
-});
-
-describe("docs/ADDING_A_PROVIDER.md", () => {
-  const guide = read("docs/ADDING_A_PROVIDER.md");
-
-  test("the DatabaseType example lines name bigquery, mqtt and firestore", () => {
-    for (const line of guide.split("\n").filter((candidate) => candidate.startsWith("export type DatabaseType ="))) {
-      for (const id of ["'bigquery'", "'mqtt'", "'firestore'"])
-        expect({ line, id, named: line.includes(id) }).toEqual({ line, id, named: true });
-    }
-  });
-
-  test("the providers index line names bigquery, mqtt and firestore", () => {
-    const line = guide
-      .split("\n")
-      .find((candidate) => candidate.startsWith("**[docs/providers/](./providers/README.md)**"));
-    expect(line).toContain("· bigquery ·");
-    expect(line).toContain("· mqtt ·");
-    expect(line).toContain("· firestore ·");
-  });
-
-  test("the driver-free ids count bigquery and firestore", () => {
-    expect(guide).toContain("twenty-one shipped ids do:");
-    expect(guide).toContain("`databend`, `kubernetes`, `bigquery`, `firestore`, `rabbitmq` and `snowflake`");
-  });
-
-  test("the QueryTab example and the queryDialect row name every member of their unions", () => {
-    expect(guide).toContain(
-      "| 'influxql' | 'oxia' | 's3' | 'kubectl' | 'mqtt' | 'firestore' | 'rabbitmq';  // Add your type here if needed",
-    );
-    expect(guide).toContain(
-      "\\| 'oxia' \\| 's3' \\| 'mqtt' \\| 'firestore' \\| 'rabbitmq' \\| 'kubectl' \\| undefined`",
-    );
-  });
-
-  test("the no-driver answer names BigQuery and Firestore with their docs", () => {
-    expect(guide).toContain("BigQuery over its REST API v2 ([bigquery.md](./providers/bigquery.md))");
-    expect(guide).toContain("Firestore over its REST API v1 ([firestore.md](./providers/firestore.md))");
   });
 });
 

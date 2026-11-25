@@ -360,13 +360,13 @@ bun run test:coverage  # coverage report
 
 - [Architecture](docs/ARCHITECTURE.md) · [Database providers](docs/DATABASE_PROVIDERS.md) · [हर engine का reference](docs/providers/README.md)
 - [API docs](docs/API_DOCS.md) · [OIDC setup](docs/OIDC.md) · [Storage layer](docs/STORAGE.md)
-- [Helm Chart](docs/HELM_CHART.md) · [Distribution channels](docs/CHANNELS.md) · [नया डेटाबेस जोड़ना](docs/ADDING_A_PROVIDER.md)
+- [Helm Chart](docs/HELM_CHART.md) · [Distribution channels](docs/CHANNELS.md)
 
 ## योगदान करें
 
 Issues और PRs का स्वागत है, और बातचीत हिन्दी में करना बिल्कुल ठीक है। शुरू करने से पहले [CONTRIBUTING.md](CONTRIBUTING.md) पढ़ें।
 
-नया database engine जोड़ने के लिए [`docs/ADDING_A_PROVIDER.md`](docs/ADDING_A_PROVIDER.md) देखें। Code, docs और tests तीनों एक ही PR में साथ-साथ बदलने चाहिए।
+Code, docs और tests तीनों एक ही PR में साथ-साथ बदलने चाहिए।
 
 ## License
 

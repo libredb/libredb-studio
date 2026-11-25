@@ -130,8 +130,7 @@ can correct it.
 
 ### 3.1 A driver that costs no distribution channel anything
 
-`cassandra-driver` was checked against the rubric in
-[`ADDING_A_PROVIDER.md`](../ADDING_A_PROVIDER.md) before being adopted. Cassandra speaks a binary
+Cassandra speaks a binary
 protocol over TCP and has no first-class HTTP surface, so a driver is not optional — but this one
 costs almost nothing that a native driver would:
 

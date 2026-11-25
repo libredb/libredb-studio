@@ -3,7 +3,7 @@
  *
  * THE GAP. This provider declares no `queryDialect`. It cannot: the dialect union is itself a
  * registration surface, a member arrives with three records, and
- * the "Quick Reference Checklist" section of `docs/ADDING_A_PROVIDER.md` says "the build fails until all three exist". Measured:
+ * the build fails until all three exist. Measured:
  * declaring `queryDialect: "modbus"` before those records exist does not typecheck.
  *
  * The cost is not hidden. A `json` provider with no dialect of its own is given MongoDB's tab

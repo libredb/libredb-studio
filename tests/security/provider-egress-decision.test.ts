@@ -11,7 +11,7 @@
  * composed path refuses a private destination before anything is sent.
  *
  * The list of engines is a test-side list: it holds every engine whose connections pass the shared egress guard, and a
- * new provider that passes it joins it (docs/ADDING_A_PROVIDER.md, "Step 3: Register in the Factory"). Since FND-2 slice
+ * new provider that passes it joins it. Since FND-2 slice
  * 2b-4 the node transports take the decision too, so the composed cases cover the fetch (ClickHouse), the socket dial
  * (MQTT), the name lookup (SNMP) and the node transport (Qdrant).
  */

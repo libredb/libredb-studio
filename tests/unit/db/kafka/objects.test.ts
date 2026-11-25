@@ -843,8 +843,8 @@ describe("sources", () => {
 });
 
 describe("a part the broker refuses is that part's refusal, and the parts it read are kept", () => {
-  // docs/ADDING_A_PROVIDER.md: "A REFUSAL and an ABSENCE are different answers and must not
-  // arrive as one": an engine that declined the read, and said so, is a part carrying
+  // A REFUSAL and an ABSENCE are different answers and must not
+  // arrive as one: an engine that declined the read, and said so, is a part carrying
   // `unavailable` with its sentence and no text. A least-privilege principal meets this on
   // every source: DescribeConfigs is a right of its own, apart from Describe (spec KM4, M-I).
   const TOPIC_REFUSAL = "The broker denied access to this topic";

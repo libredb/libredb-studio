@@ -283,8 +283,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its declaration's
  * `connection.readsTrustMaterial` to true only when its TLS library is not Node's, such as a native addon with a TLS
  * stack of its own, and then hands `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its
- * TLS wherever a connection verifies against the system trust store (docs/ADDING_A_PROVIDER.md, "Step 3: Register in
- * the Factory").
+ * TLS wherever a connection verifies against the system trust store.
  *
  * Each row is the engine's `connection.readsTrustMaterial`, authored in its declaration and projected into
  * `./engine-catalog/connection-flags.generated.ts` (docs/providers/CONTRACT.md, clause M-71): an exhaustive frozen
