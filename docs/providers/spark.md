@@ -749,14 +749,15 @@ The render-only `bun tests/live/spark-evidence.ts --surfaces` contacts no server
 
 ## Migration DDL
 
-[`SPARK_MIGRATION_DDL`](../../src/lib/db/providers/sql/spark/migration-ddl.ts) is what the schema-diff migration generator writes for `spark`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/spark.json`](../../src/lib/db/engine-declarations/spark.json) declares what the schema-diff migration generator writes for `spark`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/spark/migration-ddl.ts`](../../src/lib/db/providers/sql/spark/migration-ddl.ts), `SPARK_ADD_FOREIGN_KEY`, `SPARK_CREATE_INDEX`, `SPARK_CREATE_TABLE_FOREIGN_KEY`, `SPARK_CREATE_TABLE_PRIMARY_KEY`, `SPARK_DROP_FOREIGN_KEY`, `SPARK_DROP_INDEX` and `SPARK_MODIFY_COLUMN`.
 No transaction spans two Spark SQL statements (the provider declares `supportsTransactions: false`), so `transactionWrapper` is `null` (#284).
 A modified column is a comment: on Spark 4.1.3 and 4.2.0 a session-catalog parquet column's type change fails with NOT_SUPPORTED_CHANGE_COLUMN (0A000) while a comment change succeeds, and on 4.2.0 the same table refuses `SET` and `DROP NOT NULL` with UNSUPPORTED_FEATURE.TABLE_OPERATION (0A000) and takes `SET` and `DROP DEFAULT`.
 A DSv2 catalog decides for itself, so the answer is the catalog's and the table format's.
 Spark 4.1 and later parse `FOREIGN KEY ... REFERENCES` (SPARK-51207) as an informational `NOT ENFORCED` constraint, kept only by a DSv2 catalog that implements constraints.
 A session-catalog table refuses every constraint operation (SPARK-54761): on 4.2.0 a parquet table refuses `ADD CONSTRAINT ... FOREIGN KEY`, with or without `NOT ENFORCED`, `DROP CONSTRAINT` and a `CREATE TABLE` that declares one, each with UNSUPPORTED_FEATURE.TABLE_OPERATION (0A000).
 So keys, foreign keys and index changes are comments.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
 
 Every refusal reason it can print, verbatim:
 

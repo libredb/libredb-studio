@@ -816,12 +816,13 @@ The 2026-10-04 runs on 1.0.25 made that user in the container with `useradd` and
 
 ## Migration DDL
 
-[`DB2_MIGRATION_DDL`](../../src/lib/db/providers/sql/db2/migration-ddl.ts) is what the schema-diff migration generator writes for `db2`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/db2.json`](../../src/lib/db/engine-declarations/db2.json) declares what the schema-diff migration generator writes for `db2`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/db2/migration-ddl.ts`](../../src/lib/db/providers/sql/db2/migration-ddl.ts), `DB2_DROP_FOREIGN_KEY`, `DB2_DROP_INDEX` and `DB2_MODIFY_COLUMN`.
 Db2 (#786) has no standalone `BEGIN;`, and `BEGIN` opens a compound SQL block, so `transactionWrapper` is `null`.
 A dropped foreign key or index is written without `IF EXISTS`, measured on Db2 LUW 12.1.0.0: `ALTER TABLE "C" DROP CONSTRAINT IF EXISTS "fk_c"` and `DROP INDEX IF EXISTS "ix_c"` are both SQL0104N at `EXISTS`, while the bare statements run.
 `DROP TABLE` keeps `IF EXISTS`, and `ADD COLUMN` and `DROP COLUMN` take the standard spelling, both measured on 12.1.0.0.
 A modified column is a comment: Db2 retypes a column with `ALTER COLUMN ... SET DATA TYPE`, and several such changes leave the table REORG-pending until a REORG runs, which a flat migration file cannot schedule.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
 
 The refusal reason it prints, verbatim:
 

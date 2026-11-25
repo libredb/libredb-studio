@@ -1,17 +1,11 @@
 /**
- * Databend has `BEGIN`, `COMMIT` and `ROLLBACK`, but a DDL statement commits the open transaction, so a `BEGIN;`
- * around a migration made of DDL brackets nothing it could roll back, and the migration has no wrapper (the Oracle
- * reason). Its constraints are CHECK only, so it declares no foreign key.
+ * Databend's own migration DDL functions, each bound by Studio's migration DDL function table
+ * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives. Its constraints are
+ * CHECK only, so it declares no foreign key, its CREATE TABLE declines the primary key in a comment after the
+ * statement, and its index and column changes are declined in words.
  */
-import {
-  commentName,
-  NO_FOREIGN_KEY_CONSTRAINT,
-  standardAddColumn,
-  standardColumnDef,
-  standardDropColumn,
-  standardDropTable,
-} from "@/lib/db/migration-ddl/shared";
-import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
+import { commentName, NO_FOREIGN_KEY_CONSTRAINT } from "@/lib/db/migration-ddl/shared";
+import type { TableDdlWritten, WrittenCreateTable } from "@/lib/db/migration-ddl/types";
 
 /**
  * Why a Databend migration names a modified column in a comment rather than altering it (probe L8). Databend HAS
@@ -34,29 +28,24 @@ const DATABEND_PRIMARY_KEY_REASON = "Databend's CREATE TABLE has no primary-key 
 const DATABEND_INDEX_REFUSAL =
   "Databend: Cannot generate index DDL. Its indexes are inverted, ngram, vector and spatial search indexes, which the diff does not record; write the index change by hand.";
 
-export const DATABEND_MIGRATION_DDL: MigrationDdlSpec = {
-  tableDdl: "written",
-  transactionWrapper: null,
-  createTable: {
-    kind: "written",
-    primaryKey: () => ({ after: `-- Databend: Cannot declare a primary key. ${DATABEND_PRIMARY_KEY_REASON}` }),
-    foreignKey: () => ({ after: `-- Databend: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}` }),
-  },
-  columnDef: standardColumnDef,
-  createIndex: () => `-- ${DATABEND_INDEX_REFUSAL}`,
-  dropIndex: () => `-- ${DATABEND_INDEX_REFUSAL}`,
-  addForeignKey: () => `-- Databend: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  dropForeignKey: () => `-- Databend: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
-  addColumn: standardAddColumn,
-  dropColumn: standardDropColumn,
-  modifyColumn: (col) => [
-    `-- Databend: Cannot alter column "${commentName(col.columnName)}". ${DATABEND_COLUMN_MODIFICATION_REASON}`,
-  ],
-  dropTable: standardDropTable,
-  reasons: [
-    DATABEND_COLUMN_MODIFICATION_REASON,
-    DATABEND_INDEX_REFUSAL,
-    NO_FOREIGN_KEY_CONSTRAINT,
-    DATABEND_PRIMARY_KEY_REASON,
-  ],
-};
+export const DATABEND_CREATE_TABLE_PRIMARY_KEY: WrittenCreateTable["primaryKey"] = () => ({
+  after: `-- Databend: Cannot declare a primary key. ${DATABEND_PRIMARY_KEY_REASON}`,
+});
+
+export const DATABEND_CREATE_TABLE_FOREIGN_KEY: WrittenCreateTable["foreignKey"] = () => ({
+  after: `-- Databend: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`,
+});
+
+export const DATABEND_CREATE_INDEX: TableDdlWritten["createIndex"] = () => `-- ${DATABEND_INDEX_REFUSAL}`;
+
+export const DATABEND_DROP_INDEX: TableDdlWritten["dropIndex"] = () => `-- ${DATABEND_INDEX_REFUSAL}`;
+
+export const DATABEND_ADD_FOREIGN_KEY: TableDdlWritten["addForeignKey"] = () =>
+  `-- Databend: Cannot add a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const DATABEND_DROP_FOREIGN_KEY: TableDdlWritten["dropForeignKey"] = () =>
+  `-- Databend: Cannot drop a foreign key. ${NO_FOREIGN_KEY_CONSTRAINT}`;
+
+export const DATABEND_MODIFY_COLUMN: TableDdlWritten["modifyColumn"] = (col) => [
+  `-- Databend: Cannot alter column "${commentName(col.columnName)}". ${DATABEND_COLUMN_MODIFICATION_REASON}`,
+];

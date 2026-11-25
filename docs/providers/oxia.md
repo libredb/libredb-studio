@@ -81,7 +81,6 @@ The command language's modules (its numbers, the lexer, the command table, the g
 | `values.ts` | A value's encoding, the hex forms, shown keys and timestamps | server |
 | `results.ts` | The result grid's columns, cells and notices | server |
 | `execute.ts` | One command's run over the walks | server |
-| `migration-ddl.ts` | `OXIA_MIGRATION_DDL`, the schema-diff migration's one refusal line | browser |
 | `objects.ts` | The object surface: the `shard` and `key` kinds and their Source tabs | server |
 | `key-scan.ts` | The Keys panel's pages | server |
 | `monitoring-reads.ts` | Health and the overview | server |
@@ -850,7 +849,7 @@ For TLS, start each data server with `--tls-cert-file` and `--tls-key-file`; for
 
 ## Migration DDL
 
-[`OXIA_MIGRATION_DDL`](../../src/lib/db/providers/keyvalue/oxia/migration-ddl.ts) is what the schema-diff migration generator writes for `oxia`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/oxia.json`](../../src/lib/db/engine-declarations/oxia.json) declares what the schema-diff migration generator writes for `oxia`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `oxia` text is one `oxia client` read command, not SQL, so there is no table DDL to wrap (#284).
 

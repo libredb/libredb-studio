@@ -1058,13 +1058,14 @@ A seed takes the same fields, as [SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md) s
 
 ## Migration DDL
 
-[`DATABEND_MIGRATION_DDL`](../../src/lib/db/providers/sql/databend/migration-ddl.ts) is what the schema-diff migration generator writes for `databend`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/databend.json`](../../src/lib/db/engine-declarations/databend.json) declares what the schema-diff migration generator writes for `databend`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/databend/migration-ddl.ts`](../../src/lib/db/providers/sql/databend/migration-ddl.ts), `DATABEND_ADD_FOREIGN_KEY`, `DATABEND_CREATE_INDEX`, `DATABEND_CREATE_TABLE_FOREIGN_KEY`, `DATABEND_CREATE_TABLE_PRIMARY_KEY`, `DATABEND_DROP_FOREIGN_KEY`, `DATABEND_DROP_INDEX` and `DATABEND_MODIFY_COLUMN`.
 Databend has `BEGIN`, `COMMIT` and `ROLLBACK`, but a DDL statement commits the open transaction, so `transactionWrapper` is `null`.
 Its constraints are `CHECK` only, so a foreign key is a comment.
 An added table declines its primary key in a comment after the statement: probe L11 found every `PRIMARY KEY` form refused with 1005.
 A modified column is a comment (probe L8): Databend has `ALTER TABLE ... MODIFY COLUMN`, measured changing type, nullability and comment with the data kept, but the MySQL spelling's `NOT NULL` form is refused on an empty table (1058, "Cannot find statistics for column"), a change that does not restate the default drops it, and the PostgreSQL `ALTER COLUMN` is a parse error (1005).
 Its `CREATE INDEX` always names an inverted, ngram, vector or spatial kind, with no plain or `UNIQUE` index to carry the diff's columns, so index changes are a comment.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
 
 Every refusal reason it can print, verbatim:
 

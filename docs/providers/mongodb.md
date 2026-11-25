@@ -1696,7 +1696,7 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
 
 ## Migration DDL
 
-[`MONGODB_MIGRATION_DDL`](../../src/lib/db/providers/document/mongodb/migration-ddl.ts) is what the schema-diff migration generator writes for `mongodb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mongodb.json`](../../src/lib/db/engine-declarations/mongodb.json) declares what the schema-diff migration generator writes for `mongodb`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `mongodb` writes no SQL text at all (`readsSqlText: false`), so there is no table DDL to wrap, whatever the driver's own transaction API offers (#284).
 

@@ -792,11 +792,12 @@ What the capture could not ask, such as a 403 from an address a network policy r
 
 ## Migration DDL
 
-[`SNOWFLAKE_MIGRATION_DDL`](../../src/lib/db/providers/sql/snowflake/migration-ddl.ts) is what the schema-diff migration generator writes for `snowflake`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/snowflake.json`](../../src/lib/db/engine-declarations/snowflake.json) declares what the schema-diff migration generator writes for `snowflake`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/snowflake/migration-ddl.ts`](../../src/lib/db/providers/sql/snowflake/migration-ddl.ts), `SNOWFLAKE_CREATE_INDEX`, `SNOWFLAKE_DROP_INDEX` and `SNOWFLAKE_MODIFY_COLUMN`.
 A Snowflake DDL statement commits the open transaction, and each SQL API statement runs in its own session, so `transactionWrapper` is `null` (#284).
 A type change is spelled `SET DATA TYPE`, and `ALTER COLUMN` sets a default only to a sequence's `NEXTVAL`, so any other default change is a comment while dropping one is plain.
 Index changes are a comment, because Snowflake has indexes only on hybrid tables.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
 
 Every refusal reason it can print, verbatim:
 

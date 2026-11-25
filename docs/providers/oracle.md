@@ -567,7 +567,7 @@ It has no `readTls`, so a pasted `oracle://` URL carries no SSL mode into the fo
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `oracle` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`oracle.json`](../../src/lib/db/engine-declarations/oracle.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `oracle`, and its declaration's `editor.fenceAliases`, `plsql`.
-What a tree click and Generate Query write is `ORACLE_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`oracle-generators.ts`](../../src/lib/db/providers/sql/oracle-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id, which Studio composes from the `sqlGenerators` segment of [`engine-declarations/oracle.json`](../../src/lib/db/engine-declarations/oracle.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`oracle-generators.ts`](../../src/lib/db/providers/sql/oracle-generators.ts), `ORACLE_GENERATOR_QUOTE` and `ORACLE_GENERATOR_SELECT_LIST`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its Thin-mode refusals, its statement and access-refusal error numbers and its ORA- connection and missing-table words, is the `oracledb` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`oracle-driver-errors.ts`](../../src/lib/db/providers/sql/oracle-driver-errors.ts).
 
 ---
@@ -3011,13 +3011,14 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## Migration DDL
 
-[`ORACLE_MIGRATION_DDL`](../../src/lib/db/providers/sql/oracle-migration-ddl.ts) is what the schema-diff migration generator writes for `oracle`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/oracle.json`](../../src/lib/db/engine-declarations/oracle.json) declares what the schema-diff migration generator writes for `oracle`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/oracle-migration-ddl.ts`](../../src/lib/db/providers/sql/oracle-migration-ddl.ts), `ORACLE_ADD_COLUMN`, `ORACLE_COLUMN_DEF`, `ORACLE_DROP_FOREIGN_KEY`, `ORACLE_DROP_INDEX`, `ORACLE_DROP_TABLE` and `ORACLE_MODIFY_COLUMN`.
 Oracle DDL commits implicitly and `BEGIN` opens a PL/SQL block, not a transaction, so `transactionWrapper` is `null`.
 Oracle has no `IF EXISTS` on `DROP CONSTRAINT` or `DROP INDEX`, so a dropped foreign key, index or table is written bare.
 A column definition puts `DEFAULT` before `NOT NULL`, falls back to `VARCHAR2(255)`, and is added with `ADD (...)`.
 A modified column writes its nullability only when it changes, because restating ` NULL` on a nullable column is ORA-01451 and the column keeps its old type (#1240).
 The live regression probe is `tests/live/schema-diff-dialects.ts`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

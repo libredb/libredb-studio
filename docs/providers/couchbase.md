@@ -280,7 +280,7 @@ skipping that check reports a failed statement as "0 rows".
 
 `SELECT * FROM hotel` yields `[{ "hotel": { ... } }]` — the document is nested under the keyspace
 name, and the key is not part of the result at all.
-Generated queries therefore alias the keyspace and project the key ([`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), its row of `SQL_ENGINE_GENERATORS`):
+Generated queries therefore alias the keyspace and project the key ([`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), `COUCHBASE_GENERATOR_TABLE` and `COUCHBASE_GENERATOR_SELECT`, bound into its row of `SQL_ENGINE_GENERATORS`):
 
 ```sql
 SELECT META(d).id AS __id, d.* FROM `travel`.`inventory`.`hotel` AS d;
@@ -582,7 +582,7 @@ It runs no seed load check.
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `couchbase` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `couchbase`, and its declaration's `editor.fenceAliases`, `n1ql`.
-What a tree click and Generate Query write is `COUCHBASE_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id, which Studio composes from the `sqlGenerators` segment of [`engine-declarations/couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`generators.ts`](../../src/lib/db/providers/document/couchbase/generators.ts), `COUCHBASE_GENERATOR_QUOTE`, `COUCHBASE_GENERATOR_TABLE` and `COUCHBASE_GENERATOR_SELECT`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 
 ---
 
@@ -1617,7 +1617,7 @@ Everything else:
 
 ## Migration DDL
 
-[`COUCHBASE_MIGRATION_DDL`](../../src/lib/db/providers/document/couchbase/migration-ddl.ts) is what the schema-diff migration generator writes for `couchbase`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/couchbase.json`](../../src/lib/db/engine-declarations/couchbase.json) declares what the schema-diff migration generator writes for `couchbase`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 Couchbase has index and collection DDL, but no `CREATE` or `ALTER TABLE` column grammar.
 Couchbase does have distributed ACID transactions, but spells one `BEGIN TRANSACTION` and answers with a `txid` every following statement has to carry as a request parameter, a shape a flat migration file cannot express (#284).

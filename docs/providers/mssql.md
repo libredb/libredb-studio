@@ -372,7 +372,8 @@ It runs no seed load check.
 The rolled-back notice names `COMMIT` as the keyword that keeps an open transaction, and `mssql` has no consent deadline, so the agent's consent card shows no deadline chip or sentence for it.
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mssql.json`](../../src/lib/db/engine-declarations/mssql.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mssql`, and its declaration's `editor.fenceAliases`, `tsql` and `sqlserver`.
-What a tree click and Generate Query write is `MSSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id, declared in [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id, which Studio composes from the `sqlGenerators` segment of [`engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`mssql-generators.ts`](../../src/lib/db/providers/sql/mssql-generators.ts), `MSSQL_GENERATOR_QUOTE` and `MSSQL_GENERATOR_SELECT_LIST`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+Its declared count expression is `COUNT_BIG(*)`, so Generate Count Query counts with `COUNT_BIG`: `COUNT` returns an int, and `COUNT_BIG` preserves billion-row counts.
 How `mapDatabaseError` classifies its driver's errors, its statement and access-refusal error numbers, its cannot-open-database words and its `ECANCEL` cancel code, is the `mssql` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts).
 
 ---
@@ -2086,10 +2087,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## Migration DDL
 
-[`MSSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts) is what the schema-diff migration generator writes for `mssql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mssql.json`](../../src/lib/db/engine-declarations/mssql.json) declares what the schema-diff migration generator writes for `mssql`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/mssql-migration-ddl.ts`](../../src/lib/db/providers/sql/mssql-migration-ddl.ts), `MSSQL_ADD_COLUMN`, `MSSQL_DROP_INDEX` and `MSSQL_MODIFY_COLUMN`.
 SQL Server wraps the migration in `BEGIN TRANSACTION;` and `COMMIT;`, adds a column with a bare `ADD`, and drops an index with `ON <table>`.
 A modified column restates its type and nullability in one `ALTER COLUMN`, falling back to `NVARCHAR(MAX)`, and a changed default is a separate `ADD DEFAULT ... FOR <column>`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropForeignKey`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

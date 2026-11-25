@@ -1,23 +1,29 @@
 /**
  * The query generators name no engine. `src/lib/query-generators.ts` is the engine-agnostic dispatcher: every text one
- * engine writes is a row declared beside its provider and collected by the registry in
- * `src/lib/db/query-generators/index.ts`, keyed by what the declaration says, its query dialect or its query language,
- * or by the connection's type id for an SQL engine's own forms. The dispatcher imports no provider module, no string
- * or identifier in it names an engine, a dialect or a language other than SQL, and it reads no declaration's port.
- * MongoDB's JSON documents are the `json` language's row.
+ * engine writes reaches it through the registry in `src/lib/db/query-generators/index.ts`, a dialect's or a language's
+ * row declared beside its provider and keyed by what the declaration says, its query dialect or its query language, or
+ * an SQL engine's own forms keyed by the connection's type id, composed from the engine's declaration with Studio's SQL
+ * generator function table (docs/providers/CONTRACT.md, clause M-81). The dispatcher imports no provider module, no
+ * string or identifier in it names an engine, a dialect or a language other than SQL, and it reads no declaration's
+ * port. MongoDB's JSON documents are the `json` language's row.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { BUNDLED_SQL_GENERATORS } from "@/lib/db/engine-catalog/sql-generators.generated";
 import { DIALECT_GENERATORS, LANGUAGE_GENERATORS, SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
 import { QUERY_DIALECTS } from "@/lib/db/query-dialects";
-import { COUCHBASE_SQL_GENERATORS } from "@/lib/db/providers/document/couchbase/generators";
-import { DRUID_SQL_GENERATORS } from "@/lib/db/providers/sql/druid/generators";
-import { MSSQL_SQL_GENERATORS } from "@/lib/db/providers/sql/mssql-generators";
-import { MYSQL_SQL_GENERATORS } from "@/lib/db/providers/sql/mysql-generators";
-import { ORACLE_SQL_GENERATORS } from "@/lib/db/providers/sql/oracle-generators";
+import {
+  COUCHBASE_GENERATOR_QUOTE,
+  COUCHBASE_GENERATOR_SELECT,
+  COUCHBASE_GENERATOR_TABLE,
+} from "@/lib/db/providers/document/couchbase/generators";
+import { DRUID_GENERATOR_QUOTE } from "@/lib/db/providers/sql/druid/generators";
+import { MSSQL_GENERATOR_QUOTE, MSSQL_GENERATOR_SELECT_LIST } from "@/lib/db/providers/sql/mssql-generators";
+import { MYSQL_GENERATOR_QUOTE } from "@/lib/db/providers/sql/mysql-generators";
+import { ORACLE_GENERATOR_QUOTE, ORACLE_GENERATOR_SELECT_LIST } from "@/lib/db/providers/sql/oracle-generators";
 
 const ROOT = join(import.meta.dir, "..", "..", "..");
 const DISPATCHER = "src/lib/query-generators.ts";
@@ -108,10 +114,13 @@ describe("the generator registry", () => {
   test("holds one dialect row per member of the dialect registry, each declared beside its provider", () => {
     expect(Object.keys(DIALECT_GENERATORS).sort()).toEqual(Object.keys(QUERY_DIALECTS).sort());
     expect(Object.isFrozen(DIALECT_GENERATORS)).toBe(true);
-    // The one value import that is not a row: the type-id reader the SQL engine rows are looked up through.
+    // The value imports that are not a row: the generated SQL generator forms, the function table helpers the SQL
+    // engine rows are composed through, and the type-id reader they are looked up through.
     const imports = importsOf(REGISTRY, { valuesOnly: true });
-    expect(imports.filter((specifier) => specifier === "@/lib/db/type-id")).toEqual(["@/lib/db/type-id"]);
-    const rows = imports.filter((specifier) => specifier !== "@/lib/db/type-id");
+    const core = ["@/lib/db/engine-catalog/sql-generators.generated", "@/lib/db/function-table", "@/lib/db/type-id"];
+    expect(imports.filter((specifier) => core.includes(specifier)).sort()).toEqual(core);
+    const rows = imports.filter((specifier) => !core.includes(specifier));
+    // One module per dialect and language row, and the five SQL engines' generator function modules.
     expect(rows.length).toBe(Object.keys(DIALECT_GENERATORS).length + Object.keys(LANGUAGE_GENERATORS).length + 5);
     expect(rows.filter((specifier) => !/^@\/lib\/db\/(providers|graph)\//.test(specifier))).toEqual([]);
   });
@@ -122,13 +131,30 @@ describe("the generator registry", () => {
   });
 
   test("holds a row for each SQL engine that writes forms of its own, keyed by its type id", () => {
+    const count = (id: string) => BUNDLED_SQL_GENERATORS[id as keyof typeof BUNDLED_SQL_GENERATORS]?.countExpression;
     expect(SQL_ENGINE_GENERATORS).toEqual({
-      couchbase: COUCHBASE_SQL_GENERATORS,
-      druid: DRUID_SQL_GENERATORS,
-      mssql: MSSQL_SQL_GENERATORS,
-      mysql: MYSQL_SQL_GENERATORS,
-      oracle: ORACLE_SQL_GENERATORS,
+      couchbase: {
+        quote: COUCHBASE_GENERATOR_QUOTE,
+        table: COUCHBASE_GENERATOR_TABLE,
+        select: COUCHBASE_GENERATOR_SELECT,
+        countExpression: count("couchbase"),
+      },
+      druid: { quote: DRUID_GENERATOR_QUOTE, countExpression: count("druid") },
+      mssql: {
+        quote: MSSQL_GENERATOR_QUOTE,
+        selectList: MSSQL_GENERATOR_SELECT_LIST,
+        countExpression: count("mssql"),
+      },
+      mysql: { quote: MYSQL_GENERATOR_QUOTE, countExpression: count("mysql") },
+      oracle: {
+        quote: ORACLE_GENERATOR_QUOTE,
+        selectList: ORACLE_GENERATOR_SELECT_LIST,
+        countExpression: count("oracle"),
+      },
     });
+    // Each function by identity, as toEqual compares functions by reference.
+    expect(SQL_ENGINE_GENERATORS.mssql?.selectList).toBe(MSSQL_GENERATOR_SELECT_LIST);
+    expect(SQL_ENGINE_GENERATORS.mssql?.countExpression).toBe("COUNT_BIG(*)");
     expect(Object.isFrozen(SQL_ENGINE_GENERATORS)).toBe(true);
     // No row carries the port it was once keyed by.
     for (const row of Object.values(SQL_ENGINE_GENERATORS)) expect(Object.hasOwn(row, "port")).toBe(false);

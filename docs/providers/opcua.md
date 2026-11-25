@@ -1290,7 +1290,7 @@ and the ones that disagreed with it were replaced ([3.3](#33-more-rows-than-node
 
 ## Migration DDL
 
-[`OPCUA_MIGRATION_DDL`](../../src/lib/db/providers/industrial/opcua/migration-ddl.ts) is what the schema-diff migration generator writes for `opcua`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/opcua.json`](../../src/lib/db/engine-declarations/opcua.json) declares what the schema-diff migration generator writes for `opcua`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 A node's attributes are defined by its type in the server's own model, and this provider has no code that writes to a server (#1677).
 

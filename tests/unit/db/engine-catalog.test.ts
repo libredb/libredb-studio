@@ -1,19 +1,20 @@
 /**
  * Studio's engine catalog, which engines it ships, where each lives and how long its open may take, its data-only
  * connection tables, its connection forms, its connection strings, each engine's execution UI and fence aliases, its
- * query dialects, tab type editors and editor languages, and each engine's SQL text and SQL writing, projected from the
- * engine declarations the catalog generator admits (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74, M-75,
- * M-77, M-78 and M-79).
+ * query dialects, tab type editors and editor languages, and each engine's SQL text, SQL writing, migration DDL and SQL
+ * generator forms, projected from the engine declarations the catalog generator admits (docs/providers/CONTRACT.md,
+ * clauses M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80 and M-81).
  *
  * `scripts/generate-engine-catalog.ts` projects the committed declarations' authored members with `projectCatalog`,
  * `projectConnectionTables`, `projectConnectionForms`, `projectConnectionStrings`, `projectEditorFacts`,
- * `projectQueryEditorFacts`, `projectSqlText` and `projectSqlWriting`, renders the projections into
- * `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`, `connection-flags.generated.ts`,
- * `connection-form.generated.ts`, `connection-string.generated.ts`, `editor.generated.ts`, `query-editor.generated.ts`,
- * `sql-text.generated.ts` and `sql-writing.generated.ts`, the modules Studio's readers read, and holds each to the set
- * it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the generated
- * modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch copy of the
- * sources it reads.
+ * `projectQueryEditorFacts`, `projectSqlText`, `projectSqlWriting`, `projectMigrationDdl` and `projectSqlGenerators`,
+ * renders the projections into `src/lib/db/engine-catalog/catalog.generated.ts`, `connection.generated.ts`,
+ * `connection-flags.generated.ts`, `connection-form.generated.ts`, `connection-string.generated.ts`,
+ * `editor.generated.ts`, `query-editor.generated.ts`, `sql-text.generated.ts`, `sql-writing.generated.ts`,
+ * `migration-ddl.generated.ts` and `sql-generators.generated.ts`, the modules Studio's readers read, and holds each to
+ * the set it admits through the SDK's digest-checked validator. This file holds the projections, the admission, the
+ * generated modules' bytes, the readers that answer from them, and `bun run engines:generate` end to end on a scratch
+ * copy of the sources it reads.
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -39,7 +40,9 @@ import {
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_DECLARATIONS_DIRECTORY,
   ENGINE_EDITOR_MODULE,
+  ENGINE_MIGRATION_DDL_MODULE,
   ENGINE_QUERY_EDITOR_MODULE,
+  ENGINE_SQL_GENERATORS_MODULE,
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
   renderCatalog,
@@ -48,7 +51,9 @@ import {
   renderConnectionStrings,
   renderConnectionTables,
   renderEditorFacts,
+  renderMigrationDdl,
   renderQueryEditorFacts,
+  renderSqlGenerators,
   renderSqlText,
   renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
@@ -68,11 +73,13 @@ import {
 import { BUNDLED_CONNECTION_FORMS } from "@/lib/db/engine-catalog/connection-form.generated";
 import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
 import { BUNDLED_EXECUTION_UI, BUNDLED_FENCE_ALIASES } from "@/lib/db/engine-catalog/editor.generated";
+import { BUNDLED_MIGRATION_DDL } from "@/lib/db/engine-catalog/migration-ddl.generated";
 import {
   BUNDLED_DIALECT_EDITORS,
   BUNDLED_EDITOR_LANGUAGES,
   BUNDLED_QUERY_DIALECTS,
 } from "@/lib/db/engine-catalog/query-editor.generated";
+import { BUNDLED_SQL_GENERATORS } from "@/lib/db/engine-catalog/sql-generators.generated";
 import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
 import { BUNDLED_SQL_WRITING } from "@/lib/db/engine-catalog/sql-writing.generated";
 import {
@@ -85,7 +92,9 @@ import {
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
+  projectMigrationDdl,
   projectQueryEditorFacts,
+  projectSqlGenerators,
   projectSqlText,
   projectSqlWriting,
 } from "@/lib/db/engine-catalog/projection";
@@ -198,6 +207,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(() => projectQueryEditorFacts(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectSqlText(twice)).toThrow('The engine id "postgres" is declared twice.');
     expect(() => projectSqlWriting(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectMigrationDdl(twice)).toThrow('The engine id "postgres" is declared twice.');
+    expect(() => projectSqlGenerators(twice)).toThrow('The engine id "postgres" is declared twice.');
   });
 
   test("the catalog reads only the members a declaration authors", () => {
@@ -851,6 +862,109 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.policy)).toBeGreaterThan(0);
   });
 
+  test("projectMigrationDdl answers each declaration's migration DDL, frozen, in ascending id order", () => {
+    const set = ["postgres", "kafka", "mssql", "cassandra"].map(admitted);
+    const ddls = projectMigrationDdl(set);
+
+    expect(Object.keys(ddls)).toEqual(["cassandra", "kafka", "mssql", "postgres"]);
+    for (const declaration of set) {
+      expect(ddls[declaration.id]).toEqual(declaration.migrationDdl);
+      // Each member in the declaration's order, at every level.
+      expect(JSON.stringify(ddls[declaration.id])).toBe(JSON.stringify(declaration.migrationDdl));
+    }
+    // A refused form as its line and reasons, a written one with its wrapper and each function as its name.
+    expect(ddls.kafka?.tableDdl).toBe("refused");
+    expect(ddls.mssql?.tableDdl === "written" && ddls.mssql.transactionWrapper).toEqual({
+      begin: "BEGIN TRANSACTION;",
+      commit: "COMMIT;",
+    });
+    expect(ddls.postgres?.tableDdl === "written" && ddls.postgres.dropIndex).toBe("dropIndex");
+    expect(ddls.cassandra?.tableDdl === "written" && ddls.cassandra.createTable).toEqual({
+      kind: "refused",
+      createTableRefusal: "createTableRefusal",
+    });
+    // The same answer for the set reversed, and for every committed declaration in any order.
+    expect(JSON.stringify(projectMigrationDdl([...set].reverse()))).toBe(JSON.stringify(ddls));
+    expect(JSON.stringify(projectMigrationDdl([...ADMITTED].reverse()))).toBe(
+      JSON.stringify(projectMigrationDdl(ADMITTED)),
+    );
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(ddls)).toBe(true);
+    const cassandra = structuredClone(admitted("cassandra"));
+    const copied = projectMigrationDdl([cassandra]);
+    (cassandra.migrationDdl.reasons as string[]).push("A planted reason.");
+    expect(copied.cassandra?.reasons).not.toContain("A planted reason.");
+  });
+
+  test("the migration DDL reads only the members a declaration authors", () => {
+    // Every member but the authored migration DDL replaced with postgres's: the migration DDL the generator writes
+    // first, before the declaration generator rewrites those members, is therefore already the final one.
+    const postgres = admitted("postgres");
+    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...postgres, id: d.id, migrationDdl: d.migrationDdl }));
+
+    expect(projectMigrationDdl(replaced)).toEqual(projectMigrationDdl(ADMITTED));
+    // Vacuity: the replacement changed members the migration DDL would read if it read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
+    expect(differs((d) => d.sqlGenerators)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor)).toBeGreaterThan(0);
+    expect(differs((d) => d.policy)).toBeGreaterThan(0);
+  });
+
+  test("projectSqlGenerators answers each declaration's SQL generator forms, null where it states none, frozen, in ascending id order", () => {
+    const set = ["postgres", "mssql", "couchbase", "mysql"].map(admitted);
+    const forms = projectSqlGenerators(set);
+
+    expect(Object.keys(forms)).toEqual(["couchbase", "mssql", "mysql", "postgres"]);
+    for (const declaration of set) {
+      expect(forms[declaration.id]).toEqual(declaration.sqlGenerators);
+      // Each member in the declaration's order.
+      expect(JSON.stringify(forms[declaration.id])).toBe(JSON.stringify(declaration.sqlGenerators));
+    }
+    // null kept as the entry of an engine that writes the shared forms, and each form as its name or null.
+    expect(Object.hasOwn(forms, "postgres")).toBe(true);
+    expect(forms.postgres).toBeNull();
+    expect(forms.mssql).toEqual({
+      quote: "generatorQuote",
+      table: null,
+      select: null,
+      selectList: "generatorSelectList",
+      countExpression: "COUNT_BIG(*)",
+    });
+    // The same answer for the set reversed, and for every committed declaration in any order.
+    expect(JSON.stringify(projectSqlGenerators([...set].reverse()))).toBe(JSON.stringify(forms));
+    expect(JSON.stringify(projectSqlGenerators([...ADMITTED].reverse()))).toBe(
+      JSON.stringify(projectSqlGenerators(ADMITTED)),
+    );
+    // Frozen at every level, and a copy: mutating the input after the call changes nothing.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(forms)).toBe(true);
+    const mssql = structuredClone(admitted("mssql"));
+    const copied = projectSqlGenerators([mssql]);
+    (mssql.sqlGenerators as { countExpression: string }).countExpression = "COUNT(*)";
+    expect(copied.mssql?.countExpression).toBe("COUNT_BIG(*)");
+  });
+
+  test("the SQL generator forms read only the members a declaration authors", () => {
+    // Every member but the authored SQL generator forms replaced with mssql's: the forms the generator writes first,
+    // before the declaration generator rewrites those members, are therefore already the final ones.
+    const mssql = admitted("mssql");
+    const replaced = ADMITTED.map((d): EngineDeclaration => ({ ...mssql, id: d.id, sqlGenerators: d.sqlGenerators }));
+
+    expect(projectSqlGenerators(replaced)).toEqual(projectSqlGenerators(ADMITTED));
+    // Vacuity: the replacement changed members the SQL generator forms would read if they read them.
+    const differs = (read: (d: EngineDeclaration) => unknown) =>
+      replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
+    expect(differs((d) => d.sqlWriting)).toBeGreaterThan(0);
+    expect(differs((d) => d.migrationDdl)).toBeGreaterThan(0);
+    expect(differs((d) => d.editor)).toBeGreaterThan(0);
+    expect(differs((d) => d.policy)).toBeGreaterThan(0);
+  });
+
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
     expect(ADMITTED.map((d) => d.id)).toEqual([...SHIPPED_DATABASE_TYPES]);
     expect(ADMITTED.length).toBe(SHIPPED_DATABASE_TYPES.length);
@@ -1118,6 +1232,58 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_SQL_WRITING)).toBe(true);
   });
 
+  test("the committed migration DDL module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_MIGRATION_DDL_MODULE), "utf8");
+    const ddls = projectMigrationDdl(ADMITTED);
+
+    expect(committed).toBe(renderMigrationDdl(ddls));
+    expect<unknown>(BUNDLED_MIGRATION_DDL).toEqual(ddls);
+    expect(Object.keys(BUNDLED_MIGRATION_DDL)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_MIGRATION_DDL",
+    ]);
+    // A wrapper as its two statements, a refusal line as its text, and each function as its name.
+    expect(committed).toContain(
+      'transactionWrapper: Object.freeze({ begin: "BEGIN TRANSACTION;", commit: "COMMIT;" }),',
+    );
+    expect(committed).toContain('"-- Apache Kafka: Cannot generate table DDL. ');
+    expect(committed).toContain('createTableRefusal: "createTableRefusal"');
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_MIGRATION_DDL)).toBe(true);
+  });
+
+  test("the committed SQL generator module is what the generator renders from the admitted declarations", () => {
+    const committed = readFileSync(path.join(ROOT, ENGINE_SQL_GENERATORS_MODULE), "utf8");
+    const forms = projectSqlGenerators(ADMITTED);
+
+    expect(committed).toBe(renderSqlGenerators(forms));
+    expect<unknown>(BUNDLED_SQL_GENERATORS).toEqual(forms);
+    expect(Object.keys(BUNDLED_SQL_GENERATORS)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(committed).toContain("bun run engines:generate");
+    expect([...committed.matchAll(/^export const (\w+)/gm)].map((match) => match[1])).toEqual([
+      "BUNDLED_SQL_GENERATORS",
+    ]);
+    // An engine that writes the shared forms as null, and each form as its name.
+    expect(committed).toContain("  postgres: null,");
+    expect(committed).toContain('countExpression: "COUNT_BIG(*)"');
+    expect(committed).toContain('quote: "generatorQuote"');
+    // Type imports only, so a reader of the module loads no other module through it.
+    const imports = [...committed.matchAll(/^import .*$/gm)].map((match) => match[0]);
+    expect(imports.length).toBeGreaterThan(0);
+    expect(imports.every((line) => line.startsWith("import type "))).toBe(true);
+    // Frozen at every level, as the projection answers it.
+    const frozen = (value: unknown): boolean =>
+      typeof value !== "object" || value === null || (Object.isFrozen(value) && Object.values(value).every(frozen));
+    expect(frozen(BUNDLED_SQL_GENERATORS)).toBe(true);
+  });
+
   test("the renderer writes a line feed as its escape and refuses every other character it does not quote", () => {
     const writings = projectSqlWriting(ADMITTED);
     const cassandra = writings.cassandra as NonNullable<(typeof writings)["cassandra"]>;
@@ -1288,8 +1454,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const queryEditor = path.join(dir, "query-editor.generated.ts");
       const sqlText = path.join(dir, "sql-text.generated.ts");
       const sqlWriting = path.join(dir, "sql-writing.generated.ts");
+      const migrationDdl = path.join(dir, "migration-ddl.generated.ts");
+      const sqlGenerators = path.join(dir, "sql-generators.generated.ts");
       expect(written.stdout.toString()).toBe(
-        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\n`,
+        `Wrote ${catalog}\nWrote ${connection}\nWrote ${flags}\nWrote ${form}\nWrote ${strings}\nWrote ${editor}\nWrote ${queryEditor}\nWrote ${sqlText}\nWrote ${sqlWriting}\nWrote ${migrationDdl}\nWrote ${sqlGenerators}\n`,
       );
       expect(readFileSync(connection, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_MODULE), "utf8"));
       expect(readFileSync(flags, "utf8")).toBe(readFileSync(path.join(ROOT, ENGINE_CONNECTION_FLAGS_MODULE), "utf8"));
@@ -1297,7 +1465,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const current = run("--check", "--out", dir);
       expect(current.exitCode).toBe(0);
       expect(current.stdout.toString()).toBe(
-        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n`,
+        `${catalog} is up to date\n${connection} is up to date\n${flags} is up to date\n${form} is up to date\n${strings} is up to date\n${editor} is up to date\n${queryEditor} is up to date\n${sqlText} is up to date\n${sqlWriting} is up to date\n${migrationDdl} is up to date\n${sqlGenerators} is up to date\n`,
       );
 
       const text = readFileSync(connection, "utf8");
@@ -1415,6 +1583,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_QUERY_EDITOR_MODULE,
         ENGINE_SQL_TEXT_MODULE,
         ENGINE_SQL_WRITING_MODULE,
+        ENGINE_MIGRATION_DDL_MODULE,
+        ENGINE_SQL_GENERATORS_MODULE,
       ]) {
         expect(readFileSync(path.join(dir, path.basename(generated)), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
@@ -1492,6 +1662,43 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       );
       expect(run("--write", "--out", dir).exitCode).toBe(0);
       expect(readFileSync(sqlWriting, "utf8")).toBe(sqlWritingText);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+
+      // MySQL's transaction wrapper edited by hand in the generated migration DDL module is named, and only that
+      // module.
+      const migrationDdl = path.join(dir, "migration-ddl.generated.ts");
+      const migrationDdlText = readFileSync(migrationDdl, "utf8");
+      const mysqlDdl = /^ {2}mysql: Object\.freeze\(\{$[\s\S]*?^ {2}\}\),$/m.exec(migrationDdlText)?.[0] ?? "";
+      expect(mysqlDdl).toContain('begin: "BEGIN;"');
+      writeFileSync(
+        migrationDdl,
+        migrationDdlText.replace(mysqlDdl, mysqlDdl.replace('begin: "BEGIN;"', 'begin: "START TRANSACTION;"')),
+      );
+      const staleMigrationDdl = run("--check", "--out", dir);
+      expect(staleMigrationDdl.exitCode).toBe(1);
+      expect(staleMigrationDdl.stderr.toString()).toBe(
+        `${migrationDdl} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(migrationDdl, "utf8")).toBe(migrationDdlText);
+      expect(run("--check", "--out", dir).exitCode).toBe(0);
+
+      // SQL Server's count expression edited by hand in the generated SQL generator module is named, and only that
+      // module.
+      const sqlGenerators = path.join(dir, "sql-generators.generated.ts");
+      const sqlGeneratorsText = readFileSync(sqlGenerators, "utf8");
+      expect(sqlGeneratorsText).toContain('countExpression: "COUNT_BIG(*)"');
+      writeFileSync(
+        sqlGenerators,
+        sqlGeneratorsText.replace('countExpression: "COUNT_BIG(*)"', 'countExpression: "COUNT(*)"'),
+      );
+      const staleSqlGenerators = run("--check", "--out", dir);
+      expect(staleSqlGenerators.exitCode).toBe(1);
+      expect(staleSqlGenerators.stderr.toString()).toBe(
+        `${sqlGenerators} is not what the engine declarations project\nrun: bun run engines:generate\n`,
+      );
+      expect(run("--write", "--out", dir).exitCode).toBe(0);
+      expect(readFileSync(sqlGenerators, "utf8")).toBe(sqlGeneratorsText);
       expect(run("--check", "--out", dir).exitCode).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -1981,6 +2188,113 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       expect(refused.exitCode).toBe(1);
       expect(refused.stderr).toContain(
         'postgres names the function "literalBackslash", which Studio holds no function for.',
+      );
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored migration DDL and SQL generator change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const file = path.join(directory, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      if (committed.migrationDdl.tableDdl !== "written") throw new Error("mysql's migration DDL writes no table DDL");
+      const mysql = {
+        ...committed,
+        migrationDdl: {
+          ...committed.migrationDdl,
+          transactionWrapper: { begin: "BEGIN TRANSACTION;", commit: "COMMIT;" },
+        },
+      };
+      writeFileSync(file, `${JSON.stringify(mysql, null, 2)}\n`);
+      const mssqlFile = path.join(directory, "mssql.json");
+      const mssqlCommitted = JSON.parse(readFileSync(mssqlFile, "utf8")) as EngineDeclaration;
+      if (mssqlCommitted.sqlGenerators === null) throw new Error("mssql states no SQL generator forms");
+      const mssql = {
+        ...mssqlCommitted,
+        sqlGenerators: { ...mssqlCommitted.sqlGenerators, countExpression: "COUNT(*)" },
+      };
+      writeFileSync(mssqlFile, `${JSON.stringify(mssql, null, 2)}\n`);
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      // The declaration generator writes the authored members back unchanged.
+      expect(regenerated.find((d) => d.id === "mysql")).toEqual(mysql);
+      expect(regenerated.find((d) => d.id === "mssql")).toEqual(mssql);
+      const sqlGeneratorsModule = readFileSync(path.join(copy.root, ENGINE_SQL_GENERATORS_MODULE), "utf8");
+      expect(sqlGeneratorsModule).toBe(renderSqlGenerators(projectSqlGenerators(regenerated)));
+      expect(projectSqlGenerators(regenerated).mssql?.countExpression).toBe("COUNT(*)");
+      const migrationDdlModule = readFileSync(path.join(copy.root, ENGINE_MIGRATION_DDL_MODULE), "utf8");
+      expect(migrationDdlModule).toBe(renderMigrationDdl(projectMigrationDdl(regenerated)));
+      const ddl = projectMigrationDdl(regenerated).mysql;
+      expect(ddl?.tableDdl === "written" && ddl.transactionWrapper?.begin).toBe("BEGIN TRANSACTION;");
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
+        ENGINE_SQL_WRITING_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => !["mysql", "mssql"].includes(d.id))) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the function when a declaration names a migration DDL function Studio holds none for", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const migrationDdl = { ...committed.migrationDdl, dropTable: "dropTables" };
+      writeFileSync(file, `${JSON.stringify({ ...committed, migrationDdl }, null, 2)}\n`);
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain('postgres names the function "dropTables", which Studio holds no function for.');
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the function when a declaration names a SQL generator function Studio holds none for", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const sqlGenerators = {
+        quote: "generatorQuote",
+        table: null,
+        select: null,
+        selectList: null,
+        countExpression: "COUNT(*)",
+      };
+      writeFileSync(file, `${JSON.stringify({ ...committed, sqlGenerators }, null, 2)}\n`);
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain(
+        'postgres names the function "generatorQuote", which Studio holds no function for.',
       );
     } finally {
       copy.remove();

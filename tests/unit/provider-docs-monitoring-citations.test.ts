@@ -38,8 +38,6 @@ const read = (relative: string): string => readFileSync(path.join(ROOT, relative
 
 const SEARCH_PROVIDER = "src/lib/db/providers/sql/search/index.ts";
 const BASE_PROVIDER = "src/lib/db/base-provider.ts";
-const ELASTICSEARCH_MIGRATION_DDL_FILE = "src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts";
-const OPENSEARCH_MIGRATION_DDL_FILE = "src/lib/db/providers/sql/search/opensearch-migration-ddl.ts";
 const FACTORY = "src/lib/db/factory.ts";
 
 /** Sorted: `readdirSync` returns filesystem order — green here, red on the next machine. */
@@ -660,19 +658,12 @@ describe("search provider docs: the monitoring seam table", () => {
       const text = read(doc);
       expect(text).toContain("`runMaintenance(type)` ([`search/index.ts`]");
       const id = path.basename(doc, ".md");
-      // The prose wraps, so the name and the un-numbered link are pinned separately.
-      expect(text).toContain(`\`${id.toUpperCase()}_MIGRATION_DDL\` refusal in`);
-      expect(text).toContain(
-        `[\`${id}-migration-ddl.ts\`](../../src/lib/db/providers/sql/search/${id}-migration-ddl.ts)`,
-      );
-      expect(text).not.toMatch(/migration-ddl\.ts:\d/);
+      // The prose wraps, so the segment and the declaration's link are pinned separately.
+      expect(text).toContain("the refusal line of the `migrationDdl` segment of");
+      expect(text).toContain(`[\`engine-declarations/${id}.json\`](../../src/lib/db/engine-declarations/${id}.json)`);
+      expect(text).not.toMatch(/\.json:\d/);
     });
   }
-
-  test("each search module declares its migration row", () => {
-    expect(read(ELASTICSEARCH_MIGRATION_DDL_FILE)).toMatch(/^export const ELASTICSEARCH_MIGRATION_DDL\b/m);
-    expect(read(OPENSEARCH_MIGRATION_DDL_FILE)).toMatch(/^export const OPENSEARCH_MIGRATION_DDL\b/m);
-  });
 });
 
 describe("redis provider doc", () => {
@@ -807,8 +798,6 @@ const SEARCH_MODULE_CITATIONS = [
   { name: "httpOrigin", source: "src/lib/db/http/endpoint.ts" },
   { name: "quoteIdentifier", source: "src/lib/sql/identifier.ts" },
   { name: "SQL_WRITING", source: "src/lib/db/sql-writing/index.ts" },
-  { name: "ELASTICSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/elasticsearch-migration-ddl.ts" },
-  { name: "OPENSEARCH_MIGRATION_DDL", source: "src/lib/db/providers/sql/search/opensearch-migration-ddl.ts" },
 ] as const;
 
 /** Members of the dialect table rather than top-level declarations, so matched as object keys. */

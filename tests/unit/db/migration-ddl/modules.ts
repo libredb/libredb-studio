@@ -1,19 +1,24 @@
 /**
- * The engine modules the migration DDL registry imports, read from `src/lib/db/migration-ddl/index.ts` itself, so
- * the seam and isolation tests hold the modules the registry really uses and not a list kept beside it.
+ * The migration DDL function modules the registry imports, read from the import statements of
+ * `src/lib/db/migration-ddl/index.ts` as source rather than from a list typed here, so the seam and docs tests cover
+ * every module the registry reaches and a new one the day it lands. `compose.test.ts` holds each binding to the slot
+ * Studio's migration DDL function table binds it at.
+ *
+ * Each module's engine is read from its path: the directory of a `migration-ddl.ts`, and the prefix of an
+ * `<id>-migration-ddl.ts`.
  */
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import ts from "typescript";
 
 export const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 export const REGISTRY = "src/lib/db/migration-ddl/index.ts";
 
 export interface EngineModule {
-  /** The type id, from the export name: `INFLUXDB3_MIGRATION_DDL` is `influxdb3`. */
+  /** The type id the module's path names: `src/lib/db/providers/sql/mysql-migration-ddl.ts` is `mysql`. */
   readonly id: string;
-  /** The binding the registry imports. */
-  readonly exportName: string;
+  /** The bindings the registry imports from the module, each a function its migration DDL function table binds. */
+  readonly exportNames: readonly string[];
   /** The specifier as the registry spells it. */
   readonly specifier: string;
   /** The file, relative to the repository root. */
@@ -27,6 +32,15 @@ export function fileOf(specifier: string): string {
   return `${base}/index.ts`;
 }
 
+/** The engine a migration DDL function module's path names, or a thrown error naming a path of no such module. */
+export function engineOfPath(path: string): string {
+  const name = basename(path);
+  if (name === "migration-ddl.ts") return basename(dirname(path));
+  if (name.endsWith("-migration-ddl.ts")) return name.slice(0, -"-migration-ddl.ts".length);
+  throw new Error(`${path} is no migration DDL function module`);
+}
+
+/** Every module the registry imports from a provider directory, with the bindings it imports, in path order. */
 export function engineModules(): EngineModule[] {
   const sf = ts.createSourceFile(REGISTRY, readFileSync(join(ROOT, REGISTRY), "utf8"), ts.ScriptTarget.Latest, true);
   const modules: EngineModule[] = [];
@@ -35,13 +49,12 @@ export function engineModules(): EngineModule[] {
     const specifier = statement.moduleSpecifier.text;
     if (!specifier.startsWith("@/lib/db/providers/")) continue;
     const bindings = statement.importClause?.namedBindings;
-    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
-    for (const element of bindings.elements) {
-      const exportName = (element.propertyName ?? element.name).text;
-      const match = /^([A-Z0-9]+)_MIGRATION_DDL$/.exec(exportName);
-      if (match === null) continue;
-      modules.push({ id: match[1].toLowerCase(), exportName, specifier, path: fileOf(specifier) });
-    }
+    const exportNames =
+      bindings !== undefined && ts.isNamedImports(bindings)
+        ? bindings.elements.map((element) => (element.propertyName ?? element.name).text)
+        : [];
+    const path = fileOf(specifier);
+    modules.push({ id: engineOfPath(path), exportNames, specifier, path });
   }
-  return modules;
+  return modules.sort((a, b) => a.path.localeCompare(b.path));
 }

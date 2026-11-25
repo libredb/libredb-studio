@@ -705,7 +705,6 @@ const BROWSER_SET: ReadonlySet<string> = new Set([
   "preview-csv.ts",
   "preview-json.ts",
   "parquet-schema.ts",
-  "migration-ddl.ts",
   "parquet-thrift-guard.ts",
   "preview-cells.ts",
   "preview-render.ts",

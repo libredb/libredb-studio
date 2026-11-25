@@ -500,7 +500,7 @@ Agent readings offered: `health`.
 
 ## Migration DDL
 
-[`SNMP_MIGRATION_DDL`](../../src/lib/db/providers/network/snmp/migration-ddl.ts) is what the schema-diff migration generator writes for `snmp`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/snmp.json`](../../src/lib/db/engine-declarations/snmp.json) declares what the schema-diff migration generator writes for `snmp`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 An object's type is the device's MIB module, and this provider's valve refuses any PDU that is not a Get, GetNext or GetBulk.
 

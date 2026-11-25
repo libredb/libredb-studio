@@ -1,7 +1,7 @@
 /**
  * Removing an engine's declaration from the admitted set gives exactly what a fresh build from the remaining set gives,
  * in every projection Studio makes of the declarations (docs/providers/CONTRACT.md, clauses M-70, M-71, M-72, M-74,
- * M-75, M-77, M-78 and M-79).
+ * M-75, M-77, M-78, M-79, M-80 and M-81).
  *
  * A fixture engine, `acmefoo` (tests/helpers/fixture-engine-declaration.ts), is added to the committed declarations and
  * removed again; each projection built without it must equal a fresh build from the committed set and the committed
@@ -20,7 +20,9 @@ import {
   ENGINE_CONNECTION_MODULE,
   ENGINE_CONNECTION_STRING_MODULE,
   ENGINE_EDITOR_MODULE,
+  ENGINE_MIGRATION_DDL_MODULE,
   ENGINE_QUERY_EDITOR_MODULE,
+  ENGINE_SQL_GENERATORS_MODULE,
   ENGINE_SQL_TEXT_MODULE,
   ENGINE_SQL_WRITING_MODULE,
   renderCatalog,
@@ -29,7 +31,9 @@ import {
   renderConnectionStrings,
   renderConnectionTables,
   renderEditorFacts,
+  renderMigrationDdl,
   renderQueryEditorFacts,
+  renderSqlGenerators,
   renderSqlText,
   renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
@@ -46,12 +50,16 @@ import {
   projectConnectionStrings,
   projectConnectionTables,
   projectEditorFacts,
+  projectMigrationDdl,
   projectQueryEditorFacts,
+  projectSqlGenerators,
   projectSqlText,
   projectSqlWriting,
   type SqlTextEntry,
   type SqlWritingEntry,
 } from "@/lib/db/engine-catalog/projection";
+import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS, migrationDdlFor } from "@/lib/db/migration-ddl";
+import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS, sqlEngineGenerators } from "@/lib/db/query-generators";
 import { composeSqlGrammar, SQL_GRAMMAR_FUNCTIONS, sqlGrammarFor } from "@/lib/db/sql-grammar";
 import { composeSqlWriting, SQL_WRITING_FUNCTIONS, sqlWritingFor } from "@/lib/db/sql-writing";
 import { unknownTypeSentence } from "@/lib/db/type-id";
@@ -360,6 +368,89 @@ describe("each projection of the admitted declarations, built with and without a
       expect(writings).toEqual(built);
       expect(Object.keys(writings)).toEqual(Object.keys(built));
       expect(JSON.stringify(writings)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the migration DDL built with the fixture engine holds its entry, and with it removed is exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectMigrationDdl(ADMITTED);
+    const withFixture = projectMigrationDdl([...ADMITTED, FIXTURE]);
+    const entry = withFixture.acmefoo;
+    if (entry?.tableDdl !== "refused") throw new Error("the fixture engine's migration DDL writes table DDL");
+    // Its own refusal line and reason, so its entry is one no shipped engine has.
+    expect(entry.refusal).toBe(`-- Acme Foo: Cannot generate table DDL. ${entry.reasons[0]}`);
+    expect(Object.values(shipped)).not.toContainEqual(entry);
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+    // A refused form names no function, so its row composes with Studio's migration DDL function table, which holds
+    // nothing for it.
+    expect(composeMigrationDdl(FIXTURE.id as DatabaseType, entry, MIGRATION_DDL_FUNCTIONS)).toEqual({
+      tableDdl: "refused",
+      refusal: entry.refusal,
+      transactionWrapper: null,
+      reasons: [...entry.reasons],
+    });
+
+    const removed = projectMigrationDdl([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderMigrationDdl(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_MIGRATION_DDL_MODULE), "utf8"));
+    // Nothing is kept on purpose: the migration DDL composed from the committed module refuses the fixture's id by
+    // name.
+    expect(() => migrationDdlFor(FIXTURE.id)).toThrow(unknownTypeSentence(FIXTURE.id));
+  });
+
+  test("the migration DDL is the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectMigrationDdl(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const ddls = projectMigrationDdl(order);
+      expect(ddls).toEqual(built);
+      expect(Object.keys(ddls)).toEqual(Object.keys(built));
+      expect(JSON.stringify(ddls)).toBe(JSON.stringify(built));
+    }
+  });
+
+  test("the SQL generator forms built with the fixture engine hold its entry, and with it removed are exactly a fresh build from the remaining set and the committed module", () => {
+    const shipped = projectSqlGenerators(ADMITTED);
+    const withFixture = projectSqlGenerators([...ADMITTED, FIXTURE]);
+    const entry = withFixture.acmefoo;
+    if (entry === null || entry === undefined) throw new Error("the fixture engine states no SQL generator forms");
+    // Its own count expression with only its quoting named, so its entry is one no shipped engine has.
+    expect(entry).toEqual({
+      quote: "generatorQuote",
+      table: null,
+      select: null,
+      selectList: null,
+      countExpression: "COUNT_BIG(*)",
+    });
+    expect(Object.values(shipped)).not.toContainEqual(entry);
+    expect(Object.keys(withFixture)).toHaveLength(ADMITTED.length + 1);
+    // Its quoting is named by its slot's name, which Studio's SQL generator function table holds for no fixture engine,
+    // so composing its row is refused by name: the answer a package's declaration gets until a package fills a slot.
+    expect(() => composeSqlEngineGenerators(FIXTURE.id as DatabaseType, entry, SQL_GENERATOR_FUNCTIONS)).toThrow(
+      'acmefoo names the function "generatorQuote", which Studio holds no function for.',
+    );
+
+    const removed = projectSqlGenerators([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
+    expect(removed).toEqual(shipped);
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
+    expect(renderSqlGenerators(removed)).toBe(readFileSync(path.join(ROOT, ENGINE_SQL_GENERATORS_MODULE), "utf8"));
+    // Nothing is kept on purpose: the generator forms composed from the committed module refuse the fixture's id by
+    // name.
+    expect(() => sqlEngineGenerators(FIXTURE.id as DatabaseType)).toThrow(unknownTypeSentence(FIXTURE.id));
+  });
+
+  test("the SQL generator forms are the same whatever order the declarations are admitted in", () => {
+    const set = [...ADMITTED, FIXTURE];
+    const built = projectSqlGenerators(set);
+
+    for (const order of [[...set].reverse(), shuffled(set)]) {
+      const forms = projectSqlGenerators(order);
+      expect(forms).toEqual(built);
+      expect(Object.keys(forms)).toEqual(Object.keys(built));
+      expect(JSON.stringify(forms)).toBe(JSON.stringify(built));
     }
   });
 

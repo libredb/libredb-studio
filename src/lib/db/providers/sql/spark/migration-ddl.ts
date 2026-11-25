@@ -1,15 +1,10 @@
 /**
- * No transaction spans two Spark SQL statements (the provider declares `supportsTransactions: false`), so the
- * migration has no wrapper (#284).
+ * Apache Spark's own migration DDL functions, each bound by Studio's migration DDL function table
+ * (`MIGRATION_DDL_FUNCTIONS` in src/lib/db/migration-ddl/index.ts) at the slot its name gives: its keys, indexes and
+ * column changes are declined in words, each for the reason beside its sentence.
  */
-import {
-  commentName,
-  standardAddColumn,
-  standardColumnDef,
-  standardDropColumn,
-  standardDropTable,
-} from "@/lib/db/migration-ddl/shared";
-import type { MigrationDdlSpec } from "@/lib/db/migration-ddl/types";
+import { commentName } from "@/lib/db/migration-ddl/shared";
+import type { TableDdlWritten, WrittenCreateTable } from "@/lib/db/migration-ddl/types";
 
 // Apache Spark: whether a column's type, nullability or default can change is the catalog's and the table format's
 // answer, as Trino's is the connector's, and this refusal declines every modified column, whichever of the three the
@@ -34,24 +29,24 @@ const NO_FOREIGN_KEYS =
 const NO_PRIMARY_KEY_CONSTRAINT =
   "Spark accepts a primary key only as an informational NOT ENFORCED constraint, in a catalog that implements constraints.";
 
-export const SPARK_MIGRATION_DDL: MigrationDdlSpec = {
-  tableDdl: "written",
-  transactionWrapper: null,
-  createTable: {
-    kind: "written",
-    primaryKey: () => ({ after: `-- Apache Spark: Cannot declare a primary key. ${NO_PRIMARY_KEY_CONSTRAINT}` }),
-    foreignKey: () => ({ after: `-- Apache Spark: Cannot add a foreign key. ${NO_FOREIGN_KEYS}` }),
-  },
-  columnDef: standardColumnDef,
-  createIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  dropIndex: () => `-- ${NO_PORTABLE_INDEX_DDL}`,
-  addForeignKey: () => `-- Apache Spark: Cannot add a foreign key. ${NO_FOREIGN_KEYS}`,
-  dropForeignKey: () => `-- Apache Spark: Cannot drop a foreign key. ${NO_FOREIGN_KEYS}`,
-  addColumn: standardAddColumn,
-  dropColumn: standardDropColumn,
-  modifyColumn: (col) => [
-    `-- Apache Spark: Cannot alter column "${commentName(col.columnName)}". ${NO_COLUMN_MODIFICATION}`,
-  ],
-  dropTable: standardDropTable,
-  reasons: [NO_COLUMN_MODIFICATION, NO_PORTABLE_INDEX_DDL, NO_FOREIGN_KEYS, NO_PRIMARY_KEY_CONSTRAINT],
-};
+export const SPARK_CREATE_TABLE_PRIMARY_KEY: WrittenCreateTable["primaryKey"] = () => ({
+  after: `-- Apache Spark: Cannot declare a primary key. ${NO_PRIMARY_KEY_CONSTRAINT}`,
+});
+
+export const SPARK_CREATE_TABLE_FOREIGN_KEY: WrittenCreateTable["foreignKey"] = () => ({
+  after: `-- Apache Spark: Cannot add a foreign key. ${NO_FOREIGN_KEYS}`,
+});
+
+export const SPARK_CREATE_INDEX: TableDdlWritten["createIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const SPARK_DROP_INDEX: TableDdlWritten["dropIndex"] = () => `-- ${NO_PORTABLE_INDEX_DDL}`;
+
+export const SPARK_ADD_FOREIGN_KEY: TableDdlWritten["addForeignKey"] = () =>
+  `-- Apache Spark: Cannot add a foreign key. ${NO_FOREIGN_KEYS}`;
+
+export const SPARK_DROP_FOREIGN_KEY: TableDdlWritten["dropForeignKey"] = () =>
+  `-- Apache Spark: Cannot drop a foreign key. ${NO_FOREIGN_KEYS}`;
+
+export const SPARK_MODIFY_COLUMN: TableDdlWritten["modifyColumn"] = (col) => [
+  `-- Apache Spark: Cannot alter column "${commentName(col.columnName)}". ${NO_COLUMN_MODIFICATION}`,
+];

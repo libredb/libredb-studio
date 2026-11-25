@@ -719,7 +719,7 @@ The rolled-back notice names `COMMIT` as the keyword that keeps an open transact
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`mysql.json`](../../src/lib/db/engine-declarations/mysql.json)), projected into the generated execution UI record.
 The fence tags that name it are its id, `mysql`, and its declaration's `editor.fenceAliases`, `mariadb`.
 `mariadb` names `mysql`, the type-id MariaDB connects through: an alias names the type-id a block's text runs on, which is not always the product the tag spells.
-What a tree click and Generate Query write is `MYSQL_SQL_GENERATORS`, its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), declared in [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts) and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
+What a tree click and Generate Query write is its row of `SQL_ENGINE_GENERATORS` under its type id (its identifier quoting), which Studio composes from the `sqlGenerators` segment of [`engine-declarations/mysql.json`](../../src/lib/db/engine-declarations/mysql.json), each form it names bound by Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, to the functions of [`mysql-generators.ts`](../../src/lib/db/providers/sql/mysql-generators.ts), `MYSQL_GENERATOR_QUOTE`, and read by the engine-agnostic dispatcher in `src/lib/query-generators.ts`.
 How `mapDatabaseError` classifies its driver's errors, its account-limit and access-refusal error numbers and its interrupted-query words, is the `mysql2` row of `DRIVER_ERROR_CLASSIFIERS`, declared in [`mysql-driver-errors.ts`](../../src/lib/db/providers/sql/mysql-driver-errors.ts).
 
 ---
@@ -3032,10 +3032,11 @@ Over the API: `POST /api/db/query`, `POST /api/db/transaction`, `POST /api/db/ca
 
 ## Migration DDL
 
-[`MYSQL_MIGRATION_DDL`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts) is what the schema-diff migration generator writes for `mysql`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mysql.json`](../../src/lib/db/engine-declarations/mysql.json) declares what the schema-diff migration generator writes for `mysql`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/mysql-migration-ddl.ts`](../../src/lib/db/providers/sql/mysql-migration-ddl.ts), `MYSQL_DROP_FOREIGN_KEY`, `MYSQL_DROP_INDEX` and `MYSQL_MODIFY_COLUMN`.
 MySQL drops an index with `ON <table>` and a foreign key with `DROP FOREIGN KEY`, and restates the whole column in `MODIFY COLUMN`.
 Everything else is the shared statement, wrapped in `BEGIN;` and `COMMIT;`.
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `BEGIN_COMMIT`, `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardAddForeignKey`, `standardColumnDef`, `standardCreateIndex`, `standardCreateTableForeignKey`, `standardDropColumn`, `standardDropTable` and `standardPrimaryKey`.
 
 It prints no refusal reason.
 

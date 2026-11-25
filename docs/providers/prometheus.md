@@ -804,7 +804,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 
 ## Migration DDL
 
-[`PROMETHEUS_MIGRATION_DDL`](../../src/lib/db/providers/timeseries/prometheus/migration-ddl.ts) is what the schema-diff migration generator writes for `prometheus`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/prometheus.json`](../../src/lib/db/engine-declarations/prometheus.json) declares what the schema-diff migration generator writes for `prometheus`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `prometheus` text is PromQL, not SQL (`readsSqlText: false`, [§5.7](#57-sql-grammar)), so there is no table DDL to wrap (#284, #1085).
 

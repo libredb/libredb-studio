@@ -1,28 +1,18 @@
 /**
- * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): the migration DDL declared
- * beside the provider and registered as its row, the SQL grammar, the SQL writing and the connection string composed
- * from its declaration, the execution UI read from its declaration, and each saying what the design says, since a
- * Weaviate console request is not SQL text and nothing it runs writes.
+ * The `weaviate` rows of the five contract registries (#1566 spec 4, 5.9, 9, Migration DDL): the migration DDL, the SQL
+ * grammar, the SQL writing and the connection string composed from its declaration, the execution UI read from its
+ * declaration, and each saying what the design says, since a Weaviate console request is not SQL text and nothing it
+ * runs writes.
  */
 import { describe, expect, test } from "bun:test";
 import { CONNECTION_STRING } from "@/lib/db/connection-string";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
-import { WEAVIATE_MIGRATION_DDL } from "@/lib/db/providers/vector/weaviate/migration-ddl";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
 import { identifierDoubleQuoted, literalStandard } from "@/lib/db/sql-writing/shared";
-
-describe("each row is the registry's weaviate row", () => {
-  test.each([["MIGRATION_DDL", MIGRATION_DDL.weaviate, WEAVIATE_MIGRATION_DDL]] as const)(
-    "%s",
-    (_name, registered, declared) => {
-      expect(registered).toBe(declared as never);
-    },
-  );
-});
 
 describe("the rows", () => {
   test("the SQL grammar reads no SQL text and redacts a statement whole", () => {
@@ -43,7 +33,7 @@ describe("the rows", () => {
   test("migration DDL is refused with the one sentence, and no transaction wrapper", () => {
     const reason =
       "A collection's properties and vectors are declared through Weaviate's own schema API, not SQL DDL, so there is no column definition to change.";
-    expect(WEAVIATE_MIGRATION_DDL).toEqual({
+    expect(MIGRATION_DDL.weaviate).toEqual({
       tableDdl: "refused",
       refusal: `-- Weaviate: Cannot generate table DDL. ${reason}`,
       transactionWrapper: null,

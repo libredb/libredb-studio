@@ -2014,12 +2014,12 @@ Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
 ### D147. The Db2 schema diff writes a column modification as a comment
 
-`DB2_MIGRATION_DDL` in `src/lib/db/providers/sql/db2/migration-ddl.ts` writes a modified column as its `NO_COLUMN_MODIFICATION` comment, because Db2 changes a column with `ALTER TABLE ... ALTER COLUMN ... SET DATA TYPE` and may leave the table REORG-pending, after which most statements on it fail with SQL0668N until a REORG.
+`DB2_MODIFY_COLUMN` in `src/lib/db/providers/sql/db2/migration-ddl.ts` writes a modified column as its `NO_COLUMN_MODIFICATION` comment, because Db2 changes a column with `ALTER TABLE ... ALTER COLUMN ... SET DATA TYPE` and may leave the table REORG-pending, after which most statements on it fail with SQL0668N until a REORG.
 The #787 branch drafted a branch that emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with a REORG advisory comment, never measured live.
 
 Found 2026-10-03 while scoping the Db2 provider's first version (#786).
 
-**Done when:** `DB2_MIGRATION_DDL`'s `modifyColumn` emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with the REORG advisory, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
+**Done when:** `DB2_MODIFY_COLUMN` emits `SET DATA TYPE`, `SET`/`DROP NOT NULL` and `SET`/`DROP DEFAULT` with the REORG advisory, each statement it emits runs on Db2 12.1 against the fixture, the REORG-pending advisory names the table, and `tests/unit/schema-diff/migration-generator.test.ts` moves `db2` out of the comment-only coverage.
 
 ### D149. Windows channels and the Visual C++ runtime the Db2 addon needs
 
@@ -3590,7 +3590,7 @@ Found 2026-10-13 while reviewing the Apache Spark provider (#1759); pre-existing
 
 ### D350. The schema-diff migration says BigQuery has no foreign-key constraint
 
-`BIGQUERY_MIGRATION_DDL` in `src/lib/db/providers/sql/bigquery/migration-ddl.ts` declines a foreign key with the shared `NO_FOREIGN_KEY_CONSTRAINT`, so an added or dropped foreign key is declined with `-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.` (and the `Cannot drop` twin).
+`BIGQUERY_ADD_FOREIGN_KEY` and `BIGQUERY_DROP_FOREIGN_KEY` in `src/lib/db/providers/sql/bigquery/migration-ddl.ts` decline a foreign key with the shared `NO_FOREIGN_KEY_CONSTRAINT`, so an added or dropped foreign key is declined with `-- BigQuery: Cannot add a foreign key. The engine has no foreign-key constraint.` (and the `Cannot drop` twin).
 BigQuery does have foreign keys, declared `NOT ENFORCED`, as it has primary keys, and the same module's `NO_PRIMARY_KEY_CONSTRAINT` already says so for the primary key: "BigQuery accepts a primary key only as PRIMARY KEY (...) NOT ENFORCED."
 The decline itself may stay; its reason is false.
 

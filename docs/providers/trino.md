@@ -1996,11 +1996,12 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
 
 ## Migration DDL
 
-[`TRINO_MIGRATION_DDL`](../../src/lib/db/providers/sql/trino/migration-ddl.ts) is what the schema-diff migration generator writes for `trino`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/trino.json`](../../src/lib/db/engine-declarations/trino.json) declares what the schema-diff migration generator writes for `trino`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
+The table binds this engine's own functions from the module beside its provider: [`sql/trino/migration-ddl.ts`](../../src/lib/db/providers/sql/trino/migration-ddl.ts), `TRINO_ADD_FOREIGN_KEY`, `TRINO_CREATE_INDEX`, `TRINO_CREATE_TABLE_FOREIGN_KEY`, `TRINO_CREATE_TABLE_PRIMARY_KEY`, `TRINO_DROP_FOREIGN_KEY`, `TRINO_DROP_INDEX` and `TRINO_MODIFY_COLUMN`.
 Trino's transactional semantics are the connector's answer, so no portable `BEGIN;` or `COMMIT;` exists and `transactionWrapper` is `null` (#284).
 Trino has no index or foreign-key grammar, and its `CREATE TABLE` has no primary-key constraint, so an added table's key is declined in a comment after the statement; Trino was the first engine declined that way.
 A modified column is a comment, measured 2026-08-20 on Trino 476: `ALTER TABLE ... ALTER COLUMN id TYPE varchar` is "line 1:50: mismatched input 'TYPE'. Expecting: '.', 'DROP', 'SET'", and `ALTER COLUMN id SET DATA TYPE varchar` parses and then the catalog answers "This connector does not support setting column types".
-The fields it takes unchanged from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
+The building blocks Studio's table binds for it from `src/lib/db/migration-ddl/shared.ts` are `standardAddColumn`, `standardColumnDef`, `standardDropColumn` and `standardDropTable`.
 
 Every refusal reason it can print, verbatim:
 

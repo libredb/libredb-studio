@@ -474,7 +474,7 @@ stand-in, and no local copy of a rule the shared modules own.
 
 ## Migration DDL
 
-[`MTCONNECT_MIGRATION_DDL`](../../src/lib/db/providers/industrial/mtconnect/migration-ddl.ts) is what the schema-diff migration generator writes for `mtconnect`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/mtconnect.json`](../../src/lib/db/engine-declarations/mtconnect.json) declares what the schema-diff migration generator writes for `mtconnect`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 An agent's device model is the agent's own and every route this provider sends is a GET, so there is no table DDL to wrap either (#1722).
 

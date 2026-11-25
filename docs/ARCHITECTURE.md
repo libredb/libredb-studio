@@ -230,7 +230,8 @@ Each language's accent and whether it is a console dialect are the ones the decl
 `DIALECT_GENERATORS` (`src/lib/db/query-generators/index.ts`) gives each dialect what a tree click and Generate Query write, and, for a provider that declares `rowActions`, what each declared row action runs.
 `LANGUAGE_GENERATORS` beside it does the same for each query language an engine writes its own text in, MongoDB's JSON documents included.
 `SQL_ENGINE_GENERATORS` holds the SQL forms and identifier quoting one SQL engine writes apart from the shared ones, keyed by type id and read through `typeIdRow`, so a connection's forms follow its type and never the port its declaration names, and a value outside the union is refused by name.
-Every row is declared beside its provider, so `src/lib/query-generators.ts` is the engine-agnostic dispatcher and names no engine, which `tests/unit/lib/query-generators-isolation.test.ts` holds.
+Each of its rows is composed from the engine's declaration, its `sqlGenerators` projected into `src/lib/db/engine-catalog/sql-generators.generated.ts`, and Studio's SQL generator function table, `SQL_GENERATOR_FUNCTIONS`, which binds each form the declaration names to the engine's own function in a module beside its provider.
+Every dialect and language row is declared beside its provider and every SQL engine row is composed in the registry, so `src/lib/query-generators.ts` is the engine-agnostic dispatcher and names no engine, which `tests/unit/lib/query-generators-isolation.test.ts` holds.
 A dialect is one record in each, and no reader branches on its name: `tests/unit/lib/dialect-reader-allowlist.test.ts` holds every other reader of `queryDialect`, of the JSON language and of a negated language to a closed list with its owner.
 
 How a generated statement spells a literal, a name and a bind follows the same rule beside `QUERY_DIALECTS`, keyed by type id rather than by dialect.
@@ -243,7 +244,8 @@ Such a module imports only the contract, the building blocks, the engine-neutral
 The golden files under `tests/unit/db/sql-writing/golden/` pin every engine's output.
 
 The schema-diff migration text follows it too, through `MIGRATION_DDL` in `src/lib/db/migration-ddl/`, a `Record<DatabaseType, MigrationDdlSpec>` the compiler holds complete beside `QUERY_DIALECTS`.
-Each row is a module beside its provider (`<family>/<id>-migration-ddl.ts`, or `migration-ddl.ts` inside a provider directory) that either refuses the whole diff with one line or writes every statement kind through its own function, sharing PostgreSQL's spelling by importing a named building block from `shared.ts`.
+Each row is composed when that module loads from the engine's declaration, its `migrationDdl` projected into `src/lib/db/engine-catalog/migration-ddl.generated.ts`, and Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`: a refused form is its one refusal line and names no function, and a written form binds each statement writer the declaration names to a building block of `shared.ts` or to the engine's own function in a module beside its provider.
+The golden files under `tests/unit/db/migration-ddl/golden/` pin every engine's migration text.
 `generateMigrationSQL` reads a connection's row through `migrationDdlFor`, which answers a spec of its own for no connection, refuses a value outside the union with `UnknownProviderError`, and names no type id itself.
 
 How each engine's statement text is read sits in a registry of the same kind beside `QUERY_DIALECTS`: `SQL_GRAMMAR` in `src/lib/db/sql-grammar/`, a `Record<DatabaseType, SqlGrammarSpec>` the compiler holds total.

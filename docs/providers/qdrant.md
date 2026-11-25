@@ -524,7 +524,7 @@ Set `telemetry_disabled` if the server should not report to the vendor, and note
 
 ## Migration DDL
 
-[`QDRANT_MIGRATION_DDL`](../../src/lib/db/providers/vector/qdrant/migration-ddl.ts) is what the schema-diff migration generator writes for `qdrant`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/qdrant.json`](../../src/lib/db/engine-declarations/qdrant.json) declares what the schema-diff migration generator writes for `qdrant`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `qdrant` text is a Qdrant console request, not SQL, so there is no table DDL to wrap (#284).
 

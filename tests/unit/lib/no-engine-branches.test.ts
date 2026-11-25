@@ -152,10 +152,32 @@ export const REGISTRIES: readonly Listed[] = [
     reason:
       "each engine's connection string row, composed from the generated connection strings and typed over the type-id union",
   },
-  ...[
-    ["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"],
-    ["src/lib/db/migration-ddl/index.ts", "MIGRATION_DDL"],
-  ].map(([path, declaration]) => ({ path, declaration, count: 1, reason: CONTRACT })),
+  ...[["src/lib/db/engine-facets/index.ts", "ENGINE_FACETS"]].map(([path, declaration]) => ({
+    path,
+    declaration,
+    count: 1,
+    reason: CONTRACT,
+  })),
+  {
+    path: "src/lib/db/engine-catalog/migration-ddl.generated.ts",
+    declaration: "BUNDLED_MIGRATION_DDL",
+    count: 1,
+    reason: "each engine's migration DDL, generated from the declarations and compile-enforced over the type-id union",
+  },
+  {
+    path: "src/lib/db/migration-ddl/index.ts",
+    declaration: "MIGRATION_DDL",
+    count: 2,
+    reason:
+      "each engine's migration DDL row, composed from the generated migration DDL and typed over the type-id union",
+  },
+  {
+    path: "src/lib/db/engine-catalog/sql-generators.generated.ts",
+    declaration: "BUNDLED_SQL_GENERATORS",
+    count: 1,
+    reason:
+      "each engine's SQL generator forms, generated from the declarations and compile-enforced over the type-id union",
+  },
   {
     path: "src/lib/db/engine-catalog/sql-text.generated.ts",
     declaration: "BUNDLED_SQL_TEXT",
@@ -282,7 +304,7 @@ export const REGISTRIES: readonly Listed[] = [
     declaration: "SQL_ENGINE_GENERATORS",
     count: 1,
     reason:
-      "the SQL forms of each SQL engine that writes its own, a partial registry whose rows are declared beside their providers",
+      "the SQL forms of each SQL engine that writes its own, a partial registry composed from the generated SQL generator forms",
   },
   {
     path: "src/lib/db/graph-policy-profiles.ts",

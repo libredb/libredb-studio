@@ -845,7 +845,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 
 ## Migration DDL
 
-[`KAFKA_MIGRATION_DDL`](../../src/lib/db/providers/stream/kafka/migration-ddl.ts) is what the schema-diff migration generator writes for `kafka`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/kafka.json`](../../src/lib/db/engine-declarations/kafka.json) declares what the schema-diff migration generator writes for `kafka`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `kafka` text is a JSON read request, not SQL, so there is no table DDL to wrap (#284, #1088).
 

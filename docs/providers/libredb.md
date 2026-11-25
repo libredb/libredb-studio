@@ -1435,7 +1435,7 @@ await provider.disconnect();
 
 ## Migration DDL
 
-[`LIBREDB_MIGRATION_DDL`](../../src/lib/db/providers/embedded/libredb-migration-ddl.ts) is what the schema-diff migration generator writes for `libredb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/libredb.json`](../../src/lib/db/engine-declarations/libredb.json) declares what the schema-diff migration generator writes for `libredb`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 The embedded engine speaks a JSON command grammar, so there is no table DDL to wrap (#284).
 

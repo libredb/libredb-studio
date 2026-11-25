@@ -290,13 +290,7 @@ const STATEMENT_LANGUAGES: ReadonlySet<string> = new Set(
   Object.values(AGENT_STATEMENT_LANGUAGE).filter((language) => language !== null),
 );
 const SHIPPED_TYPE_IDS: ReadonlySet<string> = new Set(SHIPPED_DATABASE_TYPES);
-const NAMED_REMOVERS: ReadonlySet<string> = new Set([
-  "PR 8b",
-  "PR 11 editor and SQL text",
-  "PR 11 policy",
-  "PR 11 agent",
-  "PR 12",
-]);
+const NAMED_REMOVERS: ReadonlySet<string> = new Set(["PR 8b", "PR 11 policy", "PR 11 agent", "PR 12"]);
 
 /** Whether `remover` names a change of the program: a named slice, a language slice of PR 8, or a native port. */
 function isRemover(remover: string): boolean {

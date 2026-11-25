@@ -86,8 +86,6 @@ import {
   buildAgentOverlay,
   buildEditor,
   buildEngineDeclaration,
-  buildMigrationDdl,
-  buildSqlGenerators,
   CAPABILITY_READ_ENVIRONMENT,
   declarationDirectoryProblems,
   ENGINE_DECLARATIONS_DIRECTORY,
@@ -170,7 +168,7 @@ import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/conne
 import { CONFIRMATION_CLAIM_REVIEW, isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
-import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
+import { MIGRATION_DDL, MIGRATION_DDL_FUNCTIONS, type MigrationDdlFunctions } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
 import { EXECUTION_UI, executionUiFor } from "@/lib/db/execution-ui";
@@ -184,7 +182,7 @@ import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
-import { SQL_ENGINE_GENERATORS } from "@/lib/db/query-generators";
+import { SQL_ENGINE_GENERATORS, SQL_GENERATOR_FUNCTIONS, type SqlGeneratorFunctions } from "@/lib/db/query-generators";
 import type { SqlEngineGenerators } from "@/lib/db/query-generators/types";
 import { SQL_WRITING, SQL_WRITING_FUNCTIONS, type SqlWritingFunctions } from "@/lib/db/sql-writing";
 import type { MetadataKind } from "@/lib/db/redaction/metadata-only";
@@ -248,8 +246,6 @@ import type { DatabaseConnection, DatabaseType, HostPathField, QueryTab } from "
 import { readCensusCapabilities } from "../../helpers/census-capabilities";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { SPAN_STATEMENTS } from "./sql-grammar/fixtures";
-import { engineModules as migrationDdlModules } from "./migration-ddl/modules";
-import { sqlGeneratorModules } from "./engine-declarations/sql-generator-modules";
 import {
   DECLARED_SLOTS,
   type DeclaredSlotName,
@@ -456,60 +452,6 @@ function sqlTextNames(d: EngineDeclaration): string[] {
   ];
 }
 
-/** The migration DDL modules the registry imports, read from the registry file's import statements as source. */
-const MIGRATION_DDL_MODULES = migrationDdlModules();
-
-/**
- * Each engine's migration DDL row as its own module exports it, the module imported by its absolute path, never through
- * the registry index the generator reads: every migration DDL slot the census's slot table names is resolved on this
- * row.
- */
-const MODULE_MIGRATION_DDL: ReadonlyMap<string, unknown> = new Map(
-  await Promise.all(
-    MIGRATION_DDL_MODULES.map(
-      async (engine) =>
-        [
-          engine.id,
-          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
-        ] as const,
-    ),
-  ),
-);
-
-/** The engine module's migration DDL row of `type`, which the census holds to be the registry's row. */
-function moduleMigrationDdl(type: DatabaseType): object {
-  const row = MODULE_MIGRATION_DDL.get(type);
-  if (typeof row !== "object" || row === null) throw new Error(`${type}: no migration DDL module exports a row`);
-  return row;
-}
-
-/** The SQL generator modules the query generators' registry imports, read from the registry file's import statements. */
-const SQL_GENERATOR_MODULES = sqlGeneratorModules();
-
-/**
- * Each SQL engine's generator row as its own module exports it, the module imported by its absolute path, never through
- * the registry index the generator reads: every SQL generator slot the census's slot table names is resolved on this
- * row. Only the engines with a row of `SQL_ENGINE_GENERATORS` have one.
- */
-const MODULE_SQL_GENERATORS: ReadonlyMap<string, unknown> = new Map(
-  await Promise.all(
-    SQL_GENERATOR_MODULES.map(
-      async (engine) =>
-        [
-          engine.id,
-          ((await import(path.join(ROOT, engine.path))) as Record<string, unknown>)[engine.exportName],
-        ] as const,
-    ),
-  ),
-);
-
-/** The engine module's SQL generator row of `type`, which the census holds to be the registry's row. */
-function moduleSqlGenerators(type: DatabaseType): object {
-  const row = MODULE_SQL_GENERATORS.get(type);
-  if (typeof row !== "object" || row === null) throw new Error(`${type}: no SQL generator module exports a row`);
-  return row;
-}
-
 /** The registry's SQL generator row of `type`, read as an own key; undefined where the engine writes the shared forms. */
 function sqlGeneratorRow(type: DatabaseType): SqlEngineGenerators | undefined {
   return Object.hasOwn(SQL_ENGINE_GENERATORS, type) ? SQL_ENGINE_GENERATORS[type] : undefined;
@@ -561,8 +503,8 @@ function moduleAgentOverlay(type: DatabaseType): object {
 function moduleRow(table: SlotTable, type: DatabaseType): object | undefined {
   const rows: Readonly<Record<SlotTable, () => object | undefined>> = {
     SQL_WRITING: () => SQL_WRITING[type],
-    MIGRATION_DDL: () => moduleMigrationDdl(type),
-    SQL_ENGINE_GENERATORS: () => (sqlGeneratorRow(type) === undefined ? undefined : moduleSqlGenerators(type)),
+    MIGRATION_DDL: () => MIGRATION_DDL[type],
+    SQL_ENGINE_GENERATORS: () => sqlGeneratorRow(type),
     AGENT_SERVER_OVERLAY: () => (MODULE_AGENT_OVERLAYS.has(type) ? moduleAgentOverlay(type) : undefined),
   };
   return rows[table]();
@@ -622,6 +564,22 @@ const SQL_WRITING_SLOT_KINDS: Readonly<Record<string, keyof SqlWritingFunctions>
 /** The function members of a declaration's `migrationDdl`, in either form, by their dotted paths, read off the schema. */
 const MIGRATION_DDL_FUNCTION_PATHS = schemaFunctionPaths("migrationDdl");
 
+/** The slot kind of Studio's migration DDL function table that binds the name a declaration states at each path. */
+const MIGRATION_DDL_SLOT_KINDS: Readonly<Record<string, keyof MigrationDdlFunctions>> = {
+  "createTable.primaryKey": "createTablePrimaryKeys",
+  "createTable.foreignKey": "createTableForeignKeys",
+  "createTable.createTableRefusal": "createTableRefusals",
+  columnDef: "columnDefs",
+  createIndex: "createIndexes",
+  dropIndex: "dropIndexes",
+  addForeignKey: "addForeignKeys",
+  dropForeignKey: "dropForeignKeys",
+  addColumn: "addColumns",
+  dropColumn: "dropColumns",
+  modifyColumn: "modifyColumns",
+  dropTable: "dropTables",
+};
+
 /** Every function name a declaration's `migrationDdl` states, with the dotted path it is stated at. */
 function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
   return MIGRATION_DDL_FUNCTION_PATHS.flatMap((path) => {
@@ -632,6 +590,14 @@ function migrationDdlNames(d: EngineDeclaration): (readonly [path: string, name:
 
 /** The function members of a declaration's `sqlGenerators`, by their dotted paths, read off the schema. */
 const SQL_GENERATORS_FUNCTION_PATHS = schemaFunctionPaths("sqlGenerators");
+
+/** The slot kind of Studio's SQL generator function table that binds the name a declaration states at each path. */
+const SQL_GENERATOR_SLOT_KINDS: Readonly<Record<string, keyof SqlGeneratorFunctions>> = {
+  quote: "quotes",
+  table: "tables",
+  select: "selects",
+  selectList: "selectLists",
+};
 
 /** Every function name a declaration's `sqlGenerators` states, with the dotted path it is stated at; none where null. */
 function sqlGeneratorNames(d: EngineDeclaration): (readonly [path: string, name: string])[] {
@@ -992,7 +958,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing segment", () => {
+  test("the authored members are the catalog's, the data-only connection members, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, and the SQL writing, migration DDL and SQL generator segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1027,6 +993,8 @@ describe("the committed declarations", () => {
       "sqlText.updateTarget",
       "sqlText.completion",
       "sqlWriting",
+      "migrationDdl",
+      "sqlGenerators",
     ]);
     const bigquery = declared("bigquery");
     expect(authored("bigquery")).toEqual({
@@ -1071,6 +1039,8 @@ describe("the committed declarations", () => {
         completion: { formatSegment: null, readQuotedQualifier: null },
       },
       sqlWriting: bigquery.sqlWriting,
+      migrationDdl: bigquery.migrationDdl,
+      sqlGenerators: null,
     });
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
@@ -1255,6 +1225,17 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(committed, "sqlWriting"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member sqlWriting",
     );
+    expect(() => authoredMembersOf(without(committed, "migrationDdl"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member migrationDdl",
+    );
+    expect(() => authoredMembersOf(without(declared("postgres"), "migrationDdl"), "postgres.json")).toThrow(
+      "postgres.json lacks its authored member migrationDdl",
+    );
+    expect(() => authoredMembersOf(without(committed, "sqlGenerators"), "bigquery.json")).toThrow(
+      "bigquery.json lacks its authored member sqlGenerators",
+    );
+    // A segment stated as null is stated: an engine that writes the shared forms authors null.
+    expect(authoredMembersOf(declared("postgres"), "postgres.json").sqlGenerators).toBeNull();
     // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
     expect(() =>
       authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, "redaction") }, "bigquery.json"),
@@ -1311,72 +1292,6 @@ describe("the committed declarations", () => {
     const json = { ...postgres, language: { ...postgres.language, queryLanguage: "json" as const } };
     expect(() => buildEditor("postgres", CAPABILITIES.postgres, json)).toThrow(
       "postgres: the declaration states the query language json, and its provider declares sql",
-    );
-  });
-
-  test("the generator refuses, by name, a migration DDL member it has no place for", () => {
-    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
-    const refused = MIGRATION_DDL.kafka;
-    const written = MIGRATION_DDL.postgres;
-    const createTableRefused = MIGRATION_DDL.cassandra;
-    if (refused.tableDdl !== "refused") throw new Error("kafka's migration DDL row writes table DDL");
-    if (written.tableDdl !== "written" || written.transactionWrapper === null) {
-      throw new Error("postgres's migration DDL row writes no wrapped table DDL");
-    }
-    if (createTableRefused.tableDdl !== "written" || createTableRefused.createTable.kind !== "refused") {
-      throw new Error("cassandra's migration DDL row writes its CREATE TABLE");
-    }
-    const planted: [DatabaseType, MigrationDdlSpec, string][] = [
-      ["kafka", { ...refused, [key]: null }, key],
-      ["postgres", { ...written, [key]: null }, key],
-      ["postgres", { ...written, createTable: { ...written.createTable, [key]: null } }, `createTable.${key}`],
-      [
-        "cassandra",
-        { ...createTableRefused, createTable: { ...createTableRefused.createTable, [key]: null } },
-        `createTable.${key}`,
-      ],
-      [
-        "postgres",
-        { ...written, transactionWrapper: { ...written.transactionWrapper, [key]: null } },
-        `transactionWrapper.${key}`,
-      ],
-    ];
-
-    for (const [type, spec, member] of planted) {
-      expect(() => buildMigrationDdl(type, MIGRATION_DDL[type])).not.toThrow();
-      expect(() => buildMigrationDdl(type, spec)).toThrow(
-        `${type}: the migration DDL member "${member}" has no place in the engine declaration`,
-      );
-    }
-  });
-
-  test("the generator refuses, by name, a table DDL or create table form that is neither refused nor written", () => {
-    const row = MIGRATION_DDL.postgres;
-    if (row.tableDdl !== "written") throw new Error("postgres's migration DDL row writes no table DDL");
-    const partialTable = { ...row, tableDdl: "partial" } as unknown as MigrationDdlSpec;
-    const partialCreate = {
-      ...row,
-      createTable: { ...row.createTable, kind: "partial" },
-    } as unknown as MigrationDdlSpec;
-
-    expect(() => buildMigrationDdl("postgres", partialTable)).toThrow(
-      'postgres: the migration DDL member "tableDdl" is "partial", neither refused nor written',
-    );
-    expect(() => buildMigrationDdl("postgres", partialCreate)).toThrow(
-      'postgres: the migration DDL member "createTable.kind" is "partial", neither refused nor written',
-    );
-  });
-
-  test("the generator refuses, by name, an SQL generator member it has no place for", () => {
-    const key = `k${crypto.randomUUID().replaceAll("-", "")}`;
-    const row = SQL_ENGINE_GENERATORS.mssql;
-    if (row === undefined) throw new Error("mssql has no SQL generator row");
-    const planted = { ...row, [key]: null } as SqlEngineGenerators;
-
-    expect(() => buildSqlGenerators("mssql")).not.toThrow();
-    expect(buildSqlGenerators("postgres")).toBeNull();
-    expect(() => buildSqlGenerators("mssql", planted)).toThrow(
-      `mssql: the SQL generator member "${key}" has no place in the engine declaration`,
     );
   });
 
@@ -3443,11 +3358,6 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("the migration DDL modules the registry imports are the shipped engines, each exporting its registry row", () => {
-    expect(sorted(MIGRATION_DDL_MODULES.map(({ id }) => id))).toEqual(sorted(SHIPPED_DATABASE_TYPES));
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MODULE_MIGRATION_DDL.get(type) !== MIGRATION_DDL[type])).toEqual([]);
-  });
-
   test("migrationDdl states the row's table DDL, its refusal line, its transaction wrapper and its reasons in order", () => {
     expect(
       differing((type, d) => {
@@ -3492,21 +3402,23 @@ describe("the census", () => {
     expect(sorted([...new Set(kinds)])).toEqual(["refused", "written"]);
   });
 
-  test("every name a migration DDL declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+  test("every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs", () => {
     const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) =>
         migrationDdlNames(declared(type)).flatMap(([path, name]) => {
           const held = valueAt(MIGRATION_DDL[type], path);
+          const kind = MIGRATION_DDL_SLOT_KINDS[path];
+          const bound = kind === undefined ? undefined : MIGRATION_DDL_FUNCTIONS[kind][type]?.[name];
           const isSlot = slots[name]?.table === "MIGRATION_DDL" && slots[name]?.path === path;
-          const resolved = isSlot ? slotFunction(moduleMigrationDdl(type), name as DeclaredSlotName) : undefined;
-          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+          return isSlot && typeof bound === "function" && bound === held ? [] : [`${type}:${path}=${name}`];
         }),
       ),
     ).toEqual([]);
     // Vacuity: the schema states every migration DDL slot of the table as a function member, and the declarations name
     // them.
     expect(sorted(MIGRATION_DDL_FUNCTION_PATHS)).toEqual(sorted(tablePaths("MIGRATION_DDL")));
+    expect(sorted(Object.keys(MIGRATION_DDL_SLOT_KINDS))).toEqual(sorted(tablePaths("MIGRATION_DDL")));
     expect(SHIPPED_DATABASE_TYPES.flatMap((type) => migrationDdlNames(declared(type))).length).toBeGreaterThan(160);
   });
 
@@ -3599,13 +3511,6 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("the SQL generator modules the registry imports are the engines with a row, each exporting its registry row", () => {
-    const ids = Object.keys(SQL_ENGINE_GENERATORS) as DatabaseType[];
-
-    expect(sorted(SQL_GENERATOR_MODULES.map(({ id }) => id))).toEqual(sorted(ids));
-    expect(ids.filter((type) => MODULE_SQL_GENERATORS.get(type) !== SQL_ENGINE_GENERATORS[type])).toEqual([]);
-  });
-
   test("sqlGenerators is null exactly where the engine has no SQL_ENGINE_GENERATORS row, and states the row's count expression, COUNT(*) where it has none", () => {
     expect(
       differing((type, d) => {
@@ -3622,18 +3527,20 @@ describe("the census", () => {
     expect(counts.some((count) => count !== "COUNT(*)")).toBe(true);
   });
 
-  test("every name an SQL generator declaration states is its member's slot, and resolves through the census's slot table to the very function the engine's own module exports there", () => {
+  test("every name an SQL generator declaration states is its member's slot, and Studio's SQL generator function table binds it there to the function the engine's row runs", () => {
     const slots = DECLARED_SLOTS as Readonly<Record<string, { readonly table: SlotTable; readonly path: string }>>;
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) =>
         sqlGeneratorNames(declared(type)).flatMap(([path, name]) => {
           const held = valueAt(sqlGeneratorRow(type), path);
+          const kind = SQL_GENERATOR_SLOT_KINDS[path];
+          const bound = kind === undefined ? undefined : SQL_GENERATOR_FUNCTIONS[kind][type]?.[name];
           const isSlot = slots[name]?.table === "SQL_ENGINE_GENERATORS" && slots[name]?.path === path;
-          const resolved = isSlot ? slotFunction(moduleSqlGenerators(type), name as DeclaredSlotName) : undefined;
-          return typeof resolved === "function" && resolved === held ? [] : [`${type}:${path}=${name}`];
+          return isSlot && typeof bound === "function" && bound === held ? [] : [`${type}:${path}=${name}`];
         }),
       ),
     ).toEqual([]);
+    expect(sorted(Object.keys(SQL_GENERATOR_SLOT_KINDS))).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));
     // Vacuity: the schema states every SQL generator slot of the table as a function member, and each form other than
     // the quoting is named on one row and null on another.
     expect(sorted(SQL_GENERATORS_FUNCTION_PATHS)).toEqual(sorted(tablePaths("SQL_ENGINE_GENERATORS")));

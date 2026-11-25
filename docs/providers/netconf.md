@@ -564,7 +564,7 @@ This provider cannot cancel a run, so Studio sends no cancel, and the read runs 
 
 ## Migration DDL
 
-[`NETCONF_MIGRATION_DDL`](../../src/lib/db/providers/network/netconf/migration-ddl.ts) is what the schema-diff migration generator writes for `netconf`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/netconf.json`](../../src/lib/db/engine-declarations/netconf.json) declares what the schema-diff migration generator writes for `netconf`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 A node's shape is the device's YANG module, and this provider builds four read operations and a close, so there is no table DDL to wrap either (#1724).
 

@@ -375,7 +375,7 @@ reporting every mutation caught looks identical to a run that measured nothing.
 
 ## Migration DDL
 
-[`SPARKPLUG_MIGRATION_DDL`](../../src/lib/db/providers/industrial/sparkplug/migration-ddl.ts) is what the schema-diff migration generator writes for `sparkplug`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/sparkplug.json`](../../src/lib/db/engine-declarations/sparkplug.json) declares what the schema-diff migration generator writes for `sparkplug`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 A metric's shape is the birth certificate its edge node publishes, and the encoder has no function that writes a PUBLISH, so there is no table DDL to wrap either (#1720).
 

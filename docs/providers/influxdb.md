@@ -710,7 +710,7 @@ readOnly: true
 
 ## Migration DDL
 
-[`INFLUXDB_MIGRATION_DDL`](../../src/lib/db/providers/timeseries/influxdb/influxdb-migration-ddl.ts) is what the schema-diff migration generator writes for `influxdb`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`.
+The `migrationDdl` segment of [`engine-declarations/influxdb.json`](../../src/lib/db/engine-declarations/influxdb.json) declares what the schema-diff migration generator writes for `influxdb`, and Studio composes it into this engine's row of `MIGRATION_DDL`, read through `migrationDdlFor` in `src/lib/db/migration-ddl/`, each function it names bound by Studio's migration DDL function table, `MIGRATION_DDL_FUNCTIONS`.
 It declines the whole diff: `refusal` is the one line the migration prints after its header, in place of any DDL, and `transactionWrapper` is `null`.
 `influxdb` text is an InfluxQL statement, not SQL, and the provider is read-only, so there is no table DDL to wrap (#284).
 
