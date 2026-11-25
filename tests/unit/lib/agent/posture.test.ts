@@ -3,8 +3,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import * as manifest from "@/lib/agent/agent-manifest";
 import { namedList } from "@/lib/agent/engine-support";
+import * as grants from "@/lib/db/claim-grants";
 import * as compatibility from "@/lib/db/compatibility";
-import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { unknownTypeSentence } from "@/lib/db/type-id";
 import { AGENT_HANDOVER_BUDGET, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
@@ -59,7 +60,7 @@ const STATEMENT_BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
  * them honest: an engine that gains a `catalogCapture` fails this file until the copy names it.
  */
 function catalogPlanDialects(): string[] {
-  return (Object.keys(manifest.AGENT_STATEMENT_LANGUAGE) as DatabaseType[]).filter(
+  return (Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[]).filter(
     (type) => engineServerDialect(type).catalogCapture !== "unsupported",
   );
 }
@@ -706,28 +707,28 @@ describe("the engine names follow the enforcing list", () => {
     }
   });
 
-  test("whether an engine executes is the manifest's answer: an engine with a statement language reads", async () => {
+  test("whether an engine executes is Studio's grant of its statement language: an engine granted one reads", async () => {
     // Captured as a plain object before the substitution: the namespace itself follows the replacement.
-    const real = { ...manifest };
+    const real = { ...grants };
     try {
-      mock.module("@/lib/agent/agent-manifest", () => ({
+      mock.module("@/lib/db/claim-grants", () => ({
         ...real,
-        AGENT_STATEMENT_LANGUAGE: { ...real.AGENT_STATEMENT_LANGUAGE, mongodb: "sql", postgres: null },
+        GRANTED_AGENT_STATEMENT_LANGUAGE: { ...real.GRANTED_AGENT_STATEMENT_LANGUAGE, mongodb: "sql", postgres: null },
       }));
-      const { agentPosture: fromManifest } = await import("@/lib/agent/posture");
+      const { agentPosture: fromGrant } = await import("@/lib/agent/posture");
 
-      expect(fromManifest({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false }).tone).toBe(
+      expect(fromGrant({ mode: "agent", engine: "mongodb", engineLabel: "MongoDB", handover: false }).tone).toBe(
         "reads",
       );
       expect(
-        fromManifest({ mode: "agent", engine: "postgres", engineLabel: "PostgreSQL", handover: false }).headline,
+        fromGrant({ mode: "agent", engine: "postgres", engineLabel: "PostgreSQL", handover: false }).headline,
       ).toBe("Cannot execute on PostgreSQL");
-      // No connection is still no engine, whatever the manifest holds: it reads as unresolved, not as SQL.
-      expect(fromManifest({ mode: "agent", engine: null, engineLabel: "", handover: false }).headline).toBe(
+      // No connection is still no engine, whatever the grant holds: it reads as unresolved, not as SQL.
+      expect(fromGrant({ mode: "agent", engine: null, engineLabel: "", handover: false }).headline).toBe(
         "Cannot execute yet",
       );
     } finally {
-      mock.module("@/lib/agent/agent-manifest", () => real);
+      mock.module("@/lib/db/claim-grants", () => real);
     }
   });
 

@@ -3,7 +3,6 @@ import {
   AGENT_LANGUAGE_COPY,
   AGENT_PLAN_ESTIMATE_OPERATION,
   AGENT_REQUIREMENT_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementArgument,
   type AgentStatementLanguageId,
@@ -21,7 +20,7 @@ import { composesCatalogFor, composesEstimatingExplainFor } from "@/lib/agent/co
 import { AGENT_WORKFLOW_GOALS } from "@/lib/agent/goal-verifier";
 import { agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_PRESENTS_ANSWER, type AgentRunWorkflowType } from "@/lib/agent/types";
-import { AGENT_EXECUTION_ENGINES, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";

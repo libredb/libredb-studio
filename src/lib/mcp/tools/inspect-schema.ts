@@ -78,8 +78,8 @@ import {
  * resolves, before anything is acquired, and the refusal names the statement tool that reads it, which its arm
  * declares (`holdsNoTables`), rather than answering an empty page.
  *
- * It acquires under agent-operations, which sends no statement and so is served on every engine; an engine's
- * `agentReadings` row decides only which readings agent mode's `inspect_operations` offers, never this acquisition. The
+ * It acquires under agent-operations, which sends no statement and so is served on every engine; an engine's granted
+ * agent readings decide only which readings agent mode's `inspect_operations` offers, never this acquisition. The
  * decision event is written before acquisition and the outcome after, and a call whose record
  * cannot be written runs nothing. The page is fitted to the result cap at a table boundary, a
  * table comment is cut to its own bound first, and the column and index caps count what they leave

@@ -353,12 +353,12 @@ export async function POST(req: Request) {
          known first, and under Automatic it is: the rail classifies at
          `POST /api/agent/classify` and names the workflow in this request, so the
          refusal lands after the classify call and before the open.
-       - **The ENGINE'S LANGUAGE**, from `AGENT_STATEMENT_LANGUAGE`, keyed by type-id
-         and held by `tests/unit/lib/agent/agent-manifest.test.ts` to every provider
+       - **The ENGINE'S LANGUAGE**, from Studio's grant `GRANTED_AGENT_STATEMENT_LANGUAGE`,
+         keyed by type-id, whose record `tests/unit/lib/agent/agent-manifest.test.ts` holds to every provider
          that has `queryReadOnly`. Read here rather than probed
          off a constructed provider, because a construction is not free on the engines
          this refusal is about: on a single-writer file the second handle throws rather
-         than opening (B49), and it is the same record the rail and the safety strip
+         than opening (B49), and it is the same grant the rail and the safety strip
          read, so the notice and the refusal cannot disagree about which engines they
          are talking about.
        - **The REVIEW RECORD**, `AGENT_EXECUTION_ENGINES`, the record the provider

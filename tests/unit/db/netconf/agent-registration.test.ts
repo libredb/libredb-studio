@@ -6,13 +6,17 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { fingerprintNetconfrpc, netconfrpcRowCapAdvice } from "@/lib/agent/languages/netconfrpc/adapter";
 import { NETCONFRPC_CLIENT_PACK } from "@/lib/agent/languages/netconfrpc/client";
 import { NETCONFRPC_TOOL_OVERRIDES } from "@/lib/agent/languages/netconfrpc/definitions";
 import { NETCONFRPC_SERVER_PACK } from "@/lib/agent/languages/netconfrpc/server";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import {
+  AGENT_EXECUTION_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
+  MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
+} from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import {

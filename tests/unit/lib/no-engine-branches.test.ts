@@ -127,6 +127,8 @@ export const REGISTRIES: readonly Listed[] = [
     "GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE",
     "GRANTED_SSH_TUNNEL_REFUSAL",
     "GRANTED_SEED_AGENT_CREDENTIAL",
+    "GRANTED_AGENT_STATEMENT_LANGUAGE",
+    "GRANTED_AGENT_READINGS",
     "READ_ONLY_ENFORCED",
     "UNGRANTED_CLAIM_REFUSALS",
   ].map((declaration) => ({
@@ -134,7 +136,7 @@ export const REGISTRIES: readonly Listed[] = [
     declaration,
     count: 1,
     reason:
-      "Studio's grant of a policy or MCP claim, computed from each engine's request and Studio's review record and typed over the type-id union",
+      "Studio's grant of a claim, computed from each engine's request and Studio's review record and typed over the type-id union",
   })),
   {
     path: "src/lib/db/engine-catalog/claims.generated.ts",
@@ -380,12 +382,12 @@ export const REGISTRIES: readonly Listed[] = [
     reason:
       "the statements and paging clause run_read_query names for each engine, a total table compile-enforced over the type-id union",
   },
-  { path: "src/lib/agent/agent-manifest.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
+  { path: "src/lib/db/compatibility.ts", declaration: "AGENT_STATEMENT_LANGUAGE", count: 1, reason: AGENT_LEG },
   {
     path: "src/lib/agent/agent-manifest.ts",
     declaration: "AgentAvailabilityTables",
     count: 1,
-    reason: "the type of the agent-leg tables above, which availability is decided from",
+    reason: "the type of the agent-leg tables availability is decided from, the granted statement language among them",
   },
   {
     path: "src/lib/db/compatibility.ts",

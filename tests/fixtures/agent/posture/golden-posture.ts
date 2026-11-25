@@ -16,7 +16,7 @@
  *
  * Nothing here builds a provider or reaches a database: `agentPosture` is a pure function of its input.
  */
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { agentPosture } from "@/lib/agent/posture";
 import { getDBConfig } from "@/lib/db-ui-config";
 import type { DatabaseType } from "@/lib/types";

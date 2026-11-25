@@ -1,7 +1,7 @@
 /**
- * Studio's grant of each policy, MCP and connection claim an engine declaration requests (docs/providers/CONTRACT.md,
- * clauses M-54, M-82 and M-83): the one module that reads a request, `BUNDLED_CLAIM_REQUESTS`, and Studio's review
- * record of each claim, and the module every gate reads in their place.
+ * Studio's grant of each policy, MCP, connection and agent mode claim an engine declaration requests
+ * (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): the one module that reads a request,
+ * `BUNDLED_CLAIM_REQUESTS`, and Studio's review record of each claim, and the module every gate reads in their place.
  *
  * A claim is a request, never a fact Studio believes as declared (clause M-52). So each claim is granted as the more
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
@@ -38,23 +38,38 @@
  *   where no row exists. The granted table keeps the record's vocabulary, the sentence or null.
  * - `connection.agentCredential`, unordered: the row where the request equals it, form and superseding fields in order,
  *   and null otherwise or where no row exists.
+ * - `agent.statementLanguage`, unordered: the row where the request equals it, and null, agent mode sending the engine
+ *   no statement, otherwise or where no row exists.
+ * - `facets.agentReadings`, a set a gate offers: the intersection of the request and the row, in the row's order,
+ *   always a fresh frozen list, and the empty list where no row exists. The record is the `agentReadings` member of
+ *   each `ENGINE_FACETS` row, handed over whole.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
- * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a row of
- * Studio's record outside it is refused naming the record, the claim and the engine.
+ * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
+ * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine, and
+ * every other row is Studio's own typed table, read as it stands.
  *
- * The records stay Studio's hand-written tables in src/lib/db/compatibility.ts and src/lib/db/connection-fields.ts,
- * which import nothing of this module; tests/unit/db/claim-record-readers.test.ts holds that no other module of
- * Studio's source reads them, and tests/unit/db/engine-declaration-readers.test.ts that no other module reads a
- * request. For every engine Studio ships each request is its record's row, so each granted table equals its record
- * there.
+ * The records stay Studio's hand-written tables in src/lib/db/compatibility.ts, the statement language record among
+ * them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this
+ * module; tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source reads them, the
+ * facet rows' `agentReadings` by member, and tests/unit/db/engine-declaration-readers.test.ts that no other module
+ * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its
+ * record there.
  *
  * The tables are computed once, when this module loads, over the bundled declarations; a loader that admits a provider
- * package computes `grantClaims` over its admitted set the same way. The module holds literals and generated data only,
- * so the browser's readers, the read-only marker and the connection form, load it as they load the records.
+ * package computes `grantClaims` over its admitted set the same way. The module holds literals, the facet rows and
+ * generated data only, so the browser's readers, the read-only marker, the connection form and the agent rail, load it
+ * as they load the records.
  */
-import type { AgentCredentialFormClaim, McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
+import type {
+  AgentCredentialFormClaim,
+  AgentReading,
+  McpClaims,
+  PolicyClaims,
+  StatementLanguage,
+} from "@libredb/provider-sdk/manifest";
 import type { DatabaseType, HostPathField } from "@/lib/types";
 import {
+  AGENT_STATEMENT_LANGUAGE,
   HOST_PATH_FIELDS,
   MASKING_EXEMPT_COLUMNS,
   MCP_AGENT_CREDENTIAL_REQUIRED,
@@ -77,7 +92,8 @@ import {
   type SeedAgentCredential,
 } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
-import type { ClaimRequestEntry, ConnectionClaims } from "./engine-catalog/projection";
+import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
+import { ENGINE_FACETS } from "./engine-facets";
 import type { AgentCredentialForm, ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
@@ -87,7 +103,7 @@ type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]
 /** One record of Studio's, keyed by engine id; an id it holds no row for is read at the claim's restrictive value. */
 type Rows<T> = Readonly<Record<string, T>>;
 
-/** Studio's review record of each policy, MCP and connection claim, keyed by the member that requests it. */
+/** Studio's review record of each policy, MCP, connection and agent mode claim, keyed by the member requesting it. */
 export interface ClaimRecords {
   readonly writeReach: Rows<WriteReach>;
   readonly readsFileAccessPosture: Rows<boolean>;
@@ -106,6 +122,9 @@ export interface ClaimRecords {
   /** The sentence a tunnel that is on is refused with, or null where the engine takes one. */
   readonly sshTunnel: Rows<string | null>;
   readonly agentCredential: Rows<SeedAgentCredential | null>;
+  readonly statementLanguage: Rows<StatementLanguage>;
+  /** The engine's facet row, whose `agentReadings` member is the record. */
+  readonly agentReadings: Rows<{ readonly agentReadings: readonly AgentReading[] }>;
 }
 
 /** An engine's seed-only fields as `grantClaims` reads them, or null where it has none. */
@@ -136,6 +155,8 @@ export interface ClaimGrants<K extends string> {
   readonly serverLevelAtCatalogChoice: Readonly<Record<K, boolean>>;
   readonly sshTunnel: Readonly<Record<K, string | null>>;
   readonly agentCredential: Readonly<Record<K, SeedAgentCredential | null>>;
+  readonly statementLanguage: Readonly<Record<K, StatementLanguage>>;
+  readonly agentReadings: Readonly<Record<K, readonly AgentReading[]>>;
 }
 
 /** Studio's records, as `grantClaims` reads them for the bundled declarations. */
@@ -156,6 +177,8 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   serverLevelWithoutDatabase: OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   sshTunnel: SSH_TUNNEL_REFUSAL,
   agentCredential: SEED_AGENT_CREDENTIAL,
+  statementLanguage: AGENT_STATEMENT_LANGUAGE,
+  agentReadings: ENGINE_FACETS,
 });
 
 /**
@@ -165,6 +188,50 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
 export const HOST_PATH_FIELD_NAMES: readonly HostPathField[] = Object.freeze([
   "clientCertificatePath",
   "clientPrivateKeyPath",
+]);
+
+/**
+ * The statement languages a declaration may request, the schema's `statementLanguage` enum but its null, in its order:
+ * the vocabulary of `agent.statementLanguage`.
+ */
+export const STATEMENT_LANGUAGE_NAMES: readonly NonNullable<StatementLanguage>[] = Object.freeze([
+  "sql",
+  "kubectl",
+  "mongo",
+  "libredbkv",
+  "influxql",
+  "weaviateapi",
+  "qdrantapi",
+  "cypher",
+  "milvusrpc",
+  "rediscli",
+  "etcdctl",
+  "oxiacli",
+  "rabbitread",
+  "kafkaread",
+  "s3api",
+  "fsquery",
+  "snmpget",
+  "netconfrpc",
+  "modbusread",
+  "promql",
+  "opcuaread",
+  "mtconnectread",
+  "mqttread",
+  "sparkplugread",
+]);
+
+/**
+ * The curated readings a declaration may request, the schema's `agentReading` enum, in its order: the vocabulary of
+ * `facets.agentReadings`, the kinds `CURATED_OPERATION_KINDS` names.
+ */
+export const AGENT_READING_NAMES: readonly AgentReading[] = Object.freeze([
+  "sessions",
+  "slow-queries",
+  "table-stats",
+  "index-stats",
+  "storage",
+  "health",
 ]);
 
 /** Core's sentence for a connection whose file access is denied, on an engine Studio holds no refusal row for. */
@@ -271,6 +338,21 @@ function agentCredentialRequest(engine: string, value: unknown): ConnectionClaim
     }
   }
   return refused(engine, "connection.agentCredential", value);
+}
+
+/** `value` as a statement language request, a language of `STATEMENT_LANGUAGE_NAMES` or null, or refused by name. */
+function statementLanguageRequest(engine: string, value: unknown): StatementLanguage {
+  if (value === null) return null;
+  const language = STATEMENT_LANGUAGE_NAMES.find((name) => name === value);
+  return language ?? refused(engine, "agent.statementLanguage", value);
+}
+
+/** `value` as an agent readings request, a list of `AGENT_READING_NAMES`, or refused by name. */
+function agentReadingsRequest(engine: string, value: unknown): readonly AgentReading[] {
+  if (Array.isArray(value) && value.every((reading) => AGENT_READING_NAMES.some((name) => name === reading))) {
+    return value as readonly AgentReading[];
+  }
+  return refused(engine, "facets.agentReadings", value);
 }
 
 /** `value` as a denied file access refusal request, a sentence or null, or refused by name. */
@@ -400,6 +482,18 @@ function grantConnection(engine: string, connection: ConnectionClaims, records: 
   } as const;
 }
 
+/** The grant of the agent mode claims `facets` and `agent` that `engine` requests, against `records`. */
+function grantAgentMode(engine: string, facets: FacetClaims, agent: AgentClaims, records: ClaimRecords) {
+  const language = statementLanguageRequest(engine, agent.statementLanguage);
+  const readings = agentReadingsRequest(engine, facets.agentReadings);
+  const row = rowOf(records.agentReadings, engine, undefined);
+  return {
+    statementLanguage:
+      language !== null && language === rowOf(records.statementLanguage, engine, null) ? language : null,
+    agentReadings: Object.freeze((row?.agentReadings ?? []).filter((reading) => readings.includes(reading))),
+  } as const;
+}
+
 /** The grant of every claim `requested` by `engine`, against `records`, its seed-only fields `seedOnly`. */
 function grantEngine(
   engine: string,
@@ -441,6 +535,7 @@ function grantEngine(
     readOnlyEnforced: policy.writeReach !== "open",
     ungrantedRefusals: policy.singleWriterRefusal,
     ...connection,
+    ...grantAgentMode(engine, requested.facets, requested.agent, records),
   };
 }
 
@@ -465,12 +560,15 @@ const GRANT_MEMBERS: readonly (keyof ClaimGrants<string>)[] = [
   "serverLevelAtCatalogChoice",
   "sshTunnel",
   "agentCredential",
+  "statementLanguage",
+  "agentReadings",
 ];
 
 /**
- * Studio's grant of every policy, MCP and connection claim `requests` holds, against `records`, with `seedOnly` the
- * seed-only fields of the same engines, read for the host path fields where no record row exists: one frozen table per
- * claim, and two for the server level, one per gate, keyed by the requests' engines in their order, each row frozen.
+ * Studio's grant of every policy, MCP, connection and agent mode claim `requests` holds, against `records`, with
+ * `seedOnly` the seed-only fields of the same engines, read for the host path fields where no record row exists: one
+ * frozen table per claim, and two for the server level, one per gate, keyed by the requests' engines in their order,
+ * each row frozen.
  *
  * @throws {Error} Naming the engine, the claim and the value, for a request value outside its claim's vocabulary;
  * naming Studio's record, the claim, the value and the engine, for a record row outside it; naming the engine, for an
@@ -582,3 +680,19 @@ export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | 
 /** Studio's grant of `connection.agentCredential`, which the seed schema and the seed projection's gate read. */
 export const GRANTED_SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> =
   BUNDLED_GRANTS.agentCredential;
+
+/**
+ * Studio's grant of `agent.statementLanguage`: the language agent mode sends the engine, or null where it sends none.
+ * The agent posture, workflow availability, the classify route, the engine pack resolver, the agent rail and the MCP
+ * served set and arms read it.
+ */
+export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, StatementLanguage>> =
+  BUNDLED_GRANTS.statementLanguage;
+
+/**
+ * Studio's grant of `facets.agentReadings`: the curated readings agent mode is offered on the engine, in its facet
+ * row's order. Whether the operations workflow opens in agent mode, the readings `inspect_operations` offers and
+ * accepts, and the run ledger's reading check read it.
+ */
+export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly AgentReading[]>> =
+  BUNDLED_GRANTS.agentReadings;

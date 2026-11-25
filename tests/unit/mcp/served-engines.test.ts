@@ -5,8 +5,13 @@
  * MCP read row is still false, is pinned here rather than waiting for the first joiner.
  */
 import { describe, expect, test } from "bun:test";
-import { AGENT_STATEMENT_LANGUAGE, type AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_EXECUTION_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
+  MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
+} from "@/lib/db/compatibility";
 import { mcpStatementEngines, type McpExposure } from "@/lib/mcp/tools/served-engines";
 import type { DatabaseType } from "@/lib/types";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";

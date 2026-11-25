@@ -1,9 +1,9 @@
 /**
  * Studio's engine catalog, its data-only connection tables, its connection forms, its connection strings, each
  * engine's execution UI and fence aliases, its query dialects, tab type editors and editor languages, each engine's
- * SQL text, SQL writing, migration DDL and SQL generator forms, and each engine's policy, MCP and connection claim
- * requests as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses M-70, M-71,
- * M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83).
+ * SQL text, SQL writing, migration DDL and SQL generator forms, and each engine's policy, MCP, connection and agent
+ * mode claim requests as projections of a set of admitted engine declarations (docs/providers/CONTRACT.md, clauses
+ * M-70, M-71, M-72, M-74, M-75, M-77, M-78, M-79, M-80, M-81, M-82 and M-83).
  *
  * The catalog answers which engines Studio ships, whether each is an engine the user already runs (`external`) or the
  * store Studio carries with it (`embedded`), and how long the host waits for an open of each: one entry per declaration,
@@ -68,14 +68,16 @@
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, as the
  * declaration states them, each member its own property, an agent credential form in the declaration's vocabulary,
  * `pair` included, a masking exemption as its column pattern and reason, a tunnel offered or refused with its sentence,
- * and a seed agent credential as its form and the fields that supersede it, or null. Every member is a claim: a
- * request, which only Studio's grant reader, src/lib/db/claim-grants.ts, reads, granting each against Studio's review
- * record of the claim (clauses M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the
- * evidence the write reach request summarizes, is authored with them and never projected: no gate reads it.
+ * and a seed agent credential as its form and the fields that supersede it, or null, and its two agent mode claims,
+ * `facets.agentReadings` and `agent.statementLanguage`, the curated readings it asks agent mode to offer and the
+ * statement language it asks agent mode to send, or null. Every member is a claim: a request, which only Studio's
+ * grant reader, src/lib/db/claim-grants.ts, reads, granting each against Studio's review record of the claim (clauses
+ * M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the evidence the write reach
+ * request summarizes, is authored with them and never projected: no gate reads it.
  *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,
  * `AUTHORED_MEMBERS`), so none reads anything the declaration generator writes, and none of them is a claim but the
- * policy, MCP and connection claims, which only the grant reader reads, and the confirmation gate's two,
+ * policy, MCP, connection and agent mode claims, which only the grant reader reads, and the confirmation gate's two,
  * `sqlText.readsSqlText` and an exempt form of the grammar, which the gate counts only where Studio's review record
  * lists them (docs/providers/CONTRACT.md, clause S-8). Each takes `AuthoredDeclaration`, those members alone: an
  * admitted `EngineDeclaration` is one, and so are the authored members the catalog generator's `--write` reads from a
@@ -152,6 +154,8 @@ export interface AuthoredDeclaration {
     readonly import: Connection["import"];
     readonly connectBudgetMs: Connection["connectBudgetMs"];
   };
+  readonly facets: FacetClaims;
+  readonly agent: AgentClaims;
   readonly editor: {
     readonly commitKeyword: Editor["commitKeyword"];
     readonly consentDeadline: Editor["consentDeadline"];
@@ -216,14 +220,23 @@ export type ConnectionClaims = Pick<
   "sshTunnel" | "hostPathFields" | "opensLocalFile" | "serverLevelWithoutDatabase" | "agentCredential"
 >;
 
+/** The facets claim a declaration authors: the curated readings it asks agent mode to offer. */
+export type FacetClaims = Pick<EngineDeclaration["facets"], "agentReadings">;
+
+/** The agent claim a declaration authors: the statement language it asks agent mode to send, or null. */
+export type AgentClaims = Pick<EngineDeclaration["agent"], "statementLanguage">;
+
 /**
- * One engine's claim requests as its declaration authors them: its `policy` and `mcp` segments and its connection
- * claims, every member a claim Studio grants only through its grant reader, src/lib/db/claim-grants.ts.
+ * One engine's claim requests as its declaration authors them: its `policy` and `mcp` segments, its connection claims
+ * and its agent mode claims, every member a claim Studio grants only through its grant reader,
+ * src/lib/db/claim-grants.ts.
  */
 export interface ClaimRequestEntry {
   readonly policy: PolicyClaims;
   readonly mcp: McpClaims;
   readonly connection: ConnectionClaims;
+  readonly facets: FacetClaims;
+  readonly agent: AgentClaims;
 }
 
 /** The claim requests: one frozen entry per engine id, keyed in ascending code-unit order of the ids. */
@@ -692,14 +705,15 @@ export function projectSqlGenerators(declarations: readonly AuthoredDeclaration[
 }
 
 /**
- * The policy, MCP and connection claim requests of `declarations`, each entry the declaration's `policy` and `mcp`
- * segments and its connection claims as it states them, members every declaration authors, in its own member order at
- * every level. No other member is read: the authored `safeguards`, which no gate reads, included.
+ * The policy, MCP, connection and agent mode claim requests of `declarations`, each entry the declaration's `policy`
+ * and `mcp` segments, its connection claims, its agent readings and its statement language as it states them, members
+ * every declaration authors, in its own member order at every level. No other member is read: the authored
+ * `safeguards`, which no gate reads, included.
  *
  * @throws {Error} When two declarations state the same `id`, naming it.
  */
 export function projectClaimRequests(declarations: readonly AuthoredDeclaration[]): ClaimRequests {
-  return recordOf(inIdOrder(declarations), ({ policy, mcp, connection }) =>
+  return recordOf(inIdOrder(declarations), ({ policy, mcp, connection, facets, agent }) =>
     frozenCopy<ClaimRequestEntry>({
       policy,
       mcp,
@@ -710,6 +724,8 @@ export function projectClaimRequests(declarations: readonly AuthoredDeclaration[
         serverLevelWithoutDatabase: connection.serverLevelWithoutDatabase,
         agentCredential: connection.agentCredential,
       },
+      facets: { agentReadings: facets.agentReadings },
+      agent: { statementLanguage: agent.statementLanguage },
     }),
   );
 }

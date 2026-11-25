@@ -16,7 +16,8 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:
 import { logger } from "@/lib/logger";
 import { LLMConfigError, LLMStreamError } from "@/lib/llm/types";
 import type { AgentModel } from "@/lib/agent/model-adapter";
-import { AGENT_STATEMENT_LANGUAGE, AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
+import { AgentManifestError, openWorkflows } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 
 interface GenerateTextCall {
   readonly model: unknown;

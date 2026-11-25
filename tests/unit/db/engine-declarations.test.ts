@@ -96,7 +96,6 @@ import { refuseInexactJson } from "../../../scripts/read-engine-capabilities";
 import { SEGMENT_CLAIMS } from "./engine-declarations/claims";
 import {
   AGENT_REQUIREMENT_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
   AGENT_WORKFLOW_VARIANTS,
   type AgentStatementLanguageId,
   workflowAvailability,
@@ -114,6 +113,7 @@ import { detectConnectionStringType, parseConnectionString, pasteText } from "@/
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
 import {
   AGENT_EXECUTION_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
   HOST_PATH_FIELDS,
@@ -958,7 +958,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -988,6 +988,8 @@ describe("the committed declarations", () => {
       "connection.opensLocalFile",
       "connection.serverLevelWithoutDatabase",
       "connection.agentCredential",
+      "facets.agentReadings",
+      "agent.statementLanguage",
       "editor.commitKeyword",
       "editor.consentDeadline",
       "editor.fenceAliases",
@@ -1038,6 +1040,8 @@ describe("the committed declarations", () => {
         import: null,
         connectBudgetMs: 140_000,
       },
+      facets: { agentReadings: ["sessions", "slow-queries", "table-stats", "storage", "health"] },
+      agent: { statementLanguage: null },
       editor: {
         commitKeyword: "COMMIT",
         consentDeadline: null,
@@ -1083,6 +1087,11 @@ describe("the committed declarations", () => {
       supersededBy: ["apiKeyId", "apiKeySecret"],
     });
     expect(authored("libredb").connection.agentCredential).toBeNull();
+    // The facets' agent readings and the agent's statement language are requests too: agent mode reads Studio's grant
+    // of each, never the request. The rest of both segments is generated.
+    expect(authored("kafka").facets).toEqual({ agentReadings: ["health"] });
+    expect(authored("kafka").agent).toEqual({ statementLanguage: "kafkaread" });
+    expect(authored("mqtt").facets.agentReadings).toEqual([]);
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
     // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
@@ -1183,11 +1192,17 @@ describe("the committed declarations", () => {
       ...committed.safeguards,
       writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
     };
+    // The facets' agent readings and the agent's statement language are authored: a request edited by hand is kept,
+    // and the rest of both segments is rewritten from Studio's tables.
+    const facets = { ...committed.facets, agentReadings: ["health" as const] };
+    const agent = { ...committed.agent, statementLanguage: "mongo" as const };
     const edited = {
       ...committed,
       displayName: "Edited by hand",
       location: "embedded",
       connection,
+      facets: { ...facets, maintenance: [] },
+      agent: { ...agent, overlay: null },
       editor: { ...editor, explainFormat: null },
       sqlText: { ...sqlText, redaction: { kind: "none" } },
       sqlWriting,
@@ -1204,6 +1219,8 @@ describe("the committed declarations", () => {
       displayName: "Edited by hand",
       location: "embedded",
       connection,
+      facets,
+      agent,
       editor,
       sqlText,
       sqlWriting,
@@ -1278,6 +1295,14 @@ describe("the committed declarations", () => {
         authoredMembersOf({ ...committed, editor: without(committed.editor, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member editor.${member}`);
     }
+    expect(() =>
+      authoredMembersOf({ ...committed, facets: without(committed.facets, "agentReadings") }, "bigquery.json"),
+    ).toThrow("bigquery.json lacks its authored member facets.agentReadings");
+    expect(() =>
+      authoredMembersOf({ ...committed, agent: without(committed.agent, "statementLanguage") }, "bigquery.json"),
+    ).toThrow("bigquery.json lacks its authored member agent.statementLanguage");
+    // A statement language stated as null is stated: an engine that speaks none authors null.
+    expect(authoredMembersOf(committed, "bigquery.json").agent.statementLanguage).toBeNull();
     expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member editor.commitKeyword",
     );
@@ -1381,34 +1406,39 @@ describe("the committed declarations", () => {
       dialect: { ...dialectOf("mssql"), profileComposition: { ...profile, [member]: /text/g } },
     });
 
-    expect(buildAgentOverlay("bigquery")).toBeNull();
-    expect(() => buildAgentOverlay("bigquery", postgres)).toThrow(
+    expect(buildAgentOverlay("bigquery", null)).toBeNull();
+    expect(() => buildAgentOverlay("bigquery", null, postgres)).toThrow(
       "bigquery: the engine speaks no statement language, so its agent overlay has no place in the engine declaration",
     );
-    expect(buildAgentOverlay("kafka")).toEqual({ dialect: null, grounding: null });
-    expect(buildAgentOverlay("cassandra")?.grounding).toBe("groundingOverride");
+    // The statement language is the declaration's: one authored as null on an engine whose overlay the registry holds
+    // leaves that overlay no place, and the generator refuses it by name.
+    expect(() => buildAgentOverlay("postgres", null)).toThrow(
+      "postgres: the engine speaks no statement language, so its agent overlay has no place in the engine declaration",
+    );
+    expect(buildAgentOverlay("kafka", "kafkaread")).toEqual({ dialect: null, grounding: null });
+    expect(buildAgentOverlay("cassandra", "sql")?.grounding).toBe("groundingOverride");
     for (const member of ["workflowToolRules", "answerNotADataRead"]) {
       expect(() =>
-        buildAgentOverlay("postgres", { ...postgres, [member]: (base: unknown) => base } as typeof postgres),
+        buildAgentOverlay("postgres", "sql", { ...postgres, [member]: (base: unknown) => base } as typeof postgres),
       ).toThrow(`postgres: the agent overlay member "${member}" has no place in the engine declaration`);
     }
-    expect(() => buildAgentOverlay("postgres", { ...postgres, [key]: null } as typeof postgres)).toThrow(
+    expect(() => buildAgentOverlay("postgres", "sql", { ...postgres, [key]: null } as typeof postgres)).toThrow(
       `postgres: the agent overlay member "${key}" has no place in the engine declaration`,
     );
     expect(() =>
-      buildAgentOverlay("postgres", {
+      buildAgentOverlay("postgres", "sql", {
         ...postgres,
         dialect: { ...dialectOf("postgres"), [key]: "unsupported" },
       } as typeof postgres),
     ).toThrow(`postgres: the agent overlay member "dialect.${key}" has no place in the engine declaration`);
     expect(() =>
-      buildAgentOverlay("postgres", {
+      buildAgentOverlay("postgres", "sql", {
         ...postgres,
         dialect: { ...dialectOf("postgres"), catalogRead: { ...catalogRead, [key]: true } },
       } as typeof postgres),
     ).toThrow(`postgres: the agent overlay member "dialect.catalogRead.${key}" has no place in the engine declaration`);
     expect(() =>
-      buildAgentOverlay("postgres", {
+      buildAgentOverlay("postgres", "sql", {
         ...postgres,
         dialect: {
           ...dialectOf("postgres"),
@@ -1419,7 +1449,7 @@ describe("the committed declarations", () => {
       `postgres: the agent overlay member "dialect.catalogRead.compose.${key}" has no place in the engine declaration`,
     );
     expect(() =>
-      buildAgentOverlay("mssql", {
+      buildAgentOverlay("mssql", "sql", {
         ...mssql,
         dialect: { ...dialectOf("mssql"), planEstimate: { kind: "partial", mode: "estimate-plan" } },
       } as unknown as typeof mssql),
@@ -1427,7 +1457,7 @@ describe("the committed declarations", () => {
       'mssql: the agent overlay member "dialect.planEstimate.kind" is "partial", neither prefix nor session-mode',
     );
     expect(() =>
-      buildAgentOverlay("cassandra", {
+      buildAgentOverlay("cassandra", "sql", {
         ...engineServerOverlay("cassandra"),
         grounding: languageServerPack("sql").grounding,
       } as ReturnType<typeof engineServerOverlay>),
@@ -1435,7 +1465,7 @@ describe("the committed declarations", () => {
       "cassandra: the agent overlay gives grounding as a value, which the declaration names only as a derivation",
     );
     for (const member of ["incomparableType", "uncountableType"] as const) {
-      expect(() => buildAgentOverlay("mssql", flagged(member) as typeof mssql)).toThrow(
+      expect(() => buildAgentOverlay("mssql", "sql", flagged(member) as typeof mssql)).toThrow(
         `mssql: the profile type pattern ${member} has flags "g", which are not none, i, u or iu`,
       );
     }

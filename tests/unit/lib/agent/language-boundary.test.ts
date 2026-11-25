@@ -10,8 +10,8 @@
  *
  * - R1a: a string literal, no-substitution template or literal type whose whole text is a pack id.
  * - R1b: a property named by a pack id: an assignment, a shorthand, a signature, a `.x` access or an `["x"]` access.
- * - R1c: any other identifier that contains a pack id, in any case, except an engine's own name (`mongodb` as a key of
- *   `AGENT_STATEMENT_LANGUAGE`): engine names are the `DatabaseType` rule's, which is PR 3's.
+ * - R1c: any other identifier that contains a pack id, in any case, except an engine's own name (`mongodb`, a key of
+ *   the `DatabaseType` map `AGENT_STATEMENT_LANGUAGE`): engine names are the `DatabaseType` rule's, which is PR 3's.
  * - R1d: a string or template part that names a MongoDB plan stage (`COLLSCAN`, `IXSCAN`).
  * - R1e: a string literal or literal type that starts with a pack id and a separator, or ends in `-<id>.<n>`: an
  *   operation id, a verifier id or a fingerprint prefix.
@@ -34,7 +34,8 @@
  * - R5e: a string literal or literal type that starts with `sql` and a `.`, `:` or `-`: an operation, requirement or
  *   verifier id.
  * - R8a: a string literal or literal type whose whole text is an engine id, a key of `AGENT_STATEMENT_LANGUAGE`.
- * - R8b: a property named by an engine id, except the keys of `AGENT_STATEMENT_LANGUAGE` itself.
+ * - R8b: a property named by an engine id, with no exception: `AGENT_STATEMENT_LANGUAGE`, the total map keyed by every
+ *   engine id, is Studio's record in src/lib/db/compatibility.ts, outside the boundary.
  * - R8c: any other identifier with a whole segment, or a run of adjacent segments, (split at `_` and at case changes,
  *   then lowercased) that is an engine id: `postgresThing` and `duckDbPlan` are, `redistribute` is not. An import or export specifier is no reference, as for
  *   R5c, so an imported name is read where the file uses it.
@@ -75,12 +76,13 @@ import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import * as manifest from "@/lib/agent/agent-manifest";
-import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import * as languages from "@/lib/agent/languages";
 import * as languageClients from "@/lib/agent/languages/client";
 import * as languageMcpFacets from "@/lib/agent/languages/mcp";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import * as languageServers from "@/lib/agent/languages/server";
+import { AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const AGENT = "src/lib/agent";
@@ -199,33 +201,9 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mqttread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "sparkplugread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R5a "sql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mongo"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kubectl"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "libredbkv"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "influxql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "weaviateapi"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "qdrantapi"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "cypher"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "milvusrpc"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "rediscli"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "etcdctl"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "oxiacli"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "rabbitread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kafkaread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "s3api"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "fsquery"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "snmpget"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "netconfrpc"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "modbusread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "promql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "opcuaread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mtconnectread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mqttread"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "sparkplugread"`]: 1,
   // The provider capability `queryLanguage`, whose value "influxql" names the editor's language and is spelled as the
   // pack id; the inventory reads it to write an InfluxQL measurement as "db".."m", the spelling the server reads.
   [`${AGENT}/context-snapshot.ts#qualifiedName: R1a "influxql"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R5a "sql"`]: 16,
   [`${AGENT}/agent-manifest.ts#AgentStatementArgument: R5a "sql"`]: 1,
   [`${AGENT}/tools.ts#argument: R5a "sql"`]: 1,
   [`${AGENT}/investigation.ts#planningStatementContract: R5a "sql"`]: 2,
@@ -461,7 +439,7 @@ const isSpecifierName = (node: ts.Node): boolean =>
   ts.isImportSpecifier(node.parent) || ts.isExportSpecifier(node.parent);
 
 /** R1, R2, R5, R8 and R9 over one core file: every finding, once per occurrence. */
-function coreFileFindings(file: string, text: string, exemptEngineMap = true): string[] {
+function coreFileFindings(file: string, text: string): string[] {
   const inMcp = file.startsWith(`${MCP}/`);
   const source = parse(file, text);
   const findings: string[] = [];
@@ -516,14 +494,6 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
     ts.forEachChild(node, bind);
   };
   bind(source);
-  const isEngineMapKey = (node: ts.Node): boolean =>
-    exemptEngineMap &&
-    file === MANIFEST &&
-    ts.isPropertyAssignment(node.parent) &&
-    declarationOf(node) === "AGENT_STATEMENT_LANGUAGE";
-  const engineProperty = (node: ts.Node, name: string): void => {
-    if (!isEngineMapKey(node)) add(node, "R8b", name);
-  };
   const visit = (node: ts.Node): void => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       const literal = JSON.stringify(node.text);
@@ -540,7 +510,7 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
       }
       if (!isSpecifier && SQL_COMPOUND.test(node.text)) add(node, "R5e", literal);
       if (!isSpecifier && ENGINE_IDS.has(node.text)) {
-        if (isPropertyName(node)) engineProperty(node, node.text);
+        if (isPropertyName(node)) add(node, "R8b", node.text);
         else add(node, "R8a", literal);
       }
       if (!isSpecifier && (EXPLAIN_FORMATS.has(node.text) || ENGINE_PREFIXED.test(node.text)))
@@ -562,7 +532,7 @@ function coreFileFindings(file: string, text: string, exemptEngineMap = true): s
         add(node, "R5b", SQL);
       }
       if (DEFAULT_LANGUAGE_CONSTANTS.has(node.text) && !isSpecifierName(node)) add(node, "R5c", node.text);
-      if (ENGINE_IDS.has(node.text) && isPropertyName(node)) engineProperty(node, node.text);
+      if (ENGINE_IDS.has(node.text) && isPropertyName(node)) add(node, "R8b", node.text);
       else if (!isSpecifierName(node) && namesEngine(node.text)) add(node, "R8c", node.text);
       if (!isSpecifierName(node) && segmentsOf(node.text).some((segment) => ENGINE_ALIASES.has(segment))) {
         add(node, "R8d", node.text);
@@ -1265,15 +1235,20 @@ describe("planted violations yield exactly their findings", () => {
     expect(boundaryFindings(planted)).toEqual([`${TOOLS}#readCatalog: R8a "postgres"`]);
   });
 
-  test("an engine id as a property name fails R8b, and only the total map's keys are exempt", () => {
+  test("an engine id as a property name fails R8b", () => {
     const posture = `${AGENT}/posture.ts`;
     expect(boundaryFindings(prepend(posture, "const T = { postgres: 1, sqlite: 2 };"))).toEqual([
       `${posture}#T: R8b postgres`,
       `${posture}#T: R8b sqlite`,
     ]);
-    const unexempt = coreFileFindings(MANIFEST, read(MANIFEST), false).filter((finding) => finding.includes(": R8b "));
-    expect(unexempt).toHaveLength(Object.keys(AGENT_STATEMENT_LANGUAGE).length);
-    expect(unexempt.every((finding) => finding.startsWith(`${MANIFEST}#AGENT_STATEMENT_LANGUAGE: R8b `))).toBe(true);
+    // A total map keyed by every engine id has no exemption either: the manifest declaring one fails once per key.
+    const map = `const ENGINE_MAP = { ${Object.keys(AGENT_STATEMENT_LANGUAGE)
+      .map((type) => `${type}: null`)
+      .join(", ")} };`;
+    const planted = coreFileFindings(MANIFEST, `${read(MANIFEST)}\n${map}`).filter((finding) =>
+      finding.includes(": R8b "),
+    );
+    expect(planted).toEqual(Object.keys(AGENT_STATEMENT_LANGUAGE).map((type) => `${MANIFEST}#ENGINE_MAP: R8b ${type}`));
   });
 
   test("an identifier with an engine id as a whole segment fails R8c, and one that only contains it does not", () => {

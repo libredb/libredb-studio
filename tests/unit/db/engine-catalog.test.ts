@@ -970,8 +970,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(differs((d) => d.policy)).toBeGreaterThan(0);
   });
 
-  test("projectClaimRequests answers each declaration's policy, MCP and connection claims as it authors them, frozen, in ascending id order", () => {
-    const set = ["sqlite", "modbus", "etcd", "s3", "opcua", "elasticsearch", "postgres"].map(admitted);
+  test("projectClaimRequests answers each declaration's policy, MCP, connection and agent mode claims as it authors them, frozen, in ascending id order", () => {
+    const set = ["sqlite", "modbus", "etcd", "s3", "opcua", "elasticsearch", "postgres", "bigquery", "mqtt"].map(
+      admitted,
+    );
     const requests = projectClaimRequests(set);
     const expected = (declaration: EngineDeclaration) => ({
       policy: declaration.policy,
@@ -983,15 +985,33 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         serverLevelWithoutDatabase: declaration.connection.serverLevelWithoutDatabase,
         agentCredential: declaration.connection.agentCredential,
       },
+      facets: { agentReadings: declaration.facets.agentReadings },
+      agent: { statementLanguage: declaration.agent.statementLanguage },
     });
 
-    expect(Object.keys(requests)).toEqual(["elasticsearch", "etcd", "modbus", "opcua", "postgres", "s3", "sqlite"]);
+    expect(Object.keys(requests)).toEqual([
+      "bigquery",
+      "elasticsearch",
+      "etcd",
+      "modbus",
+      "mqtt",
+      "opcua",
+      "postgres",
+      "s3",
+      "sqlite",
+    ]);
     for (const declaration of set) {
       expect(requests[declaration.id]).toEqual(expected(declaration));
       // Each member in the declaration's order, every key its own property.
       expect(JSON.stringify(requests[declaration.id])).toBe(JSON.stringify(expected(declaration)));
-      expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp", "connection"]);
+      expect(Object.keys(requests[declaration.id] ?? {})).toEqual(["policy", "mcp", "connection", "facets", "agent"]);
     }
+    // The agent mode claims as the declaration states them: a statement language or null, and the curated readings,
+    // the empty list included.
+    expect(requests.postgres?.agent).toEqual({ statementLanguage: "sql" });
+    expect(requests.bigquery?.agent).toEqual({ statementLanguage: null });
+    expect(requests.postgres?.facets.agentReadings).toEqual(admitted("postgres").facets.agentReadings);
+    expect(requests.mqtt?.facets).toEqual({ agentReadings: [] });
     // The connection claims in the declaration's vocabulary: a tunnel offered or refused with its sentence, the host
     // path fields, and a seed agent credential with its superseding fields, or null.
     expect(requests.sqlite?.connection.sshTunnel).toEqual({ offered: false, refusal: expect.any(String) });
@@ -1028,13 +1048,16 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     (modbus.policy as { writeReach: string }).writeReach = "open";
     (modbus.policy.maskingExemptColumns as { column: string }).column = "^x$";
     (modbus.connection as { opensLocalFile: boolean }).opensLocalFile = true;
+    (modbus.facets.agentReadings as string[]).push("storage");
     expect(copied.modbus?.policy.writeReach).toBe(admitted("modbus").policy.writeReach);
+    expect(copied.modbus?.facets.agentReadings).toEqual(admitted("modbus").facets.agentReadings);
     expect(copied.modbus?.connection.opensLocalFile).toBe(false);
     expect(copied.modbus?.policy.maskingExemptColumns).toEqual(admitted("modbus").policy.maskingExemptColumns);
   });
 
   test("the claim requests read only the members a declaration authors", () => {
-    // Every member but the authored policy and MCP segments and connection claims replaced with postgres's: the
+    // Every member but the authored policy and MCP segments, connection claims, agent readings and statement language
+    // replaced with postgres's, the rest of the facets and the agent overlay included: the
     // requests the generator writes first, before the declaration generator rewrites the other members, are therefore
     // already the final ones, and the authored safeguards, which no gate reads, are not read either.
     const postgres = admitted("postgres");
@@ -1050,6 +1073,8 @@ describe("the engine catalog, projected from the admitted declarations", () => {
           serverLevelWithoutDatabase: d.connection.serverLevelWithoutDatabase,
           agentCredential: d.connection.agentCredential,
         },
+        facets: { ...postgres.facets, agentReadings: d.facets.agentReadings },
+        agent: { ...postgres.agent, statementLanguage: d.agent.statementLanguage },
         policy: d.policy,
         mcp: d.mcp,
       }),
@@ -1060,9 +1085,10 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     const differs = (read: (d: EngineDeclaration) => unknown) =>
       replaced.filter((d, index) => JSON.stringify(read(d)) !== JSON.stringify(read(ADMITTED[index]))).length;
     expect(differs((d) => d.safeguards)).toBeGreaterThan(0);
-    expect(differs((d) => d.facets)).toBeGreaterThan(0);
+    expect(differs((d) => d.facets.monitoring)).toBeGreaterThan(0);
+    expect(differs((d) => d.facets.maintenance)).toBeGreaterThan(0);
     expect(differs((d) => d.connection)).toBeGreaterThan(0);
-    expect(differs((d) => d.agent)).toBeGreaterThan(0);
+    expect(differs((d) => d.agent.overlay)).toBeGreaterThan(0);
   });
 
   test("every committed declaration is admitted through the SDK's digest-checked validator before it is projected", () => {
@@ -2538,6 +2564,76 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       copy.remove();
     }
     // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate regenerates an authored agent readings change in one run", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const file = path.join(directory, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      expect(committed.facets.agentReadings).toContain("health");
+      // postgres's readings without health: the request its own declaration states, whatever Studio's facet row holds.
+      const agentReadings = committed.facets.agentReadings.filter((reading) => reading !== "health");
+      const postgres: EngineDeclaration = { ...committed, facets: { ...committed.facets, agentReadings } };
+      writeFileSync(file, `${JSON.stringify(postgres, null, 2)}\n`);
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      const regenerated = admittedDeclarations(directory);
+      // The declaration generator writes the authored members back unchanged.
+      expect(regenerated.find((d) => d.id === "postgres")).toEqual(postgres);
+      expect(readFileSync(file, "utf8")).toBe(`${JSON.stringify(postgres, null, 2)}\n`);
+      const claimsModule = readFileSync(path.join(copy.root, ENGINE_CLAIMS_MODULE), "utf8");
+      expect(claimsModule).toBe(renderClaimRequests(projectClaimRequests(regenerated)));
+      expect(projectClaimRequests(regenerated).postgres?.facets).toEqual({ agentReadings });
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
+        ENGINE_SQL_WRITING_MODULE,
+        ENGINE_MIGRATION_DDL_MODULE,
+        ENGINE_SQL_GENERATORS_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "postgres")) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate exits 1 naming the engine when an authored statement language leaves its agent overlay no place", () => {
+    const copy = generatingCopy();
+    try {
+      const file = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY, "postgres.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      const agent = { ...committed.agent, statementLanguage: null };
+      writeFileSync(file, `${JSON.stringify({ ...committed, agent }, null, 2)}\n`);
+
+      const refused = copy.generate();
+      expect(refused.exitCode).toBe(1);
+      expect(refused.stderr).toContain(
+        "postgres: the engine speaks no statement language, so its agent overlay has no place in the engine declaration",
+      );
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the generator runs take a few seconds; well inside ten times that.
   }, 60000);
 
   test("bun run engines:generate exits 1 naming the function when a declaration names a migration DDL function Studio holds none for", () => {

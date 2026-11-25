@@ -1,5 +1,6 @@
 /**
- * Studio's grant of each policy and MCP claim (docs/providers/CONTRACT.md, clauses M-54 and M-82): the more restrictive
+ * Studio's grant of each policy, MCP, connection and agent mode claim (docs/providers/CONTRACT.md, clauses M-54, M-82
+ * and M-83): the more restrictive
  * of an engine's request and Studio's review record of the claim, the claim's restrictive value where no record row
  * exists, by one rule per claim shape. `grantClaims` is read here with hand-made requests and records, each built from
  * the shipped ones with one engine changed or for an id no shipped engine uses, and the bundled grant tables are read
@@ -10,8 +11,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
+  AGENT_READING_NAMES,
   type ClaimRecords,
   GRANTED_AGENT_CREDENTIAL_FORM,
+  GRANTED_AGENT_READINGS,
+  GRANTED_AGENT_STATEMENT_LANGUAGE,
   GRANTED_DENIED_FILE_ACCESS_REFUSAL,
   GRANTED_HOST_PATH_FIELDS,
   GRANTED_MASKING_EXEMPT_COLUMNS,
@@ -31,6 +35,7 @@ import {
   grantClaims,
   HOST_PATH_FIELD_NAMES,
   READ_ONLY_ENFORCED,
+  STATEMENT_LANGUAGE_NAMES,
   STUDIO_CLAIM_RECORDS,
   UNGRANTED_CLAIM_REFUSALS,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
@@ -40,7 +45,8 @@ import {
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
-import type { ClaimRequestEntry, ConnectionClaims } from "@/lib/db/engine-catalog/projection";
+import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
+import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 
 /** An id no shipped engine uses, for a request no record row covers. */
 const UNRECORDED = "acmefoo";
@@ -48,16 +54,20 @@ const UNRECORDED = "acmefoo";
 /** postgres's requests, the base every hand-made request changes one claim of. */
 const BASE: ClaimRequestEntry = BUNDLED_CLAIM_REQUESTS.postgres;
 
-/** One engine's requests: postgres's with `policy`, `mcp` and `connection` members changed. */
+/** One engine's requests: postgres's with `policy`, `mcp`, `connection`, `facets` and `agent` members changed. */
 function request(
   policy: Partial<PolicyClaims> = {},
   mcp: Partial<McpClaims> = {},
   connection: Partial<ConnectionClaims> = {},
+  facets: Partial<FacetClaims> = {},
+  agent: Partial<AgentClaims> = {},
 ): ClaimRequestEntry {
   return {
     policy: { ...BASE.policy, ...policy },
     mcp: { ...BASE.mcp, ...mcp },
     connection: { ...BASE.connection, ...connection },
+    facets: { ...BASE.facets, ...facets },
+    agent: { ...BASE.agent, ...agent },
   };
 }
 
@@ -342,6 +352,8 @@ describe("Studio's grant of each policy and MCP claim", () => {
       GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE,
       GRANTED_SSH_TUNNEL_REFUSAL,
       GRANTED_SEED_AGENT_CREDENTIAL,
+      GRANTED_AGENT_STATEMENT_LANGUAGE,
+      GRANTED_AGENT_READINGS,
     ];
 
     for (const table of tables) {
@@ -616,5 +628,135 @@ describe("Studio's grant of each connection claim", () => {
     expect(() => grantOf(UNRECORDED, request(), STUDIO_CLAIM_RECORDS, inherited)).toThrow(
       `${UNRECORDED} has no seed-only row, so Studio cannot grant its host path fields`,
     );
+  });
+});
+
+/** The schema's enums the agent mode claims are read in. */
+function schemaAgentModeEnums(): { readonly statementLanguages: readonly string[]; readonly agentReadings: string[] } {
+  const schema = JSON.parse(
+    readFileSync(
+      path.resolve(import.meta.dir, "../../../packages/provider-sdk/src/manifest/manifest.schema.json"),
+      "utf8",
+    ),
+  ) as { $defs: { statementLanguage: { enum: (string | null)[] }; agentReading: { enum: string[] } } };
+  return {
+    // The statement languages a declaration may request, its null aside.
+    statementLanguages: schema.$defs.statementLanguage.enum.filter((language) => language !== null),
+    agentReadings: schema.$defs.agentReading.enum,
+  };
+}
+
+describe("Studio's grant of each agent mode claim", () => {
+  test("for every shipped engine, each granted agent mode claim is its record's row", () => {
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] !== STUDIO_CLAIM_RECORDS.statementLanguage[type],
+      ),
+    ).toEqual([]);
+    expect(GRANTED_AGENT_STATEMENT_LANGUAGE).toEqual(STUDIO_CLAIM_RECORDS.statementLanguage);
+    // Vacuity: the record holds languages and nulls.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_STATEMENT_LANGUAGE[type] === null)).toEqual([
+      "bigquery",
+      "databend",
+      "snowflake",
+      "spark",
+    ]);
+    expect(GRANTED_AGENT_STATEMENT_LANGUAGE.mongodb).toBe("mongo");
+    expect(
+      SHIPPED_DATABASE_TYPES.filter(
+        (type) =>
+          JSON.stringify(GRANTED_AGENT_READINGS[type]) !==
+          JSON.stringify(STUDIO_CLAIM_RECORDS.agentReadings[type]?.agentReadings),
+      ),
+    ).toEqual([]);
+    // Vacuity: the facet rows hold full, partial and empty readings.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_READINGS[type].length === 0)).toEqual([
+      "mqtt",
+      "mtconnect",
+      "opcua",
+      "sparkplug",
+    ]);
+    expect(GRANTED_AGENT_READINGS.kafka).toEqual(["health"]);
+    expect(GRANTED_AGENT_READINGS.postgres).toEqual([...CURATED_OPERATION_KINDS]);
+  });
+
+  const STATEMENT_LANGUAGE_CASES = [
+    ["postgres", "sql", "sql", "sql"],
+    ["postgres", "mongo", "sql", null],
+    ["postgres", null, "sql", null],
+    ["postgres", "sql", null, null],
+    ["postgres", null, null, null],
+    [UNRECORDED, "sql", undefined, null],
+    [UNRECORDED, null, undefined, null],
+  ] as const;
+
+  test.each(STATEMENT_LANGUAGE_CASES)(
+    "a statement language request equal to the record's row is granted as that row, and any other, or one with no record, is read as null: %s, request %p, record %p",
+    (engine, requested, row, granted) => {
+      const against = row === undefined ? STUDIO_CLAIM_RECORDS : records(engine, { statementLanguage: row });
+
+      expect(
+        grantOf(engine, request({}, {}, {}, {}, { statementLanguage: requested }), against).statementLanguage,
+      ).toBe(granted);
+    },
+  );
+
+  test("the agent readings granted are the intersection of the request and the record in the record's order, a frozen list, and empty where no record exists", () => {
+    const of = (engine: string, agentReadings: FacetClaims["agentReadings"], against = STUDIO_CLAIM_RECORDS) =>
+      grantOf(engine, request({}, {}, {}, { agentReadings }), against).agentReadings;
+    const row = { agentReadings: ["storage", "health"] as const };
+    const two = records("postgres", { agentReadings: row });
+
+    // The record's order, whatever the request's.
+    expect(of("postgres", ["health", "storage"], two)).toEqual(["storage", "health"]);
+    // A request holding every reading of the row reads a copy of the row, frozen, never the row's own list.
+    const all = of("postgres", [...CURATED_OPERATION_KINDS], two);
+    expect(all).toEqual(["storage", "health"]);
+    expect(all).not.toBe(row.agentReadings);
+    expect(Object.isFrozen(all)).toBe(true);
+    // A reading the row lacks is never gained, and one the request drops is never kept.
+    expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
+    expect(of("postgres", ["sessions"], two)).toEqual([]);
+    expect(of("postgres", [], two)).toEqual([]);
+    expect(of("kafka", [...CURATED_OPERATION_KINDS])).toEqual(["health"]);
+    expect(of("mqtt", [...CURATED_OPERATION_KINDS])).toEqual([]);
+    // No record: the empty list, whatever the request.
+    expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
+    expect(Object.isFrozen(of(UNRECORDED, ["health"]))).toBe(true);
+    // A row on the prototype chain is no row.
+    const inherited = Object.create({ postgres: row }) as ClaimRecords["agentReadings"];
+    expect(of("postgres", ["health"], { ...STUDIO_CLAIM_RECORDS, agentReadings: inherited })).toEqual([]);
+  });
+
+  test("the statement language and agent reading vocabularies are the schema's statementLanguage and agentReading enums, and the readings are CURATED_OPERATION_KINDS", () => {
+    const schema = schemaAgentModeEnums();
+
+    expect<readonly string[]>([...STATEMENT_LANGUAGE_NAMES]).toEqual([...schema.statementLanguages]);
+    expect(Object.isFrozen(STATEMENT_LANGUAGE_NAMES)).toBe(true);
+    expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual(schema.agentReadings);
+    expect<readonly string[]>([...AGENT_READING_NAMES]).toEqual([...CURATED_OPERATION_KINDS]);
+    expect(Object.isFrozen(AGENT_READING_NAMES)).toBe(true);
+  });
+
+  test("an agent mode claim value outside its vocabulary is refused by name, naming the claim and the engine", () => {
+    const wrong = (value: unknown) => value as never;
+    const refusedLanguage = (value: unknown, written: string) =>
+      expect(() => grantOf(UNRECORDED, request({}, {}, {}, {}, { statementLanguage: wrong(value) }))).toThrow(
+        `${UNRECORDED} requests agent.statementLanguage ${written}, which is not a value of the claim`,
+      );
+
+    refusedLanguage("postgresql", '"postgresql"');
+    refusedLanguage("SQL", '"SQL"');
+    refusedLanguage(false, "false");
+    refusedLanguage(undefined, "undefined");
+    const refusedReadings = (value: unknown, written: string) =>
+      expect(() => grantOf(UNRECORDED, request({}, {}, {}, { agentReadings: wrong(value) }))).toThrow(
+        `${UNRECORDED} requests facets.agentReadings ${written}, which is not a value of the claim`,
+      );
+
+    refusedReadings(["health", "locks"], '["health","locks"]');
+    refusedReadings("health", '"health"');
+    refusedReadings(null, "null");
+    refusedReadings([1], "[1]");
   });
 });

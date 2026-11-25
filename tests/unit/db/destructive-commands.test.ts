@@ -3,8 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 import { isDangerousQuery } from "@/components/QuerySafetyDialog";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   NON_SQL_DESTRUCTIVE_VOCABULARY,
   consoleTextByteLimit,

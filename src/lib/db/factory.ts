@@ -2054,8 +2054,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * required and never enough. The engines of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
  * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT, Sparkplug B and Trino (`src/lib/db/compatibility.ts`). `agent-operations` sends no statement
  * at all: it calls the curated reporting methods, and agent mode asks only for the
- * readings the engine's `ENGINE_FACETS` row declares in `agentReadings`, which is the
- * row's decision and not this gate's. Requiring a read-only STATEMENT path of it would
+ * readings Studio grants the engine, `GRANTED_AGENT_READINGS`, which is the
+ * grant's decision and not this gate's. Requiring a read-only STATEMENT path of it would
  * refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run
  * already answered with, replayed in the user's editor — so it takes the same gate as

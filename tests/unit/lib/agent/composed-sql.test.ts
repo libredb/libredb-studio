@@ -11,13 +11,8 @@ import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
 import { trinoAgentStatementRefusal } from "@/lib/db/providers/sql/trino/agent-boundary";
-import {
-  AGENT_REQUIREMENT_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
-  AGENT_WORKFLOW_VARIANTS,
-  workflowAvailability,
-} from "@/lib/agent/agent-manifest";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { AGENT_REQUIREMENT_ENGINES, AGENT_WORKFLOW_VARIANTS, workflowAvailability } from "@/lib/agent/agent-manifest";
+import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";

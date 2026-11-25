@@ -22,8 +22,9 @@
  * src/lib/db/migration-ddl/index.ts reads, so only the schema diff loads it; and
  * src/lib/db/engine-catalog/sql-generators.generated.ts, each SQL engine's generator forms (clause M-81), which only
  * src/lib/db/query-generators/index.ts reads, so the schema diff never loads them; and
- * src/lib/db/engine-catalog/claims.generated.ts, each engine's policy, MCP and connection claim requests (clauses M-82
- * and M-83), which only src/lib/db/claim-grants.ts reads, so no gate reads a request but through Studio's grant of it.
+ * src/lib/db/engine-catalog/claims.generated.ts, each engine's policy, MCP, connection and agent mode claim requests
+ * (clauses M-82 and M-83), which only src/lib/db/claim-grants.ts reads, so no gate reads a request but through
+ * Studio's grant of it.
  *
  * Admission happens here, once for every module, in `--check`: every `.json` file of src/lib/db/engine-declarations is
  * parsed and admitted through the SDK's `compileManifestValidator`, which checks the SHA-256 of the schema's bytes
@@ -159,8 +160,8 @@ export const ENGINE_MIGRATION_DDL_MODULE = "src/lib/db/engine-catalog/migration-
 export const ENGINE_SQL_GENERATORS_MODULE = "src/lib/db/engine-catalog/sql-generators.generated.ts";
 
 /**
- * The generated claim requests module in the repository: each engine's policy, MCP and connection claim requests,
- * which only src/lib/db/claim-grants.ts reads.
+ * The generated claim requests module in the repository: each engine's policy, MCP, connection and agent mode claim
+ * requests, which only src/lib/db/claim-grants.ts reads.
  */
 export const ENGINE_CLAIMS_MODULE = "src/lib/db/engine-catalog/claims.generated.ts";
 
@@ -210,6 +211,8 @@ export const AUTHORED_MEMBERS = [
   "connection.opensLocalFile",
   "connection.serverLevelWithoutDatabase",
   "connection.agentCredential",
+  "facets.agentReadings",
+  "agent.statementLanguage",
   "editor.commitKeyword",
   "editor.consentDeadline",
   "editor.fenceAliases",
@@ -291,6 +294,12 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
       hostIdentity: read("connection.hostIdentity") as Connection["hostIdentity"],
       import: read("connection.import") as Connection["import"],
       connectBudgetMs: read("connection.connectBudgetMs") as Connection["connectBudgetMs"],
+    },
+    facets: {
+      agentReadings: read("facets.agentReadings") as EngineDeclaration["facets"]["agentReadings"],
+    },
+    agent: {
+      statementLanguage: read("agent.statementLanguage") as EngineDeclaration["agent"]["statementLanguage"],
     },
     editor: {
       commitKeyword: read("editor.commitKeyword") as Editor["commitKeyword"],
@@ -773,7 +782,7 @@ export function renderClaimRequests(requests: ClaimRequests): string {
   return renderedEntryModule(
     ENGINE_CLAIMS_MODULE,
     "ClaimRequestEntry",
-    "Each engine's policy, MCP and connection claim requests, read only by the grant reader, claim-grants.ts (M-83).",
+    "Each engine's policy, MCP, connection and agent mode claim requests, read only by claim-grants.ts (M-83).",
     "export const BUNDLED_CLAIM_REQUESTS",
     requests,
   );
