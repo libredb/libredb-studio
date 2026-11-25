@@ -1315,7 +1315,8 @@ async function queryEngine(ctx: Context): Promise<string> {
     );
     const cookie = await signIn(server, ctx.credentials.adminPassword);
     const connection = connectionOf(ctx);
-    assertNone(saveProblems(await postJson(server, STUDIO.routes.save, { connection }, cookie)));
+    const save = await postJson(server, STUDIO.routes.save, { connection }, cookie);
+    assertNone(saveProblems(save));
     const answered: string[] = [];
     for (const expected of fixture.acceptance.statements) {
       // oxlint-disable-next-line no-await-in-loop -- the statements run one after another on the one connection.
@@ -1323,7 +1324,7 @@ async function queryEngine(ctx: Context): Promise<string> {
       assertNone(rowsProblems(answer, expected));
       answered.push(`${expected.statement} -> ${JSON.stringify(answer.body.rows)}`);
     }
-    return `engine ${connection.type} on 127.0.0.1:${port}, saved and answered: ${answered.join("; ")}`;
+    return `engine ${connection.type} on 127.0.0.1:${port}, saved (${save.status} ${JSON.stringify(save.body)}) and answered: ${answered.join("; ")}`;
   });
 }
 
@@ -1356,7 +1357,7 @@ async function refuseTampered(ctx: Context): Promise<string> {
     const statement = (fixture.acceptance.statements[0] as Expectation).statement;
     const query = await postJson(server, STUDIO.routes.query, { connection, sql: statement }, cookie);
     assertNone(unavailableProblems(query, STUDIO.digestMismatch).map((problem) => `the statement ${problem}`));
-    return `booted and logged "${(lines[0] as string).trim()}"; the save answered ${save.status} ${String(save.body.code)} and the statement ${query.status} ${String(query.body.code)}`;
+    return `booted and logged "${(lines[0] as string).trim()}"; the save answered ${save.status} ${JSON.stringify(save.body)} and the statement ${query.status} ${JSON.stringify(query.body)}`;
   });
 }
 
