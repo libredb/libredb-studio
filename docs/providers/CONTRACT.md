@@ -3269,15 +3269,16 @@ Beside it, the granted tree facade serves the agent's grounding walk under one g
 The host classes each connection's session capacity, one or several, from Studio's own records and the connection, never from a manifest or a provider.
 It is one where Studio's record of the engines that serve their tree from one session, `SERVES_ONE_SESSION`, names a reason, which it does for every engine that keeps one handle per file, and where the connection's database is in memory, one database per handle, as the file admission reads it; it is several otherwise.
 A manifest has no member for it, and a built provider's declaration never reaches it, M-57.
-The class decides only which session a tree read or a kill runs on; it never authorizes anything.
+The class decides only which session a tree read, a monitoring panel read, a health read or a kill runs on; it never authorizes anything.
 On a connection of class several, the tree routes and the VS Code backend's tree calls, `selectStatement`'s describe among them, read on a metadata session of the connection's own, opened beside the editor's session from the same connection, with the same credentials, file-access posture and owner, through the same checks in the same order, and keyed by the editor session's key with a metadata frame, so it is each owner's own under governance.
 Its pool holds at most two sessions and opens none until a read or a kill asks.
 The maintenance route runs a kill on the same metadata session, under the editor's posture and through the same checks, and every other operation on the editor's provider, C-70.
-On a connection of class one they read, and a kill runs, on the editor's session.
+The monitoring route reads every panel, and the health route reads health, on the same metadata session, under the editor's posture and through the same checks, C-74 and C-75; the pool-stats route reads the editor's provider, whose pool its answer describes.
+On a connection of class one every one of these reads, and a kill, runs on the editor's session.
 A metadata session opens once per key, C-44, is torn down with the caches under the teardown's deadlines, C-45, leaves with the idle sweep and with every removal that names its connection, its owner or its record's key, and keeps the connection's SSH tunnel open while it serves the connection.
 A tree read takes no catalog, so no catalog choice is honoured on it, M-57.
-A kill's catalog is honoured on the metadata session through the same catalog choice as on the editor's provider, and a catalog the connection cannot honour is refused in the same words, M-57.
-On a server-level connection, a tree read inside one of its databases and a kill in a catalog run on the catalog session the metadata session opens for that database, which takes the pool its provider gives every catalog session in place of the metadata session's two.
+The catalog of a kill, a monitoring panel read or a health read is honoured on the metadata session through the same catalog choice as on the editor's provider, and a catalog the connection cannot honour is refused in the same words, M-57.
+On a server-level connection, a tree read inside one of its databases, and a kill, a monitoring panel read or a health read in a catalog, run on the catalog session the metadata session opens for that database, which takes the pool its provider gives every catalog session in place of the metadata session's two.
 The legacy bridge's postgres provider, the one provider that declares catalog sessions, gives each catalog session a pool of at most three sessions that opens none until a read asks, and keeps at most five databases open at once, so its metadata session on a server-level connection holds at most seventeen sessions.
 A native provider's metadata session is an open like the editor's with a smaller `pool`, and the open names no role.
 
@@ -3307,6 +3308,12 @@ A native provider's metadata session is an open like the editor's with a smaller
 - test `tests/unit/lib/api/editor-provider.test.ts` "a catalog runs on that database's session of the metadata session, and a connection without sessions refuses one"
 - test `tests/api/db/maintenance.test.ts` "a kill runs on the connection's metadata session, opened with the editor's connection and posture, and every other operation on the editor's provider"
 - test `tests/api/db/maintenance.test.ts` "a kill answers while the editor's provider holds every run, without waiting for it"
+- test `tests/api/db/monitoring.test.ts` "the dashboard reads every panel on the connection's metadata session, opened with the editor's connection and posture, and answers that session's maintenance"
+- test `tests/api/db/monitoring.test.ts` "a dashboard answers while the editor's provider holds every panel read, without waiting for it"
+- test `tests/api/db/monitoring.test.ts` "a dashboard's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words with no panel read"
+- test `tests/api/db/health.test.ts` "the health read runs on the connection's metadata session, opened with the editor's connection and posture"
+- test `tests/api/db/health.test.ts` "a health read answers while the editor's provider holds every read, without waiting for it"
+- test `tests/api/db/health.test.ts` "a health read's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words"
 - test `tests/api/db/maintenance.test.ts` "a kill's catalog runs on that database's session of the metadata session, and a catalog the connection cannot honour is refused as the editor's provider refuses it, with nothing run or audited"
 
 ### C-67 (normative): The maintenance facets
@@ -3485,7 +3492,8 @@ The core does not read a panel answer's form: the caller reads the member its re
 
 ### C-74 (normative): Monitoring on the host
 
-The monitoring and pool-stats routes read every panel and the pool statistics through one caller facade and the host core's monitoring calls, C-73, on the session the legacy bridge serves, C-50, of the provider the route resolved.
+The monitoring and pool-stats routes read every panel and the pool statistics through one caller facade and the host core's monitoring calls, C-73, on the session the legacy bridge serves, C-50, of the provider the route resolved: the connection's metadata session for the monitoring route, C-66, and the editor's provider for the pool-stats route, whose statistics describe the pool the editor's statements run on.
+The maintenance the monitoring route answers beside the panels is read from the same metadata session's provider, which connects to the same server with the same credentials as the editor's.
 A dashboard read is the host's one orchestration of the declared panels, which asks only the panels the engine offers and the caller requests, each through one panel request with the limits resolved and a schema only where the caller named one.
 It answers each panel answered, failed with its sentence, not requested or not offered, and holds each answer to the requested panel's form, failing that panel by name otherwise.
 A dashboard whose every panel failed answers the first panel's error as raised when they failed with one sentence, and Studio's mapping of the joined sentences for the session's engine when they failed with several, the mapping every provider's own applies.
@@ -3523,10 +3531,12 @@ Each route's doors, checks, scrubs and answers run where they ran, and a session
 - test `tests/api/db/pool-stats.test.ts` "a pool statistics read whose request is already gone answers 499 not-sent and reads nothing"
 - test `tests/api/db/pool-stats.test.ts` "a pool statistics read past its deadline answers 504 studio-timeout-refusal naming the read"
 - test `tests/api/db/pool-stats.test.ts` "whether pool statistics are offered is read from the bridged session"
+- test `tests/api/db/monitoring.test.ts` "the dashboard reads every panel on the connection's metadata session, opened with the editor's connection and posture, and answers that session's maintenance"
+- test `tests/api/db/pool-stats.test.ts` "pool statistics are read on the editor's provider and never on the metadata session, since they describe the editor's pool"
 
 ### C-75 (normative): Health on the host
 
-The health route and fleet health read a connection's health through the monitoring facade and the host core's health call, C-73, on the session the legacy bridge serves, C-50, of the provider the route resolved.
+The health route and fleet health read a connection's health through the monitoring facade and the host core's health call, C-73, on the session the legacy bridge serves, C-50, of the provider of the connection's metadata session for the health route, C-66, and of the provider fleet health resolved.
 Each health read, and fleet health's overview read, waits until its own deadline, the statement timeout plus 10 s from its start, and the request's signal.
 A read the caller left answers `QueryCancelledError`, outcome unknown, or not-sent when refused before the call, and one past its deadline `StudioTimeoutRefusal` naming the read, the statement timeout and the slack.
 A later failure is logged by kind and code, never its text.
@@ -3553,6 +3563,7 @@ Each route's doors, checks, scrubs and answers run where they ran.
 - test `tests/api/db/health.test.ts` "a health read whose request leaves answers 499 at once, outcome unknown"
 - test `tests/api/db/health.test.ts` "a health read whose request is already gone answers 499 not-sent and reads nothing"
 - test `tests/api/db/health.test.ts` "a health read past its deadline answers 504 studio-timeout-refusal naming the health read"
+- test `tests/api/db/health.test.ts` "the health read runs on the connection's metadata session, opened with the editor's connection and posture"
 - test `tests/api/admin/fleet-health.test.ts` "each row's health and overview are read through the host core, the overview only where the engine offers it"
 - test `tests/api/admin/fleet-health.test.ts` "a row whose health read the host stopped at its deadline answers error with the health read's sentence"
 - test `tests/api/admin/fleet-health.test.ts` "a row whose overview read the host stopped stays healthy and carries no byte figure"
@@ -4072,3 +4083,4 @@ Against this contract's earlier text:
 - A read-only execute's page is every row or a limit and an offset, and a session sent a bounded page applies it or refuses a non-zero offset it does not apply before it sends anything, C-78 and C-85, where a read-only execute answered every row and the read-only statement session took no offset.
 - The legacy bridge's read-only statement session applies a bounded page through the provider's prepare and refuses an offset the prepare did not apply as Studio's own refusal, not-sent, C-50, C-85 and E-5, where the read-only session read no page.
 - run_read_query's page is applied by the read-only statement session through the host core, C-81 and C-85, where MCP called the provider's `prepareQuery` itself; an offset the provider does not apply is refused when the statement starts, so a call whose deadline passed or whose request left before then is answered with the timeout or the cancel, and a provider's `offset-unsupported` refusal from its read path is answered as an offset refusal, where it was the engine's error.
+- A monitoring panel read and a health read run on the connection's metadata session where the host's session capacity class is several, C-66, C-74 and C-75, where they ran on the editor's provider; pool statistics stay on the editor's provider.

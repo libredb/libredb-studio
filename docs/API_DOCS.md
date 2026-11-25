@@ -394,6 +394,7 @@ The body's JSON Schema is `readiness.schema` in `tests/fixtures/governance/contr
 #### POST /api/db/health
 
 Detailed health check for a specific database connection.
+The health read runs on the connection's metadata session (`docs/providers/CONTRACT.md`, clause C-66), the pool the object tree reads on, opened with the connection's own credentials and through the same checks as the editor's provider, so it never waits for a connection the editor's statements hold; a `catalog` is honoured on it as on the editor's provider, and on a connection that serves one session it reads on the editor's provider.
 
 **Authentication:** Required
 
@@ -2763,6 +2764,9 @@ A source that fails is reported here with `state: "error"` while `GET /api/conne
 >
 > Under governance (`GOVERNANCE_SOURCE=postgres`, see [GOVERNANCE.md](GOVERNANCE.md)) `POST /api/db/monitoring` is admin-only: a session whose role is not `admin` gets `403` with `{"error": "Unauthorized. Admin access required.", "code": "ADMIN_REQUIRED"}` before any connection is resolved, and the denial is audited as `permission_denied` with reason `insufficient_role`.
 > Without governance every signed-in session keeps its monitoring access.
+>
+> `POST /api/db/monitoring` reads every panel, and the `maintenance` it answers beside them, on the connection's metadata session (`docs/providers/CONTRACT.md`, clause C-66), the pool the object tree reads on, opened with the connection's own credentials and through the same checks as the editor's provider, so it never waits for a connection the editor's statements hold; a `catalog` is honoured on it as on the editor's provider, and on a connection that serves one session it reads on the editor's provider.
+> `POST /api/db/pool-stats` reads the editor's provider, since it reports the pool the editor's statements run on.
 >
 > A monitoring or pool statistics read answers `499` `QUERY_CANCELLED` when its request leaves, and `504` `TIMEOUT_ERROR` (`studio-timeout-refusal`) when no read answers within the connection's statement timeout plus 10 seconds; a monitoring panel stopped beside answered ones carries the sentence in its `errors` entry.
 > `POST /api/db/monitoring` answers `400` naming the option, before any connection resolves, for an `options.slowQueryLimit` or `options.sessionLimit` that is not a whole number of at least 1 and an `options.schemaFilter` that is not text naming a schema.

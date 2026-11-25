@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateProvider } from "@/lib/db";
 import type { MonitoringOptions } from "@/lib/db/types";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub, scrubMonitoringData } from "@/lib/db/operations/provider-text";
@@ -7,7 +6,7 @@ import { INVALID_REQUEST_BODY, isJsonObject } from "@/lib/api/json-object-body";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { auditRoleDenial, guardRoute, adminRequiredResponse } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider } from "@/lib/api/editor-provider";
+import { metadataProvider } from "@/lib/api/editor-provider";
 import { governanceEnabled } from "@/lib/governance/config";
 import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider-monitoring";
 
@@ -15,7 +14,8 @@ import { monitoringOptionsRefusal, providerMonitoring } from "@/lib/api/provider
  * POST /api/db/monitoring
  * Get comprehensive monitoring data for a database connection: every panel read through the host core's panel calls
  * by `providerMonitoring` (docs/providers/CONTRACT.md, clause C-74), each under its own deadline and the request's
- * signal, so a request that leaves answers 499 `QUERY_CANCELLED` and a read past its deadline 504.
+ * signal, so a request that leaves answers 499 `QUERY_CANCELLED` and a read past its deadline 504. The panels are read
+ * on the connection's metadata session (clause C-66), never behind the editor's statements.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of body parsing, matching every other provider-reaching route: an unauthenticated
@@ -73,7 +73,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The panels run on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so a dashboard
+    // never waits for a connection the editor's statements hold.
+    const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
     const monitoringData = await providerMonitoring(provider, req.signal, "api/db/monitoring").readDashboard(
       options ?? {},
     );

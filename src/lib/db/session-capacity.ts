@@ -8,8 +8,9 @@
  * census's reasons kept there, and where its database is in memory, one database per handle, as the file admission
  * reads the name (`namesInMemoryDatabase` in `./provider-files`). It serves several otherwise.
  *
- * The class decides sharing only and authorizes nothing: the provider factory reads it to choose which session a tree
- * read or a kill runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass the same checks.
+ * The class decides sharing only and authorizes nothing: the provider factory reads it to choose which session a tree,
+ * monitoring or health read, or a kill, runs on (`getOrCreateMetadataProvider` in `./factory`), and both sessions pass
+ * the same checks.
  */
 import type { DatabaseConnection } from "@/lib/types";
 import { SERVES_ONE_SESSION } from "./compatibility";

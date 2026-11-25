@@ -144,6 +144,17 @@ const READS_THE_TREE = new Set([
   "objects/search",
 ]);
 
+/**
+ * The monitoring and health routes, which read on the connection's metadata session too (docs/providers/CONTRACT.md,
+ * clause C-66); `pool-stats` is not among them, since its answer describes the editor's pool.
+ */
+const MONITORS_ON_THE_METADATA_SESSION = new Set(["monitoring", "health"]);
+
+/** Whether `route` takes the connection's metadata session rather than the editor's provider. */
+function onTheMetadataSession(route: string): boolean {
+  return READS_THE_TREE.has(route) || MONITORS_ON_THE_METADATA_SESSION.has(route);
+}
+
 /** The routes that build their own provider rather than take a cached one. */
 const BUILDS_ITS_OWN = new Set(["test-connection"]);
 
@@ -197,12 +208,12 @@ async function postureFrom(route: string, target: Record<string, unknown>): Prom
   }
   const opener = BUILDS_ITS_OWN.has(route)
     ? mockCreateDatabaseProvider
-    : READS_THE_TREE.has(route)
+    : onTheMetadataSession(route)
       ? mockGetOrCreateMetadataProvider
       : mockGetOrCreateProvider;
   expect(opener.mock.calls.length).toBeGreaterThan(0);
-  // A tree route takes no editor provider, and no other route a metadata session.
-  const other = READS_THE_TREE.has(route) ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
+  // A tree, monitoring or health route takes no editor provider, and no other route a metadata session.
+  const other = onTheMetadataSession(route) ? mockGetOrCreateProvider : mockGetOrCreateMetadataProvider;
   expect([route, other.mock.calls.length]).toEqual([route, 0]);
   if (READS_DECLARATIONS_AFTER_OPEN.has(route)) {
     expect([route, mockReadProviderDeclarations.mock.calls[0]?.[1]]).toEqual([route, opener.mock.calls[0]?.[2]]);

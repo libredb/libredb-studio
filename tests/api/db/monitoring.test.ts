@@ -97,8 +97,22 @@ mock.module("@/lib/db", () => ({
   mapDatabaseError,
 }));
 
+// ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+/**
+ * The metadata session the panels are read on (docs/providers/CONTRACT.md, clause C-66), answered by default with the
+ * same `mockProvider`, so a title written against the provider the route resolves passes unchanged. The editor's
+ * stand-in above stays in the barrel's mock, and the titles below hold that the route never calls it.
+ */
+const mockGetOrCreateMetadataProvider = mock<(...args: unknown[]) => Promise<never>>(async () => mockProvider as never);
+mock.module("@/lib/db/factory", () => ({
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
+  // src/lib/api/editor-provider.ts imports it, and the route loads that module; this route reads no cached provider.
+  findCachedProvider: mock(() => null),
+}));
+
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
 const { POST } = await import("@/app/api/db/monitoring/route");
+const { editorProvider } = await import("@/lib/api/editor-provider");
 
 // The route reads every panel through the process's host core (src/lib/provider-host/instance.ts), so this file
 // composes its own.
@@ -149,6 +163,7 @@ describe("POST /api/db/monitoring", () => {
   beforeEach(() => {
     clearRateLimitState();
     mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     (mockProvider.getMonitoringData as ReturnType<typeof mock>).mockClear();
     mockGetSession.mockClear();
 
@@ -156,7 +171,7 @@ describe("POST /api/db/monitoring", () => {
     mockGetSession.mockImplementation(
       async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
     );
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
     for (const member of PANEL_MEMBERS) (mockProvider[member] as Mocked).mockReset();
     (mockProvider.getOverview as Mocked).mockImplementation(async () => ({
       version: "PostgreSQL 16.1",
@@ -366,7 +381,7 @@ describe("POST /api/db/monitoring", () => {
 
   test("a provider error with the code ECONNRESET answers by its class, not as a request the caller left", async () => {
     const words = crypto.randomUUID();
-    mockGetOrCreateProvider.mockImplementation(async () => {
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => {
       throw Object.assign(new Error(words), { code: "ECONNRESET" });
     });
 
@@ -392,7 +407,7 @@ describe("POST /api/db/monitoring", () => {
   });
 
   test("ConnectionError returns 503", async () => {
-    mockGetOrCreateProvider.mockImplementation(async () => {
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => {
       throw new ConnectionError("Connection refused", "postgres", "localhost", 5432);
     });
 
@@ -410,7 +425,7 @@ describe("POST /api/db/monitoring", () => {
   });
 
   test("DatabaseError returns 500", async () => {
-    mockGetOrCreateProvider.mockImplementation(async () => {
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => {
       throw new DatabaseError("Internal error", "postgres", "DATABASE_ERROR");
     });
 
@@ -458,7 +473,7 @@ describe("POST /api/db/monitoring", () => {
       expect(res.status).toBe(403);
       expect(data).toEqual({ error: "Unauthorized. Admin access required.", code: "ADMIN_REQUIRED" });
       expect(mockResolveConnection).not.toHaveBeenCalled();
-      expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+      expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
       expect(mockEmitAuditEvent).toHaveBeenCalledTimes(1);
       expect(mockEmitAuditEvent.mock.calls[0][0]).toMatchObject({
         type: "permission_denied",
@@ -491,7 +506,7 @@ describe("POST /api/db/monitoring", () => {
       expect(res.status).toBe(200);
       expect(data.overview.version).toBe("PostgreSQL 16.1");
       expect(mockResolveConnection).toHaveBeenCalledTimes(1);
-      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+      expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
       expect(mockEmitAuditEvent).not.toHaveBeenCalled();
     });
   });
@@ -511,7 +526,7 @@ describe("POST /api/db/monitoring", () => {
 
       expect(res.status).toBe(200);
       expect(data.overview.version).toBe("PostgreSQL 16.1");
-      expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+      expect(mockGetOrCreateMetadataProvider).toHaveBeenCalledTimes(1);
     } finally {
       if (savedSource !== undefined) process.env.GOVERNANCE_SOURCE = savedSource;
     }
@@ -527,7 +542,7 @@ describe("POST /api/db/monitoring: a body that is not a JSON object", () => {
     ["a number", "7"],
     ["a string", '"x"'],
   ])("a body that is %s answers 400 and opens no provider", async (_label, raw) => {
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     const res = await POST(
       new Request("http://localhost:3000/api/db/monitoring", {
         method: "POST",
@@ -538,7 +553,7 @@ describe("POST /api/db/monitoring: a body that is not a JSON object", () => {
 
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "Invalid request body" });
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
   });
 });
 
@@ -549,7 +564,7 @@ describe("POST /api/db/monitoring: options that are not an object", () => {
     ["a number", 5],
     ["an array", []],
   ])("options that are %s answer 400 and open no provider", async (_label, options) => {
-    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
     const res = await POST(
       createMockRequest("/api/db/monitoring", {
         method: "POST",
@@ -559,7 +574,7 @@ describe("POST /api/db/monitoring: options that are not an object", () => {
 
     expect(res.status).toBe(400);
     expect(await parseResponseJSON(res)).toEqual({ error: "options must be an object" });
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
   });
 });
 
@@ -597,7 +612,7 @@ describe("what the monitoring route answers today, which the host core keeps", (
   }
 
   async function send(provider: DatabaseProvider, type: DatabaseType, options?: MonitoringOptions) {
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => provider as never);
     const connection = { ...validConnection, type };
     const body = options === undefined ? { connection } : { connection, options };
     return POST(createMockRequest("/api/db/monitoring", { method: "POST", body }) as never);
@@ -611,7 +626,7 @@ describe("what the monitoring route answers today, which the host core keeps", (
   });
 
   afterEach(() => {
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
     for (const provider of built.splice(0)) expect(provider.getMonitoringData).not.toHaveBeenCalled();
   });
 
@@ -857,15 +872,16 @@ describe("the monitoring route on the host core", () => {
     );
     mockResolveConnection.mockClear();
     mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
   });
 
   afterEach(() => {
-    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
   });
 
   /** A monitoring request for `provider`, whose signal is `signal`, as a browser that may leave sends it. */
   function monitoringWith(provider: DatabaseProvider, signal?: AbortSignal, options?: unknown): Promise<Response> {
-    mockGetOrCreateProvider.mockImplementation(async () => provider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => provider as never);
     return POST(
       new Request("http://localhost:3000/api/db/monitoring", {
         method: "POST",
@@ -1007,7 +1023,7 @@ describe("the monitoring route on the host core", () => {
       expect(await parseResponseJSON(res)).toEqual({ error: sentence });
     }
     expect(mockResolveConnection).not.toHaveBeenCalled();
-    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
     for (const member of PANEL_MEMBERS) expect(provider[member]).not.toHaveBeenCalled();
   });
 
@@ -1032,5 +1048,122 @@ describe("the monitoring route on the host core", () => {
     });
     expect(body.indexes).toEqual([]);
     expect(body.tables).toBeUndefined();
+  });
+});
+
+describe("the monitoring route on the metadata session", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetSession.mockImplementation(
+      async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
+    );
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
+  });
+
+  afterEach(() => {
+    mockGetOrCreateProvider.mockImplementation(async () => mockProvider as never);
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => mockProvider as never);
+  });
+
+  /** A monitoring request for `connection`, in `catalog` when one is given. */
+  function monitor(connection: Record<string, unknown>, catalog?: string): Promise<Response> {
+    const body = catalog === undefined ? { connection } : { connection, catalog };
+    return POST(createMockRequest("/api/db/monitoring", { method: "POST", body }) as never);
+  }
+
+  test("the dashboard reads every panel on the connection's metadata session, opened with the editor's connection and posture, and answers that session's maintenance", async () => {
+    const label = `Terminate ${crypto.randomUUID()}`;
+    const metadata = createMockProvider({
+      capabilities: {
+        maintenanceOperations: ["kill"],
+        maintenanceOperationSpecs: { kill: { label, perEntity: false, global: false } },
+      },
+    });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata as never);
+    const editor = createMockProvider();
+    mockGetOrCreateProvider.mockImplementation(async () => editor as never);
+
+    const res = await monitor(validConnection);
+    const data = await parseResponseJSON<{ maintenance: unknown }>(res);
+
+    expect(res.status).toBe(200);
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+    expect(mockGetOrCreateMetadataProvider.mock.calls).toEqual([
+      [validConnection, {}, { allowExternalFileAccess: true }],
+    ]);
+    for (const member of PANEL_MEMBERS) {
+      expect([member, (metadata[member] as Mocked).mock.calls.length]).toEqual([member, 1]);
+      expect([member, (editor[member] as Mocked).mock.calls.length]).toEqual([member, 0]);
+    }
+    expect(data.maintenance).toEqual({
+      maintenanceOperations: ["kill"],
+      maintenanceOperationSpecs: { kill: { label, perEntity: false, global: false } },
+    });
+  });
+
+  test("a dashboard answers while the editor's provider holds every panel read, without waiting for it", async () => {
+    // The editor's provider holds: each panel member signals `reached` and settles only when this test rejects it.
+    const held = Promise.withResolvers<never>();
+    const reached = Promise.withResolvers<"editor held">();
+    const editor = createMockProvider();
+    for (const member of PANEL_MEMBERS) {
+      (editor[member] as Mocked).mockImplementation(() => {
+        reached.resolve("editor held");
+        return held.promise;
+      });
+    }
+    mockGetOrCreateProvider.mockImplementation(async () => editor as never);
+    const marker = `PostgreSQL ${crypto.randomUUID()}`;
+    const metadata = createMockProvider({ overview: { ...(await mockProvider.getOverview()), version: marker } });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => metadata as never);
+
+    const answering = monitor(validConnection);
+    const first = await Promise.race([answering, reached.promise]);
+    held.reject(new Error("released by the test"));
+    const response = await answering;
+    await held.promise.catch(() => undefined);
+
+    expect(first).toBeInstanceOf(Response);
+    expect(response.status).toBe(200);
+    expect(await parseResponseJSON(response)).toMatchObject({ overview: { version: marker } });
+    for (const member of PANEL_MEMBERS) expect(editor[member]).not.toHaveBeenCalled();
+  });
+
+  test("a dashboard's catalog reads on that database's session of the metadata session, and a catalog the connection cannot honour is refused in the editor's provider's words with no panel read", async () => {
+    const serverLevel = { ...validConnection, database: "" };
+    const shop = createMockProvider();
+    const root = Object.assign(
+      createMockProvider({ config: serverLevel as never, capabilities: { catalogSessions: true } }),
+      { forCatalog: mock(async (catalog: string) => (catalog === "shop" ? shop : undefined)) },
+    );
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => root as never);
+
+    const inShop = await monitor(serverLevel, "shop");
+
+    expect(inShop.status).toBe(200);
+    expect(root.forCatalog.mock.calls).toEqual([["shop"]]);
+    for (const member of PANEL_MEMBERS) {
+      expect([member, (shop[member] as Mocked).mock.calls.length]).toEqual([member, 1]);
+      expect([member, (root[member] as Mocked).mock.calls.length]).toEqual([member, 0]);
+    }
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    // A connection that names its database honours no catalog, on the metadata session as on the editor's.
+    const named = createMockProvider({ config: validConnection as never, capabilities: { catalogSessions: true } });
+    mockGetOrCreateMetadataProvider.mockImplementation(async () => named as never);
+    mockGetOrCreateProvider.mockImplementation(async () => named as never);
+    const refused = await monitor(validConnection, "shop");
+    const body = await parseResponseJSON<{ error: string }>(refused);
+    for (const member of PANEL_MEMBERS) expect(named[member]).not.toHaveBeenCalled();
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+
+    const editorRefusal = await editorProvider({ role: "admin" }, validConnection as never, "shop").then(
+      () => "no refusal",
+      (error: Error) => error.message,
+    );
+    expect(refused.status).toBe(400);
+    expect(body.error).toBe(editorRefusal);
+    expect(editorRefusal).toContain('cannot run one in "shop"');
   });
 });

@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { getOrCreateProvider } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
-import { editorProvider } from "@/lib/api/editor-provider";
+import { metadataProvider } from "@/lib/api/editor-provider";
 import { livenessResponse } from "@/lib/api/liveness";
 import { providerMonitoring } from "@/lib/api/provider-monitoring";
 
@@ -24,7 +23,8 @@ export function GET() {
  * POST /api/db/health
  * Detailed health check for a specific database connection. The health is read through the monitoring facade and the
  * host core's health call (docs/providers/CONTRACT.md, clause C-75), under its own deadline, the statement timeout
- * plus 10 s, and the request's signal.
+ * plus 10 s, and the request's signal, on the connection's metadata session (clause C-66), never behind the editor's
+ * statements.
  */
 export async function POST(req: NextRequest) {
   // Moved ahead of req.json(): an unauthenticated caller no longer gets a body parsed on its
@@ -49,7 +49,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Valid connection configuration is required" }, { status: 400 });
     }
 
-    const provider = await editorProvider(guard.session, connection, requestCatalog(body));
+    // The health read runs on the connection's metadata session (docs/providers/CONTRACT.md, clause C-66), so the
+    // connection pulse never waits for a connection the editor's statements hold.
+    const provider = await metadataProvider(guard.session, connection, requestCatalog(body));
     const health = await providerMonitoring(provider, req.signal, "api/db/health").readHealth();
 
     return NextResponse.json(health);

@@ -52,6 +52,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
 });
 
 // ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
+/** The metadata session's opener (docs/providers/CONTRACT.md, clause C-66), which this route never reads. */
+const mockGetOrCreateMetadataProvider = mock(async () => {
+  throw new Error("getOrCreateMetadataProvider is not read by this route");
+});
 mock.module("@/lib/db/factory", () => ({
   getOrCreateProvider: mockGetOrCreateProvider,
   createDatabaseProvider: mock(async () => mockProvider),
@@ -61,10 +65,8 @@ mock.module("@/lib/db/factory", () => ({
   }),
   // src/lib/api/editor-provider.ts imports it, and the route loads that module.
   findCachedProvider: mock(() => null),
-  // The barrel `@/lib/db` re-exports it from this module too; this route reads no object tree.
-  getOrCreateMetadataProvider: mock(async () => {
-    throw new Error("getOrCreateMetadataProvider is not read by this route");
-  }),
+  // The barrel `@/lib/db` re-exports it from this module too; this route reads no object tree and no panel.
+  getOrCreateMetadataProvider: mockGetOrCreateMetadataProvider,
 }));
 
 // ─── Import route handler AFTER mocking ─────────────────────────────────────
@@ -420,6 +422,21 @@ describe("the pool-stats route on the host core", () => {
     expect(body.error).toBe(
       "The pool statistics read did not answer within the statement timeout of 60 seconds and 10 seconds more for the engine's own answer, so Studio stopped waiting for it.",
     );
+  });
+
+  test("pool statistics are read on the editor's provider and never on the metadata session, since they describe the editor's pool", async () => {
+    const stats = { total: 10, idle: 0, active: 10, waiting: 3, max: 10 };
+    const editor = { ...createMockProvider(), getPoolStats: mock(() => stats) };
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateMetadataProvider.mockClear();
+
+    const res = await poolStatsWith(editor);
+
+    expect(res.status).toBe(200);
+    expect(await parseResponseJSON(res)).toEqual(stats);
+    expect(mockGetOrCreateProvider).toHaveBeenCalledTimes(1);
+    expect(editor.getPoolStats).toHaveBeenCalledTimes(1);
+    expect(mockGetOrCreateMetadataProvider).not.toHaveBeenCalled();
   });
 
   test("whether pool statistics are offered is read from the bridged session", async () => {
