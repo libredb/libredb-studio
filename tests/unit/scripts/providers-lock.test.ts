@@ -193,7 +193,8 @@ describe("the lock command", () => {
   });
 
   test("the command records every static import of each module file, sorted and once each, and Studio's read admits the lock", () => {
-    // A declaration file, .d.ts, .d.mts or .d.cts in any letter case, is no module file: its imports are not recorded.
+    // Only a JavaScript module file, .js, .mjs or .cjs in any letter case, is scanned. A TypeScript file, a declaration
+    // file among them, is listed but not scanned: admission refuses a package holding one by the listing alone.
     const providers = freshProviders();
     const pkg: FixturePackage = {
       name: "acme-scanned",
@@ -215,6 +216,7 @@ describe("the lock command", () => {
         "dist/c.cjs":
           'const fs = require("fs");\nif (false) require("./dead.cjs");\nrequire.resolve("./resolved.cjs");\n',
         "dist/types.ts": 'import type { T } from "./t";\nimport { v } from "./v";\nexport const w: T = v;\n',
+        "dist/view.TSX": 'import "./never.mjs";\nexport const v = <div />;\n',
         "dist/types.d.ts": 'export * from "acme-typings";\nimport type { T } from "./t";\n',
         "dist/esm.D.MTS": 'export * from "acme-typings";\n',
         "dist/cjs.d.cts": 'import x = require("acme-typings");\nexport = x;\n',
@@ -241,7 +243,6 @@ describe("the lock command", () => {
       { from: "dist/index.mjs", specifier: "./late.mjs", kind: "import" },
       { from: "dist/index.mjs", specifier: "./template.mjs", kind: "import" },
       { from: "dist/index.mjs", specifier: "node:fs", kind: "import" },
-      { from: "dist/types.ts", specifier: "./v", kind: "import" },
     ]);
     expect(lock.entries[0]).toEqual({ ...lockEntryOf(providers, pkg), engines: ["acmescanned"] });
     const read = readProvidersLock(providers);

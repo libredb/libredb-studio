@@ -22,10 +22,11 @@
  *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); the lookup stops at a
  *    directory named `node_modules`, as Node.js's package scope lookup does, so a `.js` entry below one is CommonJS
  *    unless a package.json under it says otherwise; a module's syntax is never read to decide;
- * 6. no TypeScript module: a file whose name ends in `.ts`, `.mts` or `.cts` in any letter case and is no declaration
- *    file (`.d.ts`, `.d.mts`, `.d.cts`), or a recorded import whose specifier names a TypeScript file, a declaration file
- *    among them (`PROVIDER_MODULE_FORMAT`, `typescript-module`), since Bun's scanner drops a type-only import that
- *    Node.js's type stripping keeps and loads, so the record cannot hold every import such a module makes;
+ * 6. no TypeScript file: a file whose name ends in `.ts`, `.mts`, `.cts` or `.tsx` in any letter case, a declaration
+ *    file (`.d.ts`, `.d.mts`, `.d.cts`) among them, judged on the listing alone (`PROVIDER_MODULE_FORMAT`,
+ *    `typescript-module`), since Bun maps an extensionless, a `.d` and a `.js` specifier onto a TypeScript file and
+ *    Node.js's type stripping loads an import Bun's scanner drops, so a TypeScript file could run unseen on either
+ *    runtime; a package of this contract is a JavaScript bundle;
  * 7. its import closure (`./provider-closure`), over the import record its lock entry gives (`PROVIDER_LOAD_FAILED`,
  *    `closure-outside`);
  * 8. native addons: a `.node` file in any letter case, or a manifest declaring `runtime.native`
@@ -93,9 +94,8 @@ export const HOST_CONTRACT = "0.1";
 /** The envelope's form of a contract, `MAJOR.MINOR`. */
 const CONTRACT_FORM = /^(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})$/;
 
-/** A TypeScript file by its extension, in any letter case, and a declaration file, which is no module file. */
-const TYPESCRIPT_FILE = /\.[mc]?ts$/i;
-const DECLARATION_FILE = /\.d\.[mc]?ts$/i;
+/** A TypeScript file by its extension, in any letter case, a declaration file among them. */
+const TYPESCRIPT_FILE = /\.(?:[mc]?ts|tsx)$/i;
 
 /** The implementation's segments, each read by its descriptor and frozen once admitted. */
 const IMPL_SEGMENTS = ["console", "objects", "maintenance", "monitoring"] as const;
@@ -288,13 +288,12 @@ function nearestPackageJson(pkg: VerifiedPackage, entry: string): ArtifactFile |
 }
 
 /**
- * Refuses a package holding a TypeScript module file, one no declaration file, or a module importing a TypeScript file
- * by its name: Bun's scanner drops a type-only import, which Node.js's type stripping keeps and loads, so the record
- * cannot hold every import such a module makes.
+ * Refuses a package whose listing holds a TypeScript file, a declaration file among them, whatever its imports: Bun
+ * maps an extensionless, a `.d` and a `.js` specifier onto a TypeScript file and runs it, and Node.js's type stripping
+ * loads an import Bun's scanner drops, so the record cannot hold every import a TypeScript file makes.
  */
 function checkTypeScript(pkg: VerifiedPackage): void {
-  const holds = pkg.files.some((file) => TYPESCRIPT_FILE.test(file.path) && !DECLARATION_FILE.test(file.path));
-  if (holds || pkg.imports.some(({ specifier }) => TYPESCRIPT_FILE.test(specifier))) {
+  if (pkg.files.some((file) => TYPESCRIPT_FILE.test(file.path))) {
     throw new Refused(admissionRefusal(pkg, { code: "PROVIDER_MODULE_FORMAT", rule: "typescript-module" }));
   }
 }

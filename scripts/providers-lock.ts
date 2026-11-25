@@ -6,15 +6,14 @@
  * libredb-provider.json), the digest of its files and its import record, its source, `local`, and the import record.
  *
  * The import record (clause C-102) holds every static import of every module file of the package: each regular file
- * whose name ends in `.js`, `.mjs`, `.cjs`, `.ts`, `.mts` or `.cts` in any letter case, reached by the entry or not,
- * except a declaration file, `.d.ts`, `.d.mts` or `.d.cts`, which is no module file and whose imports are neither
- * scanned nor recorded. Each is read as strict UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports`
- * (loader `ts` for the three TypeScript extensions, `js` otherwise), after a leading `#!` line is removed, since the
- * scanner refuses one. It reports import declarations, side-effect imports, re-exports, `import()` of a string or a
- * template without substitution and `require()` of a string, in dead branches too; not `require.resolve` or
- * `import.meta.resolve`, which load nothing, and not a type-only import of a TypeScript file, which is why admission
- * refuses a TypeScript module file. Each import is recorded with its kind, `importKind`: `require` for a `require()`
- * call, `import` for the rest. The command records; Studio's admission judges the record
+ * whose name ends in `.js`, `.mjs` or `.cjs` in any letter case, reached by the entry or not. A file of any other
+ * extension is listed and digested but not scanned; a TypeScript file among them is not scanned either, since
+ * admission refuses a package holding one by its listing, whatever its imports. Each module file is read as strict
+ * UTF-8 and scanned with Bun's transpiler, `Bun.Transpiler#scanImports` (loader `js`), after a leading `#!` line is
+ * removed, since the scanner refuses one. It reports import declarations, side-effect imports, re-exports, `import()`
+ * of a string or a template without substitution and `require()` of a string, in dead branches too; not
+ * `require.resolve` or `import.meta.resolve`, which load nothing. Each import is recorded with its kind, `importKind`:
+ * `require` for a `require()` call, `import` for the rest. The command records; Studio's admission judges the record
  * (src/lib/provider-host/admission.ts and src/lib/provider-host/provider-closure.ts).
  *
  * The digest and the identity are computed by the artifact functions Studio's own lock read uses
@@ -95,15 +94,9 @@ function sorted(names: readonly string[]): string[] {
   return [...names].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
 }
 
-/**
- * A module file by its extension, in any letter case; the three TypeScript ones are scanned as TypeScript. A
- * declaration file is no module file.
- */
-const MODULE_FILE = /\.[mc]?[jt]s$/i;
-const DECLARATION_FILE = /\.d\.[mc]?ts$/i;
-const TYPESCRIPT_FILE = /\.[mc]?ts$/i;
+/** A JavaScript module file by its extension, in any letter case: the only files the command scans. */
+const MODULE_FILE = /\.[mc]?js$/i;
 const SCAN_JAVASCRIPT = new Bun.Transpiler({ loader: "js" });
-const SCAN_TYPESCRIPT = new Bun.Transpiler({ loader: "ts" });
 /** UTF-8 that refuses an invalid byte. */
 const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
 
@@ -122,7 +115,7 @@ export function importKind(scannerKind: string): ImportKind {
 }
 
 /** The imports `text` makes statically, or null when it is not UTF-8 or the scanner cannot parse it. */
-function scanned(bytes: Buffer, typescript: boolean): { specifier: string; kind: ImportKind }[] | null {
+function scanned(bytes: Buffer): { specifier: string; kind: ImportKind }[] | null {
   let text: string;
   try {
     text = STRICT_UTF8.decode(bytes).replace(/^#![^\n]*/, "");
@@ -131,9 +124,7 @@ function scanned(bytes: Buffer, typescript: boolean): { specifier: string; kind:
     return null;
   }
   try {
-    return (typescript ? SCAN_TYPESCRIPT : SCAN_JAVASCRIPT)
-      .scanImports(text)
-      .map((found) => ({ specifier: found.path, kind: importKind(found.kind) }));
+    return SCAN_JAVASCRIPT.scanImports(text).map((found) => ({ specifier: found.path, kind: importKind(found.kind) }));
   } catch (error) {
     if (!(error instanceof BuildMessage) && !(error instanceof AggregateError)) throw error;
     return null;
@@ -147,12 +138,9 @@ function scanned(bytes: Buffer, typescript: boolean): { specifier: string; kind:
 export function moduleImports(directory: string, files: readonly ArtifactFile[]): ModuleImport[] | string {
   const pairs = new Map<string, ModuleImport>();
   for (const file of files) {
-    if (!MODULE_FILE.test(file.path) || DECLARATION_FILE.test(file.path)) continue;
+    if (!MODULE_FILE.test(file.path)) continue;
     if (!inForm(file.path, IMPORT_FROM_FORM)) return "a module path is longer than 1024 characters";
-    const found = scanned(
-      fs.readFileSync(path.join(directory, ...file.path.split("/"))),
-      TYPESCRIPT_FILE.test(file.path),
-    );
+    const found = scanned(fs.readFileSync(path.join(directory, ...file.path.split("/"))));
     if (found === null) return `${file.path}: its parser cannot read it, or it is not UTF-8`;
     for (const { specifier, kind } of found) {
       if (!inForm(specifier, IMPORT_SPECIFIER_FORM)) {

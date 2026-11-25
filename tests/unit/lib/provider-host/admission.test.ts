@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { admitted, type LoadRefusalReason, loadPackage } from "@libredb/provider-loader";
 import { PROVIDER_CONTRACT } from "@libredb/provider-sdk/calls";
 import { type ManifestValidator, ManifestSchemaDigestError } from "@libredb/provider-sdk/manifest";
@@ -433,52 +434,64 @@ describe("before the import", () => {
     expect(fs.existsSync(outsideSentinel)).toBe(true);
   });
 
-  test("a TypeScript module file, or a module importing a TypeScript file, is refused as PROVIDER_MODULE_FORMAT", async () => {
-    // Bun's scanner drops a type-only import of a TypeScript file, `import { type B } from "y"`, while Node.js's type
-    // stripping keeps it as `import {} from "y"` and loads y, so the record cannot hold every import such a file makes.
-    // A declaration file a module names is loaded the same way by Node.js, so naming one is refused too.
-    for (const file of ["dist/mod.ts", "dist/mod.mts", "dist/mod.cts", "dist/MOD.TS", "lib/deep/mod.Mts"]) {
-      const written = write({ files: { [file]: "export const x = 1;\n" } });
+  test("a package holding a TypeScript file of any kind, a declaration file among them, is refused as PROVIDER_MODULE_FORMAT", async () => {
+    // A package of this contract is a JavaScript bundle. Bun maps an extensionless, a .d and a .js specifier onto a
+    // TypeScript file, and Node.js's type stripping loads a type-only import Bun's scanner drops, so a TypeScript file
+    // in the package could run unseen on either runtime; the listing alone decides, before any import.
+    const files = [
+      "dist/mod.ts",
+      "dist/mod.mts",
+      "dist/mod.cts",
+      "dist/view.tsx",
+      "dist/MOD.TS",
+      "lib/deep/mod.Mts",
+      "dist/types.d.ts",
+      "types/esm.d.mts",
+      "types/cjs.D.CTS",
+      "types/VIEW.TSX",
+    ];
+    for (const file of files) {
+      const written = write({ files: { [file]: "export declare const x: number;\n" } });
       const refusal = refusalOf(await admit(verified(written)));
       expect([file, refusal.code, refusal.rule]).toEqual([file, "PROVIDER_MODULE_FORMAT", "typescript-module"]);
       expect(refusal.sentence).toBe(
-        `PROVIDER_MODULE_FORMAT: ${written.name} 1.0.0: a module of it is a TypeScript file, or imports one, whose type-only imports admission cannot judge`,
+        `PROVIDER_MODULE_FORMAT: ${written.name} 1.0.0: its directory holds a TypeScript file, which a package of this contract, a JavaScript bundle, does not hold`,
       );
-      expect(fs.existsSync(written.sentinel)).toBe(false);
-    }
-    for (const specifier of ["./types.d.ts", "./types.d.mts", "./TYPES.D.CTS", "./mod.ts"]) {
-      const own = names();
-      const manifest = manifestFor(own.id);
-      const written = write({
-        name: own.name,
-        id: own.id,
-        manifest,
-        source: `import ${JSON.stringify(specifier)};\n${entrySource(manifest, own.sentinel)}`,
-        files: { [`dist/${specifier.slice(2)}`]: "export declare const x: number;\n" },
-      });
-      const pkg = verified(written);
-      const refusal = refusalOf(await admit(pkg));
-      expect([specifier, refusal.code, refusal.rule]).toEqual([
-        specifier,
-        "PROVIDER_MODULE_FORMAT",
-        "typescript-module",
-      ]);
       expect(fs.existsSync(written.sentinel)).toBe(false);
     }
   });
 
-  test("a declaration file is no module file: its imports are not recorded and a package shipping typings is admitted", async () => {
-    const typings = {
-      "types/index.d.ts":
-        'import type { A } from "acme-absent";\nimport { type B } from "other-absent";\nexport declare const x: A & B;\n',
-      "types/esm.d.mts": 'export * from "acme-absent";\n',
-      "types/cjs.D.CTS": 'import x = require("acme-absent");\nexport = x;\n',
-    };
-    const written = write({ files: typings });
+  test("an entry importing ./types.d beside a types.d.ts is refused before the import, so the declaration file's import never runs", async () => {
+    // Under Bun, `import "./types.d"` resolves to types.d.ts by its extension search and runs it, its runtime imports
+    // included; the lock records only the specifier ./types.d, a relative path inside the package. Node.js fails the
+    // same import as not found. The outside module is named by its file URL, the same form on every platform.
+    const own = names();
+    const outsideSentinel = path.join(scratch, `declaration-outside-${counter}-${randomUUID()}`);
+    const outsideModule = path.join(scratch, `declaration-outside-${counter}.mjs`);
+    fs.writeFileSync(
+      outsideModule,
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(outsideSentinel)}, "ran");\n`,
+    );
+    const manifest = manifestFor(own.id);
+    const written = write({
+      name: own.name,
+      id: own.id,
+      manifest,
+      source: `import "./types.d";\n${entrySource(manifest, own.sentinel)}`,
+      files: { "dist/types.d.ts": `import ${JSON.stringify(pathToFileURL(outsideModule).href)};\nexport {};\n` },
+    });
     const pkg = verified(written);
-    expect(pkg.imports.filter((found) => found.from.startsWith("types/"))).toEqual([]);
-    expect(await outcome(pkg)).toBe("admitted");
-    expect(fs.existsSync(written.sentinel)).toBe(true);
+    expect(pkg.imports.filter((found) => found.from === "dist/types.d.ts")).toEqual([]);
+
+    const refusal = refusalOf(await admit(pkg));
+    expect([refusal.code, refusal.rule]).toEqual(["PROVIDER_MODULE_FORMAT", "typescript-module"]);
+    expect(fs.existsSync(outsideSentinel)).toBe(false);
+    expect(fs.existsSync(written.sentinel)).toBe(false);
+
+    // The control: the loader alone, on the same artifact and under Bun, runs the module outside the package.
+    const loaded = await loadPackage(pkg.entryFile, { deadlineMs: DEADLINE_MS, onLateSettle: () => undefined });
+    expect(loaded.loaded).toBe(true);
+    expect(fs.existsSync(outsideSentinel)).toBe(true);
   });
 
   test("a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED", async () => {

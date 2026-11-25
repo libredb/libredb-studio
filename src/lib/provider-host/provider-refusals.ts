@@ -196,7 +196,7 @@ const ADMISSION_SENTENCES: Readonly<Record<string, Readonly<Record<string, strin
     "entry-commonjs": 'its entry is a .js file whose nearest package.json does not declare "type": "module"',
     "package-scope-unreadable": "the package.json nearest its entry is over its byte limit or not a JSON object",
     "typescript-module":
-      "a module of it is a TypeScript file, or imports one, whose type-only imports admission cannot judge",
+      "its directory holds a TypeScript file, which a package of this contract, a JavaScript bundle, does not hold",
   },
   PROVIDER_LOAD_FAILED: {
     "closure-outside":
