@@ -4366,6 +4366,7 @@ Every claim is granted by Studio's grant reader against Studio's record, which h
 The set rules over the whole set, the engine id, the fence alias, the query dialect, the tab type and the editor language, refuse every admitted claimant as `PROVIDER_CATALOG_CONFLICT`, whatever the order, with Studio's bundled value the reference, and the refusal names the package and the rule and no value of its declaration.
 An engine id that is one of Studio's bundled fence aliases is refused under the engine id rule, so no fence tag names a bundled engine and a package's engine.
 A package so refused is never registered and serves nothing.
+The catalog is held in one place per process, so the module instance boot installs it from and each route's module instance read the same catalog.
 A process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
 The published `DatabaseType` and `isDatabaseType` are unchanged.
 
@@ -4381,6 +4382,7 @@ The published `DatabaseType` and `isDatabaseType` are unchanged.
 - test `tests/unit/lib/db/server-catalog.test.ts` "an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines"
 - test `tests/unit/lib/db/server-catalog.test.ts` "an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both"
 - test `tests/unit/lib/db/server-catalog.test.ts` "a set rule refusal carries the package's name, version and rule and no value of its declaration"
+- test `tests/unit/lib/db/server-catalog-cross-bundle.test.ts` "a catalog installed by the boot bundle is the one a route bundle reads"
 - test `tests/unit/lib/provider-host/boot.test.ts` "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines"
 - test `tests/unit/db/claim-grants.test.ts` "an admitted package with no grant record reads every claim at its restrictive value"
 
