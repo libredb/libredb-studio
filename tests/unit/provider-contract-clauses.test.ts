@@ -13,7 +13,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { CLAUSE_ENFORCERS, type ClauseEnforcers } from "./provider-contract-enforcers";
+import { trackedFiles } from "../helpers/repo-text-scope";
+import { CLAUSE_ENFORCERS, type ClauseEnforcers, REMOVED_CLAUSES } from "./provider-contract-enforcers";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const CONTRACT_FILE = "docs/providers/CONTRACT.md";
@@ -168,6 +169,43 @@ function vocabulariesListed(document: string, schema: unknown): string[] {
     .map(([pointer]) => pointer);
 }
 
+/** A token that reads as a clause id wherever it stands in a file's text. */
+const CLAUSE_CITATION = /\b[CMSEV]-[1-9][0-9]*\b/g;
+/** The text files a clause citation can stand in: code, docs, configuration and scripts. */
+const CITING_FILE = /\.(?:ts|tsx|js|mjs|cjs|md|json|yml|yaml|sh|go)$/;
+/** This file's planted documents and maps name made-up clause ids on purpose, so it is left out of the scan. */
+const THIS_FILE = "tests/unit/provider-contract-clauses.test.ts";
+
+/** Every failure of the removed ids: an id back in the document, an id with no home, an id still enforced. */
+function removedFailures(
+  document: string,
+  enforcers: Readonly<Record<string, ClauseEnforcers>>,
+  removed: Readonly<Record<string, string>>,
+  exists: (file: string) => boolean,
+): string[] {
+  const inDocument = new Set(clauses(document).clauses.map((clause) => clause.id));
+  const failures: string[] = [];
+  for (const [id, home] of Object.entries(removed)) {
+    if (inDocument.has(id)) failures.push(`${id}: a removed id is a clause of the document again`);
+    if (!exists(home)) failures.push(`${id}: ${home} does not exist`);
+    if (Object.hasOwn(enforcers, id)) failures.push(`${id}: listed both as a clause's enforcers and as removed`);
+  }
+  return failures;
+}
+
+/** Every clause id a file cites that is neither a clause of the document nor a removed id, once per file and id. */
+function citationFailures(
+  files: readonly string[],
+  read: (file: string) => string,
+  known: ReadonlySet<string>,
+): string[] {
+  return files.flatMap((file) =>
+    [...new Set(read(file).match(CLAUSE_CITATION) ?? [])]
+      .filter((id) => !known.has(id))
+      .map((id) => `${file} names ${id}, which is neither a clause of the document nor a removed id`),
+  );
+}
+
 const repositoryReader: Reader = {
   exists: (file) => existsSync(path.join(ROOT, file)),
   read: (file) => readFileSync(path.join(ROOT, file), "utf8"),
@@ -200,6 +238,17 @@ describe("docs/providers/CONTRACT.md", () => {
   test("the document names no internal change number or ledger path", () => {
     expect(document).not.toMatch(/\bPR ?\d|\.team\//);
   });
+
+  test("every removed id is gone from the document, has a home, and has no enforcers", () => {
+    expect(removedFailures(document, CLAUSE_ENFORCERS, REMOVED_CLAUSES, repositoryReader.exists)).toEqual([]);
+  });
+
+  test("every clause id a tracked file cites is a clause of the document or a removed id", () => {
+    const known = new Set([...clauses(document).clauses.map((clause) => clause.id), ...Object.keys(REMOVED_CLAUSES)]);
+    const files = trackedFiles(ROOT).filter((file) => file !== THIS_FILE && CITING_FILE.test(file));
+
+    expect(citationFailures(files, repositoryReader.read, known)).toEqual([]);
+  }, 120_000);
 });
 
 describe("the clause rules on planted documents", () => {
@@ -303,6 +352,34 @@ describe("the clause rules on planted documents", () => {
       'the document: an enforcer is listed in the document, not in the map: - test `tests/a.test.ts` "the rule holds"',
       'M-1: an enforcer is listed in the document, not in the map: - test `tests/a.test.ts` "the rule holds"',
       "the document: an enforcer is listed in the document, not in the map: - schema `/properties/contract`",
+    ]);
+  });
+
+  test("a removed id that is a clause again, a removed id with no home, and an id both removed and enforced are each named", () => {
+    const document = ["### M-1 (normative): Back again", "### M-2 (normative): Kept"].join("\n");
+    const enforcers = { "M-1": { schema: [""] }, "M-2": { schema: [""] }, "M-4": { schema: [""] } };
+    const removed = { "M-1": "tests/a.test.ts", "M-3": "src/gone.ts", "M-4": "tests/a.test.ts" };
+
+    expect(removedFailures(document, enforcers, removed, reader.exists)).toEqual([
+      "M-1: a removed id is a clause of the document again",
+      "M-1: listed both as a clause's enforcers and as removed",
+      "M-3: src/gone.ts does not exist",
+      "M-4: listed both as a clause's enforcers and as removed",
+    ]);
+  });
+
+  test("a tracked file that cites an id that is neither a clause nor removed is named, and one citing a clause or a removed id is not", () => {
+    const texts: Record<string, string> = {
+      "src/a.ts": "// clause M-1, clauses C-2 to C-3",
+      "src/b.ts": "// clauses M-9 and E-12, then M-9 again; SHA-256 and XM-7 are no clause",
+      "docs/c.md": "C-3 (removed) and V-40.",
+    };
+    const known = new Set(["M-1", "C-2", "C-3"]);
+
+    expect(citationFailures(Object.keys(texts), (file) => texts[file] as string, known)).toEqual([
+      "src/b.ts names M-9, which is neither a clause of the document nor a removed id",
+      "src/b.ts names E-12, which is neither a clause of the document nor a removed id",
+      "docs/c.md names V-40, which is neither a clause of the document nor a removed id",
     ]);
   });
 
