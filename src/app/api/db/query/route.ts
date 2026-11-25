@@ -126,11 +126,11 @@ export async function POST(req: NextRequest) {
     // An engine of an admitted provider package is served too (docs/providers/CONTRACT.md, clause C-113): its connection
     // resolves with every guard of every route, the server catalog's record of its engine is read after the resolve, and
     // it runs on the package's session below.
-    const resolved = await resolveConnection(body, guard.session, undefined, "bundled-and-package");
-    const served = serverEngine(resolved.type);
+    const named = await resolveConnection(body, guard.session, undefined, "bundled-and-package");
+    const served = serverEngine(named.type);
     // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
     // by its type, so a package's connection is read as any other.
-    connection = resolved as DatabaseConnection;
+    connection = named as DatabaseConnection;
 
     // A `sql` that is present but not a string, a falsy one (0, false) included, is refused in words: a truthy one
     // reached the provider and answered 500 with its own TypeError. A missing (null) or empty one keeps its answer.
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
       // refused by name; the gate over the package's declared grammar; then the package's session, cached per key, and
       // the run through the host core.
       const { engine } = served;
-      const packaged = resolved as PackageConnection;
+      const packaged = named as PackageConnection;
       const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);
       if (bounds !== null) return NextResponse.json({ error: bounds }, { status: 400 });
       const bound = readBoundParams(body.params);
