@@ -8,6 +8,9 @@
  * listObjects to add one, and restore it. The MongoDB cases run the real provider, because it is the
  * engine that declares no "table" kind, and no server runs here: one over a hand-made client, and three
  * through the real acquisition, over the driver stand-in of tests/helpers/mongodb-driver.ts.
+ *
+ * Every container listing, relation listing and description, and the database choice's listing, is a host core tree
+ * call (docs/providers/CONTRACT.md, clause C-82), so the real host core is installed for the file.
  */
 import {
   afterAll,
@@ -21,10 +24,12 @@ import {
   spyOn,
   test,
 } from "bun:test";
+import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { doc, open, table } from "@libredb/libredb";
+import type { CallContext, TreeRequest } from "@libredb/provider-sdk/calls";
 import { getServerAuditBuffer } from "@/lib/audit";
 import type { Container, DatabaseProvider } from "@/lib/db/types";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
@@ -48,6 +53,8 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import type { ManagedConnection } from "@/lib/seed";
 import { metadataReadAnnotations } from "@/lib/mcp/tools/annotations";
 import { INSPECT_SCHEMA_DESCRIPTION, InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, HostCoreBootOrderError, hostCore, installHostCore } from "@/lib/provider-host/instance";
 import {
   countMethod,
   createDuckdbFile,
@@ -82,6 +89,9 @@ const { MongoDBProvider } = await import("@/lib/db/providers/document/mongodb");
 
 pinMcpTestEnvironment();
 isolateAcquisitionEnvironment();
+
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-inspect-"));
 const serve = handlerServe(testAuthInfo());
@@ -1149,6 +1159,206 @@ describe("the deadline", () => {
       recorded.restore();
       gate.release();
       if (gate.calls > 0) await gate.finished;
+      gate.restore();
+    }
+  }, 10_000);
+});
+
+/** Runs `body` with a core that records every tree call's request and context installed, then puts the real one back. */
+async function withTreeRecordingCore<T>(
+  body: (calls: readonly { readonly request: TreeRequest; readonly ctx: CallContext }[]) => Promise<T>,
+): Promise<T> {
+  const calls: { request: TreeRequest; ctx: CallContext }[] = [];
+  const real = hostCore();
+  const recording: HostCore = {
+    ...real,
+    treeCall: (session, request, ctx, ports) => {
+      calls.push({ request, ctx });
+      return real.treeCall(session, request, ctx, ports);
+    },
+  };
+  forgetHostCore();
+  installHostCore(recording, "test");
+  try {
+    return await body(calls);
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+describe("the host core", () => {
+  const LATE_LINE = "A tree read Studio stopped waiting for failed afterwards";
+
+  test("inspect_schema called before the host core is installed throws by name, writes no audit record and opens nothing", async () => {
+    const resolve = mock(async () => null);
+    const acquire = mock(async () => ({}) as DatabaseProvider);
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      resolve,
+      textScrub: fakeTextScrub,
+      acquire,
+    } as unknown as McpConnectionContext;
+    const connects = countMethod(SQLiteProvider.prototype, "connect");
+    const real = hostCore();
+    forgetHostCore();
+    try {
+      const thrown = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: "seed:shop" }), {
+        context,
+        signal: new AbortController().signal,
+      }).catch((error: unknown) => error);
+      expect(thrown).toBeInstanceOf(HostCoreBootOrderError);
+      expect(mcpEvents()).toEqual([]);
+      expect(resolve).not.toHaveBeenCalled();
+      expect(acquire).not.toHaveBeenCalled();
+
+      // Through the MCP handler, the SDK answers the throw with its message, and no provider is built.
+      const answered = await inspect({ connection_id: "seed:shop" });
+      expect(answered).toMatchObject({ isError: true, content: [{ type: "text", text: (thrown as Error).message }] });
+      expect(connects.calls).toBe(0);
+      expect(mcpEvents()).toEqual([]);
+    } finally {
+      installHostCore(real, "test");
+      connects.restore();
+    }
+  });
+
+  test("every container listing, relation listing and description is one host core tree call under the call's one deadline and the request's signal", async () => {
+    const parents: (readonly string[] | undefined)[] = [];
+    const provider = Object.assign(
+      new FixedProvider(2, (parent) => {
+        parents.push(parent);
+        return parent === undefined ? schemasOf(["shop"]) : schemasOf(["public"], parent);
+      }),
+      {
+        getCapabilities: () => ({
+          ...new FixedProvider(2).getCapabilities(),
+          objectKinds: [
+            { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+            { id: "view", role: "relation", label: "View", labelPlural: "Views" },
+          ],
+        }),
+      },
+    );
+    const lists = mock((container: readonly string[], kind: string) =>
+      FixedProvider.prototype.listObjects.call(provider, container, kind),
+    );
+    const describes = mock<DatabaseProvider["describeObject"]>((path) =>
+      FixedProvider.prototype.describeObject.call(provider, path),
+    );
+    Object.assign(provider, { listObjects: lists, describeObject: describes });
+    const request = new AbortController();
+    const frozen = Date.now();
+    setSystemTime(new Date(frozen));
+    try {
+      await withTreeRecordingCore(async (calls) => {
+        const result = await inspectFixed(provider, { timeout_ms: 5_000, limit: 2 }, request.signal);
+        const tables = result.structuredContent?.tables as { name: string }[] | undefined;
+        expect(tables?.map((entry) => entry.name)).toEqual(["t0", "t0"]);
+
+        expect(calls.map(({ request: sent }) => sent)).toEqual([
+          { action: "containers" },
+          { action: "containers", parent: ["shop"] },
+          { action: "list", container: ["shop", "public"], kind: "table" },
+          { action: "list", container: ["shop", "public"], kind: "view" },
+          { action: "describe", path: ["shop", "public", "t0"], kind: "table" },
+          { action: "describe", path: ["shop", "public", "t0"], kind: "view" },
+        ]);
+        for (const { ctx } of calls) {
+          expect(Object.keys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
+          expect(ctx.deadline).toBe(frozen + 5_000);
+        }
+        expect(new Set(calls.map(({ ctx }) => ctx.signal)).size).toBe(1);
+        const [{ ctx }] = calls;
+        expect(ctx.signal.aborted).toBe(false);
+        request.abort(new DOMException("The client left.", "AbortError"));
+        expect(ctx.signal.aborted).toBe(true);
+      });
+    } finally {
+      setSystemTime();
+    }
+
+    expect(parents).toEqual([undefined, ["shop"]]);
+    expect(lists.mock.calls).toEqual([
+      [["shop", "public"], "table"],
+      [["shop", "public"], "view"],
+    ]);
+    expect(describes.mock.calls).toEqual([
+      [["shop", "public", "t0"], "table"],
+      [["shop", "public", "t0"], "view"],
+    ]);
+  });
+
+  test("a description that fails after the deadline is logged by its action, kind and code, never its text", async () => {
+    const warned: unknown[][] = [];
+    const warn = spyOn(logger, "warn").mockImplementation((...args: unknown[]) => {
+      warned.push(args);
+    });
+    const unhandled = mock<(reason: unknown) => void>();
+    process.on("unhandledRejection", unhandled);
+    const secret = randomUUID();
+    const pending = Promise.withResolvers<never>();
+    try {
+      const provider = Object.assign(new FixedProvider(1, () => schemasOf(["public"])), {
+        describeObject: () => pending.promise,
+      });
+      // A plain await of the call, which the call's real deadline ends.
+      const result = await within(inspectFixed(provider, { timeout_ms: 500 }), 5_000);
+      expect(result === "still waiting" ? result : result.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+      expect(mcpEvents().map((event) => [event.target, event.reason])).toEqual([
+        ["mcp/decision", undefined],
+        ["mcp/execution", "mcp_timeout"],
+      ]);
+
+      pending.reject(new Error(secret));
+      await pending.promise.catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(warned.filter(([line]) => line === LATE_LINE)).toEqual([
+        [LATE_LINE, { route: "/api/mcp", action: "describe", kind: "internal", code: "INTERNAL_ERROR" }],
+      ]);
+      expect(JSON.stringify(warned)).not.toContain(secret);
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      warn.mockRestore();
+    }
+  }, 10_000);
+
+  test("a top-level listing that says the inventory needs configuration is read as no container, and its sentence is never answered", async () => {
+    const sentence = randomUUID();
+    // As a provider that says so answers its top-level listing: no container.
+    const provider = Object.assign(new FixedProvider(1, () => []), {
+      inventoryNeedsConfiguration: async () => sentence,
+    });
+
+    const listContainers = spyOn(provider, "listContainers");
+
+    const result = await inspectFixed(provider, {});
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({ schema: "default", total_tables: 0, tables: [] });
+    expect(JSON.stringify(result)).not.toContain(sentence);
+    // The host's top-level listing asks the configuration question first and lists nothing once it has a reason.
+    expect(listContainers).not.toHaveBeenCalled();
+  });
+
+  test("a database listing held past the deadline is the timeout, through the host core", async () => {
+    const server = Object.assign(new FixedProvider(1, () => schemasOf(["shop"])), {
+      getCapabilities: () => ({ ...new FixedProvider(1).getCapabilities(), catalogSessions: true }),
+      forCatalog: async () => new FixedProvider(1),
+    });
+    const gate = gateMethod(server, "listContainers");
+    try {
+      await withTreeRecordingCore(async (calls) => {
+        const result = await within(inspectFixed(server, { timeout_ms: 500 }), 5_000);
+        expect(result === "still waiting" ? result : result.content).toEqual([{ type: "text", text: TIMEOUT_500 }]);
+        expect(calls.map(({ request }) => request)).toEqual([{ action: "containers" }]);
+      });
+      expect(gate.calls).toBe(1);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+    } finally {
+      gate.release();
       gate.restore();
     }
   }, 10_000);

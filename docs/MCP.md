@@ -439,6 +439,7 @@ Measured on Silo `RELEASE.2026-09-16T00-00-00Z`, Garage `v2.4.1` and RustFS `1.0
 A PostgreSQL seed with an empty `database` reaches every database its role can CONNECT to (#1530, [`docs/providers/postgres.md` §4.1.1](providers/postgres.md#411-server-level-connections-an-empty-database-1530)).
 On such a connection both `inspect_schema` and `run_read_query` take a `database` argument naming the one to read, and a call without it is refused rather than run in whichever came first.
 The refusal is Studio's sentence, holding no database name, then the notice naming the provider that relayed the names, then the databases the call could name as one JSON list, at most fifty, with Studio's count of the rest in its sentence.
+The listing behind it ends at `timeout_ms` and when the client closes the request, answered as the timeout or the cancel, on both tools ([Limits](#limits)).
 On every other connection `database` is refused, because the connection names its own.
 The answer echoes the `database` it read.
 
@@ -673,6 +674,9 @@ OpenAI's [plugin guide](https://developers.openai.com/plugins/build/plugins) sai
 - Every statement tool's statement runs through Studio's provider host core, under the call's deadline and the client's request, and the connection's open waits within the same deadline and request ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-81); the answers are the ones described here.
   A statement Studio stopped waiting for that fails afterwards is written to the server log by its error kind and code, never its text.
   An answer larger than 1 MiB in the host's measure waits for the host's one large-page slot within `timeout_ms`; MCP reads at most 1 MiB, so only an answer near that cap can wait, and while the editor holds the slot such a call can end in the timeout answer.
+- `inspect_schema`'s container listings, relation listings and descriptions, and the database listing of a connection that reaches every database, run through Studio's provider host core under the call's deadline and the client's request ([`docs/providers/CONTRACT.md`](./providers/CONTRACT.md), clause C-82); the answers are the ones described here.
+  A read Studio stopped waiting for that fails afterwards is written to the server log by its error kind and code, never its text.
+  A statement tool's database listing ends at `timeout_ms` too; the session a statement tool opens in the `database` the call names still waits for its open beyond `timeout_ms`.
 - On an engine that bills every read, one statement call may spend at most 2000 billed reads (`MCP_CALL_READ_ALLOWANCE`), and each call gets its own allowance; a read past it is refused before it is sent. No engine served by MCP bills its reads yet.
 - A statement a provider's own read-only fence refuses before sending it is answered "The statement was refused before it reached the database:" with the provider's sentence, after a notice naming the provider that wrote it, never as the database's error.
 - Every cell of a statement tool's `rows` is plain JSON, or a tagged value `{"$": tag, "v": payload}` as `@libredb/provider-sdk/values` writes it, and the output schema's `rows` states the same.

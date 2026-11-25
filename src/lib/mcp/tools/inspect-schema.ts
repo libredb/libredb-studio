@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import type { ObjectTree } from "@/lib/api/object-tree";
 import { machineColumns } from "@/lib/db/detailed-object";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
@@ -10,8 +11,9 @@ import {
   scrubProviderText,
 } from "@/lib/db/operations/provider-text";
 import { containerDepth, isIndexesUnavailable, relationKindIds } from "@/lib/db/object-kinds";
-import type { Container, DatabaseObject, DatabaseProvider, ObjectDetail } from "@/lib/db/types";
+import type { Container, DatabaseObject, ObjectDetail } from "@/lib/db/types";
 import { getDBConfig } from "@/lib/db-ui-config";
+import { hostCore } from "@/lib/provider-host/instance";
 import type { DatabaseType } from "@/lib/types";
 import {
   newMcpCorrelationId,
@@ -25,10 +27,18 @@ import { metadataReadAnnotations } from "./annotations";
 import {
   DATABASE_ARGUMENT_DESCRIPTION,
   databaseRequiredAnswer,
+  type McpDatabaseChoice,
   McpDatabaseChoiceError,
   providerInDatabase,
 } from "./database-choice";
-import { acquireWithinCall, MCP_TIMEOUT_BOUNDS_MS, type Raced, raceDeadline } from "./read-query-limits";
+import {
+  acquireWithinCall,
+  MCP_TIMEOUT_BOUNDS_MS,
+  mcpObjectTree,
+  type Raced,
+  raceDeadline,
+  treeReadWithinCall,
+} from "./read-query-limits";
 import { type McpStatementTool, mcpTablelessReadTool } from "./statement-arms";
 import {
   MCP_CONNECTIONS_UNREADABLE,
@@ -75,11 +85,17 @@ import {
  * table comment is cut to its own bound first, and the column and index caps count what they leave
  * out instead of adding fake entries.
  *
- * One deadline, the call's start plus timeout_ms, covers every provider call: the acquisition, the database choice,
- * each container listing, the relation listing and each table's description each run through `raceDeadline`, so none
- * starts after it, while one already started runs on. The acquisition also hands the open the call's wait
- * (`acquireWithinCall`), so the host's open releases the call at its deadline or when its request leaves
- * (docs/providers/CONTRACT.md, clause C-81).
+ * The host core is read before anything else, so a call made before its install throws `HostCoreBootOrderError` by name,
+ * with no record written and nothing opened (docs/providers/CONTRACT.md, clause C-82).
+ *
+ * One deadline, the call's start plus timeout_ms, covers every provider call, and none starts after it, while one
+ * already started runs on. The open's scrub, the acquisition and the database choice each run through `raceDeadline`;
+ * the acquisition also hands the open the call's wait (`acquireWithinCall`), so the host's open releases the call at
+ * its deadline or when its request leaves (clause C-81), and the choice's catalog session open is bounded by that race
+ * alone. Each container listing, each relation kind's listing and each table's description, and the choice's database
+ * listing, is a host core tree call on the call's tree (`mcpObjectTree`, clause C-82), under the call's deadline and the
+ * request's signal; a read the call stopped waiting for that fails afterwards is logged under `/api/mcp` by its action,
+ * kind and code.
  * Foreign keys come from the description the call makes for columns or indexes anyway, so asking for them alone adds
  * a description only where the engine may declare keys.
  * The schema names are what the last container listing `chooseContainer` made answered, so asking for them sends
@@ -211,6 +227,17 @@ function stepOf<T>(raced: Raced<T>): T {
   throw new InspectStopped(raced.kind === "timeout" ? "mcp_timeout" : "mcp_cancelled");
 }
 
+/** One tree read of the call, its end answered as a raced step's: its value, its own error, or the stop. */
+function treeStep(signal: AbortSignal): Step {
+  return async (read) => stepOf(await treeReadWithinCall(read, signal));
+}
+
+/** The database choice, its listing's stop thrown as `InspectStopped`. */
+function choiceOf(choice: McpDatabaseChoice): Exclude<McpDatabaseChoice, { readonly kind: "cancelled" | "timeout" }> {
+  if (choice.kind === "cancelled" || choice.kind === "timeout") return stepOf<never>(choice);
+  return choice;
+}
+
 /** The refusal of an engine that holds no table, naming the statement tool that reads it. */
 function tablelessText(type: DatabaseType, tool: McpStatementTool): string {
   return `${getDBConfig(type).label} holds no table for inspect_schema to list. Read this connection with ${tool}.`;
@@ -229,17 +256,14 @@ type ContainerChoice =
  * back to case-insensitive, or the same default. An engine that declares no level is read at its root;
  * a level that lists nothing leaves nothing to read.
  */
-async function chooseContainer(
-  provider: DatabaseProvider,
-  schema: string | undefined,
-  step: Step,
-): Promise<ContainerChoice> {
-  const depth = containerDepth(provider.getCapabilities());
+async function chooseContainer(tree: ObjectTree, schema: string | undefined, step: Step): Promise<ContainerChoice> {
+  const depth = containerDepth(tree.getCapabilities());
   const wanted = schema?.toLowerCase();
   if (depth === 0) return wanted === undefined ? { kind: "root" } : { kind: "not-found" };
   let parent: readonly string[] | undefined;
   for (let level = 0; ; level += 1) {
-    const containers = await step(() => provider.listContainers(parent));
+    // oxlint-disable-next-line no-await-in-loop -- each level lists inside the container the level above chose.
+    const containers = await step(() => tree.listContainers(parent));
     const deepest = level === depth - 1;
     const named = deepest && wanted !== undefined;
     const chosen = named
@@ -259,16 +283,16 @@ function commentOf(source: unknown): string | undefined {
 }
 
 async function inspectTable(
-  provider: DatabaseProvider,
+  tree: ObjectTree,
   object: DatabaseObject,
   args: InspectSchemaInput,
   step: Step,
   scrub: ProviderTextScrub,
 ): Promise<InspectedTable> {
-  const readsForeignKeys = args.include_foreign_keys && provider.getCapabilities().declaresForeignKeys !== false;
+  const readsForeignKeys = args.include_foreign_keys && tree.getCapabilities().declaresForeignKeys !== false;
   const detail =
     args.include_columns || args.include_indexes || readsForeignKeys
-      ? await step(() => provider.describeObject(object.path, object.kind))
+      ? await step(() => tree.describeObject(object.path, object.kind))
       : null;
   const rawComment = (detail === null ? undefined : commentOf(detail)) ?? commentOf(object);
   const comment = rawComment === undefined ? undefined : cutUtf8(rawComment, MCP_TABLE_COMMENT_CAP_BYTES);
@@ -368,22 +392,23 @@ function pageResult(
  * The objects the page is read from: every kind the engine declares with the relation role, in
  * declared order, because not every engine has a "table" kind. MongoDB lists collections and
  * views, Redis keyspaces, the search engines indexes, and a LibreDB store holds collections and
- * keyspaces beside its tables. Each object is later described under its own kind.
+ * keyspaces beside its tables. Each object is later described under its own kind. Each kind is its own tree read, all
+ * of them concurrent, and the first failure is the listing's.
  */
-async function listRelations(provider: DatabaseProvider, container: readonly string[]): Promise<DatabaseObject[]> {
-  const kinds = relationKindIds(provider.getCapabilities());
-  return (await Promise.all(kinds.map((kind) => provider.listObjects(container, kind)))).flat();
+async function listRelations(tree: ObjectTree, container: readonly string[]): Promise<DatabaseObject[]> {
+  const kinds = relationKindIds(tree.getCapabilities());
+  return (await Promise.all(kinds.map((kind) => tree.listObjects(container, kind)))).flat();
 }
 
 async function readPage(
-  provider: DatabaseProvider,
+  tree: ObjectTree,
   args: InspectSchemaInput,
   signal: AbortSignal,
   step: Step,
   scrub: ProviderTextScrub,
   author: string,
 ): Promise<{ readonly result: ToolResult; readonly failure?: McpToolAuditReason }> {
-  const choice = await chooseContainer(provider, args.schema, step);
+  const choice = await chooseContainer(tree, args.schema, step);
   if (choice.kind === "not-found")
     return { result: ownWordsError(SCHEMA_NOT_FOUND_TEXT), failure: "mcp_schema_not_found" };
   const names = !args.include_schema_names
@@ -392,13 +417,14 @@ async function readPage(
       ? { schema_names: { unavailable: NO_SCHEMA_LEVEL_TEXT } }
       : schemaNamesOf(choice.listed);
   const container = choice.kind === "found" ? choice.container : null;
-  const objects = choice.kind === "none" ? [] : await step(() => listRelations(provider, container?.path ?? []));
+  const objects = choice.kind === "none" ? [] : await step(() => listRelations(tree, container?.path ?? []));
   const wanted = args.table?.toLowerCase();
   const filtered = wanted === undefined ? objects : objects.filter((object) => object.name.toLowerCase() === wanted);
   const tables: InspectedTable[] = [];
   for (const object of filtered.slice(args.offset, args.offset + args.limit)) {
     if (signal.aborted) return { result: ownWordsError(MCP_CANCELLED_TEXT), failure: "mcp_cancelled" };
-    const table = await inspectTable(provider, object, args, step, scrub);
+    // oxlint-disable-next-line no-await-in-loop -- one table at a time, so the page stops at the result cap.
+    const table = await inspectTable(tree, object, args, step, scrub);
     if (
       resultBytes(pageResult(args, container, names, filtered.length, [...tables, table], false, author)) >
       MCP_RESULT_CAP_BYTES
@@ -418,6 +444,9 @@ async function readPage(
 }
 
 export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall): Promise<ToolResult> {
+  // First: a call made before the host core is installed throws by name, with no record written and nothing opened, so
+  // Studio's boot-order defect is never answered as the database's error.
+  hostCore();
   const deadline = Date.now() + args.timeout_ms;
   const step = deadlineStep(call.signal, deadline);
   const record: McpCallRecord = {
@@ -463,7 +492,9 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     scrub = await step(() => call.context.textScrub(connection));
     // In the database the call names, on a connection that reaches a whole server (#1530).
     const acquired = stepOf(await acquireWithinCall(call, connection, "agent-operations", deadline));
-    const choice = await step(() => providerInDatabase(acquired, args.database));
+    // The race bounds the choice's catalog session open, which no tree read reaches; its listing ends at the same
+    // deadline and signal on the host, whichever settles first.
+    const choice = choiceOf(await step(() => providerInDatabase(acquired, args.database, call.signal, deadline)));
     if (choice.kind === "provider-refused") {
       return finish(
         providerTextError("The database could not be opened: ", choice.error, scrub, author),
@@ -475,7 +506,8 @@ export async function inspectSchema(args: InspectSchemaInput, call: McpToolCall)
     if (choice.kind === "database-required")
       return finish(databaseRequiredAnswer(choice, author), "mcp_execution_failed");
     if (call.signal.aborted) return finish(ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled");
-    const { result, failure } = await readPage(choice.provider, args, call.signal, step, scrub, author);
+    const tree = mcpObjectTree(choice.provider, call.signal, deadline);
+    const { result, failure } = await readPage(tree, args, call.signal, treeStep(call.signal), scrub, author);
     return finish(result, failure);
   } catch (error) {
     if (error instanceof InspectStopped) {

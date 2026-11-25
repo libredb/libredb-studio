@@ -166,6 +166,19 @@ function direct(
   return runReadQuery(RunReadQueryInputSchema.parse(args) as McpStatementInput, { context: caller, signal });
 }
 
+/** The call's answer, or "still waiting" when it has not answered within `ms`; the timer is cleared either way. */
+async function within<T>(call: Promise<T>, ms: number): Promise<T | "still waiting"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const waited = new Promise<"still waiting">((resolve) => {
+    timer = setTimeout(() => resolve("still waiting"), ms);
+  });
+  try {
+    return await Promise.race([call, waited]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** The connection a fake that declares catalog sessions stands for: a server-level one, which `catalogChoice` reads (M-57). */
 const SERVER_LEVEL = { id: "seed:fake", name: "fake", type: "postgres", database: "" } as const;
 
@@ -1469,6 +1482,55 @@ describe("a provider the profile seam should never hand out", () => {
     ]);
     expect(queryReadOnly).not.toHaveBeenCalled();
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+  });
+
+  test("a database listing that outlasts timeout_ms on a connection that reaches a whole server is answered with the timeout", async () => {
+    const queryReadOnly = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+    const provider = {
+      type: "postgres",
+      config: SERVER_LEVEL,
+      getCapabilities: () => ({ catalogSessions: true as const }),
+      listContainers: () => new Promise<never>(() => {}),
+      queryReadOnly,
+    };
+    const result = await within(
+      direct(
+        { connection_id: "seed:fake", sql: "SELECT 1", timeout_ms: 500 },
+        undefined,
+        fakeContext(provider as unknown as Partial<DatabaseProvider>),
+      ),
+      5_000,
+    );
+    expect(result).toEqual({ content: [{ type: "text", text: timeoutText(500) }], isError: true });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
+  });
+
+  test("a client that leaves while the databases are listed is answered cancelled at once", async () => {
+    const queryReadOnly = mock(async () => ({ rows: [], fields: [], rowCount: 0, executionTime: 0 }));
+    const entered = Promise.withResolvers<void>();
+    const provider = {
+      type: "postgres",
+      config: SERVER_LEVEL,
+      getCapabilities: () => ({ catalogSessions: true as const }),
+      listContainers: () => {
+        entered.resolve();
+        return new Promise<never>(() => {});
+      },
+      queryReadOnly,
+    };
+    const request = new AbortController();
+    const call = direct(
+      { connection_id: "seed:fake", sql: "SELECT 1", timeout_ms: 30_000 },
+      request.signal,
+      fakeContext(provider as unknown as Partial<DatabaseProvider>),
+    );
+    await entered.promise;
+    request.abort(new DOMException("The client left.", "AbortError"));
+    const result = await within(call, 5_000);
+    expect(result).toEqual({ content: [{ type: "text", text: MCP_CANCELLED_TEXT }], isError: true });
+    expect(queryReadOnly).not.toHaveBeenCalled();
+    expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_cancelled" });
   });
 
   test("a database whose name holds a line break, a fence marker and an instruction appears only inside the list after the notice", async () => {

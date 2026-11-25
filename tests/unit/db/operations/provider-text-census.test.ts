@@ -488,7 +488,7 @@ const CROSSINGS: readonly (readonly [file: string, declaration: string, callee: 
   [mcp("tools", "run-statement.ts"), "profileRefusal", "scrubProviderText"],
   [mcp("tools", "run-statement.ts"), "profileRefusal", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "prepare", "providerTextError"],
-  [mcp("tools", "run-statement.ts"), "executeOpened", "providerTextError"],
+  [mcp("tools", "run-statement.ts"), "callDatabase", "providerTextError"],
   [mcp("tools", "run-statement.ts"), "executeOpened", "withScrubbedWarnings"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "textScrub"],
   [mcp("tools", "inspect-schema.ts"), "inspectSchema", "providerTextError"],
@@ -671,7 +671,7 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "a batch read through the host core's tree call, whose sentences walkObjectInventory scrubs field by field with scrubProviderText",
   [`${join("src", "lib", "api", "object-tree.ts")}: checkedContainers: answer.needsConfiguration`]:
     "a containers answer's configuration sentence, which the facade reads only for its presence and never renders; the grounding walk scrubs it with scrubProviderText",
-  [`${mcp("tools", "inspect-schema.ts")}: inspectTable: provider.describeObject`]:
+  [`${mcp("tools", "inspect-schema.ts")}: inspectTable: tree.describeObject`]:
     "a description of which inspectTable answers only the index sentence, through engineMessage, which scrubs it",
   [`${objectRoute}: requireSourceReader: provider.readObjectSource`]:
     "the source reader, whose document the source route answers through scrubSourceDocument",

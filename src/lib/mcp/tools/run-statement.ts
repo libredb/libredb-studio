@@ -85,11 +85,13 @@ import {
  *
  * The order is run_read_query's: the host core, signal, resolve, availability, the served-engine gate, canonicalize,
  * fence, the decision record, the open's `textScrub`, the acquisition under "agent-read-only" within the call
- * (`acquireWithinCall`), `providerInDatabase`, for an arm that pages the provider's `prepareQuery` with the row cap and
- * offset, the statement through the host core's read-only execute (`runReadOnlyExecute`) under the provider budgets,
- * which refuses an answer past either budget again in core, the cut to max_rows and the result cap, the outcome record
- * (docs/providers/CONTRACT.md, clause C-81). The host core is read before anything else, so a call made before its
- * install throws `HostCoreBootOrderError` by name, with no record written and nothing opened.
+ * (`acquireWithinCall`), `providerInDatabase`, whose database listing is a host core tree call under the call's
+ * deadline and the request's signal (clause C-82) while its catalog session open is not yet bounded, for an arm that
+ * pages the provider's `prepareQuery` with the row cap and offset, the statement through the host core's read-only
+ * execute (`runReadOnlyExecute`) under the provider budgets, which refuses an answer past either budget again in core,
+ * the cut to max_rows and the result cap, the outcome record (docs/providers/CONTRACT.md, clause C-81). The host core
+ * is read before anything else, so a call made before its install throws `HostCoreBootOrderError` by name, with no
+ * record written and nothing opened.
  *
  * The boundary is the agent-read-only acquisition, which the factory refuses to hand out for an engine without a
  * read-only statement path, and the read-only statement session the legacy bridge opens over the provider, which
@@ -364,6 +366,46 @@ function acquisitionFailure(
     : failureAnswer(call, failed.error, failed.settledAt, deadline, record, scrub);
 }
 
+/**
+ * The provider in the database the call names, on a connection that reaches a whole server (#1530), or the answer that
+ * ends the call there: the listing's cancel or timeout, the provider's refusal, the databases the call could name, or
+ * Studio's own choice refusal. Any other failure is thrown, the engine's.
+ */
+async function callDatabase(
+  call: StatementCall,
+  tool: McpToolCall,
+  acquired: DatabaseProvider,
+  deadline: number,
+  scrub: ProviderTextScrub,
+): Promise<{ readonly provider: DatabaseProvider } | { readonly answer: Answer }> {
+  try {
+    const choice = await providerInDatabase(acquired, call.args.database, tool.signal, deadline);
+    switch (choice.kind) {
+      case "chosen":
+        return { provider: choice.provider };
+      case "cancelled":
+        return { answer: [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"] };
+      case "timeout":
+        return { answer: [ownWordsError(timeoutText(call.args.timeout_ms)), "mcp_timeout"] };
+      case "provider-refused":
+        return {
+          answer: [
+            providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, providerAuthor(call.type)),
+            "mcp_execution_failed",
+          ],
+        };
+      // The databases the call could name are database content: behind the notice naming the provider, never spliced
+      // into Studio's sentence.
+      case "database-required":
+        return { answer: [databaseRequiredAnswer(choice, providerAuthor(call.type)), "mcp_execution_failed"] };
+    }
+  } catch (error) {
+    if (error instanceof McpDatabaseChoiceError)
+      return { answer: [ownWordsError(error.message), "mcp_execution_failed"] };
+    throw error;
+  }
+}
+
 async function executeOpened(
   call: StatementCall,
   tool: McpToolCall,
@@ -377,26 +419,9 @@ async function executeOpened(
   if (acquired.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (acquired.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
   if (acquired.kind === "failed") return acquisitionFailure(call, acquired, deadline, record, scrub);
-  // In the database the call names, on a connection that reaches a whole server (#1530).
-  let provider: DatabaseProvider;
-  try {
-    const choice = await providerInDatabase(acquired.value, args.database);
-    if (choice.kind === "provider-refused") {
-      return [
-        providerTextError(DATABASE_REFUSED_LEAD, choice.error, scrub, providerAuthor(call.type)),
-        "mcp_execution_failed",
-      ];
-    }
-    // The databases the call could name are database content: behind the notice naming the provider, never spliced
-    // into Studio's sentence.
-    if (choice.kind === "database-required") {
-      return [databaseRequiredAnswer(choice, providerAuthor(call.type)), "mcp_execution_failed"];
-    }
-    provider = choice.provider;
-  } catch (error) {
-    if (error instanceof McpDatabaseChoiceError) return [ownWordsError(error.message), "mcp_execution_failed"];
-    throw error;
-  }
+  const chosen = await callDatabase(call, tool, acquired.value, deadline, scrub);
+  if ("answer" in chosen) return chosen.answer;
+  const { provider } = chosen;
   const prepared = prepare(call, provider, connection.type, scrub);
   if ("refused" in prepared) return prepared.refused;
   const executed = await statementOnHost(tool, provider, connection.type, prepared.prepared.query, deadline);
