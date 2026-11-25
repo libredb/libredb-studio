@@ -16,6 +16,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "
 import { createHash, randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { admitted } from "@libredb/provider-loader";
 import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
 import { forgetServerCatalog, serverCatalogInstalled, serverEngine } from "@/lib/db/server-catalog";
@@ -23,6 +24,7 @@ import { logger } from "@/lib/logger";
 import * as admission from "@/lib/provider-host/admission";
 import { admitProvidersAtBoot, bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
+import { forgetPackageDirectories, packagesInStack } from "@/lib/provider-host/package-directories";
 import { forgetProvidersDirectory } from "@/lib/provider-host/providers-dir";
 import * as providersLock from "@/lib/provider-host/providers-lock";
 import {
@@ -374,6 +376,38 @@ describe("boot admission", () => {
     } finally {
       none.mockRestore();
     }
+  });
+
+  test("every package that passed its lock is recorded with its directory, as a path and as a file URL", async () => {
+    forgetPackageDirectories();
+    const empty = freshProviders();
+    writeLock(empty, []);
+    await bootAdmission(empty, PROVIDER_IMPORT_DEADLINE_MS);
+    expect(packagesInStack(() => "")).toBeNull();
+
+    const providers = freshProviders();
+    const [kept, thrower] = writePackages(providers, [{}, { source: "throw new Error('boom');\n" }]) as [
+      Written,
+      Written,
+    ];
+    const logs = spyLogs();
+    try {
+      await bootAdmission(providers, PROVIDER_IMPORT_DEADLINE_MS);
+    } finally {
+      logs.restore();
+    }
+    const directoryOf = (pkg: Written) => path.join(providers, pkg.name, "1.0.0");
+    const frame = (file: string) => `Error: boom\n    at <anonymous> (${file}:1:7)`;
+    // A package refused after its import has run its top level, so it is recorded too.
+    expect(packagesInStack(() => frame(path.join(directoryOf(thrower), "dist", "index.mjs")))).toEqual([
+      `${thrower.name} 1.0.0`,
+    ]);
+    expect(packagesInStack(() => frame(`${pathToFileURL(directoryOf(kept)).href}/dist/index.mjs`))).toEqual([
+      `${kept.name} 1.0.0`,
+    ]);
+    // A sibling directory whose name starts with the package's is not the package's.
+    expect(packagesInStack(() => frame(`${directoryOf(kept)}0${path.sep}x.mjs`))).toEqual([]);
+    forgetPackageDirectories();
   });
 
   test("admission runs once per process: a second call reads nothing and keeps the installed catalog", async () => {

@@ -39,6 +39,7 @@
 import { inspect } from "node:util";
 import { logger } from "@/lib/logger";
 import { redactErrorMessage } from "@/lib/mcp/serializer";
+import { packagesInStack } from "@/lib/provider-host/package-directories";
 import { queuedQueryEventCount } from "@/lib/query-events/queued";
 
 /** sysexits.h EX_SOFTWARE: the server stopped on an uncaught exception, and a fresh process is the recovery. */
@@ -92,6 +93,11 @@ function errorDetail(error: Error): string {
  * `origin` is Node.js's: "unhandledRejection" when it raised an unhandled rejection as an uncaught exception, which
  * `--unhandled-rejections=strict` does for every one.
  *
+ * Where a provider package passed its lock in this process (src/lib/provider-host/package-directories.ts), the line
+ * ends with the packages a frame of the error's stack runs through, `; provider packages in its stack: <name> <version>,
+ * ...`, or `; no provider package is in its stack`, for a thrown value that is not an Error too
+ * (docs/providers/CONTRACT.md, clause C-108); elsewhere it is unchanged. Only the frame lines are read, never printed.
+ *
  * A name or a message that is not a string is converted, so a Symbol name does not throw. A value whose conversion to a
  * string throws still makes it throw: a revoked Proxy, a `name` or `message` getter that throws, a name or message
  * that is a null-prototype object, a custom inspection that throws. The listener exits with the code anyway, when it
@@ -107,10 +113,25 @@ export function uncaughtExceptionLine(
   if (isError(error)) {
     const heading = errorHeading(error);
     const detail = errorDetail(error);
+    const attribution = packageAttribution(() => String(error.stack));
     // The heading alone for an empty detail, as Error.prototype.toString prints it: the redactor would say "Unknown error".
-    return detail === "" ? `${prefix}: ${heading}` : `${prefix}: ${heading}: ${redactErrorMessage(detail)}`;
+    return detail === ""
+      ? `${prefix}: ${heading}${attribution}`
+      : `${prefix}: ${heading}: ${redactErrorMessage(detail)}${attribution}`;
   }
-  return `${prefix}: ${typeof error}: ${redactErrorMessage(shown(error))}`;
+  return `${prefix}: ${typeof error}: ${redactErrorMessage(shown(error))}${packageAttribution(() => "")}`;
+}
+
+/**
+ * The line's ending naming the provider packages the stack `readStack` answers runs through; empty where no package
+ * passed its lock, and then the stack is not read.
+ */
+function packageAttribution(readStack: () => string): string {
+  const packages = packagesInStack(readStack);
+  if (packages === null) return "";
+  return packages.length === 0
+    ? "; no provider package is in its stack"
+    : `; provider packages in its stack: ${packages.join(", ")}`;
 }
 
 /**

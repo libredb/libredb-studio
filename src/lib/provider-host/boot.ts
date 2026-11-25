@@ -14,7 +14,8 @@
  * 4. installs the catalog `composeServerCatalog` composes from the packages admitted and refused, and answers true.
  *
  * `bootAdmission(directory, deadlineMs)` reads the lock (`readProvidersLock`), logs each package the lock refused, and,
- * when at least one package passed it, compiles the manifest validator once from the SDK's schema text, whose digest
+ * when at least one package passed it, records the directory of each such package for the uncaught-exception line
+ * (./package-directories, clause C-108), compiles the manifest validator once from the SDK's schema text, whose digest
  * the validator checks, then admits each verified package in the lock's order, one at a time, each import under
  * `deadlineMs` (`admitPackage`, ./admission). The catalog's set rules (`catalogConflicts`) then run over every admitted
  * package, each package they refuse is logged with `PROVIDER_CATALOG_CONFLICT`, and only the packages they keep are
@@ -25,6 +26,8 @@
  * is logged at info with its name, version and engine ids. An import that settles after its deadline is logged at warn
  * by its package and stays refused. A synchronous hang at import blocks the boot (C-37).
  */
+import * as path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { ManifestValidator } from "@libredb/provider-sdk/manifest";
 import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
 import { installServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
@@ -36,6 +39,7 @@ import {
 } from "@/lib/db/server-catalog-compose";
 import { logger } from "@/lib/logger";
 import * as admission from "./admission";
+import { recordPackageDirectories } from "./package-directories";
 import { catalogConflictRefusal, type LockRefusal, type PackageRefusal } from "./provider-refusals";
 import { providersDirectory } from "./providers-dir";
 import * as providersLock from "./providers-lock";
@@ -99,6 +103,14 @@ export async function bootAdmission(directory: string, deadlineMs: number): Prom
     readonly answer: admission.AdmittedPackage;
   }[] = [];
   if (verified.length > 0) {
+    // Before any import: a package refused after its import has run its top level, which may have left a timer.
+    recordPackageDirectories(
+      verified.map((pkg) => ({
+        name: pkg.name,
+        version: pkg.version,
+        prefixes: [`${pkg.directory}${path.sep}`, `${pathToFileURL(pkg.directory).href}/`],
+      })),
+    );
     const validator: ManifestValidator = admission.hostManifestValidator(
       new TextEncoder().encode(MANIFEST_SCHEMA_TEXT),
     );

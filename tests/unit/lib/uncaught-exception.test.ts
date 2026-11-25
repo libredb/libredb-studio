@@ -10,6 +10,9 @@
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import {
   installUncaughtExceptionExit,
@@ -17,6 +20,8 @@ import {
   UNCAUGHT_EXCEPTION_EXIT_CODE,
   uncaughtExceptionLine,
 } from "@/lib/uncaught-exception";
+import { forgetPackageDirectories, recordPackageDirectories } from "@/lib/provider-host/package-directories";
+import { removeScratch, scratchDirectory } from "../../helpers/provider-artifacts";
 import { StandInExit, type StandInProcess, standInProcess } from "../../helpers/uncaught-exception-stand-in";
 import { valueImportClosure } from "../../helpers/value-import-closure";
 
@@ -24,6 +29,7 @@ let spies: ReturnType<typeof spyOn>[] = [];
 
 afterEach(() => {
   resetUncaughtExceptionExit();
+  forgetPackageDirectories();
   for (const spy of spies) spy.mockRestore();
   spies = [];
 });
@@ -193,6 +199,61 @@ describe("uncaughtExceptionLine()", () => {
   });
 });
 
+describe("the provider package in the stack", () => {
+  /** A package's directory as boot records it: its real path and its file URL, each closed by its separator. */
+  const recorded = (name: string, directory: string) => ({
+    name,
+    version: "1.0.0",
+    prefixes: [`${directory}${path.sep}`, `${pathToFileURL(directory).href}/`],
+  });
+
+  test("the exit-70 line names the admitted package in the stack", async () => {
+    const scratch = scratchDirectory("libredb-uncaught-");
+    try {
+      // A space in the directory: Node.js prints it as %20 in a frame's file URL, Bun as itself in a frame's path.
+      const directory = path.join(scratch, "pkg dir");
+      mkdirSync(path.join(directory, "dist"), { recursive: true });
+      const entry = path.join(directory, "dist", "index.mjs");
+      // The error is made inside a timer callback of the package's module: Bun keeps that frame, where it can drop the
+      // frame of a one-line function that only returns a new Error.
+      writeFileSync(
+        entry,
+        "export function fail() {\n  return new Promise((resolve) => {\n    setTimeout(() => {\n      resolve(new Error('boom'));\n    }, 1);\n  });\n}\n",
+      );
+      const { fail } = (await import(pathToFileURL(entry).href)) as { fail: () => Promise<Error> };
+      const error = await fail();
+      recordPackageDirectories([
+        recorded("acme-other", path.join(scratch, "other")),
+        recorded("acme-stack", directory),
+      ]);
+      expect(uncaughtExceptionLine(error)).toBe(
+        "Uncaught exception, exiting with code 70: Error: boom; provider packages in its stack: acme-stack 1.0.0",
+      );
+    } finally {
+      removeScratch(scratch);
+    }
+  });
+
+  test("the exit-70 line says no provider package is in the stack for a throw from core, or a thrown value that is not an Error", () => {
+    const directory = path.join(path.sep, "srv", "providers", "acme-core", "1.0.0");
+    recordPackageDirectories([recorded("acme-core", directory)]);
+    // A message that names the directory is no frame.
+    const error = new Error(`could not read ${directory}${path.sep}dist${path.sep}index.mjs`);
+    expect(uncaughtExceptionLine(error)).toEndWith("; no provider package is in its stack");
+    expect(uncaughtExceptionLine("a string")).toBe(
+      "Uncaught exception, exiting with code 70: string: 'a string'; no provider package is in its stack",
+    );
+  });
+
+  test("the exit-70 line is unchanged where no package passed its lock", () => {
+    expect(uncaughtExceptionLine(new Error("boom"))).toBe("Uncaught exception, exiting with code 70: Error: boom");
+    recordPackageDirectories([]);
+    expect(uncaughtExceptionLine(new Error("boom"))).toBe(
+      "Uncaught exception, exiting with code 70: Error: boom; no provider package is in its stack",
+    );
+  });
+});
+
 describe("the module's imports", () => {
   test("stay few, since register() loads the module before every other boot step", () => {
     const closure = valueImportClosure("src/lib/uncaught-exception.ts");
@@ -201,6 +262,7 @@ describe("the module's imports", () => {
       "src/lib/logged-text.ts",
       "src/lib/logger.ts",
       "src/lib/mcp/serializer.ts",
+      "src/lib/provider-host/package-directories.ts",
       "src/lib/query-events/queued.ts",
       "src/lib/uncaught-exception.ts",
     ]);
