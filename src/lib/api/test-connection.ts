@@ -124,7 +124,7 @@ function logPackageError(call: string, error: unknown, scrub: ProviderTextScrub,
 }
 
 /**
- * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-113). First,
+ * Test Connection for an engine an admitted provider package serves (docs/providers/CONTRACT.md, clause C-112). First,
  * before the budget starts, `connection` is read by the engine's own field rules, composed from its declaration
  * (`engine.fieldRules`), a refusal rejecting with a not-sent `DatabaseConfigError` carrying the declared sentence, and
  * then by the open checks (`assertPackageOpenable` in src/lib/db/package-sessions.ts). Then, within the engine's connect

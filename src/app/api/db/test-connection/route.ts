@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     // Support both formats: { connectionId: "seed:X" }, { connection: {...} }, or bare connection object. An engine of
     // an admitted provider package is resolved with every guard of every route, then tested through its package: its
     // field rules and the open checks, then one session opened, its health read and closed (docs/providers/CONTRACT.md,
-    // clause C-113).
+    // clause C-112).
     const resolved = await resolveConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,

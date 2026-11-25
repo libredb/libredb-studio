@@ -223,7 +223,7 @@ export function readHealthWithin(
 
 /**
  * Test Connection's health read of `session`, a session the test holds, a legacy provider's bridged one or a provider
- * package's own (docs/providers/CONTRACT.md, clauses C-75 and C-113): one health call of `core` with the context
+ * package's own (docs/providers/CONTRACT.md, clauses C-75 and C-112): one health call of `core` with the context
  * `ctx`, the test's own deadline, its signal and the environment the session's calls are given. Answers as
  * `readHealthWithin` answers.
  *

@@ -1,6 +1,6 @@
 /**
  * `POST /api/db/test-connection` for an engine a provider package serves (docs/providers/CONTRACT.md, clauses C-107 and
- * C-113), through the real `resolveConnection`, the real package session path and the real host core: an
+ * C-112), through the real `resolveConnection`, the real package session path and the real host core: an
  * admitted engine's connection is validated against its declaration's field rules and the open checks, each refusal a
  * not-sent configuration error, then one session opens through the package, its health is read and it is closed; a
  * package's own words never reach the client; a refused package's engine answers `PROVIDER_UNAVAILABLE` naming the

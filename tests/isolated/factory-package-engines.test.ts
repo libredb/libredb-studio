@@ -79,7 +79,7 @@ describe("the factory and a provider package's engine", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet", async () => {
+  test("an admitted package's engine is refused at each factory entry point, its session opening through its package", async () => {
     const { errors, ran } = await refusals("acmefactory");
     for (const error of errors) {
       expect(error).toBeInstanceOf(PackageEngineUnsupportedError);
