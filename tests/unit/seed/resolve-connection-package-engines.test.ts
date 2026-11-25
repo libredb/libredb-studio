@@ -20,7 +20,9 @@ import * as vaultClient from "@/lib/seed/vault-client";
 import type { DatabaseConnection } from "@/lib/types";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 
-const VAULT_REFERENCE = "${vault:secret/data/x#y}";
+function vaultReference(): string {
+  return "${vault:secret/data/x#y}";
+}
 const ADMIN = { role: "admin", username: "test" } as const;
 const originalSeedPath = process.env.SEED_CONFIG_PATH;
 let scratch: string;
@@ -34,7 +36,7 @@ beforeEach(() => {
     JSON.stringify({
       version: "1",
       connections: [
-        { id: "gone", name: "Gone", type: "acmegone", host: "gone.example", password: VAULT_REFERENCE, roles: ["*"] },
+        { id: "gone", name: "Gone", type: "acmegone", host: "gone.example", password: vaultReference(), roles: ["*"] },
         { id: "served", name: "Served", type: "acmeserved", host: "served.example", roles: ["*"] },
       ],
     }),
