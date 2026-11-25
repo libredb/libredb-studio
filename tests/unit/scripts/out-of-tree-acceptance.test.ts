@@ -59,6 +59,48 @@ const readText = (file: string): string => readFileSync(file, "utf8");
 /** The fixture as the script reads it. */
 const fixture: Fixture = readFixture(FIXTURE, readText);
 const manifestText = readText(path.join(FIXTURE, "libredb-provider.json"));
+const engineId = (fixture.engines[0] as Fixture["engines"][number]).id;
+
+/**
+ * Studio's answers as the acceptance met them, one real sample of each, captured from a green local run of the script
+ * and a probe against the same build and providers directory on 2026-11-25 (main at the package session's head). The
+ * package name, version and engine id come from the fixture, so a sample stays true when the fixture is renamed; the
+ * session cookie's value is drawn at run time.
+ */
+const SAMPLES = {
+  lockStdout: (lockFile: string): string =>
+    `Wrote ${lockFile}\n${fixture.name} ${fixture.version} sha256:1c128d8147d1717382b8b42371ef2daeadb5eb2c44b6b571724e337acfaff542\n`,
+  signInSetCookie: (value: string): string =>
+    `${STUDIO.sessionCookie}=${value}; Path=/; Expires=Thu, 26 Nov 2026 18:02:03 GMT; Max-Age=86400; HttpOnly; SameSite=lax`,
+  saveBody: { success: true, message: "Connection successful", latency: 0 },
+  listBody: {
+    rows: [
+      { name: "alpha", value: "first" },
+      { name: "beta", value: "second" },
+    ],
+    fields: ["name", "value"],
+    columnTypes: { name: "text", value: "text" },
+    rowCount: 2,
+    executionTime: 0,
+    pagination: { limit: 500, offset: 0, hasMore: false, totalReturned: 2, wasLimited: false },
+  },
+  admittedLine: `[INFO ] [2026-11-25T18:02:02.835Z] {route=provider-boot, package=${fixture.name} ${fixture.version}, engines=${engineId}} A provider package was admitted`,
+  refusalLine: `[WARN ] [2026-11-25T18:00:30.243Z] {route=provider-boot} PROVIDER_DIGEST_MISMATCH: ${fixture.name} ${fixture.version}: its files differ from the digest its lock entry pins`,
+  unavailableBody: {
+    error: `The connection type "${engineId}" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_DIGEST_MISMATCH), so no provider can open it; the server's log names the package and why.`,
+    code: "PROVIDER_UNAVAILABLE",
+    statusCode: 503,
+    kind: "provider-unavailable",
+    outcome: "unknown",
+  },
+  unknownBody: {
+    error: `No provider for the connection type "${engineId}" is installed in this LibreDB Studio.`,
+    code: "PROVIDER_UNKNOWN",
+    statusCode: 400,
+    kind: "unknown-provider",
+    outcome: "unknown",
+  },
+} as const;
 
 /** Eight steps that each answer `evidence(n)`, recording the order they ran in. */
 function fakeSteps(ran: number[], answer: (n: number) => Promise<string> = async (n) => `evidence ${n}`): Step[] {
@@ -431,6 +473,7 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(lockOutputProblems(shortDigest, lock, "fixture-provider", "1.0.0")).not.toEqual([]);
     const twoPackages = `${good}another 2.0.0 sha256:${digest}\n`;
     expect(lockOutputProblems(twoPackages, lock, "fixture-provider", "1.0.0")).not.toEqual([]);
+    expect(lockOutputProblems(SAMPLES.lockStdout(lock), lock, fixture.name, fixture.version)).toEqual([]);
   });
 
   test("the artifact must hold exactly the package.json, the manifest and the bundle at the manifest's entry", () => {
@@ -458,6 +501,8 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(sessionCookie(200, headers)).toBe(`${STUDIO.sessionCookie}=${value}`);
     expect(() => sessionCookie(200, ["theme=dark; Path=/"])).toThrow(STUDIO.sessionCookie);
     expect(() => sessionCookie(401, headers)).toThrow("401");
+    const sampled = randomUUID();
+    expect(sessionCookie(200, [SAMPLES.signInSetCookie(sampled)])).toBe(`${STUDIO.sessionCookie}=${sampled}`);
   });
 
   test("the rows must equal the expected rows in order, so an error answer, no rows, other rows or a degraded save fail", () => {
@@ -485,6 +530,10 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     expect(saveProblems({ status: 200, body: { success: true, degraded: true, message: "x" } })).not.toEqual([]);
     expect(saveProblems({ status: 400, body: { success: false } })).not.toEqual([]);
     expect(saveProblems({ status: 200, body: { success: false } })).not.toEqual([]);
+
+    const list = fixture.acceptance.statements[0] as (typeof fixture.acceptance.statements)[number];
+    expect(rowsProblems({ status: 200, body: SAMPLES.listBody }, list)).toEqual([]);
+    expect(saveProblems({ status: 200, body: SAMPLES.saveBody })).toEqual([]);
   });
 
   test("an unavailable answer must carry the code PROVIDER_UNAVAILABLE exactly and name the refusal code, so IDENTITY_PROVIDER_UNAVAILABLE fails", () => {
@@ -498,6 +547,8 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
       refusal,
     );
     expect(unavailableProblems({ status: 400, body: { code: "PROVIDER_UNKNOWN" } }, refusal)).not.toEqual([]);
+    expect(unavailableProblems({ status: 503, body: SAMPLES.unavailableBody }, refusal)).toEqual([]);
+    expect(unavailableProblems({ status: 400, body: SAMPLES.unknownBody }, refusal)).not.toEqual([]);
   });
 
   test("the refusal line is found only for the code, name and version asked, and the first boot's output must name no refusal of the package", () => {
@@ -511,6 +562,9 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     const other = "PROVIDER_ENTRY_INVALID: fixture-provider 1.0.0: no default export";
     expect(refusalLines(other, null, "fixture-provider", "1.0.0")).toEqual([other]);
     expect(refusalLines("boot\nready\n", null, "fixture-provider", "1.0.0")).toEqual([]);
+    const boot = `${SAMPLES.admittedLine}\n${SAMPLES.refusalLine}\n`;
+    expect(refusalLines(boot, STUDIO.digestMismatch, fixture.name, fixture.version)).toEqual([SAMPLES.refusalLine]);
+    expect(refusalLines(`${SAMPLES.admittedLine}\n`, null, fixture.name, fixture.version)).toEqual([]);
   });
 
   test("a porcelain status with any line fails, naming the lines", () => {
