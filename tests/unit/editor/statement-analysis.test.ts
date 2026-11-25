@@ -863,5 +863,20 @@ describe("packageConfirmationVerdict", () => {
     expect(packageConfirmationVerdict("ALTER SESSION SET x = 1", exempting, "Keys", undefined)).toMatchObject({
       decision: "confirm",
     });
+    // The explain claim is read both ways: an analyzed write asks under a declaration of false, a planned write
+    // under a declaration of true, and an analyzed read runs under either.
+    for (const explainExecutesWithAnalyze of [false, true]) {
+      const explaining = { ...grammar, explainExecutesWithAnalyze };
+      for (const sql of ["EXPLAIN ANALYZE DELETE FROM t", "EXPLAIN UPDATE t SET x = 1"]) {
+        expect([
+          explainExecutesWithAnalyze,
+          sql,
+          packageConfirmationVerdict(sql, explaining, "Keys", undefined),
+        ]).toMatchObject([explainExecutesWithAnalyze, sql, { decision: "confirm" }]);
+      }
+      expect(packageConfirmationVerdict("EXPLAIN ANALYZE SELECT 1", explaining, "Keys", undefined)).toStrictEqual({
+        decision: "run",
+      });
+    }
   });
 });

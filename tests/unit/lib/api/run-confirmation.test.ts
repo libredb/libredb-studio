@@ -646,6 +646,36 @@ describe("the gate on an engine a provider package serves", () => {
     });
   });
 
+  test("a package's explain claim is read both ways: an analyzed write and a planned write each ask, whatever it declares", async () => {
+    // Neither value of `explainExecutesWithAnalyze` asks about every statement the other asks about: true reads the
+    // write under EXPLAIN ANALYZE, false reads a plain EXPLAIN's text as it stands. So the gate asks where either asks.
+    for (const executes of [false, true]) {
+      const grammar = declared((engine) => {
+        const sqlText = engine.sqlText as { grammar: { explainExecutesWithAnalyze: boolean } };
+        sqlText.grammar.explainExecutesWithAnalyze = executes;
+      });
+      for (const sql of [
+        "EXPLAIN ANALYZE DELETE FROM t",
+        "EXPLAIN (ANALYZE) DELETE FROM t",
+        "EXPLAIN UPDATE t SET x = 1",
+        "EXPLAIN WITH d AS (DELETE FROM t RETURNING *) SELECT * FROM d",
+      ]) {
+        expect([executes, sql, await gatePackageRun(packageRequest({ grammar, sql }), clock)]).toMatchObject([
+          executes,
+          sql,
+          { kind: "answer", status: 428 },
+        ]);
+      }
+      for (const sql of ["EXPLAIN ANALYZE SELECT 1", "EXPLAIN DELETE FROM t"]) {
+        expect([executes, sql, await gatePackageRun(packageRequest({ grammar, sql }), clock)]).toEqual([
+          executes,
+          sql,
+          { kind: "run", unconfirmed: false },
+        ]);
+      }
+    }
+  });
+
   test("a package reader that throws asks, marked classificationFailed, and logs the engine, never the statement", async () => {
     const broken = { ...declared(), script: undefined } as unknown as SqlGrammar;
     const asked = await gatePackageRun(packageRequest({ grammar: broken, sql: "SELECT secret_value" }), clock);

@@ -190,6 +190,12 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     expect(confirmed.status).toBe(200);
     expect(names(seen)).toEqual(["open", "execute"]);
 
+    // The minimal manifest declares that EXPLAIN never executes; the gate reads the claim both ways, so an analyzed
+    // write asks, and nothing is opened before the confirmation.
+    const analyzed = await post({ connection, sql: "EXPLAIN ANALYZE DELETE FROM t", confirmation: "ask" });
+    expect(analyzed.status).toBe(428);
+    expect(names(seen)).toEqual(["open", "execute"]);
+
     // A declaration that claims its text is not SQL and exempts a form: neither claim is counted.
     const loose = hooksFor(LOOSE);
     for (const sql of ["ALTER SESSION SET x = 1", "DELETE FROM t", "SELECT 1; DROP TABLE x"]) {

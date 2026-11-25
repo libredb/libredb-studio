@@ -859,15 +859,20 @@ export function packageUnreadableRun(text: string, grammar: SqlGrammar): boolean
  * the grammar its declaration states, composed into the server catalog's record of the engine
  * (docs/providers/CONTRACT.md, clause C-113). Every claim that would loosen the gate is read at its restrictive value,
  * since Studio's review record holds no row for such an engine (S-8): the text is read as SQL, and no exempt form is
- * counted. No vocabulary row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks where
- * part of the text cannot be read, where the statement writes, and where a later statement of the split writes:
+ * counted. `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other
+ * runs: true asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about
+ * `EXPLAIN UPDATE t SET x = 1`, which true reads as a plan. So the statement is read under both values, and asks where
+ * either asks. No vocabulary row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks
+ * where part of the text cannot be read, where the statement writes, and where a later statement of the split writes:
  * `isDangerousQuery`'s own answer for an engine with no row and no reviewed claim, read from the package's data.
  */
 export function packageStatementAsks(statement: string, grammar: SqlGrammar): boolean {
   const read = packageGateGrammar(grammar);
   return (
     packageUnreadableRun(statement, read) ||
-    writesUnderGrammar(statement, read) ||
-    writesInLaterStatements(statement, read)
+    [false, true].some((explainExecutesWithAnalyze) => {
+      const explaining = { ...read, explainExecutesWithAnalyze };
+      return writesUnderGrammar(statement, explaining) || writesInLaterStatements(statement, explaining);
+    })
   );
 }
