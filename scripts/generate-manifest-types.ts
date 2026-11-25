@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 /**
  * Writes packages/provider-sdk/src/manifest/manifest-types.generated.ts, the TypeScript types of the provider manifest,
- * from packages/provider-sdk/src/manifest/manifest.schema.json (docs/providers/CONTRACT.md, clause M-2).
+ * from packages/provider-sdk/src/manifest/manifest.schema.json (docs/providers/CONTRACT.md, clause M-2), and
+ * packages/provider-sdk/src/manifest/manifest-schema.generated.ts, the schema's text as a module.
  *
  * The schema is the one statement of the manifest: the types are rendered from it and never written by hand, and the
  * generated module also carries `MANIFEST_SCHEMA_SHA256`, the digest `compileManifestValidator` loads the schema by.
@@ -20,9 +21,16 @@
  * it: a `$defs` key in PascalCase. An object without `properties` must be open (`additionalProperties: true`) and
  * renders as a read-only record of unknown values.
  *
- * Run: bun scripts/generate-manifest-types.ts --write | --check [--out <file>]
- * --write writes the module, --check exits 1 when the file differs from what the schema renders (an absent file
- * included), and --out names another file for either, resolved against the working directory.
+ * The schema text module, `MANIFEST_SCHEMA_TEXT`, holds the schema file's text, one string literal per line joined by
+ * line feeds, so its UTF-8 bytes are the file's and `compileManifestValidator` admits them by `MANIFEST_SCHEMA_SHA256`.
+ * A host that bundles its server, Studio's standalone Next.js server among them, reads the schema's bytes from it: a
+ * bundler parses an import of the JSON file into an object, whose serialisation is not the file's bytes, and a read of
+ * the file at run time depends on the bundler copying a file no module imports.
+ *
+ * Run: bun scripts/generate-manifest-types.ts --write | --check [--out <file>] [--schema-out <file>]
+ * --write writes both modules, --check exits 1 when either file differs from what the schema renders (an absent file
+ * included), and --out names another file for the types, --schema-out for the schema text, each at most once, in
+ * either order, resolved against the working directory.
  */
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -34,9 +42,12 @@ export const MANIFEST_SCHEMA_FILE = "packages/provider-sdk/src/manifest/manifest
 /** The generated module's path in the repository. */
 export const MANIFEST_TYPES_FILE = "packages/provider-sdk/src/manifest/manifest-types.generated.ts";
 
+/** The generated schema text module's path in the repository. */
+export const MANIFEST_SCHEMA_TEXT_FILE = "packages/provider-sdk/src/manifest/manifest-schema.generated.ts";
+
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 const WRITE_COMMAND = "bun run manifest:types";
-const USAGE = "Usage: bun scripts/generate-manifest-types.ts --write | --check [--out <file>]";
+const USAGE = "Usage: bun scripts/generate-manifest-types.ts --write | --check [--out <file>] [--schema-out <file>]";
 const LINE_WIDTH = 120;
 
 const ROOT_KEYWORDS = new Set(["$schema", "$id", "$defs", "title"]);
@@ -249,6 +260,26 @@ export function renderManifestTypes(schemaText: string): string {
   ].join("\n");
 }
 
+/**
+ * The generated schema text module for a schema text: its header and `MANIFEST_SCHEMA_TEXT`, one string literal per
+ * line of the text, in the formatter's quotes, joined by line feeds, so the constant is the text exactly.
+ */
+export function renderManifestSchemaText(schemaText: string): string {
+  const lines = schemaText.split("\n").map((line) => `  ${literal(line)},`);
+  return [
+    `// GENERATED FILE - do not edit. Run: ${WRITE_COMMAND}\n//\n// Source: ${MANIFEST_SCHEMA_FILE}, via\n// scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.\n`,
+    "/**",
+    " * The schema file's text, line for line: its UTF-8 bytes are the file's, so `compileManifestValidator` admits them by",
+    " * `MANIFEST_SCHEMA_SHA256`. A host that bundles its code reads the schema's bytes here, since a bundler parses an",
+    " * import of the JSON file into an object whose serialisation is not the file's bytes.",
+    " */",
+    "export const MANIFEST_SCHEMA_TEXT = [",
+    ...lines,
+    '].join("\\n");',
+    "",
+  ].join("\n");
+}
+
 /** The file contents, or null when there is no file: absent and stale have the same fix. */
 function readOrNull(file: string): string | null {
   try {
@@ -259,16 +290,30 @@ function readOrNull(file: string): string | null {
   }
 }
 
+/** The command line's options: the mode, and the types and schema text files when another than the repository's. */
+interface Arguments {
+  readonly mode: "--write" | "--check";
+  readonly out: string | undefined;
+  readonly schemaOut: string | undefined;
+}
+
 /**
- * The command line, exactly `--write` or `--check`, optionally followed by `--out <file>`; null for anything else,
- * which the command refuses with its usage line, so a mistyped flag never rewrites the committed module.
+ * The command line, exactly `--write` or `--check`, optionally followed by `--out <file>` and `--schema-out <file>`,
+ * each at most once, in either order; null for anything else, which the command refuses with its usage line, so a
+ * mistyped flag never rewrites a committed module.
  */
-function parseArguments(argv: readonly string[]): { mode: "--write" | "--check"; out: string | undefined } | null {
-  const [mode, flag, file, ...rest] = argv;
+function parseArguments(argv: readonly string[]): Arguments | null {
+  const [mode, ...rest] = argv;
   if (mode !== "--write" && mode !== "--check") return null;
-  if (flag === undefined) return { mode, out: undefined };
-  if (flag !== "--out" || file === undefined || file.startsWith("--") || rest.length > 0) return null;
-  return { mode, out: file };
+  const files = new Map<string, string>();
+  for (let index = 0; index < rest.length; index += 2) {
+    const flag = rest[index] as string;
+    const file = rest[index + 1];
+    if ((flag !== "--out" && flag !== "--schema-out") || files.has(flag)) return null;
+    if (file === undefined || file.startsWith("--")) return null;
+    files.set(flag, file);
+  }
+  return { mode, out: files.get("--out"), schemaOut: files.get("--schema-out") };
 }
 
 function main(argv: readonly string[]): number {
@@ -277,19 +322,34 @@ function main(argv: readonly string[]): number {
     console.error(USAGE);
     return 2;
   }
-  const { mode, out } = parsed;
-  const target = out === undefined ? path.join(REPO_ROOT, MANIFEST_TYPES_FILE) : path.resolve(out);
-  const next = renderManifestTypes(readFileSync(path.join(REPO_ROOT, MANIFEST_SCHEMA_FILE), "utf8"));
+  const { mode, out, schemaOut } = parsed;
+  const schemaText = readFileSync(path.join(REPO_ROOT, MANIFEST_SCHEMA_FILE), "utf8");
+  const outputs = [
+    {
+      target: out === undefined ? path.join(REPO_ROOT, MANIFEST_TYPES_FILE) : path.resolve(out),
+      next: renderManifestTypes(schemaText),
+    },
+    {
+      target: schemaOut === undefined ? path.join(REPO_ROOT, MANIFEST_SCHEMA_TEXT_FILE) : path.resolve(schemaOut),
+      next: renderManifestSchemaText(schemaText),
+    },
+  ];
   if (mode === "--check") {
-    if (readOrNull(target) !== next) {
-      console.error(`${target} is not what the manifest schema renders; run: ${WRITE_COMMAND}`);
-      return 1;
+    let current = true;
+    for (const { target, next } of outputs) {
+      if (readOrNull(target) !== next) {
+        console.error(`${target} is not what the manifest schema renders; run: ${WRITE_COMMAND}`);
+        current = false;
+      } else {
+        console.log(`${target} is up to date`);
+      }
     }
-    console.log(`${target} is up to date`);
-    return 0;
+    return current ? 0 : 1;
   }
-  writeFileSync(target, next);
-  console.log(`Wrote ${target}`);
+  for (const { target, next } of outputs) {
+    writeFileSync(target, next);
+    console.log(`Wrote ${target}`);
+  }
   return 0;
 }
 

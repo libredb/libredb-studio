@@ -108,12 +108,13 @@ describe("the build plan and the staged package", () => {
     ]);
   });
 
-  test("buildPlan builds the repository SDK's seven TypeScript entries and copies its schema", () => {
+  test("buildPlan builds the repository SDK's eight TypeScript entries and copies its schema", () => {
     const plan = buildPlan(SDK_MANIFEST, SDK_DIRECTORY);
 
     expect(Object.keys(plan.entries)).toEqual([
       "index",
       "manifest/index",
+      "manifest/manifest-schema.generated",
       "values/index",
       "errors/index",
       "calls/index",

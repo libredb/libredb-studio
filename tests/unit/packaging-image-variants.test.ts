@@ -32,6 +32,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, posix } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { isSourcePath, moduleSpecifiers, resolveSpecifier } from "./lib/db/provider-imports/scan";
 
 const ROOT = join(import.meta.dir, "..", "..");
 
@@ -75,6 +76,103 @@ function commands(dockerfile: string): string[] {
     .flatMap((line) => line.split(/;|&&/))
     .map((command) => command.trim())
     .filter(Boolean);
+}
+
+/** The names next.config.ts lists in serverExternalPackages, which Next.js leaves to Node's require at run time. */
+function serverExternalPackages(): string[] {
+  const listed = /serverExternalPackages:\s*\[([^\]]*)\]/.exec(readRepoFile("next.config.ts"))?.[1];
+  if (listed === undefined) throw new Error("next.config.ts has no serverExternalPackages array");
+  return [...listed.matchAll(/"([^"]+)"/g)].map((match) => match[1] as string);
+}
+
+/** The packages this repository builds itself: the root's `file:` and `workspace:` dependencies, by name. */
+function localPackageNames(): string[] {
+  const manifest = JSON.parse(readRepoFile("package.json")) as Record<string, Record<string, string> | undefined>;
+  return ["dependencies", "devDependencies", "optionalDependencies"]
+    .flatMap((field) => Object.entries(manifest[field] ?? {}))
+    .filter(([, specifier]) => specifier.startsWith("file:") || specifier.startsWith("workspace:"))
+    .map(([name]) => name);
+}
+
+/** The package a bare specifier names: `@scope/name` or `name`, without a subpath. */
+function packageOf(specifier: string): string {
+  const segments = specifier.split("/");
+  return (specifier.startsWith("@") ? segments.slice(0, 2) : segments.slice(0, 1)).join("/");
+}
+
+/**
+ * Every package the server's boot reaches: the bare specifiers of `src/instrumentation.ts` and of every `src` file it
+ * reaches through `@/` and relative imports, static or dynamic, read with the scanner of
+ * `tests/unit/lib/db/provider-imports/scan.ts`.
+ */
+function packagesReachedFromInstrumentation(): Set<string> {
+  const listed = new Set(
+    readdirSync(join(ROOT, "src"), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && isSourcePath(entry.name))
+      .map((entry) =>
+        posix.join(
+          "src",
+          posix.relative(join(ROOT, "src").split("\\").join("/"), entry.parentPath.split("\\").join("/")),
+          entry.name,
+        ),
+      ),
+  );
+  const packages = new Set<string>();
+  const seen = new Set<string>();
+  const queue = ["src/instrumentation.ts"];
+  for (let file = queue.shift(); file !== undefined; file = queue.shift()) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    for (const specifier of moduleSpecifiers(readRepoFile(file))) {
+      const resolution = resolveSpecifier(file, specifier, listed);
+      if (resolution.kind === "package") packages.add(packageOf(specifier));
+      else if (resolution.kind === "file") queue.push(resolution.path);
+    }
+  }
+  return packages;
+}
+
+/**
+ * The paths a Dockerfile's stages before the runner delete, with a `for root in ...` loop's `$root/<x>` expanded to
+ * each tree the loop names.
+ */
+function deletedBeforeRunner(dockerfile: string): string[] {
+  const before = dockerfile.split(/^FROM .* AS runner$/m)[0] ?? "";
+  const roots = /for root in ([^;]+);/.exec(instructions(before).join("\n"))?.[1]?.trim().split(/\s+/) ?? [];
+  return commands(before)
+    .map((command) => command.replace(/^(?:RUN|do)\s+/, ""))
+    .filter((command) => /^rm\s/.test(command))
+    .flatMap((command) =>
+      command
+        .split(/\s+/)
+        .slice(1)
+        .filter((token) => !token.startsWith("-")),
+    )
+    .map((token) => token.replace(/^"|"$/g, ""))
+    .flatMap((token) =>
+      token.startsWith("$root/") ? roots.map((root) => `${root}/${token.slice("$root/".length)}`) : [token],
+    );
+}
+
+/**
+ * Whether a Dockerfile's runner holds `node_modules/<name>`: either the runner COPYs the package there itself, or it
+ * copies the standalone tree, into which Next.js traces each external package, and no earlier stage deletes the traced
+ * copy or a directory above it.
+ */
+function runnerCarries(dockerfile: string, name: string): boolean {
+  const runner = instructions(dockerfile.split(/^FROM .* AS runner$/m)[1] ?? "");
+  const destination = `./node_modules/${name}`;
+  if (runner.some((line) => line.startsWith("COPY ") && line.split(/\s+/).at(-1) === destination)) return true;
+  if (!runner.some((line) => /^COPY .*\/usr\/src\/app\/\.next\/standalone \.\/$/.test(line))) return false;
+  const traced = `.next/standalone/node_modules/${name}`;
+  return !deletedBeforeRunner(dockerfile).some((path) => traced === path || traced.startsWith(`${path}/`));
+}
+
+/** The local packages in serverExternalPackages that the server's boot reaches. */
+function bootExternals(): string[] {
+  const reached = packagesReachedFromInstrumentation();
+  const local = new Set(localPackageNames());
+  return serverExternalPackages().filter((name) => local.has(name) && reached.has(name));
 }
 
 interface DockerWorkflow {
@@ -387,6 +485,46 @@ describe("published image variants", () => {
       expect(settings(before)).toEqual([]);
     },
   );
+
+  test("the server's boot reaches a package this repository builds and Next.js leaves to Node's require", () => {
+    // Without one the check below holds nothing: the provider loader is that package today, reached through
+    // src/lib/provider-host/boot.ts (docs/TOOLCHAIN.md, "The provider loader").
+    expect(bootExternals()).toContain("@libredb/provider-loader");
+  });
+
+  test.each(VARIANTS)(
+    "%s carries into its runner every local package the boot reaches that Next.js leaves to Node's require",
+    (variant) => {
+      // An external package is required by name at run time, so a runner without it boots to "Cannot find module":
+      // on PR 2530 the -alpine-slim image deleted the traced @libredb scope to drop a duplicate @libredb/libredb, took
+      // the provider loader with it, and never answered /api/db/health.
+      const dockerfile = readRepoFile(variant);
+
+      expect(bootExternals().filter((name) => !runnerCarries(dockerfile, name))).toEqual([]);
+    },
+  );
+
+  test("the runner check names a package whose traced copy a builder prune deletes", () => {
+    const planted = [
+      "FROM node AS builder",
+      "RUN set -eux; \\",
+      "    for root in node_modules .next/standalone/node_modules; do \\",
+      '      rm -rf "$root/@duckdb"; \\',
+      "    done; \\",
+      "    rm -rf .next/standalone/node_modules/better-sqlite3 .next/standalone/node_modules/@libredb",
+      "FROM alpine AS runner",
+      "COPY --from=builder /usr/src/app/.next/standalone ./",
+      "COPY --from=builder /usr/src/app/node_modules/@libredb/libredb ./node_modules/@libredb/libredb",
+    ].join("\n");
+
+    expect(runnerCarries(planted, "@libredb/provider-loader")).toBe(false);
+    expect(runnerCarries(planted, "@libredb/libredb")).toBe(true);
+    expect(runnerCarries(planted, "@duckdb/node-api")).toBe(false);
+    expect(runnerCarries(planted, "pg")).toBe(true);
+    expect(
+      runnerCarries(planted.replace(" .next/standalone/node_modules/@libredb", ""), "@libredb/provider-loader"),
+    ).toBe(true);
+  });
 
   test("the Docker build matrix builds every variant, and only those", () => {
     expect(

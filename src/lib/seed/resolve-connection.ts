@@ -4,7 +4,7 @@ import { resolveVaultCredentials } from "./credential-resolver";
 import { logger } from "@/lib/logger";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
-import { assertDatabaseType } from "@/lib/db/type-id";
+import { assertBundledEngine, type PackageConnection, serverEngine } from "@/lib/db/server-catalog";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent } from "@/lib/audit";
 import { CUSTOM_CONNECTIONS_DISABLED_MESSAGE, customConnectionsAllowed } from "@/lib/config/custom-connections";
@@ -83,24 +83,63 @@ function auditUniformMiss(seedId: string, username: string, target: string): voi
   }
 }
 
+/** A request's body as the resolve reads it. */
+export type ConnectionBody = { connection?: DatabaseConnection; connectionId?: string };
+
+/**
+ * Which engines a route serves: Studio's bundled engines alone, every route's default, or those and the engines of
+ * admitted provider packages, which only Test Connection serves in this Studio (docs/providers/CONTRACT.md, clause
+ * C-107).
+ */
+export type ServedEngines = "bundled" | "bundled-and-package";
+
+/** The check of a type on a route that serves package engines too: an admitted package's engine passes. */
+function admitPackageEngine(type: unknown): void {
+  if (serverEngine(type).kind !== "package") assertBundledEngine(type, "route");
+}
+
 /**
  * The connection a request names, resolved under `session`: an inline record of the caller's own, or the operator's
  * `seed:` entry, after the access decision and with its Vault references read. What it returns carries a type id,
  * since both branches refuse a type that is not one (FND-1), so a caller reads per-engine tables by it without a check
- * of its own.
+ * of its own. Both branches check the type through the server's engine catalog (`assertBundledEngine`,
+ * src/lib/db/server-catalog.ts), so an engine only a provider package serves is refused by name too: as
+ * `PROVIDER_UNAVAILABLE` naming its refusal codes when its package was refused at boot, and as
+ * `PACKAGE_ENGINE_UNSUPPORTED` when an admitted package serves it and `engines` is `bundled`.
+ *
+ * With `engines` `bundled-and-package`, an admitted package's engine passes the check instead, and its connection is
+ * answered as a `PackageConnection`, which the caller tells apart by `serverEngine`; every other guard runs exactly as
+ * for `bundled`. Only Test Connection passes it in this Studio.
  *
  * @throws {UnknownProviderError} When the inline record's type is absent, not text, or names no provider, or the seed
  * entry's type names no provider. A seed type that is absent, not text, or text of another shape than a type id's
  * fails the whole seed file before this resolves.
+ * @throws {ProviderUnavailableError} When the type is an engine only refused provider packages name.
+ * @throws {PackageEngineUnsupportedError} When the type is an engine an admitted provider package serves and `engines`
+ * is `bundled`.
  * @throws {SeedConnectionError} When the request names no connection, names one the caller may not open, or carries a
  * record that is not one.
  */
 export async function resolveConnection(
-  body: { connection?: DatabaseConnection; connectionId?: string },
+  body: ConnectionBody,
+  session: Principal,
+  options?: VisibilityOptions,
+): Promise<DatabaseConnection>;
+export async function resolveConnection(
+  body: ConnectionBody,
+  session: Principal,
+  options: VisibilityOptions | undefined,
+  engines: "bundled-and-package",
+): Promise<DatabaseConnection | PackageConnection>;
+export async function resolveConnection(
+  body: ConnectionBody,
   session: Principal,
   /** Which credential a governed connection carries (src/lib/governance/visible.ts); nothing without governance. */
   options?: VisibilityOptions,
-): Promise<DatabaseConnection> {
+  engines: ServedEngines = "bundled",
+): Promise<DatabaseConnection | PackageConnection> {
+  const checkType =
+    engines === "bundled" ? (type: unknown): void => assertBundledEngine(type, "route") : admitPackageEngine;
   const { connection, connectionId } = body;
 
   /*
@@ -196,7 +235,7 @@ export async function resolveConnection(
     if (typeof connection !== "object" || Array.isArray(connection)) {
       throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
     }
-    assertDatabaseType(connection.type);
+    checkType(connection.type);
     const name: unknown = connection.name;
     if (name !== undefined && typeof name !== "string") {
       throw new SeedConnectionError(INVALID_CONNECTION_MESSAGE, 400);
@@ -251,7 +290,7 @@ export async function resolveConnection(
     // never learns its type; before the literal check and Vault, so nothing of an entry whose type names no provider
     // this Studio has (FND-1) is resolved or handed on. The seed file lists such an entry, and it is refused here by
     // the sentence that names its type, on every route that opens a connection.
-    assertDatabaseType(seedConn.type);
+    checkType(seedConn.type);
 
     logger.debug("Resolved seed connection", {
       route: "seed/resolve-connection",

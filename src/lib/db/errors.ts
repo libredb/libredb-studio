@@ -116,6 +116,46 @@ export class UnknownProviderError extends DatabaseConfigError {
   }
 }
 
+/**
+ * A connection whose `type` is an engine only a provider package serves, and every package naming it in the providers
+ * lock was refused when the server started (docs/providers/CONTRACT.md, clause C-107). Raised before any provider is
+ * built, any SSH tunnel opened or any per-engine table read, and answered 503 `PROVIDER_UNAVAILABLE` with its sentence,
+ * which names the refusal codes and never the package: the server's log names the package. A `DatabaseConfigError`, as
+ * `UnknownProviderError` is, so every classification of a configuration error still holds; its `provider` is undefined
+ * because the value is not a `DatabaseType`.
+ */
+export class ProviderUnavailableError extends DatabaseConfigError {
+  constructor(
+    message: string,
+    /** The connection's type, as given. */
+    readonly typeId: string,
+    /** The codes the packages naming the engine were refused with, sorted, each once. */
+    readonly codes: readonly string[],
+  ) {
+    super(message, undefined, ApiErrorCode.PROVIDER_UNAVAILABLE);
+    this.name = "ProviderUnavailableError";
+    Object.setPrototypeOf(this, ProviderUnavailableError.prototype);
+  }
+}
+
+/**
+ * A request for an engine an admitted provider package serves, which this Studio does not serve for such an engine
+ * yet: every request but Test Connection, and the open of a session (docs/providers/CONTRACT.md, clause C-107).
+ * Answered 501 `PACKAGE_ENGINE_UNSUPPORTED` with its sentence. A `DatabaseError` and not a `DatabaseConfigError`: no
+ * setting of the connection is wrong, as `FacetNotOfferedError` reasons.
+ */
+export class PackageEngineUnsupportedError extends DatabaseError {
+  constructor(
+    message: string,
+    /** The connection's type, as given. */
+    readonly typeId: string,
+  ) {
+    super(message, undefined, ApiErrorCode.PACKAGE_ENGINE_UNSUPPORTED);
+    this.name = "PackageEngineUnsupportedError";
+    Object.setPrototypeOf(this, PackageEngineUnsupportedError.prototype);
+  }
+}
+
 /** A facet of an engine's `ENGINE_FACETS` row that a request can name a member of; only maintenance is refused today. */
 export type DeclaredFacet = "maintenance";
 

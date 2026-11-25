@@ -1,6 +1,6 @@
 /**
- * The refusals of a provider package read from the providers directory and admitted (docs/providers/CONTRACT.md,
- * clauses C-91 to C-104): one closed list of codes, each with its closed list of rules, and the records and one-line
+ * The refusals of a provider package read from the providers directory, admitted and composed into the server's engine
+ * catalog (docs/providers/CONTRACT.md, clauses C-91 to C-106): one closed list of codes, each with its closed list of rules, and the records and one-line
  * sentences that carry them.
  *
  * A package's refusal names the package by the name and version its lock entry gives, which the lock's format has
@@ -14,6 +14,7 @@
  */
 import { DEFINITION_REFUSAL_RULES } from "@libredb/provider-sdk/calls";
 import { SCHEMA_REFUSAL_RULES } from "@libredb/provider-sdk/manifest";
+import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/db/server-catalog";
 import { quoteTypeId } from "@/lib/db/type-id";
 
 /** Every code a provider package or its lock is refused with. */
@@ -29,6 +30,7 @@ export const PROVIDER_REFUSAL_CODES = Object.freeze([
   "PROVIDER_LOAD_FAILED",
   "PROVIDER_NATIVE_UNSUPPORTED",
   "PROVIDER_RECORD_INVALID",
+  "PROVIDER_CATALOG_CONFLICT",
 ] as const);
 
 export type ProviderRefusalCode = (typeof PROVIDER_REFUSAL_CODES)[number];
@@ -104,6 +106,7 @@ export const PROVIDER_REFUSAL_RULES = Object.freeze({
   PROVIDER_LOAD_FAILED: Object.freeze(["closure-outside", ...LOADER_REFUSAL_REASONS] as const),
   PROVIDER_NATIVE_UNSUPPORTED: Object.freeze(["native-file", "native-declared"] as const),
   PROVIDER_RECORD_INVALID: Object.freeze([...DEFINITION_REFUSAL_RULES, "record-proxy", "manifest-differs"] as const),
+  PROVIDER_CATALOG_CONFLICT: CATALOG_CONFLICT_RULES,
 });
 
 export type LockShapeRule = (typeof LOCK_SHAPE_RULES)[number];
@@ -360,6 +363,30 @@ export function admissionRefusal(pkg: PackageName, fault: AdmissionFault): Packa
     name: pkg.name,
     version: pkg.version,
     sentence: `${fault.code}: ${pkg.name} ${pkg.version}: ${ADMISSION_SENTENCES[fault.code]?.[fault.rule]}`,
+  });
+}
+
+/** Why a package is refused by a rule of the server catalog's set rules. */
+const CATALOG_CONFLICT_SENTENCES: Readonly<Record<CatalogConflictRule, string>> = {
+  "engine-id": "it serves an engine id Studio's catalog or another package serves",
+  "fence-alias": "it states a fence alias Studio's catalog or another package states, or one that names another engine",
+  "query-dialect": "it states a query dialect with another row than Studio's catalog or another package",
+  "tab-type": "it opens a tab type in another editor language than Studio's catalog or another package",
+  "editor-language":
+    "it states an editor language with another accent or console than Studio's catalog or another package",
+};
+
+/**
+ * The refusal of an admitted package a rule across the whole set of admitted packages and Studio's bundled catalog
+ * refuses (`catalogConflicts` in src/lib/db/server-catalog-compose.ts), naming the rule and no value it states.
+ */
+export function catalogConflictRefusal(pkg: PackageName, rule: CatalogConflictRule): PackageRefusal {
+  return Object.freeze({
+    code: "PROVIDER_CATALOG_CONFLICT",
+    rule,
+    name: pkg.name,
+    version: pkg.version,
+    sentence: `PROVIDER_CATALOG_CONFLICT: ${pkg.name} ${pkg.version}: ${CATALOG_CONFLICT_SENTENCES[rule]}`,
   });
 }
 

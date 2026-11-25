@@ -20,6 +20,8 @@ export const ERROR_KINDS = [
   "database",
   "config",
   "unknown-provider",
+  "provider-unavailable",
+  "package-engine-unsupported",
   "not-offered",
   "connection",
   "transaction-lost",
@@ -81,6 +83,13 @@ export type ProviderErrorKind = (typeof PROVIDER_ERROR_KINDS)[number];
 export const CORE_ERROR_KINDS = [
   /** Raised from a connection's type before any provider is built, so no provider exists to raise it. */
   "unknown-provider",
+  /** Raised from a connection's type whose provider package was refused at boot, so no provider exists to raise it. */
+  "provider-unavailable",
+  /**
+   * Raised from a connection's type an admitted provider package serves, on a request the host does not serve for such
+   * an engine yet, before the package's provider is called.
+   */
+  "package-engine-unsupported",
   /**
    * Core refuses a facet member from the engine's declaration before build and from the provider's declared
    * capabilities after connect: a provider declares what it offers, and never discovers a feature by being called.

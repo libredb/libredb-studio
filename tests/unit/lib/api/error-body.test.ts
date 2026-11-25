@@ -17,6 +17,8 @@ import {
   DatabaseError,
   FacetNotOfferedError,
   OffsetUnsupportedError,
+  PackageEngineUnsupportedError,
+  ProviderUnavailableError,
   PermissionDeniedError,
   PoolExhaustedError,
   ProviderTextWithheldError,
@@ -267,6 +269,37 @@ const ROWS: readonly Row[] = [
     log: { level: "error", message: "Database error", context: { provider: "postgres" } },
   },
   {
+    name: "a ProviderUnavailableError answers 503 PROVIDER_UNAVAILABLE with its sentence and logs the quoted type and the codes",
+    error: new ProviderUnavailableError("the package was refused", "acme\u2028gone", [
+      "PROVIDER_DIGEST_MISMATCH",
+      "PROVIDER_LOAD_FAILED",
+    ]),
+    body: {
+      error: "the package was refused",
+      code: ApiErrorCode.PROVIDER_UNAVAILABLE,
+      statusCode: 503,
+      kind: "provider-unavailable",
+      outcome: "unknown",
+    },
+    log: {
+      level: "warn",
+      message: "Provider unavailable",
+      context: { type: '"acme\\u2028gone"', codes: ["PROVIDER_DIGEST_MISMATCH", "PROVIDER_LOAD_FAILED"] },
+    },
+  },
+  {
+    name: "a PackageEngineUnsupportedError answers 501 PACKAGE_ENGINE_UNSUPPORTED with its sentence and logs the quoted type",
+    error: new PackageEngineUnsupportedError("not served yet", "acmeserved"),
+    body: {
+      error: "not served yet",
+      code: ApiErrorCode.PACKAGE_ENGINE_UNSUPPORTED,
+      statusCode: 501,
+      kind: "package-engine-unsupported",
+      outcome: "unknown",
+    },
+    log: { level: "info", message: "Package engine unsupported", context: { type: '"acmeserved"' } },
+  },
+  {
     name: "DatabaseError with a code of its own",
     error: new DatabaseError("odd", "mysql", ApiErrorCode.QUERY_ERROR),
     body: { error: "odd", code: ApiErrorCode.QUERY_ERROR, statusCode: 500, kind: "database", outcome: "unknown" },
@@ -279,6 +312,21 @@ describe("databaseErrorBody", () => {
     expect(JSON.parse(JSON.stringify(databaseErrorBody(row.error)))).toEqual(
       JSON.parse(JSON.stringify({ body: row.body, log: row.log })),
     );
+  });
+
+  test("PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501", () => {
+    const unavailable = databaseErrorBody(
+      new ProviderUnavailableError("refused", "acmegone", ["PROVIDER_LOAD_FAILED"]),
+    );
+    expect([unavailable?.body.statusCode, unavailable?.body.code, unavailable?.log.context]).toEqual([
+      503,
+      "PROVIDER_UNAVAILABLE",
+      { type: '"acmegone"', codes: ["PROVIDER_LOAD_FAILED"] },
+    ]);
+    const unsupported = databaseErrorBody(new PackageEngineUnsupportedError("not yet", "acmeserved"));
+    expect([unsupported?.body.statusCode, unsupported?.body.code]).toEqual([501, "PACKAGE_ENGINE_UNSUPPORTED"]);
+    // Distinct from the identity provider's code, which a client compares by exact value.
+    expect(ApiErrorCode.PROVIDER_UNAVAILABLE).not.toBe(ApiErrorCode.IDENTITY_PROVIDER_UNAVAILABLE);
   });
 
   test("the body's code is the record's code for every database error class", () => {

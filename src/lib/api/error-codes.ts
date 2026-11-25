@@ -16,6 +16,19 @@ export const ApiErrorCode = {
    */
   PROVIDER_UNKNOWN: "PROVIDER_UNKNOWN",
   /**
+   * The connection's type is an engine only a provider package serves, and the package was refused when the server
+   * started (503, `ProviderUnavailableError`), answered before any provider is built. The sentence names the refusal
+   * codes and never the package; the remedy is the operator's, who fixes or locks the package again and restarts the
+   * server, after which the same request succeeds. Distinct from IDENTITY_PROVIDER_UNAVAILABLE, a sign-in provider.
+   */
+  PROVIDER_UNAVAILABLE: "PROVIDER_UNAVAILABLE",
+  /**
+   * The connection's type is an engine an admitted provider package serves, and this Studio does not serve the request
+   * for such an engine yet (501, `PackageEngineUnsupportedError`): every request but Test Connection, and the open of a
+   * session. No setting is at fault and no retry succeeds until the request serves package engines.
+   */
+  PACKAGE_ENGINE_UNSUPPORTED: "PACKAGE_ENGINE_UNSUPPORTED",
+  /**
    * The request names a facet member the connection's engine does not offer in this Studio, or one the connected
    * server does not accept (400, `FacetNotOfferedError`). The first is answered before any provider is built; the
    * sentence names the member and the engine. Distinct from CONFIG_ERROR and QUERY_ERROR: no setting or statement is

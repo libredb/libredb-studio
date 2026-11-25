@@ -4,7 +4,7 @@
  * with the agent's own adapter, so an MCP client meets the agent's sentences. Every tool-name list MCP keeps is derived
  * from the arms.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { McpServer } from "@modelcontextprotocol/server";
@@ -18,6 +18,8 @@ import { languageServer } from "@/lib/agent/languages/server";
 import { AGENT_STATEMENT_LANGUAGE, MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { ByteBudgetRefusal, RowBudgetRefusal, UnknownProviderError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
+import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { typeIdRefusal, unknownTypeSentence } from "@/lib/db/type-id";
 import { relationKindIds } from "@/lib/db/object-kinds";
 import type { McpToolAction } from "@/lib/mcp/audit";
@@ -41,6 +43,7 @@ import {
 } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 
 const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? [] : [arm]));
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
@@ -1484,6 +1487,72 @@ describe("list_connections on a connection whose type names no provider (FND-1)"
         },
       ],
       total_connections: 1,
+      has_more: false,
+      next_offset: null,
+    });
+  });
+});
+
+// An engine only a provider package serves (docs/providers/CONTRACT.md, clause C-107) is listed as the type that names
+// no provider is: its type as written, no read tool, and the server catalog's refusal, which for a refused package's
+// engine names the refusal code.
+describe("list_connections on a connection of an engine a provider package serves or a refused package names", () => {
+  afterEach(() => {
+    forgetServerCatalog();
+  });
+
+  test("lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact", async () => {
+    installServerCatalog(
+      composeServerCatalog(
+        [admittedFor("acme-list-served", admittedManifest("acmelistserved"))],
+        [{ name: "acme-list-gone", version: "1.0.0", engines: ["acmelistgone"], code: "PROVIDER_LOAD_FAILED" }],
+      ),
+    );
+    let handler: ((args: unknown, ctx: unknown) => Promise<{ structuredContent?: unknown }>) | undefined;
+    const registerTool = (_name: string, _config: unknown, callback: typeof handler) => {
+      handler = callback;
+    };
+    const record = (type: string) => ({
+      id: `seed:${type}`,
+      name: "Acme Store",
+      type,
+      database: "/srv/acme/store.db",
+      createdAt: new Date(),
+      managed: true,
+      roles: ["*"],
+      seedId: type,
+    });
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [record("acmelistgone"), record("acmelistserved")],
+    } as unknown as McpConnectionContext;
+    registerListConnections({ registerTool } as unknown as McpServer, context);
+    if (handler === undefined) throw new Error("list_connections was not registered");
+
+    const result = await handler(
+      { environment: "all", offset: 0 },
+      { mcpReq: { signal: new AbortController().signal } },
+    );
+
+    expect(result.structuredContent).toEqual({
+      connections: [
+        {
+          id: "seed:acmelistgone",
+          name: "Acme Store",
+          engine: "acmelistgone",
+          read_tool: null,
+          unavailable:
+            'The connection type "acmelistgone" is served by a provider package this LibreDB Studio refused when it started (PROVIDER_LOAD_FAILED), so no provider can open it; the server\'s log names the package and why.',
+        },
+        {
+          id: "seed:acmelistserved",
+          name: "Acme Store",
+          engine: "acmelistserved",
+          read_tool: null,
+          unavailable: "This LibreDB Studio opens no session on an engine of a provider package yet.",
+        },
+      ],
+      total_connections: 2,
       has_more: false,
       next_offset: null,
     });

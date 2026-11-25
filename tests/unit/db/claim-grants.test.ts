@@ -46,7 +46,10 @@ import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
+import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
+import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 
 /** An id no shipped engine uses, for a request no record row covers. */
 const UNRECORDED = "acmefoo";
@@ -758,5 +761,77 @@ describe("Studio's grant of each agent mode claim", () => {
     refusedReadings("health", '"health"');
     refusedReadings(null, "null");
     refusedReadings([1], "[1]");
+  });
+});
+
+describe("the claims of an admitted provider package's engine", () => {
+  test("an admitted package with no grant record reads every claim at its restrictive value", () => {
+    const postgres = JSON.parse(
+      readFileSync(path.join(import.meta.dir, "../../../src/lib/db/engine-declarations/postgres.json"), "utf8"),
+    ) as { agent: unknown; facets: Record<string, unknown> };
+    // The loosest request of every claim the SDK's validator admits for this engine: each opposite its restrictive value.
+    const manifest = admittedManifest("acmeloose", (engine) => {
+      engine.policy = {
+        writeReach: "none",
+        readsFileAccessPosture: false,
+        deniedFileAccessRefusal: null,
+        singleWriterFile: true,
+        readRootsRequired: false,
+        agentCredentialForm: "pair",
+        maskingExemptColumns: { column: "^acme_id$", reason: "An opaque id no rule needs to mask." },
+      };
+      // Write reach is the summary of the write paths, so a request of none states every path absent.
+      const absent = { reach: "absent", proof: { module: "src/read-only.ts", symbol: "readOnly" } };
+      engine.safeguards = {
+        ...engine.safeguards,
+        writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
+      };
+      engine.mcp = {
+        exposable: true,
+        statementRead: true,
+        metadataReadChangesState: false,
+        agentCredentialRequired: false,
+      };
+      engine.connection.sshTunnel = { offered: true };
+      engine.connection.opensLocalFile = false;
+      engine.connection.serverLevelWithoutDatabase = true;
+      engine.connection.agentCredential = { form: "pair", supersededBy: [] };
+      engine.facets = {
+        ...engine.facets,
+        monitoring: postgres.facets.monitoring,
+        agentReadings: ["sessions", "health"],
+      };
+      (engine as Record<string, unknown>).agent = postgres.agent;
+    });
+    installServerCatalog(composeServerCatalog([admittedFor("acme-loose", manifest)], []));
+    const answer = serverEngine("acmeloose");
+    if (answer.kind !== "package") throw new Error(`answered ${answer.kind}`);
+
+    // Studio's record holds no row for an engine it does not ship, so each claim is granted at its restrictive value.
+    expect(answer.engine.grants).toEqual({
+      writeReach: "open",
+      readsFileAccessPosture: true,
+      deniedFileAccessRefusal: UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+      singleWriterFile: false,
+      readRootsRequired: true,
+      agentCredentialForm: "none",
+      maskingExemptColumns: null,
+      exposable: false,
+      statementRead: false,
+      metadataReadChangesState: true,
+      agentCredentialRequired: true,
+      readOnlyEnforced: false,
+      ungrantedRefusals: UNGRANTED_SINGLE_WRITER_FILE_SENTENCE,
+      opensLocalFile: true,
+      hostPathFields: [],
+      serverLevelAtAdmission: true,
+      serverLevelAtCatalogChoice: false,
+      sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
+      agentCredential: null,
+      statementLanguage: null,
+      agentReadings: [],
+    });
+    expect(Object.isFrozen(answer.engine.grants)).toBe(true);
+    forgetServerCatalog();
   });
 });

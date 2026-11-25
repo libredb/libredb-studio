@@ -62,6 +62,8 @@ export const MCP_FAILURE_OF_KIND: Readonly<Record<ErrorKind, McpFailureClass>> =
   database: "engine",
   config: "engine",
   "unknown-provider": "engine",
+  "provider-unavailable": "engine",
+  "package-engine-unsupported": "engine",
   "not-offered": "engine",
   connection: "engine",
   "transaction-lost": "engine",

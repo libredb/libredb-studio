@@ -588,8 +588,26 @@ const LEGACY_MAINTENANCE_ANSWER =
   "a legacy maintenance answer carried by reference through the host core's maintenance calls and providerMaintenance to its route, which answers it through its core scrubs";
 
 /**
+ * The reason the server engine catalog's refusal of a connection's type is no provider text: `bundledEngineRefusal`
+ * (src/lib/db/server-catalog.ts) writes each of its sentences, quoting only the type the operator's seed entry gave
+ * and the closed refusal codes (C-96), and no package's code runs to build one.
+ */
+const ENGINE_CATALOG_REFUSAL =
+  "the server engine catalog's refusal of a connection's type, Studio's sentence naming only the operator's type and the closed refusal codes (C-107)";
+
+/**
+ * The reason the value a provider package's entry threw at its import at boot is logged without the one scrub: the
+ * scrub withholds the credentials of the connection a provider was handed, and at boot no connection exists and none
+ * has reached a package, so there is nothing for it to withhold. The package runs in Studio's process with the
+ * operator's trust (DESIGN section 0) and writes to the same log itself, so the line is the operator's record of their
+ * own package's failure.
+ */
+const PACKAGE_IMPORT_FAILURE =
+  "the value a provider package's entry threw at its import at boot, before any connection exists, so it holds no connection's credential for the one scrub to withhold; logged for the operator who installed the package";
+
+/**
  * Every read of such a text on the three paths outside a recorded crossing, each with the reason it is not a
- * provider's text, or is one a crossing already scrubbed.
+ * provider's text, is one a crossing already scrubbed, or is one no connection's credential can be in.
  */
 const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
   [`${agent("model-tuning", "index.ts")}: readOperatorDocument: error.message`]: "an operator document's parse error",
@@ -683,6 +701,12 @@ const NOT_PROVIDER_TEXT: Readonly<Record<string, string>> = {
     "the source reader, whose document the source route answers through scrubSourceDocument",
   [`${childHandlers}: selectStatement: tree.describeObject`]:
     "a description of which selectStatement reads only the columns, database content",
+  [`${mcp("tools", "list-connections.ts")}: listed: refusal.message`]: ENGINE_CATALOG_REFUSAL,
+  [`${mcp("availability.ts")}: mcpConnectionUnavailable: refusal.message`]: ENGINE_CATALOG_REFUSAL,
+  [`${providerHost("boot.ts")}: refusedOf: refusal.name`]:
+    "a refused package's name, the identifier the providers lock and admission record it by (C-96), never an error's name",
+  [`${providerHost("boot.ts")}: logRefusal: logger.error(cause)`]: PACKAGE_IMPORT_FAILURE,
+  [`${providerHost("boot.ts")}: logLateSettle: logger.error(settle.cause)`]: PACKAGE_IMPORT_FAILURE,
 };
 
 /**

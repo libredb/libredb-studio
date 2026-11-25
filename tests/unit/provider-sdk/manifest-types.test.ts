@@ -10,9 +10,13 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { MANIFEST_SCHEMA_SHA256 } from "@libredb/provider-sdk/manifest";
+import { MANIFEST_SCHEMA_TEXT } from "@libredb/provider-sdk/manifest-schema";
 import {
   MANIFEST_SCHEMA_FILE,
+  MANIFEST_SCHEMA_TEXT_FILE,
   MANIFEST_TYPES_FILE,
+  renderManifestSchemaText,
   renderManifestTypes,
 } from "../../../scripts/generate-manifest-types";
 
@@ -81,6 +85,61 @@ describe("the committed manifest types", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("the committed schema text module", () => {
+  test("the schema text module is the schema's bytes, line for line, and its SHA-256 is MANIFEST_SCHEMA_SHA256", () => {
+    const committed = readFileSync(path.join(ROOT, MANIFEST_SCHEMA_TEXT_FILE), "utf8");
+
+    expect(committed === renderManifestSchemaText(SCHEMA_TEXT) ? "current" : "stale: run bun run manifest:types").toBe(
+      "current",
+    );
+    expect(MANIFEST_SCHEMA_TEXT).toBe(SCHEMA_TEXT);
+    const bytes = new TextEncoder().encode(MANIFEST_SCHEMA_TEXT);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(MANIFEST_SCHEMA_SHA256);
+    // One string literal per schema line, so a schema change is a diff of the lines it changes.
+    expect(committed.split("\n").length).toBeGreaterThan(SCHEMA_TEXT.split("\n").length);
+    expect(committed.startsWith("// GENERATED FILE - do not edit. Run: bun run manifest:types\n")).toBe(true);
+  });
+
+  test("--check fails on a stale schema text module, naming the command", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "manifest-schema-text-"));
+    const run = (...args: string[]) =>
+      Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: ROOT, stdout: "pipe", stderr: "pipe" });
+    try {
+      const types = path.join(dir, "types.ts");
+      const text = path.join(dir, "schema-text.ts");
+      expect(run("--write", "--out", types, "--schema-out", text).exitCode).toBe(0);
+      expect(readFileSync(text, "utf8")).toBe(renderManifestSchemaText(SCHEMA_TEXT));
+      expect(run("--check", "--schema-out", text, "--out", types).exitCode).toBe(0);
+
+      writeFileSync(text, "// stale\n");
+      const stale = run("--check", "--out", types, "--schema-out", text);
+      expect(stale.exitCode).toBe(1);
+      expect(stale.stderr.toString()).toContain(
+        `${text} is not what the manifest schema renders; run: bun run manifest:types`,
+      );
+
+      for (const args of [
+        ["--check", "--schema-out"],
+        ["--check", "--schema-out", text, "--schema-out", text],
+      ]) {
+        const refused = run(...args);
+        expect(refused.exitCode).toBe(2);
+        expect(refused.stderr.toString()).toContain("Usage:");
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a schema line holding more double quotes than single ones renders in single quotes, as the formatter writes it", () => {
+    const rendered = renderManifestSchemaText('{\n  "a": "it\'s",\n  "b": 1\n}\n');
+
+    expect(rendered).toContain(
+      `export const MANIFEST_SCHEMA_TEXT = [\n  "{",\n  '  "a": "it\\'s",',\n  '  "b": 1',\n  "}",\n  "",\n].join("\\n");\n`,
+    );
   });
 });
 

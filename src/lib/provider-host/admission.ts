@@ -1,8 +1,8 @@
 /**
- * Admission: the step that decides whether a package that passed its lock (`./providers-lock`) is imported and
- * registered (docs/providers/CONTRACT.md, clauses C-97 to C-104). It runs in Studio's code with Studio's copy of the
- * SDK, never in the loader, and it is the only module of Studio that calls the loader's `loadPackage` and
- * `registerAdmitted`.
+ * Admission: the step that decides whether a package that passed its lock (`./providers-lock`) is imported, and
+ * registers Studio's record of a package boot keeps (docs/providers/CONTRACT.md, clauses C-97 to C-105). It runs in
+ * Studio's code with Studio's copy of the SDK, never in the loader, and it is the only module of Studio that calls the
+ * loader's `loadPackage` and `registerAdmitted`.
  *
  * `admitPackage(pkg, options)` answers the package admitted or its first refusal, in this order:
  *
@@ -16,8 +16,8 @@
  *    a key); the manifest admitted is deep-frozen;
  * 4. its engine ids: one Studio's bundled catalog serves, one that is an own key of `Object.prototype` (a table keyed
  *    by plain object would answer an inherited member for it), one a package admitted earlier in this process serves,
- *    and a package name admitted earlier, each `PROVIDER_ID_COLLISION`; the last two are checked again right before
- *    registration (step 13), since an admission that overlaps this one may register while this one imports;
+ *    and a package name registered earlier, each `PROVIDER_ID_COLLISION`; the last two are checked again right before
+ *    registration (`registerAdmission`), since another package may register while this one imports;
  * 5. its entry, an ES module: `.mjs`, or `.js` whose nearest package.json inside the package, read and bound to the
  *    listing like the manifest, declares `"type": "module"` (`PROVIDER_MODULE_FORMAT` otherwise); the lookup stops at a
  *    directory named `node_modules`, as Node.js's package scope lookup does, so a `.js` entry below one is CommonJS
@@ -39,10 +39,14 @@
  * 11. the implementation and its four segments, none a Proxy (`record-proxy`), since the SDK's check would run a nested
  *    Proxy's traps;
  * 12. the SDK's `checkProviderModule` (`PROVIDER_RECORD_INVALID`, the first refusal's rule and the count of the rest);
- * 13. the implementation and its segments frozen in place, the registered engine ids and package names checked again
- *    as in step 4 (`PROVIDER_ID_COLLISION`), and Studio's own record of them registered once under the package's name,
- *    with no `await` between the check and the registration: `{ contract, manifest, impl }` with the manifest Studio
- *    validated and froze.
+ * 13. the implementation and its segments frozen in place, and Studio's own record of them answered:
+ *    `{ contract, manifest, impl }` with the manifest Studio validated and froze.
+ *
+ * Admission registers nothing. Boot (`./boot`) admits every package of the lock, runs the server catalog's set rules over
+ * all of them, and only then calls `registerAdmission` for each package the rules keep, which checks the registered
+ * engine ids and package names again as in step 4 (`PROVIDER_ID_COLLISION`) and registers the record once under the
+ * package's name, with no `await` between the check and the registration. So the loader's registry and the server's
+ * engine catalog name the same packages.
  *
  * No step before the import runs any of the package's code. A package refused after its import has run its top level,
  * is never registered and serves no engine. The entry module is read by the runtime's loader, not by admission, so a
@@ -238,21 +242,23 @@ function checkServed(pkg: VerifiedPackage, manifest: ProviderManifest): void {
   if (ids.some((id) => Object.hasOwn(Object.prototype, id))) {
     throw new Refused(admittedCollisionRefusal(pkg, "inherited-name"));
   }
-  checkRegistered(pkg, manifest);
+  const collision = registeredCollision(pkg, manifest);
+  if (collision !== undefined) throw new Refused(collision);
 }
 
 /**
- * Refuses an engine id or a package name a package registered in this process serves. Admission runs it before the
- * import and again right before it registers, with no `await` between that second run and `registerAdmitted`, so two
- * admissions that overlap never register two packages serving one engine id or one name twice.
+ * The refusal of an engine id or a package name a package registered in this process serves, or undefined. Admission
+ * reads it before the import, and `registerAdmission` again right before it registers, with no `await` between that read
+ * and `registerAdmitted`, so two packages registered in one process never serve one engine id or share one name.
  */
-function checkRegistered(pkg: VerifiedPackage, manifest: ProviderManifest): void {
+function registeredCollision(pkg: PackageName, manifest: ProviderManifest): PackageRefusal | undefined {
   const ids = manifest.engines.map((engine) => engine.id);
   const registered = registeredEngineIds();
-  if (ids.some((id) => registered.has(id))) throw new Refused(admittedCollisionRefusal(pkg, "registered-engine"));
+  if (ids.some((id) => registered.has(id))) return admittedCollisionRefusal(pkg, "registered-engine");
   if (admitted().some((record) => record.name === pkg.name)) {
-    throw new Refused(admittedCollisionRefusal(pkg, "registered-package"));
+    return admittedCollisionRefusal(pkg, "registered-package");
   }
+  return undefined;
 }
 
 /**
@@ -385,20 +391,16 @@ async function admit(pkg: VerifiedPackage, options: AdmissionOptions): Promise<A
     const value = ownData(impl as object, segment)?.value;
     if (value !== undefined) Object.freeze(value);
   }
-  const admittedRecord: AdmittedProviderRecord = Object.freeze({
+  return Object.freeze({
     contract: PROVIDER_CONTRACT,
     manifest,
     impl: Object.freeze(impl as object),
   });
-  // An admission that overlapped this one may have registered during the import.
-  checkRegistered(pkg, manifest);
-  registerAdmitted(pkg.name, admittedRecord);
-  return admittedRecord;
 }
 
 /**
- * Admits the package `pkg`, which its lock read verified, and registers Studio's record of it; or answers its first
- * refusal, naming the package by name and version and nothing it holds.
+ * Admits the package `pkg`, which its lock read verified, and answers Studio's record of it, unregistered; or answers
+ * its first refusal, naming the package by name and version and nothing it holds.
  *
  * @throws {TypeError} When `options.validator` serves another contract than `HOST_CONTRACT`, before any file is read.
  */
@@ -427,4 +429,20 @@ export async function admitPackage(pkg: VerifiedPackage, options: AdmissionOptio
       ...(error.cause === undefined ? {} : { cause: error.cause }),
     });
   }
+}
+
+/** A package admission admitted. */
+export type AdmittedPackage = Extract<PackageAdmission, { readonly admitted: true }>;
+
+/**
+ * Registers Studio's record of `admission` in the loader's registry under the package's name, once boot's set rules
+ * kept it; or answers `PROVIDER_ID_COLLISION` when a package registered in this process meanwhile serves one of its
+ * engine ids (`registered-engine`) or has its name (`registered-package`), and registers nothing. The check and the
+ * registration run with no `await` between them.
+ */
+export function registerAdmission(admission: AdmittedPackage): PackageRefusal | undefined {
+  const collision = registeredCollision(admission, admission.manifest);
+  if (collision !== undefined) return collision;
+  registerAdmitted(admission.name, admission.record);
+  return undefined;
 }

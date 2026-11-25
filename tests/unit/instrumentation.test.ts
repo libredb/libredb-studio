@@ -11,17 +11,23 @@ import { forgetStorageLocation } from "@/lib/data-dir";
 import { logger } from "@/lib/logger";
 import { cancelCall, endScopeCall, transactionCall } from "@/lib/provider-host/core/console";
 import { forgetHostCore, HostCoreBootOrderError, hostCore } from "@/lib/provider-host/instance";
+import { forgetServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
+import * as governanceConfig from "@/lib/governance/config";
+import * as startupBanner from "@/lib/startup-banner";
+import * as boot from "@/lib/provider-host/boot";
 import * as providersDir from "@/lib/provider-host/providers-dir";
 import { forgetProvidersDirectory } from "@/lib/provider-host/providers-dir";
 import * as resealAtBoot from "@/lib/storage/reseal-at-boot";
 import { closeStorageProvider } from "@/lib/storage/factory";
 import { getPendingSeeds, getUnavailableSamples } from "@/lib/seed";
+import * as samples from "@/lib/seed/samples";
 import { getSampleSeedState, resetSampleSeedStates, SAMPLES, unavailableSentence } from "@/lib/seed/samples";
 import * as authBootstrap from "@/lib/auth-bootstrap";
 import * as shutdownHandler from "@/lib/shutdown-handler";
 import { installShutdownHandler, resetShutdownHandler } from "@/lib/shutdown-handler";
 import * as uncaughtException from "@/lib/uncaught-exception";
 import { installUncaughtExceptionExit, resetUncaughtExceptionExit } from "@/lib/uncaught-exception";
+import { writeLock } from "../helpers/provider-artifacts";
 import { shutdownStandIn } from "../helpers/shutdown-stand-in";
 import { standInProcess } from "../helpers/uncaught-exception-stand-in";
 
@@ -119,8 +125,10 @@ describe("instrumentation register()", () => {
     forgetTrustMaterial();
     forgetStorageLocation();
     forgetProvidersDirectory();
-    // register() installs the provider host core once per process; forgotten here, each boot below installs its own.
+    // register() installs the provider host core and the server's engine catalog once per process; forgotten here,
+    // each boot below installs its own.
     forgetHostCore();
+    forgetServerCatalog();
     // register() installs the uncaught-exception exit once per process; installed on a stand-in here first, its own
     // install attaches nothing, so no test in this file binds the real process.exit. The tests about that install
     // reset this one first.
@@ -160,6 +168,7 @@ describe("instrumentation register()", () => {
       forgetStorageLocation();
       forgetProvidersDirectory();
       forgetHostCore();
+      forgetServerCatalog();
       resetUncaughtExceptionExit();
       resetShutdownHandler();
     }
@@ -494,6 +503,105 @@ describe("instrumentation register()", () => {
     expect(() => hostCore()).toThrow(HostCoreBootOrderError);
   });
 
+  test("register() admits providers once, after the host core and before governance and the samples", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
+    process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    process.env.JWT_SECRET = randomUUID();
+    const events: string[] = [];
+    const original = boot.admitProvidersAtBoot;
+    const admit = spyOn(boot, "admitProvidersAtBoot").mockImplementation(async () => {
+      events.push(`admit, host core ${hostInstalled() ? "installed" : "absent"}`);
+      return await original();
+    });
+    // The governance preflight reads governanceEnabled too, so the governance start is marked where it reads it again.
+    const governance = spyOn(governanceConfig, "governanceEnabled").mockImplementation(() => {
+      events.push("governance");
+      return false;
+    });
+    const banner = spyOn(startupBanner, "printStartupBanner").mockImplementation(() => {
+      events.push("banner");
+    });
+    const seeding = spyOn(samples, "startSampleSeeding").mockImplementation(async () => {
+      events.push("samples");
+    });
+    try {
+      await register();
+      expect(serverCatalogInstalled()).toBe(true);
+      await register();
+    } finally {
+      admit.mockRestore();
+      governance.mockRestore();
+      banner.mockRestore();
+      seeding.mockRestore();
+    }
+    // After the host core and the boot checks (the governance preflight reads governanceEnabled first), and right
+    // before the governance start, the banner and the samples.
+    const admitted = events.indexOf("admit, host core installed");
+    expect(admitted).toBeGreaterThan(0);
+    expect(events.slice(admitted, admitted + 3)).toEqual(["admit, host core installed", "governance", "banner"]);
+    expect(events.indexOf("samples")).toBeGreaterThan(admitted + 2);
+    // The second register() reaches admission, which reads nothing once a catalog is installed.
+    expect(events.filter((event) => event.startsWith("admit")).length).toBe(2);
+    expect(serverCatalogInstalled()).toBe(true);
+  });
+
+  test("a boot a check refuses admits no provider", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.NEXT_MANUAL_SIG_HANDLE = "1";
+    const admit = spyOn(boot, "admitProvidersAtBoot");
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const { exits } = await withSignalListeners(() => register());
+      expect(exits).toEqual([1]);
+      expect(admit).not.toHaveBeenCalled();
+    } finally {
+      admit.mockRestore();
+      errorSpy.mockRestore();
+    }
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  test("a providers lock that cannot be read stops register before governance, the banner and the samples", async () => {
+    process.env.NEXT_RUNTIME = "nodejs";
+    process.env.AUTH_BOOTSTRAP = "off";
+    process.env.JWT_SECRET = randomUUID();
+    process.env.LIBREDB_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample.libredb");
+    process.env.SQLITE_EMBEDDED_SAMPLE_PATH = path.join(tmpDir, "sample-employees.db");
+    process.env.LIBREDB_PROVIDERS_DIR = path.join(tmpDir, "no-providers-here");
+    delete process.env.LIBREDB_NO_BANNER;
+
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    const printed = spyOn(startupBanner, "printStartupBanner");
+    let banner = "";
+    let output = "";
+    try {
+      await register();
+      banner = errorSpy.mock.calls.flat().join("\n");
+      output = log.mock.calls.flat().join("\n");
+      expect(printed).not.toHaveBeenCalled();
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+      log.mockRestore();
+      printed.mockRestore();
+    }
+
+    expect(exitCalls).toEqual([1]);
+    expect(banner).toContain("LibreDB Studio cannot start: its providers lock is invalid");
+    expect(banner).toContain("the providers directory does not exist");
+    expect(noSampleStarted()).toBe(true);
+    expect(output).not.toContain("Star the project");
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
   test("attaches the exit before the boot preflights, so a refused boot has it too", async () => {
     process.env.NEXT_RUNTIME = "nodejs";
     process.env.JWT_SECRET = "x".repeat(24); // Cosmos randomString(24), as in the #227 test above
@@ -819,6 +927,9 @@ describe("instrumentation register()", () => {
     process.env.AUTH_BOOTSTRAP = "off";
     process.env.LIBREDB_EMBEDDED_SAMPLE = "false";
     process.env.SQLITE_EMBEDDED_SAMPLE = "false";
+    // A providers directory whose lock names no package: boot admission reads it and admits nothing.
+    fs.mkdirSync(path.join(tmpDir, "providers"));
+    writeLock(path.join(tmpDir, "providers"), []);
     process.env.LIBREDB_PROVIDERS_DIR = path.join(tmpDir, "providers");
     const info = spyOn(logger, "info").mockImplementation(() => {});
     try {

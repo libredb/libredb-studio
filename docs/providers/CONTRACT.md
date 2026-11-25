@@ -2062,7 +2062,7 @@ So is an engine list, and an engine's maintenance, maintenance specs and agent r
 The loader reads only the entry's `default` export, C-87.
 Admission runs `checkProviderModule` on that record with the host's copy of the SDK, so a record another copy of the SDK built is checked by the host's copy.
 Admission also validates the manifest against the schema the host holds.
-Admission does not exist yet, so nothing checks this.
+Admission checks both at boot: C-98 validates the manifest with the host's validator, C-104 runs the host's `checkProviderModule` on the record, and C-105 runs admission for each locked package.
 
 ### C-3 (normative): The mandatory calls
 
@@ -2566,13 +2566,13 @@ The kit's isolation case checks it, and no such case exists yet.
 How a provider's failure ends, by kind and by runtime.
 The runtimes are Studio's Next.js server, the VS Code extension's backend child under Node.js, the same child under Electron, which is how the extension forks it, and the server under Node.js started with `--unhandled-rejections=strict`.
 Each "held by" cell names the clause that holds the row, or says what will hold it.
-Boot admission, the kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
+The kit's fault cases and a measurement under Electron do not exist yet, and the detached rejection row stays open until such rejections have been counted in real sessions.
 
 | Failure | Next.js server | VS Code child, Node.js | VS Code child, Electron | Node.js, strict | Blast radius | Held by |
 |---|---|---|---|---|---|---|
-| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | Boot admission, which does not exist yet |
-| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | C-88, and boot admission |
-| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | C-88 and C-89, and C-37 |
+| The loader refuses a package | Studio starts without its engines | The same | The same | The same | That package's engines | C-105 |
+| A package's import throws | Studio starts without its engines | The same | The same | The same | That package's engines | C-88 and C-105 |
+| A package's import passes its deadline | Studio stops waiting and starts without its engines, unless the import is synchronous | The same | The same | The same | That package's engines, or the process | C-88, C-89, C-37 and C-105 |
 | A synchronous hang, at import or in a call | Every request waits | The same | The same | The same | The process | Only a watchdog outside the process, C-37 |
 | A throw inside a call | That call fails | The same | The same | The same | That call | C-31 |
 | A detached rejection | Logged, and the server keeps serving | The child exits with 1 and the extension restarts it, measured by a probe, not a test | Not measured | The server exits with 70 | None on the server, the process otherwise | C-35, with the server's own choice open |
@@ -2658,12 +2658,13 @@ The kit, `@libredb/provider-kit`, is admitted only in a package's tests and its 
 The order of the entries in the lock carries no meaning, and no provider is required for Studio to start.
 The lock's read answers the same for every order of the same entries, and lists its packages by name.
 With no providers directory set, no package is read, and a lock with no entries names none.
-Boot admission does not exist yet; the loader's registry lists records in the order they were registered, an order nothing reads.
+Boot admits the packages in the lock's order, which carries no meaning, and the catalog it composes answers the same for every order of the same packages, C-106; the loader's registry lists records in the order they were registered, an order nothing reads.
 
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "the entries' order changes no result"
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "a lock with no entries names no package"
 - test `tests/unit/lib/provider-host/providers-dir.test.ts` "an unset, empty or blank LIBREDB_PROVIDERS_DIR is no providers directory"
 - test `tests/unit/lib/provider-loader/registry.test.ts` "a record enters the registry only through registerAdmitted, listed frozen in the order registered"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order"
 
 ### C-44 (normative): The host owns each open
 
@@ -4202,9 +4203,10 @@ Both are read from the lock alone, before any file of the package is read.
 
 ### C-96 (normative): A refusal names the package and nothing it holds
 
-Every refusal carries one code of one closed list, `PROVIDER_LOCK_INVALID`, `PROVIDER_PATH_OUTSIDE`, `PROVIDER_DIGEST_MISMATCH`, `PROVIDER_IDENTITY_MISMATCH`, `PROVIDER_ID_COLLISION`, `PROVIDER_CONTRACT_UNSUPPORTED`, `PROVIDER_SCHEMA_INVALID`, `PROVIDER_MODULE_FORMAT`, `PROVIDER_LOAD_FAILED`, `PROVIDER_NATIVE_UNSUPPORTED` and `PROVIDER_RECORD_INVALID`, and one rule of that code's closed list, in a sentence on one line.
+Every refusal carries one code of one closed list, `PROVIDER_LOCK_INVALID`, `PROVIDER_PATH_OUTSIDE`, `PROVIDER_DIGEST_MISMATCH`, `PROVIDER_IDENTITY_MISMATCH`, `PROVIDER_ID_COLLISION`, `PROVIDER_CONTRACT_UNSUPPORTED`, `PROVIDER_SCHEMA_INVALID`, `PROVIDER_MODULE_FORMAT`, `PROVIDER_LOAD_FAILED`, `PROVIDER_NATIVE_UNSUPPORTED`, `PROVIDER_RECORD_INVALID` and `PROVIDER_CATALOG_CONFLICT`, and one rule of that code's closed list, in a sentence on one line.
 The rules of `PROVIDER_SCHEMA_INVALID` and `PROVIDER_RECORD_INVALID` are the SDK's own lists, and admission's refusal names the first one, with the manifest pointer for a schema rule, and how many more there are, never a key the package chose.
 A package's refusal names the package by the name and version its lock entry gives, and never carries a file name inside its directory, a value of its `package.json` or its manifest, or an engine id.
+A package the lock refuses also carries the engine ids its lock entry names, which the operator wrote, not the package, so the server answers those engines as unavailable, C-107.
 No step of the lock's read imports or runs a package's code, and admission imports it only after the checks C-97 orders.
 
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "no refusal carries a value read from the package beyond its name and version"
@@ -4212,6 +4214,7 @@ No step of the lock's read imports or runs a package's code, and admission impor
 - test `tests/unit/lib/provider-host/providers-lock.test.ts` "reading and writing a lock run no code of a package"
 - test `tests/unit/lib/provider-host/admission.test.ts` "no refusal carries a value read from the package beyond its name and version"
 - test `tests/unit/lib/provider-host/admission.test.ts` "the admission codes join the closed list, each with its closed rules, and the loader's reasons are the loader's"
+- test `tests/unit/lib/provider-host/providers-lock.test.ts` "a refused package carries its lock entry's engine ids"
 
 ### C-97 (normative): A locked package is admitted in a fixed order, and none of its code runs before its manifest, format, closure and native checks pass
 
@@ -4220,7 +4223,7 @@ A package refused before its import is never imported, so none of its code runs.
 A package refused after its import has run its top level, is never registered and serves no engine.
 The entry module is read by the runtime's loader, not by admission, so a change to it after the lock's read is not seen; the providers directory must be writable only by the operator, C-93.
 Admission grants no claim: a package carries no grant in this contract, so every claim of its engines is read as M-54 reads a claim with neither a record nor a grant, at its restrictive value, whatever the manifest requests.
-A package passing every step is registered once, under its name.
+A package passing every step is answered with Studio's record of it, and admission registers nothing: boot registers it once, under its name, when the catalog's set rules keep it, C-105.
 
 - test `tests/unit/lib/provider-host/admission.test.ts` "a manifest for another contract major is refused before the schema validator runs"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a CommonJS entry is refused as PROVIDER_MODULE_FORMAT and its top level never runs"
@@ -4229,7 +4232,7 @@ A package passing every step is registered once, under its name.
 - test `tests/unit/lib/provider-host/admission.test.ts` "a bare import is refused as closure-outside even when the package's own node_modules holds the folder, since Bun's resolver moves on past it"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a package holding a TypeScript file of any kind, a declaration file among them, is refused as PROVIDER_MODULE_FORMAT"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a .node file in the artifact is refused as PROVIDER_NATIVE_UNSUPPORTED"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted"
 - test `tests/unit/lib/provider-host/admission.test.ts` "admission refuses no claim request and grants none"
 
 ### C-98 (normative): The manifest is read as bytes, for Studio's contract, by the SDK's validator
@@ -4257,9 +4260,9 @@ Its SQL writing names are read for their form, and Studio composes no SQL writin
 
 ### C-100 (normative): A package serves no engine another serves, in Studio's catalog or in this process
 
-A package is refused as `PROVIDER_ID_COLLISION` when it serves an engine id Studio's bundled catalog serves, an engine id a package admitted earlier in the same process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was admitted earlier in the process.
+A package is refused as `PROVIDER_ID_COLLISION` when it serves an engine id Studio's bundled catalog serves, an engine id a package registered earlier in the same process serves, or an engine id that names a member every JavaScript object inherits, such as `constructor`, and when a package of its name was registered earlier in the process.
 Each names its own rule.
-The engine ids and the name a package admitted earlier serves are checked before the import and again right before registration, with nothing awaited between that check and the registration, so of two admissions that overlap in one process the one that would register second is refused, after its import.
+The engine ids and the name a package registered earlier serves are checked before the import and again by `registerAdmission` right before registration, with nothing awaited between that check and the registration, so of two admitted packages registered in one process the one that would register second is refused, after its import.
 
 - test `tests/unit/lib/provider-host/admission.test.ts` "an engine id already served is refused"
 - test `tests/unit/lib/provider-host/admission.test.ts` "two admissions that overlap never register two packages serving one engine id, or one name twice"
@@ -4320,13 +4323,97 @@ A loader refusal is the package's `PROVIDER_LOAD_FAILED` with the loader's reaso
 The record's manifest must equal the manifest file, compared by the own data properties of plain objects and arrays, key order aside, without calling a getter or reading a Proxy, or the package is refused as `PROVIDER_RECORD_INVALID`.
 An implementation or one of its segments that is a Proxy is refused as `PROVIDER_RECORD_INVALID` before the SDK's check, which would run its traps.
 The SDK's `checkProviderModule`, Studio's copy, then checks the record, and a refusal is `PROVIDER_RECORD_INVALID` naming its rule.
-Studio then freezes the implementation and its segments and registers its own record of them with the manifest it validated.
+Studio then freezes the implementation and its segments and answers its own record of them with the manifest it validated, which boot registers, C-105.
 
 - test `tests/unit/lib/provider-host/admission.test.ts` "a record whose manifest differs from its file is refused"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a record the SDK's check refuses is refused as PROVIDER_RECORD_INVALID, naming the rule"
 - test `tests/unit/lib/provider-host/admission.test.ts` "an implementation or a segment that is a Proxy is refused, and none of its traps runs"
 - test `tests/unit/lib/provider-host/admission.test.ts` "a loader refusal is the package's PROVIDER_LOAD_FAILED with the loader's reason, its cause kept out of the sentence"
-- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest"
+- test `tests/unit/lib/provider-host/admission.test.ts` "a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted"
+
+### C-105 (normative): Boot admits each locked package once, after the host core and before anything is served
+
+On the standalone server, `register()` admits the providers directory's packages once per process, after it installs the host core and before governance, the banner and the samples.
+With no providers directory set, no lock is read and no validator is compiled.
+A lock refused as a whole, a set directory that does not exist among them, stops the boot with exit 1 and a line naming the lock and the rule.
+Otherwise each package the lock verified is admitted in the lock's order, one at a time, its import under a deadline of 10 s, with one manifest validator compiled from the SDK's schema text, whose digest the validator checks.
+The catalog's set rules, C-106, then run over every admitted package, and only the packages they keep are registered, so the loader's registry and the server's catalog name the same packages.
+Each refused package is logged once with its sentence, and a value its entry threw only as the logged error, never in the sentence.
+An import that settles after its deadline is logged by its package and never registered.
+A synchronous hang at import blocks the boot, C-37.
+
+- test `tests/unit/lib/provider-host/boot.test.ts` "a refused package leaves Studio running without its engines, named once by code"
+- test `tests/unit/lib/provider-host/boot.test.ts` "an unreadable lock exits 1 with a named line"
+- test `tests/unit/lib/provider-host/boot.test.ts` "an unset directory admits nothing and boots"
+- test `tests/unit/lib/provider-host/boot.test.ts` "a package whose entry throws at import is refused with its code, its cause logged on the same line call and out of the sentence"
+- test `tests/unit/lib/provider-host/boot.test.ts` "an import that settles after its deadline is logged once by its package and never registered"
+- test `tests/unit/lib/provider-host/boot.test.ts` "a package a set rule refuses is absent from the loader's registry, which names exactly the packages the catalog serves"
+- test `tests/unit/lib/provider-host/boot.test.ts` "the boot's validator is compiled once from the SDK's schema module, whose digest is the SDK's"
+- test `tests/unit/lib/provider-host/boot.test.ts` "admission runs once per process: a second call reads nothing and keeps the installed catalog"
+- test `tests/unit/lib/provider-host/boot.test.ts` "each package is admitted under the 10 s import deadline, in lock order, one after another"
+- test `tests/unit/instrumentation.test.ts` "register() admits providers once, after the host core and before governance and the samples"
+- test `tests/unit/instrumentation.test.ts` "a boot a check refuses admits no provider"
+- test `tests/unit/instrumentation.test.ts` "a providers lock that cannot be read stops register before governance, the banner and the samples"
+- test `tests/unit/provider-sdk/manifest-types.test.ts` "the schema text module is the schema's bytes, line for line, and its SHA-256 is MANIFEST_SCHEMA_SHA256"
+
+### C-106 (normative): The server's engine catalog is Studio's bundled catalog and the admitted packages' engines, composed once
+
+The server's engine catalog is composed once at boot and read through one accessor, `serverEngine`, which answers a bundled type id first, so a package never shadows a bundled engine, then an engine an admitted package serves, then an engine only refused packages name, and refuses anything else as before.
+Every lookup is a `Map` lookup, so a type that names an `Object.prototype` member is unknown.
+For a package's engine the catalog holds its catalog entry, its connection tables, its field rules and Studio's grant of each claim, and no SQL writing, connection form, connection string, grammar, migration DDL or generator row, so a request that needs one is refused by name.
+Its field rules are composed from its declaration, and a rule naming a check refuses a field holding a value with core's sentence naming the field, since Studio binds no function of a package, C-99.
+Every claim is granted by Studio's grant reader against Studio's record, which holds no row for a package's engine, so each claim is at its restrictive value, M-53 and M-54.
+The set rules over the whole set, the engine id, the fence alias, the query dialect, the tab type and the editor language, refuse every admitted claimant as `PROVIDER_CATALOG_CONFLICT`, whatever the order, with Studio's bundled value the reference, and the refusal names the package and the rule and no value of its declaration.
+An engine id that is one of Studio's bundled fence aliases is refused under the engine id rule, so no fence tag names a bundled engine and a package's engine.
+A package so refused is never registered and serves nothing.
+The catalog is held in one place per process, so the module instance boot installs it from and each route's module instance read the same catalog.
+A process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
+The published `DatabaseType` and `isDatabaseType` are unchanged.
+
+- test `tests/unit/lib/db/server-catalog.test.ts` "an admitted engine is a known type to the server and its connection fields come from its declaration"
+- test `tests/unit/lib/db/server-catalog.test.ts` "the library's DatabaseType guard is unchanged"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a refused package's engine is unavailable naming every code that refused it, and a bundled id stays bundled"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a type a client sends that is an Object.prototype key is unknown, never an inherited member"
+- test `tests/unit/lib/db/server-catalog.test.ts` "the catalog composes once: a second install is refused by name, and nothing installed answers the bundled catalog"
+- test `tests/unit/lib/db/server-catalog.test.ts` "the composed catalog holds no engine knowledge the declaration did not state: no SQL writing, connection form, connection string, grammar, migration DDL or generator row"
+- test `tests/unit/lib/db/server-catalog.test.ts` "composing a set that still conflicts, or an engine both served and unavailable, is a host defect"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a field rule naming a check refuses a value with core's sentence naming the field, and passes an empty field"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a fence alias or an engine id two claimants state refuses every admitted claimant, whatever their order"
+- test `tests/unit/lib/db/server-catalog.test.ts` "an engine id that is a bundled fence alias refuses the admitted claimant, so no fence tag names two engines"
+- test `tests/unit/lib/db/server-catalog.test.ts` "an editor fact stated otherwise than Studio's catalog refuses the admitted claimant, and one two packages state differently refuses both"
+- test `tests/unit/lib/db/server-catalog.test.ts` "a set rule refusal carries the package's name, version and rule and no value of its declaration"
+- test `tests/unit/lib/db/server-catalog-cross-bundle.test.ts` "a catalog installed by the boot bundle is the one a route bundle reads"
+- test `tests/unit/lib/provider-host/boot.test.ts` "packages the catalog's set rules refuse are logged with PROVIDER_CATALOG_CONFLICT and serve none of their engines"
+- test `tests/unit/db/claim-grants.test.ts` "an admitted package with no grant record reads every claim at its restrictive value"
+
+### C-107 (normative): A connection of an engine no admitted package serves names why
+
+A connection of an engine only refused packages name in the lock, a package whose directory is missing among them, is refused as `PROVIDER_UNAVAILABLE`, 503, naming every refusal code and never the package, on every route and at every factory entry point, before any cache, tunnel or build.
+An admitted package's engine is served by Test Connection, which validates its connection against the engine's field rules, and is refused on every other request, and at the open of a session, as `PACKAGE_ENGINE_UNSUPPORTED`, 501, until that request serves package engines.
+MCP answers both with the same sentences: `list_connections` lists such a connection with no read tool and the sentence as its `unavailable`, every MCP tool refuses it with that sentence before any open, and the open's own checks refuse it as the factory does.
+Both are core's error kinds, `provider-unavailable` and `package-engine-unsupported`, E-1.
+
+- test `tests/unit/seed/resolve-connection-package-engines.test.ts` "an inline connection or a seed of a refused package's engine is refused as PROVIDER_UNAVAILABLE naming the code"
+- test `tests/unit/seed/resolve-connection-package-engines.test.ts` "an admitted engine's connection is refused on a route that does not serve package engines, by name, and accepted by the package-aware resolve"
+- test `tests/api/db/test-connection-package-engine.test.ts` "Test Connection accepts an admitted engine's connection and validates it against its declared field rules, then refuses at the open, building nothing"
+- test `tests/api/db/test-connection-package-engine.test.ts` "Test Connection answers PROVIDER_UNAVAILABLE naming the refusal code for a refused package's engine"
+- test `tests/isolated/factory-package-engines.test.ts` "an engine whose package was refused answers PROVIDER_UNAVAILABLE naming the refusal at each factory entry point, before any cache, tunnel or build"
+- test `tests/isolated/factory-package-engines.test.ts` "an admitted package's engine is refused at each factory entry point as one this Studio opens no session on yet"
+- test `tests/unit/lib/api/error-body.test.ts` "PROVIDER_UNAVAILABLE answers 503 naming the codes and the quoted type, PACKAGE_ENGINE_UNSUPPORTED answers 501"
+- test `tests/unit/mcp/availability.test.ts` "answers the server catalog's refusal for an engine a provider package serves or a refused package names"
+- test `tests/unit/mcp/statement-arms.test.ts` "lists its type as written, no read tool and the server catalog's refusal, reading no per-engine fact"
+- test `tests/integration/mcp/context.test.ts` "both open checks refuse a refused package's engine as PROVIDER_UNAVAILABLE naming the code, and an admitted one as no session opens on it"
+
+### C-108 (normative): The exit-70 line names the provider package in the error's stack
+
+Boot records every package that passed its lock with its directory, as a path and as a file URL, before any import.
+Where a package was recorded, the exit-70 line of C-35 ends with each recorded package a frame of the error's stack runs through, or says no provider package is in it.
+With none recorded the line is unchanged.
+
+- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line names the admitted package in the stack"
+- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line says no provider package is in the stack for a throw from core, or a thrown value that is not an Error"
+- test `tests/unit/lib/uncaught-exception.test.ts` "the exit-70 line is unchanged where no package passed its lock"
+- test `tests/unit/lib/provider-host/boot.test.ts` "every package that passed its lock is recorded with its directory, as a path and as a file URL"
 
 ## Not yet in this contract
 

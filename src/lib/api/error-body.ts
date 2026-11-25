@@ -12,6 +12,8 @@ import {
   DatabaseError,
   DatabaseConfigError,
   FacetNotOfferedError,
+  PackageEngineUnsupportedError,
+  ProviderUnavailableError,
   ConnectionError,
   AuthenticationError,
   PermissionDeniedError,
@@ -58,8 +60,13 @@ export interface DatabaseErrorLog {
     readonly duration?: number;
     /** On a `PROVIDER_UNKNOWN` refusal only: whether the type was absent, not text, or named no provider. */
     readonly reason?: TypeIdRefusal["reason"];
-    /** On an `unknown` refusal only: the refused type, quoted by `quoteTypeId` so it stays one line in the log. */
+    /**
+     * On an `unknown` refusal, a `PROVIDER_UNAVAILABLE` and a `PACKAGE_ENGINE_UNSUPPORTED` answer: the type, quoted by
+     * `quoteTypeId` so it stays one line in the log.
+     */
     readonly type?: string;
+    /** On a `PROVIDER_UNAVAILABLE` answer only: the codes the packages naming the engine were refused with. */
+    readonly codes?: readonly string[];
   };
 }
 
@@ -119,6 +126,30 @@ function classifiedAnswer(error: unknown): DatabaseErrorAnswer | null {
             ? { reason: error.reason }
             : { reason: error.reason, type: quoteTypeId(error.typeId) },
       },
+    };
+  }
+
+  // --- DB: ProviderUnavailableError ---
+  // Before the DatabaseConfigError branch it subclasses: the engine's package was refused at boot, so the remedy is
+  // the operator's and the same request succeeds once the package is fixed. The log names the quoted type and the codes.
+  if (error instanceof ProviderUnavailableError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.PROVIDER_UNAVAILABLE, statusCode: 503 },
+      log: {
+        level: "warn",
+        message: "Provider unavailable",
+        context: { type: quoteTypeId(error.typeId), codes: error.codes },
+      },
+    };
+  }
+
+  // --- DB: PackageEngineUnsupportedError ---
+  // 501 before the generic branch it would otherwise reach as a 500: the server does not serve this request for an
+  // engine of a provider package yet.
+  if (error instanceof PackageEngineUnsupportedError) {
+    return {
+      body: { error: error.message, code: ApiErrorCode.PACKAGE_ENGINE_UNSUPPORTED, statusCode: 501 },
+      log: { level: "info", message: "Package engine unsupported", context: { type: quoteTypeId(error.typeId) } },
     };
   }
 

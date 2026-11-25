@@ -353,7 +353,7 @@ const HIDDEN_FORMS_ALLOWED: Readonly<Record<string, readonly Allowance[]>> = {
       origin: null,
       form: "computed",
       reason:
-        "the provider loader imports the absolute entry file its caller passes, a provider package's entry, by its file URL (docs/providers/CONTRACT.md, clause C-87); src/lib/provider-host/admission.ts calls loadPackage once a package passes every check before its import (clause C-97), and boot admission (#2518) will call admission; Studio's own modules reach the loader only by its package name, clause C-90",
+        "the provider loader imports the absolute entry file its caller passes, a provider package's entry, by its file URL (docs/providers/CONTRACT.md, clause C-87); src/lib/provider-host/admission.ts calls loadPackage once a package passes every check before its import (clause C-97), and boot admission (src/lib/provider-host/boot.ts, from register() on the standalone server only) calls admission for each package its lock verified (clause C-105); Studio's own modules reach the loader only by its package name, clause C-90",
     },
   ],
 };

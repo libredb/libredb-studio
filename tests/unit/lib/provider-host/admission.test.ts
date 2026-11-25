@@ -2,8 +2,8 @@
  * Admission (src/lib/provider-host/admission.ts): a package that passed its lock is imported only after its manifest
  * (read as bytes, bound to the lock's listing, for Studio's contract, by the SDK's validator), its engine ids, its
  * entry's module format, its import closure and its native addons pass; after the import its record must be the
- * manifest it declared and pass the SDK's check, and only then is Studio's own record of it registered through the
- * loader's `registerAdmitted`.
+ * manifest it declared and pass the SDK's check, and only then is Studio's own record of it answered, which
+ * `registerAdmission` registers through the loader's `registerAdmitted` once boot's set rules keep it.
  *
  * Every fixture is written by the test into a scratch directory under the system's temporary directory, never under
  * packages/. Each case uses package names and engine ids of its own, because the loader's registry has no reset; this
@@ -31,6 +31,7 @@ import {
   HOST_CONTRACT,
   hostManifestValidator,
   type PackageAdmission,
+  registerAdmission,
 } from "@/lib/provider-host/admission";
 import { MANIFEST_FILE_NAME, walkArtifact } from "@/lib/provider-host/provider-artifact";
 import {
@@ -193,6 +194,14 @@ function admit(pkg: VerifiedPackage, validator: ManifestValidator = VALIDATOR): 
 function refusalOf(answer: PackageAdmission): PackageRefusal {
   if (answer.admitted) throw new Error(`${answer.name} was admitted`);
   return answer.refusal;
+}
+
+/** `code rule` of an admission, or of the registration of an admitted package, or `registered`. */
+async function registered(pkg: VerifiedPackage): Promise<string> {
+  const answer = await admit(pkg);
+  if (!answer.admitted) return `${answer.refusal.code} ${answer.refusal.rule}`;
+  const refusal = registerAdmission(answer);
+  return refusal === undefined ? "registered" : `${refusal.code} ${refusal.rule}`;
 }
 
 /** `code rule` of an admission that must refuse. */
@@ -540,7 +549,7 @@ describe("before the import", () => {
 
     // An engine id, then a package name, a package admitted earlier in this process serves.
     const first = write();
-    expect(await outcome(verified(first))).toBe("admitted");
+    expect(await registered(verified(first))).toBe("registered");
     const sameEngine = write({ id: first.id });
     expect(await outcome(verified(sameEngine))).toBe("PROVIDER_ID_COLLISION registered-engine");
     expect(fs.existsSync(sameEngine.sentinel)).toBe(false);
@@ -554,14 +563,11 @@ describe("before the import", () => {
   });
 
   test("two admissions that overlap never register two packages serving one engine id, or one name twice", async () => {
-    // Both pass the checks before their imports; the check made again right before registration refuses the second.
+    // Both pass every check of admission; the check registerAdmission makes right before it registers refuses the second.
     const shared = names();
     const pair = [write({ id: shared.id }), write({ id: shared.id })];
-    const answers = await Promise.all(pair.map((written) => admit(verified(written))));
-    const outcomes = answers.map((answer) =>
-      answer.admitted ? "admitted" : `${answer.refusal.code} ${answer.refusal.rule}`,
-    );
-    expect(outcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-engine", "admitted"]);
+    const outcomes = await Promise.all(pair.map((written) => registered(verified(written))));
+    expect(outcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-engine", "registered"]);
     const servingShared = admitted().filter((entry) =>
       (entry.record as { manifest: { engines: { id: string }[] } }).manifest.engines.some((e) => e.id === shared.id),
     );
@@ -569,11 +575,8 @@ describe("before the import", () => {
 
     const sameName = names();
     const twins = [write({ name: sameName.name }), write({ name: sameName.name })];
-    const twinAnswers = await Promise.all(twins.map((written) => admit(verified(written))));
-    const twinOutcomes = twinAnswers.map((answer) =>
-      answer.admitted ? "admitted" : `${answer.refusal.code} ${answer.refusal.rule}`,
-    );
-    expect(twinOutcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-package", "admitted"]);
+    const twinOutcomes = await Promise.all(twins.map((written) => registered(verified(written))));
+    expect(twinOutcomes.toSorted()).toEqual(["PROVIDER_ID_COLLISION registered-package", "registered"]);
     expect(admitted().filter((entry) => entry.name === sameName.name).length).toBe(1);
   });
 
@@ -922,14 +925,17 @@ describe("the import and the record", () => {
     expect(await outcome(verified(noDefault))).toBe("PROVIDER_LOAD_FAILED default-missing");
   });
 
-  test("a package passing admission is registered through registerAdmitted as Studio's record of its implementation and its file's manifest", async () => {
+  test("a package passing admission is answered with Studio's record of its implementation and its file's manifest, which registerAdmission registers through registerAdmitted", async () => {
     const written = write({ edit: "globalThis[Symbol.for(manifest.engines[0].id)] = record;" });
     const answer = await admit(verified(written));
     expect(answer.admitted).toBe(true);
     if (!answer.admitted) return;
+    // Admission registers nothing: boot registers only the packages the catalog's set rules keep.
+    expect(admitted().some((entry) => entry.name === written.name)).toBe(false);
+    expect(registerAdmission(answer)).toBeUndefined();
     const packageRecord = (globalThis as Record<symbol, unknown>)[Symbol.for(written.id)] as Record<string, unknown>;
-    const registered = admitted().find((entry) => entry.name === written.name);
-    expect(registered?.record).toBe(answer.record);
+    const registeredRecord = admitted().find((entry) => entry.name === written.name);
+    expect(registeredRecord?.record).toBe(answer.record);
     expect(answer.record).not.toBe(packageRecord);
     expect(answer.record.manifest).toBe(answer.manifest);
     expect(answer.record.manifest).not.toBe(packageRecord.manifest);
@@ -1063,6 +1069,7 @@ describe("what admission carries and reaches", () => {
       "PROVIDER_LOAD_FAILED",
       "PROVIDER_NATIVE_UNSUPPORTED",
       "PROVIDER_RECORD_INVALID",
+      "PROVIDER_CATALOG_CONFLICT",
     ]);
     expect(Object.keys(PROVIDER_REFUSAL_RULES).sort()).toEqual([...PROVIDER_REFUSAL_CODES].sort());
     for (const rules of Object.values(PROVIDER_REFUSAL_RULES)) {
