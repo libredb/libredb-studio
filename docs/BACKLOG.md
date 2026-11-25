@@ -27,23 +27,23 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2-S12 · 9
-- [Drivers and connections](#drivers-and-connections) — D1-D950, U17 · 387
-- [Value interpolation](#value-interpolation) — V1
-- [Row editing](#row-editing) — R1-R5 · 4
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U223 · 208
-- [Dependencies](#dependencies) — P1-P14 · 12
-- [Documentation](#documentation) — DOC3-DOC38 · 32
-- [Release pipeline](#release-pipeline) — REL1-REL11 · 10
-- [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
-- [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
-- [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
-- [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
-- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B178 · 89
-- [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP27 · 23
-- [Governance follow-ups](#governance-follow-ups) — GOV1-GOV36 · 34
+- [SQL statement reading](#sql-statement-reading)
+- [Drivers and connections](#drivers-and-connections)
+- [Value interpolation](#value-interpolation)
+- [Row editing](#row-editing)
+- [Studio UI and query execution](#studio-ui-and-query-execution)
+- [Dependencies](#dependencies)
+- [Documentation](#documentation)
+- [Release pipeline](#release-pipeline)
+- [Security Phase 1 deferrals](#security-phase-1-deferrals)
+- [Security Phase 2 deferrals](#security-phase-2-deferrals)
+- [Security Phase 3 deferrals](#security-phase-3-deferrals)
+- [Security scanner triage](#security-scanner-triage)
+- [Agent M1 deferrals (#328)](#agent-m1-deferrals-328)
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329)
+- [Passkey deferrals (#785)](#passkey-deferrals-785)
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246)
+- [Governance follow-ups](#governance-follow-ups)
 
 ---
 
