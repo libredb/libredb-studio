@@ -8,6 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
 import type { AdmittedForCatalog } from "@/lib/db/server-catalog-compose";
@@ -70,7 +71,7 @@ export function admittedFor(name: string, manifest: ProviderManifest): AdmittedF
     version: "1.0.0",
     directory: path.join(REPOSITORY_ROOT, "never-read", name),
     manifest,
-    record: Object.freeze({ contract: "0.1", manifest, impl: Object.freeze({}) }),
+    record: Object.freeze({ contract: "0.1", manifest, impl: Object.freeze({}) as ProviderImpl<unknown> }),
   });
 }
 

@@ -216,6 +216,7 @@ describe("what the catalog composes", () => {
       "readsTrustMaterial",
       "refused",
       "seedOnly",
+      "tlsModes",
     ]);
     expect(Object.keys(engine.package).sort()).toEqual(["directory", "manifest", "name", "record", "version"]);
     for (const value of [engine, engine.package, engine.catalog, engine.connection, engine.fieldRules, engine.grants]) {

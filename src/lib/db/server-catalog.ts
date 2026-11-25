@@ -38,8 +38,9 @@
  * nothing. It is not a fallback for a failed boot: a boot whose admission cannot compose a catalog exits before it
  * serves (src/lib/provider-host/boot.ts).
  */
-import type { CredentialWarning, FieldName, ProviderManifest } from "@libredb/provider-sdk/manifest";
+import type { CredentialWarning, FieldName, ProviderManifest, TlsMode } from "@libredb/provider-sdk/manifest";
 import type { ClaimGrants } from "@/lib/db/claim-grants";
+import type { AdmittedProviderRecord } from "@/lib/provider-host/admission";
 import type { FieldRuleSpec } from "@/lib/db/connection-form";
 import type { CatalogEntry, SeedOnlyTemplate } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
@@ -68,6 +69,8 @@ export interface PackageConnectionTables {
   readonly seedOnly: SeedOnlyTemplate | null;
   readonly refused: Readonly<Partial<Record<FieldName, string>>>;
   readonly credentialWarnings: readonly CredentialWarning[];
+  /** The TLS modes the engine takes, the declaration's `connection.tls.modes`, which its open context reads. */
+  readonly tlsModes: readonly TlsMode[];
   readonly readsTrustMaterial: boolean;
   readonly connectionStringAccepted: boolean;
   readonly dialogOffersUri: boolean;
@@ -81,8 +84,8 @@ export interface ServingPackage {
   readonly directory: string;
   /** The manifest admission validated and froze. */
   readonly manifest: ProviderManifest;
-  /** Studio's record of the package, the one registered in the loader's registry. */
-  readonly record: object;
+  /** Studio's record of the package, the one registered in the loader's registry, whose `impl` its sessions open on. */
+  readonly record: AdmittedProviderRecord;
 }
 
 /**

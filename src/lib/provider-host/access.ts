@@ -16,13 +16,25 @@
  * deadline ended, at any wait of the run, is the view's own time refusal, built fresh for the call; every other refusal
  * answers as `refusalError` answers it.
  *
- * Every other refusal is a defect of Studio's own bridge, which honours every request field and is sent a scope only
- * where it offers `console.endScope`, so no provider can cause one: a plain `Error` naming each refusal's sentence, answered 500. Two rows of the host's mapping
- * wait for the first session that refuses a request field, a native provider: a refused offset as
- * `OffsetUnsupportedError` and refused params as `FacetNotOfferedError`.
+ * Three rows are reached only by a provider package's session, which may offer less than Studio's bridge (clause C-111),
+ * each refused before the call and answered `not-sent`: a non-zero offset the session does not honour is
+ * `OffsetUnsupportedError`, bound params it does not honour are `FacetNotOfferedError` naming the field, and a facet it
+ * does not offer is `FacetNotOfferedError` naming the call by its contract name, never a value of the package's.
+ *
+ * Every other refusal is a defect of Studio's own bridge, which honours every request field, offers every facet a
+ * legacy caller asks for and is sent a scope only where it offers `console.endScope`, so no provider can cause one: a
+ * plain `Error` naming each refusal's sentence, answered 500.
  */
 import { type CallRefusal, callRefusalSentence } from "@libredb/provider-sdk/calls";
-import { markNotSent, QueryCancelledError, StudioByteBudgetRefusal, StudioTimeoutRefusal } from "@/lib/db/errors";
+import {
+  type DeclaredFacet,
+  FacetNotOfferedError,
+  markNotSent,
+  OffsetUnsupportedError,
+  QueryCancelledError,
+  StudioByteBudgetRefusal,
+  StudioTimeoutRefusal,
+} from "@/lib/db/errors";
 import type { RefusedRecord } from "@/lib/provider-host/core/console";
 
 /** The sentence a cancelled query has always been answered with. */
@@ -82,6 +94,38 @@ function timeoutOf(view: CallerView): () => StudioTimeoutRefusal {
   return () => new StudioTimeoutRefusal(view.deadlineSentence);
 }
 
+/** Studio's sentence for a non-zero offset a provider package's session does not honour. */
+const OFFSET_NOT_HONOURED =
+  "This connection's provider package does not take an offset, so Studio asks for no page after the first.";
+
+/** Studio's sentence for bound params a provider package's session does not honour. */
+const PARAMS_NOT_HONOURED = "This connection's provider package takes no bound parameters, so Studio sent nothing.";
+
+/**
+ * The error of a request field or a facet a provider package's session does not offer, refused before the call and
+ * marked not-sent, or undefined for any other refusal: the three rows of clause C-111. A facet's `name` is the SDK's
+ * own call name, `<group>.<call>`, never a value of the package's.
+ */
+function notOfferedError(refusals: readonly CallRefusal[]): Error | undefined {
+  const field = refusals.find((refusal) => refusal.rule === "request-field-not-honoured");
+  const facet = refusals.find((refusal) => refusal.rule === "facet-not-offered");
+  let error: Error;
+  if (field?.name === "offset") error = new OffsetUnsupportedError(OFFSET_NOT_HONOURED);
+  else if (field?.name === "params")
+    error = new FacetNotOfferedError(PARAMS_NOT_HONOURED, undefined, "console", "params");
+  else if (facet?.name !== undefined) {
+    const [group, call] = facet.name.split(".") as [DeclaredFacet, string];
+    error = new FacetNotOfferedError(
+      `This connection's provider package does not offer ${facet.name}, so Studio did not call it.`,
+      undefined,
+      group,
+      call,
+    );
+  } else return undefined;
+  markNotSent(error);
+  return error;
+}
+
 /** The error a refused record answers, `timeRefusal()` when its deadline or a signal not the caller's ended it. */
 function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () => Error): Error {
   const { refusals } = record;
@@ -97,6 +141,8 @@ function refusalOf(record: RefusedRecord, caller: AbortSignal, timeRefusal: () =
       `A row of the result is ${overPage.size} bytes, over the ${overPage.limit} bytes one page of a result may hold, so Studio answers no page of it.`,
     );
   }
+  const notOffered = notOfferedError(refusals);
+  if (notOffered !== undefined) return notOffered;
   return new Error(`${HOST_DEFECT_PREFIX} ${refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`);
 }
 

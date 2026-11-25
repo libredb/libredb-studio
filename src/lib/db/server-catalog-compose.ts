@@ -219,6 +219,7 @@ export function composeServerCatalog(
           refused: tables.refused[id],
           // The projection holds a row only for an engine that declares a warning.
           credentialWarnings: tables.credentialWarnings[id] ?? Object.freeze([]),
+          tlsModes: Object.freeze([...engine.connection.tls.modes]),
           readsTrustMaterial: tables.readsTrustMaterial[id],
           connectionStringAccepted: tables.connectionStringAccepted[id],
           dialogOffersUri: tables.dialogOffersUri[id],

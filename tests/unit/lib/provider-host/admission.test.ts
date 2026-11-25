@@ -23,7 +23,7 @@ import * as fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { admitted, type LoadRefusalReason, loadPackage } from "@libredb/provider-loader";
-import { PROVIDER_CONTRACT } from "@libredb/provider-sdk/calls";
+import { PROVIDER_CONTRACT, type ProviderImpl } from "@libredb/provider-sdk/calls";
 import { type ManifestValidator, ManifestSchemaDigestError } from "@libredb/provider-sdk/manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
@@ -939,11 +939,11 @@ describe("the import and the record", () => {
     expect(answer.record).not.toBe(packageRecord);
     expect(answer.record.manifest).toBe(answer.manifest);
     expect(answer.record.manifest).not.toBe(packageRecord.manifest);
-    expect(answer.record.impl).toBe(packageRecord.impl as object);
+    expect(answer.record.impl).toBe(packageRecord.impl as ProviderImpl<unknown>);
     expect(answer.record.contract).toBe("0.1");
     expect(Object.isFrozen(answer.record)).toBe(true);
     expect(Object.isFrozen(answer.record.impl)).toBe(true);
-    const impl = answer.record.impl as Record<string, object>;
+    const impl = answer.record.impl as unknown as Record<string, object>;
     expect([Object.isFrozen(impl.console), Object.isFrozen(impl.monitoring)]).toEqual([true, true]);
     expect(answer).toMatchObject({ admitted: true, name: written.name, version: "1.0.0", engines: [written.id] });
     expect(Object.isFrozen(answer)).toBe(true);
