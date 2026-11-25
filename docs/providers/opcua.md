@@ -359,7 +359,7 @@ while the certificate the session actually uses comes from a second, independent
 the two, so a host answering the typed address can serve one certificate to the pin dial and its own
 to the channel dial. That grants nothing on `Sign` or `SignAndEncrypt`, because the strict manager
 still answers `BadCertificateUntrusted` for a certificate the trust list does not hold; it means the
-pin's value is narrower than the word suggests. `docs/BACKLOG.md` U130 records comparing the pin
+pin's value is narrower than the word suggests. Backlog U130 records comparing the pin
 against the session's own certificate.
 
 **The trust list is the gate; the pin narrows it.** A pin is a check, not a trust decision, so
@@ -635,7 +635,7 @@ request is at most 200 nodes or 500 values, and a history read stops at its cap,
 server's continuation point back at that point — every earlier page's point is consumed by the
 request that follows it, which is the other way a slot is not left held.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
 This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
 

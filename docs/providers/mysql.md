@@ -90,7 +90,7 @@ provider it never connects (#457), so the client's copy of the declaration is th
 version-resolved pair never arrives. The declaration itself is correct about the engine and is
 therefore kept, source read included (#789): a connected provider answers both kinds, and the API
 route reaches them. The gap is the client's copy of the declaration, it is filed in
-[`docs/BACKLOG.md`](../BACKLOG.md), and it is a Phase 1 seam rather than anything about definition
+the backlog, and it is a Phase 1 seam rather than anything about definition
 text.
 
 The one metric that goes the other way is `deadlocks`: it comes from the `Innodb_deadlocks` row of
@@ -440,7 +440,7 @@ The pool config, built by `buildPoolConfig()` ([`mysql.ts`](../../src/lib/db/pro
 mysql2-specific options and **does not** translate `ProviderOptions.queryTimeout` into a server-side
 timeout (MySQL has no direct `statement_timeout` pool option like Postgres).
 The provider kills no statement on its own; its kill is [`cancelQuery()`](#53-query-cancellation).
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`, and Studio sends the run's cancel, `KILL QUERY` on its thread, when the request named a `queryId`.
 
 ### 3.6 Maintenance over all tables when no target
@@ -937,8 +937,7 @@ For the same reason a refusal is never a connection failure: it is a fact about 
 connects: it constructs the provider and reads `getCapabilities()` off it, by design (#457, no socket,
 no SSH tunnel, no SQLite lock contention). A capability that is only knowable once connected therefore
 cannot reach the client that way, so `POST /api/db/query` builds the EXPLAIN statement from the
-CONNECTED provider's `explainFormat` and names that format in its response
-([API_DOCS.md](../API_DOCS.md)). Before `connect()` the provider still answers the static
+CONNECTED provider's `explainFormat` and names that format in its response. Before `connect()` the provider still answers the static
 `mysql-json`, which is exactly what it answered before the probe existed, so the client's pre-flight
 refusal for a non-SELECT statement is unchanged.
 
@@ -978,7 +977,7 @@ Block comments are flat: the MySQL reference manual (11.7 Comments, checked 2026
 It adds that they "might be permitted" under some conditions and that users should avoid them, which is a reason to read the first `*/` as the end rather than to guess at a second reading.
 `//` is code, probed 2026-08-25 on 26.7.0: `SELECT 1 AS a // note` is ERROR 1064, "check the manual ... near '// note'", so nothing on that line is hidden.
 A backslash does not always escape, because `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session.
-`[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is BACKLOG S7.
+`[...]` and compound statements (`CREATE PROCEDURE ... BEGIN ... END`, cut with `DELIMITER` by MySQL's own client) are not established and stay at the fail-safe default; the second gap is backlog S7.
 `[...]` is no name quote, since MySQL gives it no meaning outside a JSON path written inside a string, but there is no subscript rule to read it under instead, and one dialect's rule is not read off another's behaviour; the name reading costs a bound on a nested bracket run and can never misplace one, since a run it cannot close is undeterminable and an undeterminable end is not cut.
 The confirmation gate asks before the INSERT-shaped statements whose text changes rows already there, as it asks before `UPDATE` and `DELETE`.
 `REPLACE` (`confirmForms`) deletes the row a new one collides with on a primary or unique key; its `INTO` is optional, so every statement led by the word asks.
@@ -997,7 +996,7 @@ A plain `INSERT`, `INSERT IGNORE` and `INSERT ... SELECT` do not ask.
 The gate reads the statement, not the table: StarRocks treats an `INSERT` into a Primary Key table, and Apache Doris an `INSERT` into a Unique Key table, as an upsert that overwrites the row with the same key (each engine's table-model documentation), and such an `INSERT` does not ask either.
 Inside a script led by `BEGIN`, the gate reads every form anywhere in the code, so there a `REPLACE()` call asks too, the fail-safe direction.
 Every MySQL-wire relative in section 1.1 connects through the `mysql` type id and has no grammar row of its own, so it gets the same answers.
-TiDB's non-transactional `BATCH ... DELETE` and `BATCH ... REPLACE` still run with no confirmation, since the gate reads `BATCH` as the statement's keyword: BACKLOG D476.
+TiDB's non-transactional `BATCH ... DELETE` and `BATCH ... REPLACE` still run with no confirmation, since the gate reads `BATCH` as the statement's keyword: backlog D476.
 The update-target reader takes `--` as a comment only before a space or a control character, as MySQL and MariaDB do; its measurement on MariaDB 11.8.9 sits beside its regex in `src/lib/sql/update-target.ts`.
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with a backtick as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
@@ -3051,5 +3050,4 @@ It prints no refusal reason.
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mysql-provider.test.ts`](../../tests/integration/db/mysql-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [Trino](./trino.md) · [Redis](./redis.md)

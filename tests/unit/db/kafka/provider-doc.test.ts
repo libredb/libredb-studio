@@ -110,9 +110,7 @@ describe("docs/providers/kafka.md states the client's exposures to a hostile bro
     expect(section).toContain("**Accepted limitation: the broker chooses how much work a SCRAM exchange takes.**");
     expect(section).toContain("the client checks only the lower bound, 4,096");
     expect(section).toContain("Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations");
-    expect(section).toContain(
-      "a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`",
-    );
+    expect(section).toContain("a cap on the iteration count is requested upstream as a draft recorded in the backlog");
     expect(bulletOf(DOC, "**The broker chooses how much work a SCRAM exchange takes**")).toContain(
       "[§4.2](#42-authentication-and-never-in-the-clear-k3)",
     );
@@ -125,7 +123,7 @@ describe("docs/providers/kafka.md states the client's exposures to a hostile bro
     );
     expect(section).toContain("has the client authenticate again at 80% of it, and again after each time");
     expect(section).toContain(
-      "a floor on the session lifetime the client honours is requested upstream as a draft recorded in `docs/BACKLOG.md`",
+      "a floor on the session lifetime the client honours is requested upstream as a draft recorded in the backlog",
     );
     expect(bulletOf(DOC, "**The broker chooses how often a connection authenticates again**")).toContain(
       "[§4.2](#42-authentication-and-never-in-the-clear-k3)",

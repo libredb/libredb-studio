@@ -358,8 +358,8 @@ bun run test:coverage  # coverage report
 
 विस्तृत docs अभी सिर्फ़ अंग्रेज़ी में हैं:
 
-- [Architecture](docs/ARCHITECTURE.md) · [Database providers](docs/DATABASE_PROVIDERS.md) · [हर engine का reference](docs/providers/README.md)
-- [API docs](docs/API_DOCS.md) · [OIDC setup](docs/OIDC.md) · [Storage layer](docs/STORAGE.md)
+- [Database providers](docs/DATABASE_PROVIDERS.md) · [हर engine का reference](docs/providers/README.md)
+- [OIDC setup](docs/OIDC.md) · [Storage layer](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [Distribution channels](docs/CHANNELS.md)
 
 ## योगदान करें

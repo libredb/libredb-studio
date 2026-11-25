@@ -137,7 +137,7 @@ cd desktop/src-tauri && cargo test
   pins `ubuntu-22.04` and `tests/unit/desktop-appimage-portability.test.ts`
   refuses any floating label. The same applies to AppImageHub, whose review CI
   runs the submitted AppImage on 22.04. arm64 is still on 24.04-arm; see REL2 in
-  [`docs/BACKLOG.md`](../docs/BACKLOG.md).
+  the backlog.
 - **The bundled Node sidecar is named `libredb-studio-node`, not `node`.** The
   .deb installs it into the real `/usr/bin`, where `node` is owned by the distro
   `nodejs` package and dpkg would refuse the install. `externalBin` in

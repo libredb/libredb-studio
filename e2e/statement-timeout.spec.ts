@@ -1,7 +1,7 @@
 /**
  * A statement that reaches its query timeout runs once on the database, in a real Chromium.
  *
- * The query routes answer a statement that reached its deadline with HTTP 504 (`TIMEOUT_ERROR` in docs/API_DOCS.md).
+ * The query routes answer a statement that reached its deadline with HTTP 504 (`TIMEOUT_ERROR`).
  * They used to answer 408, and Chromium reads a 408 on a reused keep-alive connection as a server closing an idle
  * connection: it sends the POST again, without telling the page, so one Run of a statement that timed out reached the
  * database several times and the editor showed only the last answer. The status is pinned by the route tests; only a

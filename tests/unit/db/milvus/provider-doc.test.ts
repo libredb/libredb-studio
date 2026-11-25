@@ -319,7 +319,6 @@ describe("docs/SEED_CONNECTIONS.md names the Milvus refusals", () => {
 });
 
 describe("the audit pages name the engineUser() the code gives", () => {
-  const API_DOCS = read("docs/API_DOCS.md");
   const principalOf = (password: string) =>
     buildMilvusConnectionOptions({ ...MILVUS, host: "localhost", password }, CONTEXT).principal;
   const SENTENCE =
@@ -330,8 +329,7 @@ describe("the audit pages name the engineUser() the code gives", () => {
     expect(principalOf(TEST_PASSWORD)).toBe("token");
   });
 
-  test("docs/SECURITY.md and docs/API_DOCS.md state both token forms", () => {
+  test("docs/SECURITY.md states both token forms", () => {
     expect(SECURITY).toContain(`Milvus's provider implements it: ${SENTENCE}`);
-    expect(API_DOCS).toContain(`Milvus's provider implements \`engineUser()\`: ${SENTENCE}`);
   });
 });

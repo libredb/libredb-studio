@@ -19,7 +19,7 @@ describe("scope", () => {
       "README.md",
       "README_ja.md",
       "docs/FEATURES.md",
-      "docs/ARCHITECTURE.md",
+      "docs/DISTRIBUTION.md",
       "docs/providers/neo4j.md",
       "plugins/libredb-studio/skills/libredb-studio/SKILL.md",
       "src/lib/db/compatibility.ts",
@@ -51,7 +51,7 @@ describe("countFindings", () => {
   test.each([
     ["docs/MCP.md", "- Fifteen tools, each annotated read-only and closed-world:"],
     ["src/lib/db/compatibility.ts", "  // Offered for the two metadata tools, carrying names and types only."],
-    ["docs/ARCHITECTURE.md", "Its fifteen tools reach only seed connections opted in with `mcp: true`."],
+    ["docs/DISTRIBUTION.md", "Its fifteen tools reach only seed connections opted in with `mcp: true`."],
     ["docs/FEATURES.md", "MCP: list the 15 tools"],
     ["tests/integration/mcp/protocol.test.ts", 'test("lists the fifteen tools in registration order", () => {});'],
     ["tests/integration/mcp/protocol.test.ts", "expect(tools).toHaveLength(15);"],

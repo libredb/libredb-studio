@@ -209,7 +209,7 @@ at the compatibility default below, and it is listed here rather than left impli
 **MongoDB, Firestore, Redis, Prometheus, InfluxDB (InfluxQL), Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B are the twenty-two types whose query text is not SQL at all**: `readsSqlText: false`, declared in each engine's declaration and composed into its row of the registry in `src/lib/db/sql-grammar/`, holds exactly those twenty-two, which is what `readsSqlText()` reports on.
 Their providers never reach these readers on the query path, and the confirmation gate, which reads whatever is in the editor, asks `readsSqlText()` before applying any span-based rule to their text, so a JSON document, a Redis command, a PromQL expression, an InfluxQL statement, a Kafka read request, an etcdctl command, a Cypher statement, a Milvus request, a Qdrant request, an `oxia client` read command, an AWS CLI read command, a kubectl statement, a NETCONF read request, a Sparkplug read request or an SNMP walk is not judged by a SQL reader that cannot parse it.
 
-The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (`docs/BACKLOG.md` U43).
+The gate's SQL keyword test still reads MongoDB and Redis text first, as a backstop, which on Redis also asks about a read whose arguments include `update` and then `set` (backlog U43).
 Beyond it, each type whose text is not SQL has a row of its own in `NON_SQL_DESTRUCTIVE_VOCABULARY` in `src/lib/db/destructive-commands.ts`, and a test holds that table to the set `readsSqlText()` reports on.
 The MongoDB and Redis rows name the destructive operations the provider can actually dispatch (`deleteOne`/`deleteMany`/`updateOne`/`updateMany` and the `$out`/`$merge` pipeline stages for MongoDB; `DEL`, `FLUSHALL`, `SET`, `CONFIG SET` and the rest for Redis), and the gate reduces the buffer the way the provider would, to one JSON document or, for Redis, to the one command the provider's own `readRedisCommandText()` reads (each line is a command, and a second one is refused in the editor before anything is sent), before looking a name up in it.
 Text it cannot read as a command at all is not treated as safe: mongosh syntax, a half-typed document or a broken JSON command body **asks**.
@@ -518,7 +518,7 @@ not (#2286) - the same rule the script's statements follow (the last successful 
 main result, empty or not). A batch's earlier result sets are not sent back one by one,
 which costs nothing the grid showed before: it shows one result, and `statements[i]` is now the
 batch. Across a `GO`, a `#temp` table survives only if the next batch borrows the same pooled
-connection, which nothing guarantees (`docs/BACKLOG.md` D92).
+connection, which nothing guarantees (backlog D92).
 
 "Run the statement at the cursor" runs a whole body (a PL/SQL unit, a SQLite trigger, a T-SQL module
 batch), but in a T-SQL batch that is a run of statements it still runs only the caret's own statement,
@@ -536,7 +536,7 @@ skipped: a T-SQL variable (`@alter`, `@delete`) and a cursor's `FOR UPDATE` lock
 procedural bodies were read, Oracle refused the
 fragment `BEGIN DELETE FROM emp` and nothing ran; now the whole block runs, so the gate has to read
 into it. What a procedure call does (`EXEC sp_cleanup`, `BEGIN p; END;`) is the server's, and it does
-not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (`docs/BACKLOG.md` S7).
+not ask, as before. MySQL, Db2 and Trino compound statements are not read yet (backlog S7).
 
 Last-only is that route's own policy, and it leaves a hole this section does not close: a non-final
 `SELECT` runs exactly as written, and its **entire** result set travels back in `statements[i].rows`.
@@ -778,7 +778,7 @@ query a host application runs through it reaches the gate.
 On a connection whose environment is `production`, every statement the gate asks about is confirmed by typing the connection's name, and none of the four bypasses above skips it.
 The dialog draws the name field, and where the connection type asks a value of its own (an etcd prefix, start key or lease id), that value is shown as the target of the name.
 A read the gate does not ask about runs as anywhere else.
-The server checks the name: it asks for it in its 428 answer and compares what the person typed before it runs the statement ([API_DOCS.md](../API_DOCS.md#server-confirmation-of-a-run)).
+The server checks the name: it asks for it in its 428 answer and compares what the person typed before it runs the statement.
 Where a run reaches the server without the name, as a page, a SANDBOX run or an inline edit does, the dialog opens with the server's ask and the run waits for it, so inline edits ask row by row, each row's request sent only once the row before was answered.
 Closing that dialog ends the run as not run, and a SANDBOX run rolls back the transaction it opened.
 Nothing is remembered: every run asks again.

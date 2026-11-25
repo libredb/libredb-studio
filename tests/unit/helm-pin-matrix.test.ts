@@ -29,7 +29,7 @@
  * the evidence is "a Helm 3 client installs this chart into a cluster", NOT "a
  * Helm 3 client installs the released artifact". Closing that residual gap (a
  * pinned Helm 3 `repo add` + `pull` + `install` of the published .tgz in
- * helm-index-check.yml) is tracked in docs/BACKLOG.md.
+ * helm-index-check.yml) is tracked in the backlog.
  *
  * So a future "consistency fix" that unifies the odd one out must fail HERE,
  * with the reason attached, rather than silently retiring the only evidence

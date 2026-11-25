@@ -265,7 +265,7 @@ A refused **size builtin** is not one of those cases, and since #1436 does not r
 `pg_table_size()`, `pg_indexes_size()` and `pg_total_relation_size()` are three columns of a
 read whose other columns the engine answers, so each is dropped on its own
 (`queryTableStats()`) and the rows arrive with that size absent — never as a `0`, which
-would be a measurement nobody made ([D105](../BACKLOG.md)). Measured on RisingWave 3.1.0,
+would be a measurement nobody made (D105). Measured on RisingWave 3.1.0,
 which binds neither `pg_size_pretty()` nor `pg_total_relation_size()` but answers
 `pg_table_size(relid)` and `pg_indexes_size(relid)`: the panel now lists the tables with
 their sizes, where the whole read used to fail.
@@ -1099,7 +1099,7 @@ The arm it reports on is `interrupted` with `committed: "unknown"`, and that is 
 That arm is written for "the statement was SENT and the engine's answer never arrived", and for a count mismatch the answer DID arrive and the engine DID speak.
 It is used anyway because it is the only arm in the union whose disposition is right: statements ran, this provider cannot say which, the write is not established, and a retry would apply twice.
 `ApplyPreviewDialog` says the same thing on its own second line, "Whether it was applied is unknown: LibreDB has no answer that says whether it landed", which is true of this member; its FIRST line still reads "Whether it reached the server is unknown", which is not.
-Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and both of those files sit outside this provider, so the residual is filed as D89 in `docs/BACKLOG.md` with the cost of each way out.
+Closing that means either a seventh outcome arm or a narrowed sentence in `src/lib/db/types.ts` and in the dialog, and both of those files sit outside this provider, so the residual is filed as D89 in the backlog with the cost of each way out.
 
 **The limit every claim on this page carries (D62).**
 Every PostgreSQL row above is a claim about 18.4.
@@ -1394,7 +1394,7 @@ names one, and every connection string, behaves exactly as before.
   last 30 s, is never closed. All five busy answers `PoolExhaustedError` (503).
 - **The connection itself refuses** `query()`, `queryReadOnly()`, `beginTransaction()` and every
   maintenance operation but `kill` until a database is named; the API names it in a `catalog`
-  field ([`API_DOCS.md`](../API_DOCS.md)), which every route resolves through `editorProvider()`
+  field, which every route resolves through `editorProvider()`
   ([`editor-provider.ts`](../../src/lib/api/editor-provider.ts)). `cancelQuery()` finds the statement in whichever session
   runs it.
 - **The object tree chooses the database** in the workspace: activating a database, a schema, a folder
@@ -1886,7 +1886,7 @@ Every relative that goes through `PostgresProvider` (the `via: "postgres"` entri
 ### 5.6 NaN and the float infinities
 
 `real` and `double precision` (and their arrays) are still whatever `pg-types` makes of them, a JavaScript number, so `'NaN'`, `'Infinity'` and `'-Infinity'` arrive as `NaN`, `Infinity` and `-Infinity`.
-JSON has no form for those three, and the routes, the agent's row rendering and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts), [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)), while MCP answers each as the value codec's `nf` tag ([`MCP.md`](../MCP.md), Limits).
+JSON has no form for those three, and the routes, the agent's row rendering and the exports write each as the string `"NaN"`, `"Infinity"` or `"-Infinity"` rather than the `null` `JSON.stringify` would make of it ([`src/lib/non-finite.ts`](../../src/lib/non-finite.ts)), while MCP answers each as the value codec's `nf` tag ([`MCP.md`](../MCP.md), Limits).
 `numeric` was already the engine's text, `'NaN'` and `'Infinity'` included.
 
 Measured 2026-10-04 on PostgreSQL 18.6, `SELECT 'NaN'::float8, 'Infinity'::real, '-Infinity'::float8` answered `null` in all three cells of `POST /api/db/query` before and `"NaN"`, `"Infinity"`, `"-Infinity"` after, while psql shows `NaN | Infinity | -Infinity`.
@@ -2248,7 +2248,7 @@ Both controls, run without the ender, kept the table.
 
 `POST /api/db/multi-query` and `POST /api/db/query` each end their scope through the host core's `console.endScope` after the run ([`CONTRACT.md`](CONTRACT.md), C-60), each under a scope of its own, and report the outcome; an end that fails is answered in the run's place.
 What it still cannot undo: a client this scope released in `T` is back in the idle list, and the pool may hand it to another request in the moment before the ender runs, whose statement then joins this transaction and is discarded with it.
-On `POST /api/db/query` the end comes after the run's page is read, one turn of the event loop later for a page of one batch, and after the whole read, and any wait for the large-page slot, for a page of several batches, so that moment is that much longer, tracked as [D620](../BACKLOG.md).
+On `POST /api/db/query` the end comes after the run's page is read, one turn of the event loop later for a page of one batch, and after the whole read, and any wait for the large-page slot, for a page of several batches, so that moment is that much longer, tracked as D620.
 That is the leak ending it promptly is for, not a second defect.
 
 THE OTHER REQUEST CAN BE THE INTERACTIVE SESSION, and then its `commit` lies, which is sharper than the sentence above and is said here rather than left to be met.
@@ -2570,7 +2570,7 @@ the shared hierarchy:
 The two refusals are read from the SQLSTATE and never from the words, so `column "password" does not exist` (`42703`) is a `QueryError`.
 Only an error `pg` raises itself, which carries no SQLSTATE, is read by its words, such as `SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string`.
 
-A connect that fails answers `outcome` `not-sent`, and so does a statement Studio refuses before sending it; a statement that fails after it was sent answers `unknown`, because PostgreSQL may have run it ([API reference](../API_DOCS.md#error-kind-and-outcome)).
+A connect that fails answers `outcome` `not-sent`, and so does a statement Studio refuses before sending it; a statement that fails after it was sent answers `unknown`, because PostgreSQL may have run it.
 
 The editor's statement (`query`) takes its client from the pool through `checkoutPhase` before it sends anything, so a failure of that checkout answers `not-sent` and keeps the class its `pg` error maps to: a refused connection `ConnectionError`, a refused credential `AuthenticationError`, an ended pool `PoolExhaustedError` ([CONTRACT](./CONTRACT.md), E-5).
 A checkout that waits out the pool's bound (`connectionTimeoutMillis`, which is `acquireTimeout`), on a busy pool or a new client that does not open, is no statement timeout: it answers `503 CONNECTION_ERROR`, `not-sent`, with `No connection of the pool came free or opened within <n> seconds, so the statement was not sent: every connection may be in use, or the server may not be answering.`
@@ -2792,7 +2792,7 @@ Four things about the PostgreSQL side of that layer are worth knowing here:
   On the agent path Studio's own time refusal usually arrives first: its timer starts before the pool checkout, `BEGIN READ ONLY` and `SET LOCAL statement_timeout`, so the run reads `Read-only execution exceeded the time budget: no answer within <timeout>ms` (a `QueryError`, from the host core's read-only execute, `runReadOnlyExecute` in `src/lib/api/read-only-execute.ts`, whose deadline is set before the call), and the engine's own cancel follows a few milliseconds later, once the statement has started.
   The agent tool layer treats either timeout as a repairable statement failure: narrowing the read is the repair that helps.
   A run cancellation is still enforced by the run loop's own state rather than by that exception,
-  because an operator cancel arriving mid-statement is repairable too (see [BACKLOG](../BACKLOG.md) B4
+  because an operator cancel arriving mid-statement is repairable too (see backlog B4
   for the residual: classification reads the message text rather than the `57014`/`55P03` SQLSTATE).
 
 ### 12.5 Agent language pack
@@ -2928,7 +2928,7 @@ await server.disconnect();                                 // closes every datab
 
 ### 14.2 Over the API
 
-- `POST /api/db/query` — run SQL (see [`API_DOCS.md`](../API_DOCS.md#post-apidbquery)).
+- `POST /api/db/query` — run SQL.
 - `POST /api/db/objects/inventory` — objects, and their columns with `includeColumns`.
 - `POST /api/db/transaction` — begin/commit/rollback/query-in-tx.
 - `POST /api/db/cancel` — cancel a running query by id.
@@ -2986,5 +2986,4 @@ It prints no refusal reason.
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/postgres-provider.test.ts`](../../tests/integration/db/postgres-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [Trino](./trino.md) · [Redis](./redis.md)

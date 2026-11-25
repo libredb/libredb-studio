@@ -262,7 +262,7 @@ describe("requests the check must not break", () => {
   });
 
   test("the project's own documented API examples: JSON with neither Origin nor Referer", async () => {
-    // Matches scripts/engine-smoke.sh, docs/RANCHER.md and docs/API_DOCS.md verbatim: every
+    // Matches scripts/engine-smoke.sh and docs/RANCHER.md verbatim: every
     // published curl example sends Content-Type: application/json and neither Origin nor Referer.
     const res = await proxy(post("/api/auth/login", { "content-type": "application/json" }));
 

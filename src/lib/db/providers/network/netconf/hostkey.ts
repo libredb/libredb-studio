@@ -11,7 +11,7 @@
  * an SSH tunnel as well, where the key seen inside the forward is the device's own and not the
  * bastion's (the two fingerprints differed).
  *
- * `docs/BACKLOG.md` D34 records that nothing writes the tunnel's own fingerprint field today. This
+ * Backlog D34 records that nothing writes the tunnel's own fingerprint field today. This
  * file is the writer side of that gap for this provider: it parses what a user pastes, says what is
  * wrong with it, and compares. The connection form field itself is a shared surface and is not
  * touched here (decision K-53).

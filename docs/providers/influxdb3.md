@@ -30,8 +30,8 @@ To query InfluxDB 1.x, 2.x or 3.x in InfluxQL, use the InfluxDB (InfluxQL) type,
 ### 1.2 Tested versions
 
 Tested against InfluxDB 3 Core 3.12.0, image `influxdb:3.12.0-core@sha256:624d69bca6bf6fb174aca5a974e1d96e5c5486994e6ae35bc9b4fe02b9520076`, captured 2026-10-04.
-InfluxDB 3 Enterprise speaks the same API and is not tested; its database tokens are handled from InfluxData's documentation ([D201](../BACKLOG.md)).
-InfluxDB Cloud Serverless and Cloud Dedicated serve SQL only over Arrow Flight, which Studio does not use, so this type cannot reach them: connect to them with InfluxDB (InfluxQL) ([D202](../BACKLOG.md)).
+InfluxDB 3 Enterprise speaks the same API and is not tested; its database tokens are handled from InfluxData's documentation (D201).
+InfluxDB Cloud Serverless and Cloud Dedicated serve SQL only over Arrow Flight, which Studio does not use, so this type cannot reach them: connect to them with InfluxDB (InfluxQL) (D202).
 
 ## 2. Architecture
 
@@ -82,7 +82,7 @@ InfluxDB 3 Core's planner refuses every SQL write form on the query route, captu
 
 The client is Studio's own, over the shared `node:http(s)` transport, and it adds no package.
 `@influxdata/influxdb3-client` reads over Arrow Flight, which rounds 64-bit integers and nanosecond times to what JavaScript numbers hold, offers no cancel and no per-connection CA, and opens gRPC sockets outside the HTTP egress guard; `@influxdata/influxdb-client` queries Flux only.
-Reading `query_sql` as jsonl keeps every integer exact and every request inside the egress guard, at the cost of exact column types and a server-side cancel, filed as [D197](../BACKLOG.md).
+Reading `query_sql` as jsonl keeps every integer exact and every request inside the egress guard, at the cost of exact column types and a server-side cancel, filed as D197.
 
 ### 3.4 Machine access
 
@@ -185,7 +185,7 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
 Every statement it composes is DataFusion's, run on 3.12.0 Core through the agent path: the catalog reads off `information_schema` in the `iox` schema, with DataFusion's 0-based column positions moved to 1-based, and the estimating plan is `EXPLAIN`, which plans without running.
 The engine keeps no foreign key, no index and no row estimate outside the `system` schema, so those three catalog kinds answer no rows.
-`profile_table` is offered and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the provider declares no explain strategy with an agent reading ([B143](../BACKLOG.md)).
+`profile_table` is offered and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the provider declares no explain strategy with an agent reading (B143).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's `run_read_query` runs a statement on InfluxDB 3 (`MCP_STATEMENT_READ.influxdb3` is true) under the same boundary, described in "MCP read" above.
 
@@ -264,7 +264,7 @@ A Database the readable listing does not hold, matched exactly and case-sensitiv
 > Studio does not read the _internal database on this server; on InfluxDB 3 it holds the server's token table.
 
 The tree shows the session database's tables at the top level with no database node, and the monitoring overview names the database (section 7).
-A server with several databases needs one connection per database; a session that reads several is [U81](../BACKLOG.md).
+A server with several databases needs one connection per database; a session that reads several is U81.
 
 ### 4.5 A token needs TLS off this machine
 
@@ -273,7 +273,7 @@ A token over no TLS is refused before any socket unless the host is a loopback a
 > This connection would send its password or token to InfluxDB without TLS, to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS (docs/providers/influxdb.md has a TLS recipe for each version), connect through an SSH tunnel, or tick Send the password without TLS to accept that risk for this connection. Inside a container, localhost is the container itself, not the host. Nothing was sent.
 
 With SSL mode `disable` the dialog offers "Send the password without TLS"; ticked, the refusal is lifted for that connection only.
-A consent given for one host survives an edit of Host or Port ([D204](../BACKLOG.md)), so untick it when the connection moves.
+A consent given for one host survives an edit of Host or Port (D204), so untick it when the connection moves.
 A server with no token opens anywhere.
 
 ### 4.6 TLS
@@ -319,7 +319,7 @@ The language plan mode writes in, and what the editor runs:
 Apache DataFusion SQL as InfluxDB 3 runs it, not InfluxQL and not Flux: one SELECT, WITH, VALUES, SHOW, EXPLAIN or DESCRIBE statement; unquoted names fold to lower case; the time column is "time"; filter time with now() - INTERVAL '1 hour'.
 ```
 
-It is SQL, not InfluxQL and not Flux; Flux is not run by either InfluxDB type ([D196](../BACKLOG.md)).
+It is SQL, not InfluxQL and not Flux; Flux is not run by either InfluxDB type (D196).
 
 ### 5.2 The routes
 
@@ -471,15 +471,15 @@ Count and Profile are offered and run with no time window, because a windowed co
 
 ### 5.10 Cancellation and the confirmation gate
 
-Stop aborts the run in Studio and closes its socket; the server frees the query's work within about two seconds, measured on 3.12.0, but receives no cancel request, because the HTTP route has none ([D197](../BACKLOG.md)).
+Stop aborts the run in Studio and closes its socket; the server frees the query's work within about two seconds, measured on 3.12.0, but receives no cancel request, because the HTTP route has none (D197).
 A disconnect stops every request in flight or waiting.
 The text is SQL, so the editor's SQL confirmation gate reads it: a typed `DELETE` or `DROP` asks for confirmation, and the provider then refuses it with the read policy's sentence, a documented cost of being SQL.
-The Explain button is not offered ([D198](../BACKLOG.md)); a typed `EXPLAIN` returns its plan as rows.
+The Explain button is not offered (D198); a typed `EXPLAIN` returns its plan as rows.
 
 ### 5.11 Timestamps and charts
 
 A timestamp through this type carries no zone, and the same row read through InfluxDB (InfluxQL) ends in `Z`, so a timestamp copied from one type into a statement of the other needs its `Z` added or removed.
-For the Charts tab, order by `time` ascending and choose `time` as the x axis: the default x axis is the first tag ([U79](../BACKLOG.md)), and "Group by hour" reads a `Z` time in local time ([U80](../BACKLOG.md)).
+For the Charts tab, order by `time` ascending and choose `time` as the x axis: the default x axis is the first tag (U79), and "Group by hour" reads a `Z` time in local time (U80).
 
 ### 5.12 SQL grammar
 
@@ -525,7 +525,7 @@ Slow queries are not read: InfluxDB 3 records queries in a server-wide table tha
 Sessions are not read either: InfluxDB has no session list, and every request stands alone.
 Neither panel is offered, so the dashboard draws neither, and the labels declare no empty-state sentence for them.
 
-Performance, storage, table and index statistics are empty, and `/metrics` is never read ([D200](../BACKLOG.md)).
+Performance, storage, table and index statistics are empty, and `/metrics` is never read (D200).
 
 ### Engine facets
 
@@ -682,17 +682,17 @@ The token goes in `password`, there is no `user`, and `allowInsecureAuth: true` 
 
 - On InfluxDB 3 Core every token is an admin token, so read-only is a property of what Studio sends, never of the token: the same token reaches every write, token and plugin route outside Studio.
 - SSL mode `require` sends the token to a server whose certificate is not checked.
-- Studio reads `query_sql` as jsonl, with no Arrow Flight: column types are what JSON carries, and a stopped query gets no server-side cancel ([D197](../BACKLOG.md)).
+- Studio reads `query_sql` as jsonl, with no Arrow Flight: column types are what JSON carries, and a stopped query gets no server-side cancel (D197).
 - An all-null column and the columns of an empty result cannot be known, and no column type is reported.
 - A result that names a column twice, such as a self join's two `usage` columns, is refused: alias one of them with `AS`.
   When one of the two is null on every line, no line names it twice, so the result comes back as one column instead ([§5.5](#55-result-shape)).
-- One connection reads one database; a server with several needs one connection each ([U81](../BACKLOG.md)).
+- One connection reads one database; a server with several needs one connection each (U81).
 - A page boundary inside a tie of `time` can repeat or skip a row; add the tag columns to `ORDER BY` for stable pages.
 - Count and Profile read the whole table and meet Core's file limit on a large one.
 - An admin token reads plugin secrets and other users' query text from `system.*` tables by name in the editor; the agent's `system` fence refuses every one but `system.influxdb_schema` (section 3.5).
-- InfluxDB 3 Enterprise is not tested, and Cloud Serverless and Dedicated cannot be reached by this type ([D201](../BACKLOG.md), [D202](../BACKLOG.md)).
+- InfluxDB 3 Enterprise is not tested, and Cloud Serverless and Dedicated cannot be reached by this type (D201, D202).
 - MCP's `run_read_query` admits only the 3.12 Core line, as agent mode does, and its seed's token is an admin token like every Core token (section 3.5).
-- Agent mode offers `profile_table` and `compare_plans` with nothing to read them by ([B143](../BACKLOG.md)), and admits only the 3.12 Core line its write refusals were captured on.
+- Agent mode offers `profile_table` and `compare_plans` with nothing to read them by (B143), and admits only the 3.12 Core line its write refusals were captured on.
 
 ## Migration DDL
 

@@ -1,5 +1,5 @@
 /**
- * The producer `docs/BACKLOG.md` B9 asked for: a sweep that finds runs a dead
+ * The producer backlog B9 asked for: a sweep that finds runs a dead
  * process left `running` and drives each one again, in-process.
  *
  * A run is driven exactly once, by the process that opened it; if that process
@@ -8,13 +8,13 @@
  * timer it lists the ledger streams, finds the ones that are stale, and drives
  * them through the same `driveAgentRun` the start route uses.
  *
- * Single-flight is the drive's own durable claim (`docs/BACKLOG.md` B5), not a
+ * Single-flight is the drive's own durable claim (backlog B5), not a
  * sweep bookkeeping flag: the sweep holds no claim, so `runInvestigation`'s
  * `claimDrive` is what refuses a run another drive already owns.
  *
  * **Scope:** automatic resume is guaranteed for the `local` backend only. The
  * multi-replica Postgres world is absent from the shipped artifacts
- * (`docs/BACKLOG.md` B16), so no cross-replica sweep exists yet; stating "the
+ * (backlog B16), so no cross-replica sweep exists yet; stating "the
  * run is picked up automatically" must not be read as a promise on every
  * backend this application supports.
  *

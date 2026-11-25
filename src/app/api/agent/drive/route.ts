@@ -19,7 +19,7 @@ import { logger } from "@/lib/logger";
  * Stated plainly because the name suggests otherwise: **nothing calls this yet.**
  * The workflow runtime is used as the ledger's durable substrate only, so no queue
  * delivery arrives here, and a run whose process died stays running until something
- * asks. `docs/BACKLOG.md` B9 records what a producer has to bring with it (a sweep,
+ * asks. Backlog B9 records what a producer has to bring with it (a sweep,
  * and single-flight per run). What this route establishes now is the authenticated
  * seam that producer will use, and the property that seam must never lose.
  *

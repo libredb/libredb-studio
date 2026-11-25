@@ -51,7 +51,6 @@ const DOC = read("docs/providers/neo4j.md");
 const SECURITY = read("docs/SECURITY.md");
 const PROVIDERS_README = read("docs/providers/README.md");
 const SEEDS = read("docs/SEED_CONNECTIONS.md");
-const BACKLOG = read("docs/BACKLOG.md");
 const AGENT_DOC = read("docs/AGENT.md");
 const CAPTURES_README = read("tests/fixtures/neo4j/5.26.31/README.md");
 const COMPOSE = read("database-compose.yml");
@@ -721,15 +720,11 @@ describe("docs/providers/neo4j.md section 11 states the live fixture and its pro
   });
 });
 
-describe("the backlog entries the doc cites exist, and any agent one is cited by docs/AGENT.md", () => {
+describe("the backlog ids the doc cites, and any agent one is cited by docs/AGENT.md", () => {
   const cited = [...new Set([...LIMITS.matchAll(/\b([BDU]\d+)\b/g)].map((match) => match[1]))];
 
   test("the limits section cites at least the six entries the provider filed", () => {
     expect(cited.length).toBeGreaterThanOrEqual(6);
-  });
-
-  test.each(cited)("%s is an entry of docs/BACKLOG.md", (id) => {
-    expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));
   });
 
   test("every B-series entry it cites is cited by docs/AGENT.md", () => {

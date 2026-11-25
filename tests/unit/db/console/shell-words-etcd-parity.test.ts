@@ -7,7 +7,7 @@
  * two tables, `WORD_RULES` and `SHELL_REFUSALS`, in their order, and the texts of its cases outside the tables. The
  * first test counts the tables' rows in that file, so a row added there fails here until it is added too.
  *
- * This file is the evidence the BACKLOG entry about the two copies of the POSIX-shell refusal rules cites.
+ * This file is the evidence the backlog entry about the two copies of the POSIX-shell refusal rules cites.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

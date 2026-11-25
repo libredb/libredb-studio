@@ -280,7 +280,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
  * in the runner image and Bun 1.4.4;
  * Snowflake, BigQuery and Firestore, whose hosts are fixed on port 443, only on Node.js 26.13.1 in the runner image.
  * Not measured:
- * Oracle in Thick mode, whose TLS is the Oracle Client's own (docs/BACKLOG.md). A new provider sets its declaration's
+ * Oracle in Thick mode, whose TLS is the Oracle Client's own (the backlog). A new provider sets its declaration's
  * `connection.readsTrustMaterial` to true only when its TLS library is not Node's, such as a native addon with a TLS
  * stack of its own, and then hands `requireTrustMaterial(context.trust)` from `./utils/require-trust-material` to its
  * TLS wherever a connection verifies against the system trust store.
@@ -808,12 +808,12 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   weaviate: true,
   // Both offered for the metadata tools, which list database, measurement and column names and types only. Both
   // providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by
-  // MCP_STATEMENT_READ, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
+  // MCP_STATEMENT_READ, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (backlog B94).
   influxdb: true,
   influxdb3: true,
   // Closed: the 0.18.0 server authorizes nothing, so a token reads, writes and deletes every key of every namespace
   // and the provider's closed table would be the only layer between an MCP client and the cluster; Oxia key paths
-  // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (BACKLOG B100).
+  // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (backlog B100).
   oxia: false,
   databend: true,
   // Offered with every answer metadata only, as agent mode reads it, and only under the seed's agent read key, which
@@ -831,11 +831,11 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   mqtt: true,
   // Closed: every read is billed to the user's project, an MCP call has an allowance of its own and nothing bounds
   // billed reads across calls, `inspect_schema` carries no allowance, so no collection listing reaches it, and a
-  // production viewer role is not measured (BACKLOG B107).
+  // production viewer role is not measured (backlog B107).
   firestore: false,
   // Offered for the metadata tools, carrying stream names and the fixed read columns only, and for
   // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
-  // never a message value (BACKLOG B108).
+  // never a message value (backlog B108).
   rabbitmq: true,
   // Offered only beneath the read roots its seed declares, which READ_ROOTS_REQUIRED holds MCP to: an OPC UA server
   // declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers
@@ -847,12 +847,12 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Closed: agent mode reads the device paced per device and counted per run, and MCP has no run, so nothing would
   // bound a client's device requests across calls; a cancelled call keeps the device's lane until its read's own
   // deadline; and no MCP surface lists the register map's points, so a client could form only a block read whose
-  // decoding it guesses (BACKLOG B160).
+  // decoding it guesses (backlog B160).
   modbus: false,
   // Closed: agent mode reads NETCONF configuration and state with keys, password hashes, access rules and every node
   // the device's own YANG marks nacm:default-deny-all withheld by Studio alone, since a read-only account still reads
   // password hashes and keystore entries (docs/providers/netconf.md 6.3), and nothing on the device is proved to hold
-  // them out; the rest is the device's whole configuration (BACKLOG B159).
+  // them out; the rest is the device's whole configuration (backlog B159).
   netconf: false,
   // Offered as agent mode reads it: values are the device's own readings, and the withheld subtrees (the security and
   // target modules, the running processes, the commands the agent runs and the vendor copy tables) are decided on every
@@ -906,11 +906,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).
   clickhouse: true,
   // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a
-  // LOOKUP of a literal key is kept out by the statement fence alone (BACKLOG B151).
+  // LOOKUP of a literal key is kept out by the statement fence alone (backlog B151).
   druid: false,
   // Agent mode executes statements on Trino, and MCP read stays closed on it: the read-only access control lets every
   // identity read other users' query text in `system.runtime.queries`, and only the statement fence keeps it out
-  // (BACKLOG B166).
+  // (backlog B166).
   trino: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to
   // hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one
@@ -935,7 +935,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   redis: true,
   // Closed: Prometheus has no principal that narrows a read, so the connection's credential reaches every series the
   // TSDB stores, and no layer independent of reading the expression narrows it; agent mode reads under that reach with
-  // the flags and every URL's userinfo and query string withheld (BACKLOG B161).
+  // the flags and every URL's userinfo and query string withheld (backlog B161).
   prometheus: false,
   // Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and
   // ListOffsets reads alone, answered metadata-only with a platform's own topics withheld
@@ -965,14 +965,14 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // through the metadata-only projection (docs/providers/weaviate.md section 15).
   weaviate: true,
   // Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope
-  // rests on the agent's statement reader alone, and no layer that reads the answer can hold it (BACKLOG B94).
+  // rests on the agent's statement reader alone, and no layer that reads the answer can hold it (backlog B94).
   influxdb: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals
   // on a server checked at open to be that line, behind the read policy and the system schema fence
   // (docs/providers/influxdb3.md section 3.5).
   influxdb3: true,
   // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it: the server authorizes nothing,
-  // so the closed table would be the only layer between an MCP client and every key (BACKLOG B100).
+  // so the closed table would be the only layer between an MCP client and every key (backlog B100).
   oxia: false,
   databend: false,
   // Opened on its own: run_s3_read runs under the boundary agent mode uses, the provider's closed table of six metadata
@@ -987,12 +987,12 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // (docs/providers/mqtt.md section 15).
   mqtt: true,
   // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it: every read is billed and
-  // nothing bounds billed reads across MCP calls (BACKLOG B107).
+  // nothing bounds billed reads across MCP calls (backlog B107).
   firestore: false,
   // Opened on its own: run_rabbitmq_read runs under the boundary agent mode uses, the provider's structural closed
   // table (a read client that encodes no take, publish, purge or declare, the stream-only type check before any frame
   // and the `x-stream-offset` 406 backstop), answered metadata only, each message's offset and body size; message values
-  // stay withheld (docs/providers/rabbitmq.md section 17, BACKLOG B108).
+  // stay withheld (docs/providers/rabbitmq.md section 17, backlog B108).
   rabbitmq: true,
   // Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a
   // session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that
@@ -1003,10 +1003,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).
   mtconnect: true,
   // Agent mode executes paced reads on Modbus, and MCP read stays closed on it: no bound on device requests across
-  // calls, no lane release on cancel and no register-map surface exist for MCP yet (BACKLOG B160).
+  // calls, no lane release on cancel and no register-map surface exist for MCP yet (backlog B160).
   modbus: false,
   // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it: the pruning
-  // is Studio's alone, with no device layer proved to hold the secrets out (BACKLOG B159).
+  // is Studio's alone, with no device layer proved to hold the secrets out (backlog B159).
   netconf: false,
   // Opened on its own: run_snmp_read runs under the boundary agent mode uses, the agent's client of Get, GetNext and
   // GetBulk alone behind the valve, with every withheld subtree decided by the prefix of every identifier an answer
@@ -1653,7 +1653,7 @@ export const WIRE_COMPATIBLE_ENGINES: readonly WireCompatibleEngine[] = [
       "Materialized views are listed beside tables in the object browser, with their columns. Materialize reports them through information_schema.tables as table_type = 'MATERIALIZED VIEW' and they are what its users actually work with, so a browser that listed only BASE TABLE hid the product: revenue_by_region was invisible while the three plain tables showed.",
       "The Explain panel works. Materialize has no rule for EXPLAIN's parenthesised options at all - `(FORMAT JSON)` is refused the same way `(ANALYZE, BUFFERS, FORMAT JSON)` is, and the error names only the first token inside them - and no EXPLAIN ANALYZE either, so the grammar is measured at connect and this server gets the plain EXPLAIN, whose physical plan names the relations it reads, the join strategy and the filters it pushed down. The JSON form its docs publish is not used: it carries no relation names, only internal ids.",
       "Row counts are blank rather than zero. Materialize answers -1 from pg_class.reltuples - PostgreSQL's never-counted sentinel - for tables, views and materialized views alike, so there is no estimate to show and the browser draws no badge. It used to show 0, which read as a measurement nobody made; a table holding three rows said it held none.",
-      "In the object tree, the Functions and Procedures folders show Materialize's own sentence, column \"p.prokind\" does not exist, and do not open; every other folder in the tree counts and lists. Materialize's pg_proc has no prokind column, so it cannot say which routine is a function and which a procedure. It reports that as SQLSTATE XX000 rather than PostgreSQL's 42703, and while the object browser keyed its fallback on 42703 every folder in every schema showed that sentence and nothing could be opened. The fallback now keys on the column the refusal names, under any SQLSTATE, measured on Materialize v26.44.1 on 2026-10-04. Object search, the object inventory and the agent's inventory grounding still list the routine kinds and fail there (D226 in docs/BACKLOG.md). A source created from a load generator is listed under Tables, because Materialize's pg_class reports it as an ordinary table.",
+      "In the object tree, the Functions and Procedures folders show Materialize's own sentence, column \"p.prokind\" does not exist, and do not open; every other folder in the tree counts and lists. Materialize's pg_proc has no prokind column, so it cannot say which routine is a function and which a procedure. It reports that as SQLSTATE XX000 rather than PostgreSQL's 42703, and while the object browser keyed its fallback on 42703 every folder in every schema showed that sentence and nothing could be opened. The fallback now keys on the column the refusal names, under any SQLSTATE, measured on Materialize v26.44.1 on 2026-10-04. Object search, the object inventory and the agent's inventory grounding still list the routine kinds and fail there (D226 in the backlog). A source created from a load generator is listed under Tables, because Materialize's pg_class reports it as an ordinary table.",
     ],
   },
   {

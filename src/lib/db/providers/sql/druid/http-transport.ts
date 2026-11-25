@@ -212,7 +212,7 @@ interface HttpOutcome {
  * the package declared `engines.node: ">=20.9.0"`, so depending on it would have thrown
  * a bare TypeError on a runtime the package claimed to support. The floor is now
  * ">=24.0.0" (#326) and `JSON.rawJSON` is available; replacing this is tracked as
- * BACKLOG A6 rather than folded into a runtime-baseline change.
+ * backlog A6 rather than folded into a runtime-baseline change.
  *
  * Building the array as text is what remains, and it is deliberately STRUCTURAL rather
  * than a marker-and-substitute pass. An earlier version wrapped the digits in a

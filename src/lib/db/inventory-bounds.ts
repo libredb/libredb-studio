@@ -13,7 +13,7 @@
  * shared home that removes the reason - it imports nothing - so neither reader owns the numbers
  * and they cannot drift apart.
  *
- * `docs/AGENT.md` and `docs/API_DOCS.md` both state them, and the values are theirs to follow.
+ * `docs/AGENT.md` states them, and the values are its to follow.
  */
 
 /** The hard ceiling on the objects one inventory read returns. Never a caller parameter. */

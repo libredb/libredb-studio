@@ -187,7 +187,7 @@ server began sending notifications: it reported 17 replies to 12 requests. Repli
 On an end-of-message session a request that holds the `]]>]]>` separator is refused and nothing is written, because RFC 6242 section 4.3 keeps the separator out of the data and a peer would read the first one as the end of the message.
 Chunked framing counts bytes, so the same text is ordinary data there and is framed as before.
 
-The object tree reads on the editor's session, never on a metadata session of its own, because a device may admit few sessions and none has been measured against Studio's session limits ((docs/providers/CONTRACT.md, clause C-66)); so a tree read sent while an editor request is in flight on that session is refused as above (docs/BACKLOG.md, D700).
+The object tree reads on the editor's session, never on a metadata session of its own, because a device may admit few sessions and none has been measured against Studio's session limits ((docs/providers/CONTRACT.md, clause C-66)); so a tree read sent while an editor request is in flight on that session is refused as above (the backlog, D700).
 
 ### 3.5 Only implemented modules are listed
 
@@ -556,7 +556,7 @@ measured: neither captured reply carries one. A device that does send one gets a
 instead of silence.
 
 **No editor statement timeout of the provider's own, and no cancel.**
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
 This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until the device answers it.
 
@@ -656,4 +656,4 @@ The family offers the investigation workflow, through `run_read_query` with one 
 The workflow classifier offers the model only these two.
 The editor language id stays `netconf`, and the fence alias `netconfrpc` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a NETCONF request: the family declares no MCP facet, `MCP_EXPOSABLE.netconf` and `MCP_STATEMENT_READ.netconf` are false ([B159](../BACKLOG.md#b159-netconfs-agent-reads-withhold-keys-password-hashes-and-access-rules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.netconf` is unchanged.
+No MCP tool runs a NETCONF request: the family declares no MCP facet, `MCP_EXPOSABLE.netconf` and `MCP_STATEMENT_READ.netconf` are false (B159), and `READ_ONLY_ENFORCED.netconf` is unchanged.

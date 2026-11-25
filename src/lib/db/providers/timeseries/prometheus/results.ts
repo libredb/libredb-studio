@@ -58,7 +58,7 @@ export const MATRIX_SAMPLE_BUDGET = 250_000;
  * server's label sets beside them, go through the provider and out as the query route sends a
  * result, in the image's runtime under its heap flag and the chart's memory limit, and each has to
  * complete while the rest of the process holds three quarters of the heap. The bodies of responses
- * waiting to be sent are outside the budget, and nothing bounds how many wait (`docs/BACKLOG.md`
+ * waiting to be sent are outside the budget, and nothing bounds how many wait (the backlog
  * D112).
  */
 export const RESULT_BYTE_BUDGET = 16 * 1024 * 1024;

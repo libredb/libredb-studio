@@ -8,14 +8,13 @@
  * also written for any governance source, so it never names one particular product.
  */
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 
 const DOC = read("docs/GOVERNANCE.md");
-const ARCHITECTURE = read("docs/ARCHITECTURE.md");
 
 interface Manifest {
   schema: string;
@@ -71,11 +70,5 @@ describe("docs/GOVERNANCE.md", () => {
   test("it speaks of a governance source and a control plane", () => {
     expect(DOC).toContain("governance source");
     expect(DOC).toContain("control plane");
-  });
-
-  test("docs/ARCHITECTURE.md links it and the link resolves", () => {
-    const links = [...ARCHITECTURE.matchAll(/\]\(([^)]*GOVERNANCE\.md)\)/g)].map((match) => match[1]);
-    expect(links.length).toBeGreaterThan(0);
-    for (const link of links) expect(existsSync(path.join(ROOT, "docs", link))).toBe(true);
   });
 });

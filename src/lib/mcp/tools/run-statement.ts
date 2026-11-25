@@ -109,7 +109,7 @@ import {
  * acquired, naming the tool that does serve it, and the arm's fence then runs as defence in depth. One deadline, the
  * call's start plus timeout_ms, covers acquisition and execution: the acquisition hands the open the call's wait, and
  * the statement runs under the host core's deadline, the time left, and the request's signal. Neither a cancel nor the
- * deadline stops a statement already running (docs/BACKLOG.md D128), they end the wait; a statement that fails after
+ * deadline stops a statement already running (backlog D128), they end the wait; a statement that fails after
  * the wait ended is logged under `/api/mcp` by kind and code, never its text.
  *
  * Rows are fetched one past the page where the arm pages, so the extra row proves more exist, cut to max_rows, then

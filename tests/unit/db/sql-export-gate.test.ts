@@ -1,5 +1,5 @@
 /**
- * `offersSqlExport`, the one reader of `DialectSpec.offersSqlExport` (vector-family spec 3.10, BACKLOG U69).
+ * `offersSqlExport`, the one reader of `DialectSpec.offersSqlExport` (vector-family spec 3.10, backlog U69).
  *
  * The real registry answers for every shipped dialect. Qdrant's record is the one shipped record that declines the
  * SQL formats, and two synthetic records, which no shipped dialect is, stand in for one that declines them and one

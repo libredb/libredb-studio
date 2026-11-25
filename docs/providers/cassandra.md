@@ -576,7 +576,7 @@ The rolled-back notice names `COMMIT` as the keyword that keeps an open transact
 Its row in `EXECUTION_UI` is stated by its declaration's `editor.commitKeyword` and `editor.consentDeadline` ([`cassandra.json`](../../src/lib/db/engine-declarations/cassandra.json)), projected into the generated execution UI record.
 The one fence tag that names it is its id, `cassandra`: its declaration's `editor.fenceAliases` is empty.
 A block tagged `cassandra` holds a CQL statement the editor can run.
-The generic tag `cql` holds a query and names no engine, for the reason `sql` names none: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as written for Cassandra would put a claim in the model's mouth; that `cql` names no engine although every CQL server connects through `cassandra` is a known defect, [B86](../BACKLOG.md).
+The generic tag `cql` holds a query and names no engine, for the reason `sql` names none: CQL is a language, and ScyllaDB speaks it too, so reading `cql` as written for Cassandra would put a claim in the model's mouth; that `cql` names no engine although every CQL server connects through `cassandra` is a known defect, B86.
 
 ---
 
@@ -747,7 +747,7 @@ generators used to write here (#1410), and the provider now declares both away.
 `supportsConstantPredicate: false` makes **Generate Query** (on a table or a materialized view) write
 `SELECT <columns> FROM <keyspace>.<table> LIMIT 100;` with no `WHERE 1=1`, and
 `supportsMultiRowInsert: false` makes the **CSV/JSON import** into an existing table, and the
-**Test Data Generator** (not offered by the row menus, `supportsTestDataGeneration: false`, BACKLOG U93), write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
+**Test Data Generator** (not offered by the row menus, `supportsTestDataGeneration: false`, backlog U93), write one `INSERT` per row, which the editor sends through `/api/db/multi-query` one statement at a time.
 Measured on 5.0.9 on 2026-10-04 through the provider and the multi-query splitter: the generated
 select on a table runs, and a two-row import inserts both rows. ScyllaDB shares the provider and
 the declaration, and was not re-measured. An import into a **new** table stays withheld because the provider declares no `createTable`.
@@ -1999,7 +1999,7 @@ The overlay overrides the `sql` family's grounding: it keeps the family's own an
 The column kind is a SELECT on `system_schema.columns` for one keyspace, or one of its tables, with its columns renamed `table_schema`, `table_name`, `column_name`, `data_type`, `column_kind` and `ordinal_position` (capture 04); `column_kind` says which columns make the primary key, and `ordinal_position` orders the key columns and reads -1 for every other one.
 CQL has no `NOT IN` to leave the system keyspaces out of a read of every keyspace, so a selector without a keyspace is refused, naming the keyspace as what to give.
 The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: CQL has no foreign key, its index catalog names no column a key read could use, and the server keeps no row count it can vouch for ([§3.2](#32-there-is-no-honest-row-count-and-no-honest-size)).
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out ([B149](../BACKLOG.md)); plan mode drafts here as on every engine.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile (B146), and the `sql-composers` requirement holds query optimization out (B149); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's `run_read_query` runs on Cassandra (`MCP_STATEMENT_READ.cassandra` is true) under this same boundary ([§14.7](#147-mcp-read)).
 

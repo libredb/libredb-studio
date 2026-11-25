@@ -402,7 +402,7 @@ export function fingerprintInventory(inventory: AgentInventory): string {
  * refusal (`row-budget-refusal`, the provider's, or `studio-row-budget-refusal`, Studio's own) answers a pair. Any other
  * kind, and `undefined` (a refusal with no record, one recorded before records existed, or a capture that was not a
  * refusal at all), answers none, whatever the detail says. The numbers themselves are still text: neither class
- * carries them as fields (BACKLOG B73), so they are read from the sentence `rowBudgetSentence` formats, the one the
+ * carries them as fields (backlog B73), so they are read from the sentence `rowBudgetSentence` formats, the one the
  * provider or Studio wrote when it refused, anchored on the whole phrase so the `200` in the advice the tool layer
  * appends ("add LIMIT 200") cannot be mistaken for a measurement.
  *

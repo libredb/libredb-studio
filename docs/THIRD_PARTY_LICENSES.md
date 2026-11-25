@@ -62,5 +62,5 @@ The etcd provider vendors etcd's v3 API definitions from [`etcd-io/etcd`](https:
 The Milvus provider vendors Milvus's API definitions from [`milvus-io/milvus-proto`](https://github.com/milvus-io/milvus-proto) at tag `go-api/v3.0.2` (commit `9e4f0ebc92af3ecf9e13c12350c6fce13d0893fa`), Apache-2.0, with upstream's `LICENSE` beside them (`src/lib/db/providers/vector/milvus/proto/LICENSE`).
 The Apache Spark provider vendors Spark Connect's API definitions from [`apache/spark`](https://github.com/apache/spark) at tag `v4.2.0` (commit `32f7299601108917fb01920a54e084595b7b3bf8`), Apache-2.0, with upstream's `LICENSE` and `NOTICE` beside them (`src/lib/db/providers/sql/spark/proto/LICENSE`, `proto/NOTICE`).
 
-See `docs/BACKLOG.md` entry C8 for the broader, not-yet-generated NOTICE this file is a manual
+See the backlog entry C8 for the broader, not-yet-generated NOTICE this file is a manual
 precursor to.

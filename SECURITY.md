@@ -135,8 +135,7 @@ When using LibreDB Studio, please follow these security best practices:
   `Referer`) whose host matches the deployment's own host, as a second layer behind the
   `SameSite=Lax` session cookie — except a request whose `Content-Type` is exactly
   `application/json` and carries neither header at all, the one shape a cross-site browser cannot
-  forge; see `docs/API_DOCS.md`'s "CSRF: Origin Check" section for the full carve-out and why it is
-  safe. A non-browser client that does NOT send that content type (a webhook sender, for instance)
+  forge, so the carve-out is safe. A non-browser client that does NOT send that content type (a webhook sender, for instance)
   must send `Origin: <your public origin>` instead — that requirement is on clients which skip the
   JSON carve-out, not on every non-browser client unconditionally. Deployments behind a reverse
   proxy that rewrites `Host` set `ALLOWED_ORIGINS`
@@ -164,7 +163,7 @@ When using LibreDB Studio, please follow these security best practices:
   whatever log pipeline you already run. A denial based on ROLE rather than session or Origin — the
   proxy's `/admin` redirect for a non-admin token, and the in-handler admin-only checks on
   `admin/audit`, `admin/fleet-health` and `db/maintenance` — is not audited today; see
-  `docs/BACKLOG.md`. A failed login records the submitted email verbatim (truncated to 254
+  the backlog. A failed login records the submitted email verbatim (truncated to 254
   characters) as the event's actor, not just a real, known account: a user who mistypes their
   password into the email field puts that password on a retained audit log line
 

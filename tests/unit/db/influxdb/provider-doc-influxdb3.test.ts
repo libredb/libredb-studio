@@ -64,7 +64,6 @@ const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const DOC = read("docs/providers/influxdb3.md");
 const SEEDS = read("docs/SEED_CONNECTIONS.md");
-const BACKLOG = read("docs/BACKLOG.md");
 
 const CONNECTION: DatabaseConnection = {
   id: "influxdb3-doc",
@@ -245,7 +244,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     const twelve = Array.from({ length: 12 }, (_, at) => `db${at + 1}`);
     expect(RUN_DATABASE_SENTENCES.sessionMany(twelve)).toContain("db10 and 2 more");
     expect(session).toContain('up to ten names, then "and N more"');
-    expect(session).toContain(`[U81](../BACKLOG.md)`);
+    expect(session).toContain(`U81`);
   });
 
   test("the plaintext refusal is the connection options' sentence", () => {
@@ -505,12 +504,11 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     expect(section).toContain("`bun tests/live/influxdb3-write-refusals.ts` sent 43 statements");
   });
 
-  test("every backlog id the doc cites is an entry of docs/BACKLOG.md", () => {
+  test("the doc cites each backlog id it files a limit under", () => {
     const cited = [...new Set([...DOC.matchAll(/\b([DUB]\d{2,3})\b/g)].map((match) => match[1]))];
     for (const id of ["D196", "D197", "D198", "D200", "D201", "D202", "D204", "U79", "U80", "U81", "B143"]) {
       expect(cited).toContain(id);
     }
-    for (const id of cited) expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));
   });
 
   test("the known limitations keep each stated limit", () => {

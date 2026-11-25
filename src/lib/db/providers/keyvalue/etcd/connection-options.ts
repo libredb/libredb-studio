@@ -25,7 +25,7 @@
  * the IP itself (reconciliation D0-3).
  *
  * The TLS panel is read by the shared gRPC mapping, `readGrpcTlsPanel` and `grpcTlsIdentity` in
- * src/lib/db/grpc/tls.ts, which docs/BACKLOG.md D37 counts once for every gRPC provider.
+ * src/lib/db/grpc/tls.ts, which backlog D37 counts once for every gRPC provider.
  *
  * The parameter is named `config` on purpose: tests/unit/lib/db-ui-config.test.ts finds which
  * addressing fields a provider reads by the `config.<field>` pattern, so this file reads `config.user`

@@ -1,7 +1,7 @@
 /**
  * The sign-in latch of design 3.5: once Databend refuses a sign-in, this Studio process sends that password to that
  * server again only after 15 minutes, or after the credential changes; another replica keeps a latch of its own
- * (`docs/BACKLOG.md` D252).
+ * (backlog D252).
  *
  * Databend counts failed sign-ins only for a user under a password policy, and five in 15 minutes lock that user for
  * 15 minutes, during which the right password is refused too (measured, L10). Studio retries on its own (the pulse,

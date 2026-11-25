@@ -2825,7 +2825,7 @@ export async function runInvestigation(
   }
 
   // One drive per run in this process: two would both pass `runStep`'s
-  // read-then-append check and execute the same step twice (`docs/BACKLOG.md` B5).
+  // read-then-append check and execute the same step twice (backlog B5).
   // Released in the `finally` at the foot of this function, so a drive that throws
   // still leaves the run claimable by the next one.
   await service.claimDrive(runId);
@@ -3302,7 +3302,7 @@ export async function runInvestigation(
      * the fingerprint is for — it is checked against the inventory it summarises, so
      * reuse is a verification rather than a hope — and it matters most on the path
      * that pays for a re-read twice: a run resumed after a process death starts every
-     * cost ceiling again (`docs/BACKLOG.md` B6), so three catalog statements out of
+     * cost ceiling again (backlog B6), so three catalog statements out of
      * twenty would be spent per resume on rows the run already had.
      *
      * A run whose catalog cannot be read is told so and continues: the tools are

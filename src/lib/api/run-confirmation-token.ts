@@ -1,6 +1,6 @@
 /**
  * @file The run confirmation token (FND-5): what the run routes hand a caller in a 428 answer, and what the caller
- * sends back to run the statement it confirmed (docs/API_DOCS.md, "Server confirmation of a run").
+ * sends back to run the statement it confirmed.
  *
  * It is an explicit second step, not an authorization check: whoever holds the session can always ask for a token and
  * send it back. What it binds is that the run it confirms is the one the server classified: the same session, the same

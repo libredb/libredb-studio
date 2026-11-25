@@ -12,7 +12,7 @@ import { countCodeStatements, type SplitStatement, splitCursorTargets } from "./
  * call `runnableTarget`, the whole rule with a target that holds no code answered as nothing to run, on the offsets
  * they are given.
  * One rule for all three, so they never disagree about which statement a Run sends; they part only over a target that
- * holds no code, which the web editor sends as it is (`docs/BACKLOG.md` U200).
+ * holds no code, which the web editor sends as it is (backlog U200).
  */
 
 /** A `[start, end)` offset pair into the text. */

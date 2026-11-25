@@ -166,7 +166,7 @@ export interface SqlGrammar {
    * True only on a row whose lexer escapes with a backslash in both quotes under every
    * session setting. MySQL is the dialect that escapes by default, and it is still
    * false there: `NO_BACKSLASH_ESCAPES` in `sql_mode` turns the escape off per session, so
-   * no row can state it for every connection (BACKLOG S2).
+   * no row can state it for every connection (backlog S2).
    */
   readonly backslashAlwaysEscapes: boolean;
   /**

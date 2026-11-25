@@ -20,7 +20,7 @@
  *
  * Studio's own writers, the SQLite storage provider and the bootstrap credentials writer, still resolve the variable
  * when they run (`getStorageSqlitePath`, `getDataDir`), which names the same file unless the working directory changes
- * after boot; reading the location there too is BACKLOG D491.
+ * after boot; reading the location there too is backlog D491.
  */
 import * as path from "path";
 import * as fs from "fs";

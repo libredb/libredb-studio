@@ -84,7 +84,7 @@ export interface LibSQLStatement {
  * the whole point of the shape. Measured on both deployments: a batch whose
  * second statement fails still runs the third, and each statement carries its own
  * outcome. Collapsing that onto a single rejection is how one refused read costs
- * a whole monitoring dashboard (#477, BACKLOG D22) - so the transport hands the
+ * a whole monitoring dashboard (#477, backlog D22) - so the transport hands the
  * failures back individually and the provider decides, per panel, what an absent
  * reading means.
  */

@@ -1466,7 +1466,7 @@ function auditDeadlineRefusal(
  * base class, and is offered to the model as a statement it could rewrite (bounded at
  * three attempts). Neither is a boundary failure — nothing runs that should not — and
  * neither is fixable here: the misreading happens before this layer sees the error.
- * Same root cause as `docs/BACKLOG.md` B4, which is where a real fix belongs.
+ * Same root cause as backlog B4, which is where a real fix belongs.
  *
  * FOR T7, second: an error that PROPAGATES from this layer carries the driver's own
  * text unfenced, because it is an exception handed to server code rather than prompt

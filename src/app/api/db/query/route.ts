@@ -238,7 +238,7 @@ export async function POST(req: NextRequest) {
       connection = { ...connection, database: String(database) };
     }
 
-    // The server's confirmation gate (docs/API_DOCS.md, "Server confirmation of a run"): after every field check and
+    // The server's confirmation gate: after every field check and
     // after the database override, so a token binds the connection that runs, and before the admission gate and any
     // provider, so a request it answers opens nothing, runs nothing and records no query event.
     const gate = await gateRun({

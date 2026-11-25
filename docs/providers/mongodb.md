@@ -139,8 +139,7 @@ field from the first key of `options.projection` and fall back to `_id`, so
 `mongo:latest`, 120 products in five categories). `options.projection` is **not** an alias for it.
 
 Supported operations: `find`, `findOne`, `aggregate`, `count`, `distinct`, `insertOne`, `insertMany`,
-`updateOne`, `updateMany`, `deleteOne`, `deleteMany`. See the
-[`API_DOCS.md` MongoDB Query Format](../API_DOCS.md) section (under `POST /api/db/query`) and
+`updateOne`, `updateMany`, `deleteOne`, `deleteMany`. See
 [`CLAUDE.md`](../../CLAUDE.md) for the request shape.
 
 Since S8 the **execution confirmation gate reads this same shape**:
@@ -1312,9 +1311,9 @@ branch:
 | A refused credential (code `18`, `AuthenticationFailed`), or a driver error with no server code whose message contains *authentication* | `AuthenticationError`, answered `401 AUTH_ERROR` |
 | Other driver errors | generic `QueryError` / `DatabaseError` with the original message |
 
-The mapper reads a message, not a class, so on the editor's path a server that went away is misread: a `MongoServerSelectionError` ("Server selection timed out ...") becomes a query `TimeoutError`, and a socket the server closed a generic `DatabaseError` (`docs/BACKLOG.md` D366).
+The mapper reads a message, not a class, so on the editor's path a server that went away is misread: a `MongoServerSelectionError` ("Server selection timed out ...") becomes a query `TimeoutError`, and a socket the server closed a generic `DatabaseError` (backlog D366).
 An agent run's reads map the driver's transport failures to `ConnectionError` by class name (`TRANSPORT_FAILURES` in [`agent-read.ts`](../../src/lib/db/providers/document/mongodb/agent-read.ts)).
-A server cut mid-read reaches that mapping only after the driver's own 30 s server selection, so under an agent run's deadline it ends as the client giving up instead (layer 5 of [the boundary](#the-boundary-layer-by-layer), `docs/BACKLOG.md` D371).
+A server cut mid-read reaches that mapping only after the driver's own 30 s server selection, so under an agent run's deadline it ends as the client giving up instead (layer 5 of [the boundary](#the-boundary-layer-by-layer), backlog D371).
 
 ---
 
@@ -1531,7 +1530,7 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
    Each read runs in a session the provider starts, and a timer one second past the deadline (`AGENT_DEADLINE_BACKSTOP_MS`) kills that session with `killSessions` and closes the cursor; a user holding only read may kill its own session (measured on 9.0.4, 8.3.11 and 7.0.43: the read ends with code 11601 and no operation is left).
    Measured with `maxTimeMS` disabled by the `maxTimeNeverTimeOut` fail point, every read and plan under a 500 ms budget ended at 1,501 to 1,521 ms, killed server-side, with nothing left running, on 9.0.4, 8.3.11 and 7.0.43.
    The server's own expiry (code 50), and anything the read settles with after the kill, is the statement deadline, killed server-side; a read that has not ended a second after the kill (`AGENT_KILL_GRACE_MS`) is the client giving up on a server that did not end it; and a transport failure the driver reports is a `ConnectionError`, never a fault in the statement.
-   A server cut mid-read is not reported in time, though: the driver retries a read's first command, and a failed `getMore` first sends `killCursors` to the lost server, each after the client's 30 s server selection, so under an agent workflow's 10 s deadline the read ends as the client giving up (measured on 9.0.4: a cut 1.7 s into a read settled at 12.0 s, and under a 60 s deadline as a `ConnectionError` at 31.8 s; `docs/BACKLOG.md` D371).
+   A server cut mid-read is not reported in time, though: the driver retries a read's first command, and a failed `getMore` first sends `killCursors` to the lost server, each after the client's 30 s server selection, so under an agent workflow's 10 s deadline the read ends as the client giving up (measured on 9.0.4: a cut 1.7 s into a read settled at 12.0 s, and under a 60 s deadline as a `ConnectionError` at 31.8 s; backlog D371).
    The timer is clamped to the 32-bit range of `setTimeout` (`MAX_STATEMENT_TIMEOUT_MS`, the largest statement timeout a budget may carry), because a delay past it fires after 1 ms.
 6. **A server-side row bound.** A `find` asks for one row past the row budget, or for its own limit when that is smaller; an `aggregate` ends with `{$limit: <budget + 1>}`; a `count` is the `$match` and `$group` pipeline the driver's `countDocuments` sends.
    The row past the budget is the refusal, in the sentence every engine's profile uses.
@@ -1627,7 +1626,7 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
 - **Schema is inferred from a 100-document sample.** Fields outside the sample don't appear;
   subdocuments are expanded only to depth 3 and only up to 200 fields per collection, and array
   elements' fields are never expanded ([§3.3](#33-sampling-based-schema-inference-nested-to-three-levels)).
-  The object surface's sample is bounded in documents and not in bytes (`docs/BACKLOG.md` D369); the
+  The object surface's sample is bounded in documents and not in bytes (backlog D369); the
   agent's catalog read stops its sample short of the run's byte budget (§12).
 - **The editor's `aggregate` results are unbounded.** In the editor only `find` gets a default 100-document cap; an
   `aggregate` pipeline without `$limit` can return a very large result set
@@ -1635,13 +1634,13 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
   aggregate output. An agent run's reads are bounded (see the agent profile in §12).
 - **An agent run's `distinct` is decoded whole before its budgets are read.**
   The driver decodes a command's reply even when asked for it raw, so a `distinct` reply of many small values near the server's 16 MiB cap costs about ten times its size in memory before its row refusal, past the ceiling the run's cursor reads stay under (the byte budget in §12).
-  *Future:* bound it on the server, as a pipeline read from a raw cursor with a trailing `$limit`, the way a `count` is the `countDocuments` pipeline (`docs/BACKLOG.md` D370).
+  *Future:* bound it on the server, as a pipeline read from a raw cursor with a trailing `$limit`, the way a `count` is the `countDocuments` pipeline (backlog D370).
 - **A server cut mid-read ends an agent read at its deadline, not as a lost connection.**
   The driver reports the cut only after its own 30 s server selection, so the run is told the client gave up on a server that did not end the read, a statement failure, rather than that the server went away (layer 5 of §12).
-  *Future:* read the client's own server monitoring during the read (`docs/BACKLOG.md` D371).
+  *Future:* read the client's own server monitoring during the read (backlog D371).
 - **Editor reads carry no server deadline.** `query()` sends no `maxTimeMS`, and `connection.queryTimeout` bounds the
   connect alone, so a read started in the editor runs until the server finishes it or the Sessions panel's Terminate
-  kills it. *Future:* `docs/BACKLOG.md` D364. An agent run's reads carry `maxTimeMS` and Studio's kill (§12).
+  kills it. *Future:* backlog D364. An agent run's reads carry `maxTimeMS` and Studio's kill (§12).
 - **No `EXPLAIN` in the editor.** MongoDB's `explain()` is not wired to the editor (`supportsExplain: false`); the
   agent's `inspect_plan` explains through the read-only profile (see §12).
 - **No multi-document transactions.** MongoDB supports them on replica sets/sharded clusters, but the
@@ -1649,7 +1648,7 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
   why `endOpenQueryTransaction()` is absent ([§5](#endopenquerytransaction-is-absent-and-which-absence-it-is-d75)).
 - **No `cancelQuery`.** A running operation can only be terminated via maintenance `killOp` (needs the
   opid and privileges), which the Sessions panel's Terminate button sends (#1424).
-  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
   A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
   This provider cannot cancel a run, so Studio sends no cancel, and the operation runs on in the server until it ends or is killed.
 - **No column modification in a generated migration.** Since
@@ -1715,5 +1714,5 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/mongodb-provider.test.ts`](../../tests/integration/db/mongodb-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md) · query format also in [`CLAUDE.md`](../../CLAUDE.md)
+- Query format: [`CLAUDE.md`](../../CLAUDE.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [Trino](./trino.md) · [Redis](./redis.md)

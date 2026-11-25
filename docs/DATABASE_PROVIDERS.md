@@ -509,7 +509,7 @@ Such a field counts as set whatever its value but `undefined`, `null` and `""`: 
 Every connection must be plain data, with or without a tunnel: a class instance, an inherited field, an accessor or a field that is not enumerable is refused with a `DatabaseConfigError` and nothing is built.
 An MSSQL connection that names only a connection string is refused by name, because SQL Server builds from its host and database fields.
 A connection without a secret its engine declares required (today Snowflake's private key under Key pair and its access token under a programmatic access token) is refused with a `DatabaseConfigError` carrying the dialog's sentence for it, before the provider is built, when that secret is absent, not text or only whitespace; before, the provider was built and `connect()` refused.
-Every error raised while the provider is built answers `outcome` `not-sent`, on the error and in every route body built from it ([Error kind and outcome](./API_DOCS.md#error-kind-and-outcome)).
+Every error raised while the provider is built answers `outcome` `not-sent`, on the error and in every route body built from it.
 A provider carries no protected `getSafeConfig` or `getConnectionInfo` helper; no exported type declared either.
 
 `createDatabaseProvider`, `getOrCreateProvider`, `acquireExecutionProfileProvider` and `withOneShotTunnel` take the process's egress decision before they look in a cache, dial a tunnel or build a provider.
@@ -556,8 +556,7 @@ The non-SQL providers take a query that is not SQL, in the format each bullet be
 examples live in their prime docs:
 
 - **MongoDB** (MQL — `{collection, operation, filter, pipeline, update, documents, options}`):
-  [providers/mongodb.md](./providers/mongodb.md) and the
-  [`API_DOCS.md` MongoDB Query Format](./API_DOCS.md) section.
+  [providers/mongodb.md](./providers/mongodb.md).
 - **Redis** (plain command or `{command, args}`): [providers/redis.md](./providers/redis.md).
 - **Prometheus** (a PromQL expression): [providers/prometheus.md](./providers/prometheus.md).
 - **InfluxDB (InfluxQL)** (one read-only InfluxQL statement): [providers/influxdb.md](./providers/influxdb.md).

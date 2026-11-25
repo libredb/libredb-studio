@@ -1,6 +1,6 @@
 /**
  * Live check that the built standalone server's routes answer through the provider host core its boot installed, in
- * their own error classes (docs/providers/CONTRACT.md, clause C-52; docs/ARCHITECTURE.md, "The provider host core").
+ * their own error classes (docs/providers/CONTRACT.md, clause C-52).
  *
  * WHY THIS EXISTS, AND WHY IT CANNOT BE A UNIT TEST. Next.js loads instrumentation, whose `register()` installs the host
  * core, and each route handler as separate module instances, each with its own copy of Studio's error classes.

@@ -474,7 +474,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON passkey_spent_challenges TO libredb_app;
 
 The earlier claim that data grants alone suffice does not hold where the schema gives the app user no `CREATE`, as on a default PostgreSQL 17.
 The app user need not own the tables: Studio creates a passkey index only when it is missing, because PostgreSQL checks ownership before it honours `IF NOT EXISTS` on `CREATE INDEX`, so the DBA creates both passkey indexes with the tables.
-A start that needs no `CREATE` at all is `docs/BACKLOG.md` PK9.
+A start that needs no `CREATE` at all is backlog PK9.
 
 ---
 
@@ -522,7 +522,7 @@ On the monitoring dashboard, a connection the reader chose that leaves the list 
 It cannot be edited or duplicated, because the connection dialog has no form for an engine this Studio does not have; it can be deleted, favourited, grouped and reordered like any other.
 A Studio that has the provider lists and opens the same record as usual.
 
-The API answers a request that sends such a connection with `400 PROVIDER_UNKNOWN` and the same sentence, before any provider is built or any SSH tunnel opened (see [API_DOCS.md](./API_DOCS.md#post-apidbquery)).
+The API answers a request that sends such a connection with `400 PROVIDER_UNKNOWN` and the same sentence, before any provider is built or any SSH tunnel opened.
 
 An operator's seed entry whose type names no provider is listed and shown the same way, with the lock a managed connection gets and no Delete, as [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#a-connection-whose-type-this-studio-has-no-provider-for) describes.
 
@@ -1762,7 +1762,7 @@ The copy is every synced collection, the editor tabs (never stored on the server
 - **Other open tabs:** every tab of the browser profile shares the copy, so when another tab records a different owner or clears the copy (a sign-out, or a different account signing in and landing on the editor, an admin page, the monitoring page or a settings page), each page inside `WorkspaceOwnerGate` stops rendering and reloads, and the owner check runs again for the account signed in now.
   A sign-in can also land where no owner is recorded (an unknown address), so a page inside `WorkspaceOwnerGate` also asks which account is signed in whenever its tab is shown again, and reloads the same way when that is no longer the account it rendered for.
   The editor's sync asks which account is signed in once more when it starts, and reloads the same way when that is no longer the account the page matched the copy for.
-- **Every request names the account:** once a page has matched the copy, every request it sends names that account in the `X-LibreDB-Workspace-Owner` header, and the server refuses one that names an account other than the signed-in one with `409 WORKSPACE_OWNER_MISMATCH` before the route runs, on every route that needs a session; the public routes (`src/proxy.ts`) are not checked ([API_DOCS.md](API_DOCS.md#storage-api)).
+- **Every request names the account:** once a page has matched the copy, every request it sends names that account in the `X-LibreDB-Workspace-Owner` header, and the server refuses one that names an account other than the signed-in one with `409 WORKSPACE_OWNER_MISMATCH` before the route runs, on every route that needs a session; the public routes (`src/proxy.ts`) are not checked.
 - **The embedded workspace:** none of this applies to `StudioWorkspace` from the npm package, which mounts no sync, gate or owner check: its host supplies the connections, and the editor tabs it keeps in the host page's storage are the host's to scope to its own accounts.
   The page then reloads, and the owner check runs again for the account signed in now, so a push, a pull or a migration a page sends after another tab signed in as a different account never reaches that account's server data, also in a tab that stays visible.
   In the browser the same rule holds: a page writes the copy (the storage facade, its editor tabs, its object-source drafts, and each collection of a pull) only while the owner key still names the account it claimed, so a page that has not reloaded yet writes nothing into the copy another tab claimed.
@@ -2013,5 +2013,4 @@ That's it — no changes needed to the facade, API routes, sync hook, or any con
 
 ## Related Documentation
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — Overall system architecture
 - [OIDC.md](./OIDC.md) — SSO configuration (pairs well with server storage for team deployments)

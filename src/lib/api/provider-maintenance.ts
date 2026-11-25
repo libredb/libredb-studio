@@ -30,7 +30,7 @@ import { bridgedConsole, bridgedMaintenance } from "@/lib/provider-host/legacy-b
  * Deadlines. Each call waits until its own deadline, `executeDeadline` taken at that call's start, the statement
  * timeout plus `EXECUTE_SLACK_MS`, and until the caller's signal, the request's: the rule each tree read follows. On an
  * engine that bounds its maintenance statement by the statement timeout the engine's own answer arrives first; on one
- * that does not, a run longer than the deadline is cut, and the engine is not told (docs/BACKLOG.md, D730).
+ * that does not, a run longer than the deadline is cut, and the engine is not told (the backlog, D730).
  *
  * Answers. A run answers how it ended, since the route writes its audit row and its query event by that and only the
  * facade knows whether the provider was called: answered with the provider's own result by reference; not-sent, the

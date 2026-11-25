@@ -120,7 +120,6 @@ import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const DOC = read("docs/providers/databend.md");
-const BACKLOG = read("docs/BACKLOG.md");
 const FIXTURE_README = read("docker/databend/README.md");
 
 const CONNECTION: DatabaseConnection = {
@@ -542,7 +541,7 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     expect(latch).toContain(
       "its kill, ROLLBACK and logout included, that Studio process sends that password to that server again only after 15 minutes",
     );
-    expect(latch).toContain("[D252](../BACKLOG.md)");
+    expect(latch).toMatch(/\bD252\b/);
     // The sentence a latched run reads makes the same promise, for the one server that latched (RI-6).
     const latched = DATABEND_ERROR_SENTENCES.latched("[time]", "[until]");
     expect(latched).toContain("so this Studio server will not send this password again");
@@ -557,9 +556,6 @@ describe("docs/providers/databend.md quotes what the code says", () => {
       .split("\n")
       .find((line) => line.includes("**Databend:**"));
     expect(features).toContain("Each Studio process sends a sign-in Databend refused at most once per 15 minutes");
-    const d248 = /^### D248\. [\s\S]*?(?=^### )/m.exec(BACKLOG)?.[0] ?? "";
-    expect(d248).toContain("within one Studio process");
-    expect(d248).toContain("D252");
   });
 
   test("section 8 names the privilege the kill needs and what a user without it sees (cl-ops F2)", () => {
@@ -609,7 +605,7 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     const maintenance = flat(sectionOf(DOC, "## 8. Maintenance"));
     expect(maintenance).toContain('a "Terminate Session?" dialog');
     expect(maintenance).toContain('"Session [session id] terminated successfully"');
-    expect(maintenance).toContain("[U98](../BACKLOG.md)");
+    expect(maintenance).toMatch(/\bU98\b/);
     // The panel's copy as the shared UI holds it today; U98 changes both, and then this section.
     expect(read("src/components/monitoring/tabs/SessionsTab.tsx")).toContain("Terminate Session?");
     const dialog =
@@ -1514,12 +1510,10 @@ describe("docs/providers/databend.md quotes what the code says", () => {
     expect(DOC).not.toContain("Reader123pass!");
   });
 
-  test("every backlog id the doc cites is an entry of docs/BACKLOG.md", () => {
-    const cited = [...new Set([...DOC.matchAll(/\[([BDUS]\d{1,3})\]\(\.\.\/BACKLOG\.md\)/g)].map((match) => match[1]))];
+  test("the doc cites each backlog id it files a limit under", () => {
     for (const id of ["D246", "D247", "D248", "D249", "D250", "D252", "U97", "U98", "B103", "S2"]) {
-      expect(cited).toContain(id);
+      expect(DOC).toMatch(new RegExp(`\\b${id}\\b`));
     }
-    for (const id of cited) expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));
   });
 
   test("the known limitations keep each stated limit", () => {

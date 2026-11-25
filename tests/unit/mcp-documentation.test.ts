@@ -1,5 +1,5 @@
 /**
- * docs/MCP.md and docs/API_DOCS.md against the code (#246). Reads repository text only: the
+ * docs/MCP.md against the code (#246). Reads repository text only: the
  * vendor pages the client sections were written from are not committed, so CI does not have
  * them.
  */
@@ -65,53 +65,15 @@ const ORACLE_SEED =
   "A grant added between two calls refuses the next call, and a lifted one admits it.";
 const SQLITE_SEED =
   'A SQLite file has no user, so a SQLite seed proves no principal, but MCP opens it only for an admin\'s token on a seed offered to admins alone, `roles: ["admin"]`: SQLite\'s drivers cannot confine a statement\'s file access, so Studio opens a SQLite seed only for an admin, and only where no other role can use it ([sqlite.md](./providers/sqlite.md)), and `list_connections` lists every other SQLite seed a token can see, such as one offered to every role, `roles: ["*"]`, with `read_tool: null` and `unavailable`.';
-const API_DOCS = read("docs/API_DOCS.md");
 const DOC_URL = "https://studio.example.com/api/mcp";
 const CLIENTS = ["Claude Code", "Codex", "Cursor", "VS Code", "Gemini CLI", "OpenCode"];
-
-describe("docs/API_DOCS.md documents every MCP route", () => {
-  const routes = [...new Bun.Glob("src/app/api/mcp/**/route.ts").scanSync(ROOT)]
-    .map((file) =>
-      file
-        .replaceAll("\\", "/")
-        .replace(/^src\/app/, "")
-        .replace(/\/route\.ts$/, ""),
-    )
-    .sort();
-
-  test("the scan found the endpoint itself", () => {
-    expect(routes).toContain("/api/mcp");
-  });
-
-  test.each(routes)("%s appears", (route) => {
-    expect(API_DOCS).toContain(route);
-  });
-
-  test("the MCP section is in the table of contents", () => {
-    expect(API_DOCS).toContain("[MCP API](#mcp-api)");
-  });
-
-  test("says a token lists only the tools it can use, and that an unreadable seed file answers tools/list with -32603", () => {
-    expect(API_DOCS).toContain(
-      "a token's `tools/list` holds the metadata tools and only the statement tools that serve the engines of the connections it can read",
-    );
-    expect(API_DOCS).toContain(
-      "A seed file that cannot be read or parsed answers `tools/list` with the JSON-RPC error `-32603` on HTTP 200.",
-    );
-  });
-});
 
 /**
  * A statement language declares its MCP tool in its own pack and `statement-arms.ts` names no language, so no doc may
  * tell a future language to add an arm of its own there.
  */
 describe("the docs say a language's MCP tool is a facet in its pack", () => {
-  const docs = [
-    "docs/BACKLOG.md",
-    "docs/AGENT.md",
-    "docs/MCP.md",
-    ...new Bun.Glob("docs/providers/*.md").scanSync(ROOT),
-  ];
+  const docs = ["docs/AGENT.md", "docs/MCP.md", ...new Bun.Glob("docs/providers/*.md").scanSync(ROOT)];
 
   test.each(docs)("%s sends no language to an arm of its own in MCP_STATEMENT_ARMS", (doc) => {
     expect(
@@ -119,12 +81,6 @@ describe("the docs say a language's MCP tool is a facet in its pack", () => {
         .split("\n")
         .filter((line) => /own arm in `MCP_STATEMENT_ARMS`/.test(line)),
     ).toEqual([]);
-  });
-
-  test("docs/BACKLOG.md names the facet where a future language's MCP tool lives", () => {
-    expect(read("docs/BACKLOG.md")).toContain(
-      "a language's MCP words belong to its facet (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`)",
-    );
   });
 });
 
@@ -677,12 +633,6 @@ describe("docs/MCP.md", () => {
     expect(line).not.toMatch(/\brun_[a-z]+_(?:read|query|command)\b/);
   });
 
-  test("docs/ARCHITECTURE.md names both module-scope handlers of the MCP section", () => {
-    expect(read("docs/ARCHITECTURE.md")).toContain(
-      "two `createMcpHandler` handlers at module scope, one for a token's own `tools/list` and one for every other request, and one server per request,",
-    );
-  });
-
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
     expect(MCP_DOC).toContain(
       "  - libSQL: by a token proven at open to be read-only, which the server refuses every write, and refuses a login that could do more than read ([libsql.md](./providers/libsql.md)).",
@@ -912,15 +862,6 @@ describe("the per-engine lines that stay per engine", () => {
     const labels = SHIPPED_DATABASE_TYPES.map(labelOf);
     for (const label of boundaryLabels()) expect(namedLabels(label, labels)).toEqual([label]);
     for (const label of cancelLabels()) expect(namedLabels(label, labels)).toEqual([label]);
-  });
-
-  test("D128 names no served engine, so the cancel table stays the one place that says what each one does", () => {
-    const backlog = read("docs/BACKLOG.md");
-    const start = backlog.indexOf("### D128.");
-    const body = backlog.slice(start, backlog.indexOf("\n### ", start + 1));
-    expect(body).toContain("the cancel table in `docs/MCP.md`");
-    expect(namedLabels(body, servedLabels())).toEqual([]);
-    expect(body).toContain("every engine a statement tool serves stops the statement on abort");
   });
 });
 

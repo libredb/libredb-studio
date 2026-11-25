@@ -1,6 +1,6 @@
 /**
  * The channel credentials of the shared gRPC transport (src/lib/db/grpc/credentials.ts): what the SSL / TLS mapping
- * hands grpc-js's `createSsl`, the IP-identity rule of docs/BACKLOG.md D132, and the closing wrapper that lets nothing
+ * hands grpc-js's `createSsl`, the IP-identity rule of backlog D132, and the closing wrapper that lets nothing
  * of a channel outlive its close, a TLS handshake a peer never answers, a socket handed over after the close and a
  * connector made after it among them.
  * The connector cases moved here from the etcd provider's transport tests, their bodies unchanged; the Milvus

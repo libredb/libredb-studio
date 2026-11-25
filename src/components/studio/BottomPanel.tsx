@@ -75,7 +75,7 @@ export const RESULT_FORMATS: readonly ResultFormatEntry[] = [
   { format: "sql-ddl", label: "DDL (CREATE TABLE)" },
 ];
 
-/** The two formats that write a SQL table, offered only where the dialect says they apply (`offersSqlExport`, BACKLOG U69). */
+/** The two formats that write a SQL table, offered only where the dialect says they apply (`offersSqlExport`, backlog U69). */
 const SQL_TABLE_FORMATS: ReadonlySet<ResultExportFormat> = new Set<ResultExportFormat>(["sql-insert", "sql-ddl"]);
 
 export type BottomPanelMode =

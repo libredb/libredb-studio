@@ -1278,7 +1278,7 @@ describe("TrinoProvider monitoring", () => {
     // Trino has none: the bytes live in the systems its connectors reach, and
     // `SHOW STATS` is a per-table logical estimate covering variable-width columns
     // only. `toBeUndefined()` alone would pass for a `databaseSizeBytes: undefined`
-    // that still ships the key, so `in` is what pins the absence (docs/BACKLOG.md D44).
+    // that still ships the key, so `in` is what pins the absence (backlog D44).
     expect("databaseSizeBytes" in overview).toBe(false);
     expect(overview.databaseSizeBytes).toBeUndefined();
     // The string keeps saying the figure is unavailable; only the number is gone.

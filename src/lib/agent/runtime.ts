@@ -78,7 +78,7 @@ const AGENT_ARTIFACT_TTL_MS =
  * run's own ledger rather than handed to it fresh (#999), so a run driven three
  * times no longer triples its statement budget or evicts the evidence an earlier
  * drive cited. One ceiling is still per drive — the repair ledger is rebuilt by
- * each drive (`docs/BACKLOG.md` B6) — so repair attempts do start over on resume.
+ * each drive (backlog B6) — so repair attempts do start over on resume.
  *
  * The behaviour at the cap is worth knowing rather than guessing at. The cap is
  * spent run-fairly (`ExecutionArtifactStore.put`): a store at the cap evicts the
@@ -287,7 +287,7 @@ async function recordUnlessDrivenElsewhere(service: AgentRunService, runId: stri
  * around it: resolving the connection, reading capabilities, building the model.
  * A throw there used to unwind past the ledger completely, leaving a run at
  * `queued` with an empty timeline whose reason existed only in the server log —
- * and with no drive producer yet (`docs/BACKLOG.md` B9), nothing would return to it.
+ * and with no drive producer yet (backlog B9), nothing would return to it.
  *
  * Every failure of the recording itself is swallowed, on purpose. The run may have
  * ended between the throw and this call, which makes `finish` throw, and that is not

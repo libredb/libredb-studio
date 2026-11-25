@@ -4,7 +4,7 @@
  * the route itself.
  *
  * Nothing mints one in production yet: no queue produces a drive delivery, so the
- * only callers today are the tests that pin these properties (`docs/BACKLOG.md` B9).
+ * only callers today are the tests that pin these properties (backlog B9).
  * The credential exists now because the seam it guards had to be designed with the
  * boundary, not bolted onto it afterwards.
  *

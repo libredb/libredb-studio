@@ -139,7 +139,7 @@ On a topic row both row menus withhold Profile, through `offersColumnProfiling`,
 Code generation is withheld because the models it writes over a topic's fixed columns reject the rows a read returns: a `Date` timestamp against the ISO string, a record-typed value against text, base64 and the Confluent label.
 Both menus also withhold Generate Count Query, through `offersCountQuery` (#702): a read request is JSON of its own dialect, with no count grammar.
 The execution confirmation gate never asks on a Kafka connection: a read request cannot write, so the `kafka` row of `NON_SQL_DESTRUCTIVE_VOCABULARY` (`src/lib/languages/kafkaread/destructive.ts`, collected in `src/lib/db/destructive-commands.ts`) names no operation and is the gate's whole answer, and a topic named `delete` or `drop` is never read as SQL.
-No Monaco language and no JSON schema for the request are registered; a schema with completion and validation is recorded in `docs/BACKLOG.md`.
+No Monaco language and no JSON schema for the request are registered; a schema with completion and validation is recorded in the backlog.
 Widening the published `queryDialect` union breaks an external consumer's exhaustive switch over it, and that ships with a release note rather than a compatibility layer.
 
 ### 3.2 Read-only by construction (K4)
@@ -168,7 +168,7 @@ And it keeps one fetch session per broker, which two fetches in flight at once c
 So the adapter sends Fetch v13 itself, through the client's exported `fetchV13` module, on a connection its `ConnectionPool` holds to the leader's advertised address, READ_COMMITTED and sessionless (session id 0, epoch -1), with `currentLeaderEpoch: -1` so a read across a leader failover is not fenced.
 The client parses that answer inside its own try and settles the call either way, so a compacted transactional topic reads in full; with no fetch session, reads that overlap run side by side; and the answer reaches only the adapter's own filter, the Java consumer's rule of [§5.2](#52-result-shape).
 The consumer-protocol group description is the other raw call, ConsumerGroupDescribe (API 69) through the exported `consumerGroupDescribeV0`, because the client has no Admin method for it.
-Both depend on exports the client does not document as public API; the seam guard pins them, and an Admin method for ConsumerGroupDescribe is requested upstream as a draft recorded in `docs/BACKLOG.md`.
+Both depend on exports the client does not document as public API; the seam guard pins them, and an Admin method for ConsumerGroupDescribe is requested upstream as a draft recorded in the backlog.
 
 ### 3.5 A host that embeds the provider factory
 
@@ -242,7 +242,7 @@ A CR, LF or NUL in `user` or `password` is refused with a `DatabaseConfigError` 
 A `user` or `password` that is not a string, such as a number or an array in a connection sent to the API, which reaches the provider as it came, is refused the same way, whatever the mechanism, and is never coerced: the client's SCRAM step reads the user as a string inside its socket handler, where a number throws and ends a Node process that installs no `uncaughtException` handler ([§3.5](#35-a-host-that-embeds-the-provider-factory)), and its PLAIN step joins the credential into text, so `["reader"]` would authenticate as `reader`.
 A `null` in either reads as an absent field.
 The client's protocol logger prints the first bytes of every request frame when `DEBUG` names it (`plt:kafka:protocol`, or `DEBUG=*`), and a SASL PLAIN frame carries the password, so `platformatic-client.ts` mutes that logger when it loads the client, while the client's own logger keeps its lines.
-OAUTHBEARER, GSSAPI and AWS MSK IAM are not offered: a pasted bearer token expires within hours and v1 has no refresh flow (`docs/BACKLOG.md`).
+OAUTHBEARER, GSSAPI and AWS MSK IAM are not offered: a pasted bearer token expires within hours and v1 has no refresh flow (the backlog).
 
 **Accepted limitation: the broker chooses how much work a SCRAM exchange takes.**
 A SCRAM exchange runs PBKDF2 over the password as many times as the broker's first SCRAM answer asks, and the client checks only the lower bound, 4,096.
@@ -250,13 +250,13 @@ Apache Kafka 4.3.1 stores no SCRAM credential above 16,384 iterations (`ScramMec
 Each exchange holds a thread of the runtime's pool for as long as its count takes, measured at about 2.9 million SHA-512 iterations a second under Node 24.14.0 and 3.3 million under Bun 1.4.2, so the largest count the runtime's PBKDF2 accepts, 2,147,483,647, takes about 11 to 12 minutes, and a larger one fails the authentication at once.
 The client retries a failed connect once, so a connect asks for the work twice, and the work goes on after the connect has timed out and after the client is closed.
 Node's pool has four threads unless `UV_THREADPOOL_SIZE` says otherwise, and every file read, DNS lookup and crypto call of the one Studio process every user shares waits for a free thread: with four such exchanges running under Node, a file read took 4,490 ms instead of 1 ms.
-The client offers no hook that runs before that work short of replacing its SCRAM implementation, which this provider does not own, so the exposure is stated rather than bounded; TLS `verify-full` keeps it to brokers whose certificate the configured CA vouches for, and a cap on the iteration count is requested upstream as a draft recorded in `docs/BACKLOG.md`.
+The client offers no hook that runs before that work short of replacing its SCRAM implementation, which this provider does not own, so the exposure is stated rather than bounded; TLS `verify-full` keeps it to brokers whose certificate the configured CA vouches for, and a cap on the iteration count is requested upstream as a draft recorded in the backlog.
 
 **Accepted limitation: the broker chooses how often a connection authenticates again.**
 A broker that answers a SASL authentication with a session lifetime (KIP-368; on Apache Kafka `connections.max.reauth.ms`, which defaults to 0, no lifetime) has the client authenticate again at 80% of it, and again after each time, for as long as the connection is open, with no floor on the lifetime.
 Measured on one connection over five idle seconds with a lifetime of 1 ms: 3,926 re-authentications under Node 24.14.0 and 3,005 under Bun 1.4.2 with PLAIN, 11 to 14% of a core, and 1,559 and 1,609 with SCRAM-SHA-512 at 4,096 iterations, about 60% of a core, where a lifetime of 0 or of one hour made none.
 Every connection the provider holds carries the connection's SASL options, the `Admin`'s, the `Consumer`'s, the fetch pool's and a consumer-protocol group description's alike, and a cached provider keeps its connections until it is disconnected or evicted, which the factory's sweep, every five minutes, does once the provider has been idle for 30 minutes, so a hostile or misconfigured broker can keep that much of the one Studio process busy per connection for as long; closing a connection stops its loop.
-The client applies the lifetime inside its connection, where the adapter's only hook, `authBytesValidator`, sees an answer's bytes and never its lifetime, so the exposure is stated rather than bounded, and a floor on the session lifetime the client honours is requested upstream as a draft recorded in `docs/BACKLOG.md`.
+The client applies the lifetime inside its connection, where the adapter's only hook, `authBytesValidator`, sees an answer's bytes and never its lifetime, so the exposure is stated rather than bounded, and a floor on the session lifetime the client honours is requested upstream as a draft recorded in the backlog.
 
 ### 4.3 TLS
 
@@ -266,7 +266,7 @@ The client applies the lifetime inside its connection, where the adapter's only 
 | `require` | Encrypted, certificate not verified unless `rejectUnauthorized` is set |
 | `verify-system`, `verify-ca`, `verify-full` | Certificate verified against the supplied CA or, without one, the runtime's trust store |
 
-`ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the client as `ca`, `cert` and `key`, and `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`, the Couchbase rule written again here by the isolation rule (`docs/BACKLOG.md` D37).
+`ssl.caCert`, `ssl.clientCert` and `ssl.clientKey` reach the client as `ca`, `cert` and `key`, and `rejectUnauthorized = ssl.rejectUnauthorized ?? ssl.mode !== "require"`, the Couchbase rule written again here by the isolation rule (backlog D37).
 The panel is checked whole, whatever its mode, before any of it is read: an `ssl` that is not an object, a `mode` the table does not name, a `caCert`, `clientCert` or `clientKey` that is not a string, or a `rejectUnauthorized` that is not a boolean is refused with a `DatabaseConfigError` naming the field and never its value.
 Such a panel is never guessed at: read as it came, `ssl: false` would turn TLS on, and a certificate that is not a string would reach Node, whose `TypeError` can quote the value.
 A `null` reads as an absent field, and a panel with no `mode`, which a seed file may carry, is read as a verifying one.
@@ -277,7 +277,7 @@ A handshake or verification failure is a `ConnectionError` carrying the Node err
 A verification failure is known by any name Node gives a refused certificate, such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `DEPTH_ZERO_SELF_SIGNED_CERT` or `INVALID_PURPOSE`.
 A client certificate the broker refuses, or none where the broker requires one, reads as a lost connection, not as a TLS failure: under TLS 1.3, which the `kafka-auth` fixture negotiates, a broker refuses a client certificate after the client's half of the handshake, and the client reports only that the connection closed, handing the socket's error, which carries the alert, to no caller.
 The one exception is the one-off connection of a consumer-protocol group's description, which the provider listens to itself, so there the alert's code is reported, such as `ERR_SSL_TLSV13_ALERT_CERTIFICATE_REQUIRED` in a `ConnectionError` naming the coordinator ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
-A request upstream for the client to keep that error is drafted in `docs/BACKLOG.md`.
+A request upstream for the client to keep that error is drafted in the backlog.
 Each outcome is exercised by a real handshake against a local TLS server in [`tests/unit/db/kafka/tls-handshake.test.ts`](../../tests/unit/db/kafka/tls-handshake.test.ts), with certificates generated at test time and never committed, and the server-name rule under Node in a child process, because Bun sends a server name unasked.
 
 ### 4.4 The broker chooses where Studio connects next
@@ -401,7 +401,7 @@ An integer past `Number.MAX_SAFE_INTEGER` either side of zero, which `JSON.parse
 A document that repeats a member name, which `JSON.parse` answers with its last value alone, or that holds a number no double shows as sent, is answered by rule 4 as its text, exactly as sent: a number past the double's range, which the query route would send as `null`, one that underflows or loses digits, and `-0`, which it would send as `0`.
 Another spelling of the same number, such as `1.10` or `1e2`, is the same value, and so is another member order, since a JSON object is unordered.
 Rule 2 comes before rule 3 because a Confluent-framed payload can itself be valid UTF-8, so a text value that happens to start with `0x00` is labelled `confluent`: a false positive, stated here rather than guessed around.
-No Schema Registry is read and no Avro, Protobuf or JSON Schema payload is decoded; a framed value is labelled with its schema id, never guessed (`docs/BACKLOG.md`).
+No Schema Registry is read and no Avro, Protobuf or JSON Schema payload is decoded; a framed value is labelled with its schema id, never guessed (the backlog).
 UTF-8 is checked with a fatal decoder, so invalid bytes are never shown as a replacement character, and with the byte order mark kept, so a value is shown as sent and two header names differing only by the mark stay two keys.
 A value longer than four times `KAFKA_CELL_LIMIT` is judged on its first bytes only: rule 3 never applies to it, rule 4 checks that prefix, and rule 5 encodes a prefix, so no whole large value is turned into text before it is cut.
 A header name is decoded as text, or as base64 when it is not valid UTF-8, never as JSON and never as a Confluent frame, so two names that look like JSON never collapse into one.
@@ -421,14 +421,14 @@ So the bounds are the provider's own, and each sets `wasLimited` when it cuts a 
   So a read the budget stops answers the rows it held when it stopped, from the partitions read before the stop and the first rows of the one it stopped in, and none from a later partition, whose records are never fetched.
   A `"latest"` read can therefore miss the newest rows of the topic, even when those rows alone would fit the budget, and one the budget stops in the first partition it reads holds the oldest rows of that partition's window.
   Its warning names the offset it stopped before and each later partition with offsets left to read, a partition whose window holds only transaction markers included, since only reading it could tell.
-  Answering the newest rows that fit instead would read every partition's window whatever the record size; that trade is recorded in `docs/BACKLOG.md`.
+  Answering the newest rows that fit instead would read every partition's window whatever the record size; that trade is recorded in the backlog.
 - **No progress**: a fetch that makes no progress below a partition's end stops that partition rather than spin, and the result names the partition, the offset it stopped at and its end.
 - **The cell limit**, `KAFKA_CELL_LIMIT`, bounds each of a row's three decoded cells, the key, the value and the headers ([§5.2](#52-result-shape), [§5.3](#53-decoding)).
 
 **Accepted limitation: decompression before any bound (K5).**
 The client decompresses every batch of a fetch answer whole, synchronously and with no output cap, before any provider bound applies, and the broker bounds only the compressed batch (`max.message.bytes` is "after compression").
 So one answer can hold its compressed size times the codec's ratio in the one Studio process every user shares, measured at about 1,029 to 1 for gzip and 32,692 to 1 for zstd, and a hostile broker ([§4.4](#44-the-broker-chooses-where-studio-connects-next)) is bounded by neither, because the client buffers whatever frame length the broker announces.
-A decompressed-size cap is requested upstream as a draft recorded in `docs/BACKLOG.md`; [`docs/SECURITY.md`](../SECURITY.md) records the limitation beside the advertised-address one.
+A decompressed-size cap is requested upstream as a draft recorded in the backlog; [`docs/SECURITY.md`](../SECURITY.md) records the limitation beside the advertised-address one.
 
 ### 5.5 Timeout and cancellation
 
@@ -488,7 +488,7 @@ A topic's columns are fixed, because they are the shape of a read result and not
 
 One reader per kind feeds both `countObjects` and `listObjects`, so the count is the listed length.
 Topics come from one listing, capped at `KAFKA_TOPIC_LIST_CAP`: past it the Topics count is a floor, which the tree badges `2,000+` from "one topic listing capped at 2,000 names", and the listing holds the first 2,000 in name order.
-Past the cap plan mode grounds topics only, because the grounding walk stops at the first truncated batch, and with more consumer groups than the object budget leaves after the topics it reaches no broker (`docs/BACKLOG.md` B89).
+Past the cap plan mode grounds topics only, because the grounding walk stops at the first truncated batch, and with more consumer groups than the object budget leaves after the topics it reaches no broker (backlog B89).
 A topic row carries no row count: latest minus earliest summed over partitions is an offset span, not a message count, because compaction, transaction markers and retention leave gaps, and publishing it as a count is the defect #424 records for Citus and TimescaleDB; the span appears only in the topic's source, labelled as such.
 Listings are filtered by the principal's Describe ACL: a principal with no ACL gets an empty topic listing and an empty group listing with no error, so its tree is indistinguishable from an empty cluster, and the protocol gives the provider no way to tell the two apart.
 
@@ -759,7 +759,7 @@ On `kafka-cluster` the Brokers folder lists nodes 1, 2 and 3, each partition of 
 With node 3 stopped, `orders` reads as `under-replicated`, the Brokers folder lists nodes 1 and 2, every partition of `orders` still reads, including one whose leader moved off node 3, and the three panels answer; after the restart every topic is `ok` again, and the broker's state before the stop equalled its state after the restart.
 `offline` was reached on a throwaway single node with two log directories whose second directory was made unreadable: the partitions on it went offline within about 10 seconds.
 There the Topics listing shows the topic `offline`, its source shows its partitions with no offsets, a read of it is refused naming the leaderless partitions, and a read of a healthy topic still answers.
-The three panels do not answer there: the broker answers DescribeLogDirs for the failed directory with `KAFKA_STORAGE_ERROR`, and the overview, health and storage fail with that error (`docs/BACKLOG.md` D125).
+The three panels do not answer there: the broker answers DescribeLogDirs for the failed directory with `KAFKA_STORAGE_ERROR`, and the overview, health and storage fail with that error (backlog D125).
 
 ### 11.5 Write reach, measured live
 
@@ -819,7 +819,6 @@ curl -X POST http://localhost:3000/api/db/query \
 ```
 
 `seed:events-kafka` is the Kafka seed example of [`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md); an inline `connection` object works as well.
-See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contract.
 
 ---
 
@@ -831,15 +830,15 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **The broker chooses how often a connection authenticates again** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **A malformed answer can end the standalone server, and a host process with no `uncaughtException` handler** ([§3.5](#35-a-host-that-embeds-the-provider-factory)).
 - **A read the budget stops answers older rows than the newest that would fit** ([§5.4](#54-bounds)).
-- **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (`docs/BACKLOG.md` B89).
+- **Past `KAFKA_TOPIC_LIST_CAP` topics, plan mode grounds topics only** (backlog B89).
 - **A principal with no Describe ACL sees an empty cluster**, with no error to tell it apart ([§6.1](#listing-counting-and-scale)).
 - **No OAUTHBEARER, GSSAPI or AWS MSK IAM** ([§4.2](#42-authentication-and-never-in-the-clear-k3)).
 - **No Schema Registry decoding**, so Avro, Protobuf and JSON Schema values show their schema id ([§5.3](#53-decoding)).
 - **No live tail, no streaming results and no push subscriptions.**
 - **No ksqlDB and no SQL over Kafka**: ksqlDB's licence forbids offering it as a competing service, most clusters do not run it, and its queries create server-side groups and topics; SQL over Kafka, if ever wanted, is a separate type-id.
-- **Agent mode and MCP's `run_kafka_read` read metadata only, and send no fetch** ([§15](#15-agent-mode), [§16](#16-mcp), `docs/BACKLOG.md` B157): no record, group, config or log directory reaches an agent or MCP answer, and a platform's own topics are withheld.
+- **Agent mode and MCP's `run_kafka_read` read metadata only, and send no fetch** ([§15](#15-agent-mode), [§16](#16-mcp), backlog B157): no record, group, config or log directory reaches an agent or MCP answer, and a platform's own topics are withheld.
 - **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)), except on a consumer-protocol group description's own connection, which reports the TLS alert's code.
-- **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), `docs/BACKLOG.md` D125).
+- **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), backlog D125).
 
 ---
 

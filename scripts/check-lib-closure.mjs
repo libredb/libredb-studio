@@ -144,7 +144,7 @@ function main(argv) {
 /**
  * Whether this file runs as the program rather than as the unit test's import. Real paths are compared on both
  * sides, as `scripts/generate-etcd-descriptor.mjs` does, so the check also runs from a symlinked checkout, where
- * `process.argv[1]` keeps the link and `import.meta.url` is the real file (docs/BACKLOG.md REL5).
+ * `process.argv[1]` keeps the link and `import.meta.url` is the real file (backlog REL5).
  * @param {string | undefined} argv1
  */
 function isDirectExecution(argv1) {

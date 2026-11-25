@@ -995,7 +995,7 @@ describe("splitExecutionUnits: one unit per statement where the unit is the stat
     expect(sqlsOf(splitExecutionUnits("BEGIN; SELECT 1;\nGO\n/"))).toEqual(["BEGIN", "SELECT 1", "GO\n/"]);
   });
 
-  test("MySQL compound statements are not read yet, as recorded in BACKLOG S7", () => {
+  test("MySQL compound statements are not read yet, as recorded in backlog S7", () => {
     expect(splitStatements("CREATE PROCEDURE p() BEGIN SELECT 1; END", resolveSqlGrammar("mysql"))).toHaveLength(2);
   });
 });

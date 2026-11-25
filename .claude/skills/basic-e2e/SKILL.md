@@ -192,7 +192,7 @@ The auto-execute outcome differs by engine, and these are documented behaviours,
 | --- | --- | --- | --- |
 | PostgreSQL | offered | `applied` or `auto-executed` | The gate weighs PostgreSQL plans, but a 10-row table always plans a sequential scan, so the answer is placed unrun with "the plan reads the whole table". |
 | MySQL | offered | `applied` only | The gate never fires on MySQL. |
-| SQL Server | offered | `applied` only | The gate never fires on SQL Server (BACKLOG A6). |
+| SQL Server | offered | `applied` only | The gate never fires on SQL Server (backlog A6). |
 | MongoDB | absent | `none`, `autoExecute: false` | Not offered on MongoDB (B118). |
 | SQLite | offered | aggregate `applied` or `auto-executed`; probe `auto-executed` | The uncosted rule needs every plan step to be a SEARCH. |
 
@@ -229,9 +229,9 @@ A failed check is a finding until it is classified:
    Deduplicate across providers.
 
 Never fix product code inside the run.
-Record each defect where the project tracks work (`docs/BACKLOG.md` or an issue, the issue as a draft for the owner to approve), so none is left unrecorded and none grows the change under test.
+Record each defect where the project tracks work (the backlog or an issue, the issue as a draft for the owner to approve), so none is left unrecorded and none grows the change under test.
 
-Known, recorded as D413 in `docs/BACKLOG.md` (PR #2108), and not a reason to fail a lane: the embedded "Sample (Employees)" can show "database is locked" on the very first load of a fresh data dir (five concurrent provider creations); "Try again" clears it.
+Known, recorded as D413 in the backlog (PR #2108), and not a reason to fail a lane: the embedded "Sample (Employees)" can show "database is locked" on the very first load of a fresh data dir (five concurrent provider creations); "Try again" clears it.
 Row badges on PostgreSQL and MySQL tables are catalog estimates and do not move after an INSERT.
 
 ## Cleanup

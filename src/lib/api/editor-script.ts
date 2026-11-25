@@ -53,7 +53,7 @@ import type { DatabaseType, QueryResult } from "@/lib/types";
  * built by the caller's builder from the provider's result by reference, every row, and the page record is released
  * once, in a `finally`, after the builder ran or threw. So a row larger than one page is the unit's
  * `StudioByteBudgetRefusal`, outcome unknown, and nothing is cut: a script's answer has no field to say where a cut
- * fell (BACKLOG D920).
+ * fell (backlog D920).
  *
  * A unit is never answered by a rejection: its outcome is the builder's value or the unit's error, which the route
  * answers inside the script's answer as a provider's error always was. A stop is answered by the editor's views

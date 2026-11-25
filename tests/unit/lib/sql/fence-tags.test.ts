@@ -318,7 +318,7 @@ describe("the two alias registries", () => {
   // that never contradicts a connection, so every alias must be in both. `sql` is the one deliberate exception: it is a
   // language every SQL engine speaks, so it names none.
   const LANGUAGE_ONLY = ["sql"];
-  // Known debt, not a rule: `cql` should name `cassandra`, the one type-id that runs CQL (docs/BACKLOG.md B86). Fixing
+  // Known debt, not a rule: `cql` should name `cassandra`, the one type-id that runs CQL (backlog B86). Fixing
   // B86 fails the second test below, and deletes this entry.
   const KNOWN_GAPS = ["cql"];
 

@@ -237,7 +237,7 @@ A provider created with an `owner` in its execution context, which only governan
 When it fires, `expireTransaction()` rolls the transaction back and releases it, so its pooled connection goes back to the pool; a rollback that fails is logged, and the transaction is released all the same.
 `commitTransaction()`, `rollbackTransaction()` and `disconnect()` clear the timer.
 A provider without an owner, which is every install without governance, arms **no** timer, like Oracle without an owner, so its transaction lifetime is unchanged.
-Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision ([GOV3](../BACKLOG.md#gov3-arming-the-mssql-and-oracle-transaction-timeout-in-every-mode-needs-a-design-decision-first)).
+Arming the timer in every mode would change the transaction lifetime of every install without governance, so it waits for a product decision (GOV3).
 
 ### 3.7 Named-instance support
 
@@ -422,7 +422,7 @@ there for the batch's next statement, and `CREATE PROCEDURE … AS BEGIN …; �
 A line holding only `GO` (any case, optionally followed by a `--` comment) separates batches and is
 never sent; `GO 5` is not read as a separator and the server refuses it (measured on SQL Server 2025 RTM-CU9: `Incorrect syntax near 'GO'.`). Each batch is
 its own request on a pooled connection, so a `#temp` table created in one batch is visible to the next
-only if it borrows the same connection (`docs/BACKLOG.md` D92). The last batch's last statement is
+only if it borrows the same connection (backlog D92). The last batch's last statement is
 bounded with `TOP` when it is a read, unless the batch is a module definition (its first statement
 creates or alters a procedure, function, trigger or view), whose tail is the stored body. "Run the
 statement at the cursor" runs the caret's own statement in a batch that is a run of statements and the
@@ -603,7 +603,7 @@ with a 5-minute auto-rollback on an owned provider only ([§3.6](#36-transaction
 | `commitTransaction()` / `rollbackTransaction()` | `commit()`/`rollback()`. Throws if none active. A failure answers its mapped class with `outcome` `unknown`, and the provider holds no transaction after it. |
 | `isInTransaction()` | Current state. |
 
-A COMMIT or ROLLBACK sent while a statement of the same transaction runs is refused by the driver before it sends anything (`EREQINPROG`, "Can't commit transaction. There is a request in progress."), and the provider then holds no transaction although the server still does, with the connection and its locks held until the pool closes (D580 in [BACKLOG.md](../BACKLOG.md)).
+A COMMIT or ROLLBACK sent while a statement of the same transaction runs is refused by the driver before it sends anything (`EREQINPROG`, "Can't commit transaction. There is a request in progress."), and the provider then holds no transaction although the server still does, with the connection and its locks held until the pool closes (D580 in the backlog).
 
 ### 6.1 `endOpenQueryTransaction()` is NOT implemented here, because the driver cannot be asked
 
@@ -1845,7 +1845,7 @@ apart.
 - **What a single admitted SELECT may READ.** A least-privilege principal cannot reach another user
   database or the file system, but server-level metadata readable by `public` (`master.sys.databases`,
   `master.sys.server_principals`, `master.dbo.spt_values`) is inside the boundary. That is the same
-  class of gap [BACKLOG](../BACKLOG.md) A3 records for the other engines, not a SQL Server property.
+  class of gap backlog A3 records for the other engines, not a SQL Server property.
 - **The byte budget's TOTAL is still post-hoc**, though each VALUE is now bounded by the server.
   `SET TEXTSIZE` is set to one byte past the budget alongside `SET ROWCOUNT`, so no single large value
   arrives whole: without it, `SELECT REPLICATE(CAST('a' AS varchar(max)), 700000000)` is one row of one
@@ -1856,7 +1856,7 @@ apart.
   travels as UTF-16 at two bytes each. 131072 ASCII characters are 131072 UTF-8 bytes, half the budget,
   so measuring the cut in UTF-8 would have passed it silently. What remains post-hoc is the TOTAL: rows
   times values can still exceed `maxResultBytes` before the sum is taken, which is the property every
-  engine with a byte budget has and is filed as [BACKLOG](../BACKLOG.md) A7.
+  engine with a byte budget has and is filed as backlog A7.
 - **A linked server is outside layer 4.** `SELECT * FROM OPENQUERY(<linked server>, '…')` compiles to a
   single `SELECT` root, so admission accepts it, and the pass-through executes on the OTHER server under
   that server's own credential mapping: the local principal's grants do not reach it and the local
@@ -2106,5 +2106,4 @@ It prints no refusal reason.
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts), and the SQL Server mapping in [`src/lib/db/providers/sql/mssql-driver-errors.ts`](../../src/lib/db/providers/sql/mssql-driver-errors.ts)
 - Tests: [`tests/integration/db/mssql-provider.test.ts`](../../tests/integration/db/mssql-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [Trino](./trino.md) · [Redis](./redis.md)

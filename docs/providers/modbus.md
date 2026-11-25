@@ -207,7 +207,7 @@ ignoring it runs a different read from the one that was written. A name is check
 since a name means only what the map says it means. The protocol's bounds are not repeated in the
 parser - it calls `checkRead`, so a limit cannot pass in one file while it fails in another.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
 This provider cannot cancel a run, so Studio sends no cancel, and the read runs on until its last request ends.
 
@@ -366,7 +366,7 @@ The workflow classifier offers the model only these two.
 Plan mode's safety strip says the family's own words (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/modbusread/client.ts)) beside core's pill, *Executes nothing it drafts*: "the register map grounds it; opening the connection dials the device, and no request is sent to it", because the grounding reads the map and sends the device nothing, while the acquisition's `connect` dials the device's port and closes it again, so the shared strip's "nothing else reaches the database" would not be true here.
 The editor language id stays `modbus`, and the fence alias `modbusread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false ([B160](../BACKLOG.md#b160-modbuss-agent-reads-are-paced-per-device-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.modbus` is unchanged.
+No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false (B160), and `READ_ONLY_ENFORCED.modbus` is unchanged.
 
 ## Monitoring
 

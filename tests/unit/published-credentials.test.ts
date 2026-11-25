@@ -377,7 +377,7 @@ const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", 
 /**
  * A login example's JSON body, which names no environment variable at all and so was read
  * by none of the rules above: `-d '{"email": "...", "password": "example-fake-login"}'` published a
- * working login in docs/API_DOCS.md twice, in a cURL block and a fetch() block, and the
+ * working login in the API docs twice, in a cURL block and a fetch() block, and the
  * same string had already been removed from CONTRIBUTING.md by hand.
  *
  * What makes it a LOGIN body is the `email` beside it, and that is the whole test. The same
@@ -389,7 +389,7 @@ const JSON_PASSWORD_STANDINS = new Set(["string", "password", "secret", "null", 
  * Of what is left, only a QUOTED literal that reads as a value counts: a space in it makes it
  * an instruction, and a `your-` prefix makes it a placeholder. Single quotes and a bare key
  * count as much as double ones - `{ email: 'a@b.c', password: 'example-fake-login' }` is how a
- * JavaScript object literal is written and how docs/API_DOCS.md wrote the second of its two,
+ * JavaScript object literal is written and how the API docs wrote the second of its two,
  * so requiring double quotes read one of that file's two published logins and walked past the
  * other, measured. What stays unquoted is an expression, not a literal: the fetch() example
  * now reads `password: process.env.ADMIN_PASSWORD`, which publishes nothing.
@@ -455,7 +455,7 @@ describe("the documentation publishes no credential that works", () => {
 
   test("reads a password out of a login body, and leaves a schema alone", () => {
     const caught = (text: string) => jsonPasswordValues(text);
-    // The two shapes that were really in docs/API_DOCS.md, copied from it: the cURL body and the
+    // The two shapes that were really in the API docs, copied from it: the cURL body and the
     // fetch() body of its login example. The second is a JavaScript object literal
     // - bare key, single quotes - and a rule that required double quotes read the first and
     // walked past the second, which is how that file published two logins and reported one.
@@ -476,7 +476,7 @@ describe("the documentation publishes no credential that works", () => {
     expect(caught(`{ password: 'example-fake-login', email: 'admin@libredb.org' }`)).toEqual(["example-fake-login"]);
 
     // An unquoted value is an expression, not a literal: this is what the login example under
-    // "JavaScript/TypeScript Examples" in docs/API_DOCS.md reads now, and it publishes nothing.
+    // "JavaScript/TypeScript Examples" in the API docs read, and it publishes nothing.
     expect(
       caught(`body: JSON.stringify({ email: 'admin@libredb.org', password: process.env.ADMIN_PASSWORD }),`),
     ).toEqual([]);
@@ -667,7 +667,7 @@ describe("the documentation publishes no credential that works", () => {
     const optional = "| `USER_PASSWORD` | No | Never generated - the account exists only when you set it |";
     expect(caught(required + optional, "USER_PASSWORD")).toEqual([]);
 
-    // The `USER_EMAIL` row under "Environment Variables" in docs/API_DOCS.md is a row ABOUT
+    // The `USER_EMAIL` row under "Environment Variables" in the API docs is a row ABOUT
     // `USER_EMAIL` that names `USER_PASSWORD` in passing and carries a default of its own. The
     // subject of a row is the cell the name fills.
     const other =

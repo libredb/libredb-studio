@@ -894,7 +894,7 @@ An index outside the role answers as if it did not exist ("Unknown index"), meas
 
 That role is enough for agent mode and not for plan mode.
 A plan run grounds through the provider's object surface, the same reads the editor's object tree makes, signed in with the connection's own login: the index listing reads `/_cat/indices`, the template listing `/_index_template`, the pipeline listing `/_ingest/pipeline`, and the aliases, data streams and mappings the agent's role already reads.
-The capture is all or nothing, so one refused listing leaves the run with no inventory ([B88](../BACKLOG.md)).
+The capture is all or nothing, so one refused listing leaves the run with no inventory (B88).
 Measured on 9.1.4 with security on, through `captureContextSnapshot` in planning mode under the operations profile: on the agent's role alone the read is refused (`CATALOG_READ_REFUSED`), and the tree answers 403 on Indices, Ingest Pipelines and Index Templates; with the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor` added, it captures and every tree folder lists.
 Each of the three is needed: without cluster `monitor` the index and template listings answer 403, without `read_pipeline` the pipeline listing does, and without index `monitor` the index listing does, and each refusal ends the capture.
 Cluster and index `monitor` also serve the monitoring tab's health read, which answers 403 without either.
@@ -1014,7 +1014,7 @@ The column kind composes `SYS COLUMNS`, or `SYS COLUMNS "<table>"` for one table
 A pure mapper (`mapRows`) turns the engine's JDBC-shaped answer into `table_name`, `column_name`, `data_type` (the engine's own type name, such as `KEYWORD`), `is_nullable` and `ordinal_position`, one row per engine row; the captures it is tested against are `tests/fixtures/elasticsearch/9.1.4/catalog-read/`, written by `tests/live/elasticsearch-catalog-captures.ts`.
 The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: the engine keeps no foreign key, no index object apart from the table itself, and no row estimate a catalog command reads.
 The other members are unsupported, each for a measured reason: its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)), and a table profile would be an aggregate over a whole index, never measured.
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B144](../BACKLOG.md)).
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine (B144).
 The provider path's statement check admits exactly that command among the catalog commands, once the server's two resolutions of its table, `*` for every table, agree and name no hidden or system target, and the query-only endpoint answers it as it answers a SELECT; a table the server does not resolve is refused before the command is sent, where the engine answered no rows; the least-privilege role above reads it, and its answer holds only tables the role reads (a data stream's backing index included, which a statement reads through the data stream's own name).
 Its answer can also name a hidden alias over an index the login reads, with that index's columns, since the engine lists aliases by its own lookup: measured on 9.1.4 on 2026-11-02, a hidden alias over `probe_orders` was listed with security off, and with security on to a role reading `probe_*` where the alias's name matched `probe_*`, not where it did not; a statement that names such an alias is refused, so the answer adds its name and no row.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
@@ -1550,7 +1550,7 @@ The honest empties, each with its reason:
   with no share of the limit, instead of a `0` under a healthy tick. This provider held the last
   unconditional `activeConnections: 0` in the codebase - SQL Server, Oracle, MongoDB and Cassandra had
   already omitted it - but not the last zero of any kind: Trino, Druid, ClickHouse and Couchbase each
-  degrade an unavailable monitoring read to no rows and then map the absent row to 0 (BACKLOG D51).
+  degrade an unavailable monitoring read to no rows and then map the absent row to 0 (backlog D51).
 - **`maxConnections` is 0, and that is the correct encoding** — the opposite one, for the opposite
   reason: for the ceiling `0` and absence are the **same** fact, which is why Druid and Trino cite
   `mssql.ts` for it and why the Connections card reads a zero maximum as "no limit published" rather
@@ -2029,7 +2029,6 @@ The refusal reason it prints, verbatim:
 - Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/elasticsearch.json`](../../src/lib/db/engine-declarations/elasticsearch.json) (`#`, `[`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (double quotes) · `sqlWriting.escapeLiteral` in the same declaration (literal escaping) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`elasticsearch` service, 9200)
 - Tests: [`tests/integration/db/elasticsearch-provider.test.ts`](../../tests/integration/db/elasticsearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Tracking issue: [#424 — Search providers](https://github.com/libredb/libredb-studio/issues/424)
 - Elasticsearch SQL: <https://www.elastic.co/guide/en/elasticsearch/reference/current/xpack-sql.html>
 - SQL REST API: <https://www.elastic.co/guide/en/elasticsearch/reference/current/sql-rest.html>

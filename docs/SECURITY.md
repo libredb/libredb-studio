@@ -271,7 +271,7 @@ audited. A forged, tampered or truncated `auth-token` reaches the trailing `catc
 `logger.warn("JWT verification failed, refusing the session")` and refuses (a redirect to `/login` for a page, a `401` `AUTH_REQUIRED` for an API path) without an
 `emitAuditEvent` call, so the attempt lands in stdout and never in `GET /api/admin/audit`. The proxy's
 other two refusals both emit: `origin_mismatch` and `insufficient_role`. See
-[`docs/BACKLOG.md`](./BACKLOG.md) H12.
+backlog H12.
 
 Everything the row once described short of that is audited. Role failures are recorded at all twelve
 sites that refuse on role, eleven in handlers and one in the proxy, and the eleven handler sites are the
@@ -502,7 +502,7 @@ user types reaches the profile.
 Still **Partial**, for the one reason that
 survives: out-of-scope READS have no database-native control on any of those providers — only the
 declared-target allowlist, the statement guard, and whatever the role's grants bound (see
-[`docs/BACKLOG.md`](./BACKLOG.md) A3).
+backlog A3).
 
 **3.5.** Each execution emits a decision event and, once allowed, an execution-outcome event
 sharing one server-generated correlation id; a denial emits the decision event alone with a typed
@@ -524,7 +524,7 @@ deadline is not silent. The routes that make this reachable are session-verified
 handlers, and a run is authorized against the actor persisted in its own ledger — not against the
 caller of the moment, so a drive that continues a run minutes later cannot widen what it may audit or
 read (that resume path exists and authenticates, but nothing calls it yet — see
-[`docs/BACKLOG.md`](./BACKLOG.md) B9). Still **Partial**, for the one reason that survives: the in-app
+backlog B9). Still **Partial**, for the one reason that survives: the in-app
 ring buffer is per-process — the stdout line remains the authoritative record.
 
 **3.6.** This is the first row that covers a database WRITE, and the claim it makes is the narrow
@@ -881,7 +881,7 @@ These are real, current, and not oversights. Each is a decision with a reason.
   (N=16384, r=8, p=1); see [STORAGE.md](./STORAGE.md#accounts). Rate limiting (1.2) and the
   constant-time comparison (1.5) still apply to both paths.
 - **Rate limiting is per process and every bucket is keyed on something the caller supplies.** See
-  [`docs/BACKLOG.md`](./BACKLOG.md), entries H11 and H13. Two variables decide what that something
+  the backlog, entries H11 and H13. Two variables decide what that something
   is. `TRUST_PROXY_HEADERS` (default `true`) derives the client address from `X-Forwarded-For`,
   falling back to `X-Real-IP`; set to `false`, every anonymous caller shares one bucket, so a single
   caller tripping the login limiter locks everyone out until the window closes. `TRUSTED_PROXY_HOPS`
@@ -972,7 +972,7 @@ These are real, current, and not oversights. Each is a decision with a reason.
 - **A test linked from this table is checked to exist and to run — not to be true.** Nothing
   verifies that a linked test actually exercises the control it is linked from. That is the
   residual this page carries knowingly; the same limitation is recorded for the route-guard
-  allowlist in [`docs/BACKLOG.md`](./BACKLOG.md), entry H10.
+  allowlist in the backlog, entry H10.
 - **No dynamic application security testing, no penetration test, no OpenSSF Scorecard badge yet.**
   Each was deferred deliberately rather than skipped.
 

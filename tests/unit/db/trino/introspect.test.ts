@@ -479,7 +479,7 @@ describe("Trino getOverview", () => {
     expect(overview.databaseSize).toBe(TRINO_UNAVAILABLE_TEXT);
     // The key is ABSENT, which is what this test's name has always said. It used to
     // assert 0 - a measurement, in the same object whose `databaseSize` said the figure
-    // is unavailable (docs/BACKLOG.md D44). `in` is the assertion that distinguishes a
+    // is unavailable (backlog D44). `in` is the assertion that distinguishes a
     // missing key from one present holding `undefined`; `toBeUndefined()` passes for both.
     expect("databaseSizeBytes" in overview).toBe(false);
   });

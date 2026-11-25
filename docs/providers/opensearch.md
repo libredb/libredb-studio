@@ -570,7 +570,7 @@ matching-document count at all, so a "showing 50 of 4,812" notice would appear o
 on the other for identical statements — and it would restate what the route's own pagination already
 tells the UI (`hasMore`, `limit`, `offset`). A caveat attached to every ordinary query is the fastest
 way to train a user to ignore the ones that matter, which is the argument [druid.md](./druid.md) makes
-about its own warnings. The count is dropped knowingly; `docs/BACKLOG.md` is where it belongs if a
+about its own warnings. The count is dropped knowingly; the backlog is where it belongs if a
 surface for it ever exists (the docblock on `toQueryResult()`, [index.ts](../../src/lib/db/providers/sql/search/index.ts)).
 
 ### 5.3 A container field comes back as its sub-document
@@ -840,7 +840,7 @@ The every-table catalog read, `DESCRIBE TABLES LIKE %`, names every index, so th
 
 That role is enough for agent mode and not for plan mode.
 A plan run grounds through the provider's object surface, the same reads the editor's object tree makes, signed in with the connection's own login: the index listing reads `/_cat/indices`, and the aliases, data streams, templates, pipelines and mappings each their own listing.
-The capture is all or nothing, so one refused listing leaves the run with no inventory ([B88](../BACKLOG.md)).
+The capture is all or nothing, so one refused listing leaves the run with no inventory (B88).
 The index, alias and data-stream listings span every index on the cluster, and the security plugin refuses such a listing whole to a role that does not cover every index it lists, so plan mode's index privileges are on every index.
 Measured on 3.8.0 with security on, through `captureContextSnapshot` in planning mode under the operations profile: on the agent's role alone the read is refused (`CATALOG_READ_REFUSED`); it captures once the role adds the cluster actions `cluster:monitor/health`, `cluster:admin/ingest/pipeline/get` and `indices:admin/index_template/get`, and on every index `indices:monitor/settings/get`, `indices:monitor/stats`, `indices:admin/aliases/get`, `indices:admin/data_stream/get` and `indices:admin/mappings/get`; with any one of the eight taken away it is refused again.
 The agent profile still opens under the wider role.
@@ -891,7 +891,7 @@ An answer past the row or byte budget, counted as the JSON array of the rows, is
 The plugin answers at most `plugins.query.size_limit` rows, 10,000 by default, and cuts the rest with no sign of the cut: measured on 3.8.0 with the limit at 1,000, a 1,500-row read answers 1,000 rows and a cursor whose next page holds no row, and a 1,500-group aggregation answers 1,000 rows and no cursor.
 So where the limit is within the row budget, an answer that reaches it is refused ("Read-only execution exceeded the row budget: OpenSearch answers at most 1000 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused"), and where the budget is below the limit, an answer that reaches the limit is past the budget anyway.
 That sentence is what agent mode answers.
-Through MCP's `run_read_query` the same refusal is answered with MCP's own row text ("The result has more than 1000 rows, the most this server reads for one call", then the advice to add a `LIMIT` of 1000 or less), which names 1000 rows whatever the engine's limit: measured on 3.8.0 with the limit at 500, `SELECT k FROM probe_buckets LIMIT 500` is refused that way ([BACKLOG.md](../BACKLOG.md) MCP10).
+Through MCP's `run_read_query` the same refusal is answered with MCP's own row text ("The result has more than 1000 rows, the most this server reads for one call", then the advice to add a `LIMIT` of 1000 or less), which names 1000 rows whatever the engine's limit: measured on 3.8.0 with the limit at 500, `SELECT k FROM probe_buckets LIMIT 500` is refused that way (backlog MCP10).
 The deadline is the budget's and the client's alone, refused in the shared time-budget sentence: a cancel ends the wait, not the work, as [§3.8](#38-the-deadline-is-the-clients-and-only-the-clients) records for the editor.
 
 #### Agent language pack
@@ -918,7 +918,7 @@ A pure mapper (`mapRows`) turns the engine's JDBC-shaped answer into `table_name
 A name no index holds is answered with the engine's `IndexNotFoundException`, not an empty inventory.
 The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: the engine keeps no foreign key, no index object apart from the table itself, and no row estimate a catalog command reads.
 The other members are unsupported: the provider reads no `EXPLAIN` ([§3.10](#310-no-explain-the-statement-form-is-refused)), and a table profile would be an aggregate over a whole index, never measured.
-So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B145](../BACKLOG.md)).
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine (B145).
 The statement check admits the composed command by its shape, and the plugin answers it as it answers a SELECT; the one-table form is resolved like any index expression, and the every-table form, which the overlay never composes, is refused by the reader before anything is sent ([The statement path](#the-statement-path)).
 The check is OpenSearch's own (`SearchProduct.agentStatementCheck`), with its own reader and marks, beside Elasticsearch's ([elasticsearch.md §5.9](./elasticsearch.md#59-the-agent-read-only-profile-rests-on-the-grammar)).
 Elasticsearch's privilege-endpoint login check is off here (`SearchProduct.checksLoginReach` is false); this open probes the login instead (`SearchProduct.checksLoginWrites`, [The open and the profile](#the-open-and-the-profile)).
@@ -1496,7 +1496,7 @@ The honest empties, each with its reason:
   with no share of the limit, instead of a `0` under a healthy tick. This provider held the last
   unconditional `activeConnections: 0` in the codebase - SQL Server, Oracle, MongoDB and Cassandra had
   already omitted it - but not the last zero of any kind: Trino, Druid, ClickHouse and Couchbase each
-  degrade an unavailable monitoring read to no rows and then map the absent row to 0 (BACKLOG D51).
+  degrade an unavailable monitoring read to no rows and then map the absent row to 0 (backlog D51).
 - **`maxConnections` is 0, and that is the correct encoding** — the opposite one, for the opposite
   reason: for the ceiling `0` and absence are the **same** fact, which is why Druid and Trino cite
   `mssql.ts` for it and why the Connections card reads a zero maximum as "no limit published" rather
@@ -2009,7 +2009,6 @@ The refusal reason it prints, verbatim:
 - Dialect facts elsewhere in the codebase: `sqlText.grammar` in [`src/lib/db/engine-declarations/opensearch.json`](../../src/lib/db/engine-declarations/opensearch.json) (`#`, `[…]`, block comments) · `quoteIdentifier()` in [`src/lib/sql/identifier.ts`](../../src/lib/sql/identifier.ts) (backticks) · `sqlWriting.escapeLiteral` in the same declaration (both escape forms) · [`src/lib/sql/fence-tags.ts`](../../src/lib/sql/fence-tags.ts) (the fence tag)
 - Local cluster: [`database-compose.yml`](../../database-compose.yml) (`opensearch` service, host port 9201)
 - Tests: [`tests/integration/db/opensearch-provider.test.ts`](../../tests/integration/db/opensearch-provider.test.ts) · [`tests/unit/db/search/`](../../tests/unit/db/search/)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 - Tracking issue: [#424 — Search providers](https://github.com/libredb/libredb-studio/issues/424)
 - OpenSearch SQL plugin: <https://docs.opensearch.org/latest/search-plugins/sql/index/>
 - SQL/PPL API: <https://docs.opensearch.org/latest/search-plugins/sql/sql-ppl-api/>

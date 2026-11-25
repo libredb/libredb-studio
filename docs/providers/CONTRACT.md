@@ -3180,7 +3180,7 @@ The script of several statements runs each unit through the host core, C-84.
 
 The caller that runs statements in a scope mints it, one per request, sends it with every execute of the request and only to a session that offers `console.endScope`, C-9, and ends it once through `endScopeCall`, C-48, under a cleanup context the caller's leaving does not end, C-47.
 A provider that offers `console.endScope` keeps the connection that holds a transaction a scope's statements opened to that scope while the transaction is open, and lends it to no other scope or caller, until `endScope` for that scope has answered.
-The legacy bridge's postgres provider does not hold this rule today: its `query()` returns such a client to its pool, and the end comes after the run's pump, so another request can borrow the client in between and run inside that transaction; the backlog tracks it as [D620](../BACKLOG.md).
+The legacy bridge's postgres provider does not hold this rule today: its `query()` returns such a client to its pool, and the end comes after the run's pump, so another request can borrow the client in between and run inside that transaction; the backlog tracks it as D620.
 The editor query ends its run's scope once its execute answered or failed, before its answer is built, and after a stop once the stopped call's `settled` resolved; a run refused before its call ran nothing and ends none.
 An end that fails is answered in the run's place, its error by reference, and an end its deadline stopped answers `StudioTimeoutRefusal` naming the end, outcome unknown; after a stop, either is logged by kind and code, since the stop was already answered.
 The answer carries `openTransaction: "rolled-back"` only when the end answered it.

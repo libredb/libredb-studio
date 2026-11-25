@@ -41,7 +41,6 @@ import { KUBECONFIG_IMPORT_SENTENCES } from "@/lib/kubernetes/kubeconfig-import"
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (file: string) => readFileSync(path.join(ROOT, file), "utf8");
 const DOC = read("docs/providers/kubernetes.md");
-const BACKLOG = read("docs/BACKLOG.md");
 const AGENT_DOC = read("docs/AGENT.md");
 
 /** A quoted sentence: the doc's blockquote line that holds it whole. */
@@ -167,7 +166,7 @@ describe("the declarations the doc states", () => {
     ])
       expect(nine).toContain(line);
     expect(nine).toContain(
-      "Masking a Secret name inside free-text status, event and log messages, on agent and MCP reads alike, is D391 in [`docs/BACKLOG.md`](../BACKLOG.md).",
+      "Masking a Secret name inside free-text status, event and log messages, on agent and MCP reads alike, is D391 in the backlog.",
     );
     expect(sectionOf("## 14. Known limitations")).not.toContain("No MCP");
     expect(sectionOf("## 14. Known limitations")).toContain("(B115)");
@@ -183,12 +182,8 @@ describe("the declarations the doc states", () => {
   });
 });
 
-describe("the backlog entries the doc cites exist, and the agent ones are cited by docs/AGENT.md", () => {
+describe("the agent backlog entries the doc cites are cited by docs/AGENT.md", () => {
   const cited = [...new Set([...sectionOf("## 14. Known limitations").matchAll(/\b([BDU]\d+)\b/g)].map((m) => m[1]))];
-
-  test.each(cited)("%s is an entry of docs/BACKLOG.md", (id) => {
-    expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));
-  });
 
   test("each B-series entry is cited by docs/AGENT.md", () => {
     const agentEntries = cited.filter((id) => id.startsWith("B"));

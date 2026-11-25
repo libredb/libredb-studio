@@ -62,7 +62,7 @@ concurrency:
   # same github.ref (refs/heads/main), so keying by ref alone let a push cancel
   # that day's only image scan mid-run - image-scan does not run on push at all,
   # so the scan simply never happened - and a cancelled run sends no failed-run
-  # email, the only notification path BACKLOG C2 names. pull_request events
+  # email, the only notification path backlog C2 names. pull_request events
   # already have distinct refs, so this changes nothing for them.
   group: security-scan-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true

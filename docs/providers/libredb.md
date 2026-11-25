@@ -1396,15 +1396,14 @@ await provider.disconnect();
 
 ### 12.3 Over the API
 
-`POST /api/db/query` with the command in the `sql` field — see
-[`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
+`POST /api/db/query` with the command in the `sql` field.
 
 ---
 
 ## 13. Known limitations & future work
 
 - **No editor statement timeout of the provider's own, and no cancel.**
-  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+  Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
   A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
   This provider cannot cancel a run, so Studio sends no cancel, and the command runs on until it ends.
 - **No multi-key transactions in the query UI.** The `@libredb/libredb` kernel exposes a
@@ -1453,7 +1452,6 @@ The refusal reason it prints, verbatim:
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)
 - Errors: [`src/lib/db/errors.ts`](../../src/lib/db/errors.ts)
 - Tests: [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts)
-- API contract: [`docs/API_DOCS.md`](../API_DOCS.md)
 
 
 Connection targets reserve Studio's storage database, its WAL/SHM files, the credential re-seal's backups of it (`<store file>.pre-reseal-<stamp>`) and bootstrap credentials (including backups and temporary files).

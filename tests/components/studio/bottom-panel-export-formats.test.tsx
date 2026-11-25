@@ -1,5 +1,5 @@
 /**
- * The result export menu's SQL formats, read per dialect (vector-family spec 3.10, R46 C4, BACKLOG U69).
+ * The result export menu's SQL formats, read per dialect (vector-family spec 3.10, R46 C4, backlog U69).
  *
  * R46 C4 measured the Export menu of seven engines offering SQL INSERT and DDL; each keeps both here, under its
  * own language and dialect. Qdrant's record declines them, and so does a synthetic dialect record, which no shipped

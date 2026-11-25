@@ -700,7 +700,7 @@ describe("proxy", () => {
       // unauthenticated route past this middleware with NO matcher edit at all.
       // That is why the drive path this task added is one the matcher DOES route
       // (asserted above), guarded by a credential rather than by a path rule.
-      // The repo records the same dot-rule consequence in docs/BACKLOG.md A2.
+      // The repo records the same dot-rule consequence in backlog A2.
       const matcher = new RegExp(`^${config.matcher[0]}$`);
 
       expect(matcher.test("/.well-known/workflow/v1/flow")).toBe(false);

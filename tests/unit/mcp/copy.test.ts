@@ -3,7 +3,7 @@
  * in each engine's own language, as the guide's introduction says, never "read-only SQL", which only one statement
  * tool runs, and that MCP needs no LLM provider. The settings screen's rendered sentences are pinned in
  * tests/components/mcp/McpSettings.test.tsx; this reads the sources. The chart's values comment keeps its words until
- * the next chart change (`docs/BACKLOG.md` MCP23), because a values.yaml edit forces a chart release.
+ * the next chart change (backlog MCP23), because a values.yaml edit forces a chart release.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";

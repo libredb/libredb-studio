@@ -2342,7 +2342,7 @@ export class MSSQLProvider extends SQLBaseProvider {
    * may READ. A least-privilege principal cannot reach another user database or the
    * file system, but server-level metadata readable by `public` (`master.sys.databases`,
    * `sys.server_principals`) is inside the boundary, exactly as it is on the other
-   * engines (see `docs/BACKLOG.md`, A3).
+   * engines (see the backlog, A3).
    *
    * EVERY SESSION MODE THIS SETS LEAKS, and that is measured, not feared: `SET
    * ROWCOUNT`, `SET SHOWPLAN_ALL` and `SET LOCK_TIMEOUT` all survive the ROLLBACK and

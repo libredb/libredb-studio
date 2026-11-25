@@ -302,7 +302,7 @@ const LIST_TRIGGERS_SQL = `
 // columns, its own name and `rank` on an FTS5 table - and those are not columns the table
 // declares, so only that value is excluded. `getSchema()` still reads `table_info` and
 // still loses generated columns; that is the flat surface's defect, recorded in
-// docs/BACKLOG.md.
+// the backlog.
 const OBJECT_COLUMNS_SQL = `
       SELECT name, type, "notnull", dflt_value, pk
         FROM pragma_table_xinfo(?, ?)

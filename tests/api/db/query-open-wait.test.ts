@@ -1,6 +1,5 @@
 /**
- * The query route's open wait against the real factory (docs/providers/CONTRACT.md, clause C-44; docs/API_DOCS.md, "How
- * long the server waits"): a request that leaves while its connection opens is answered at once, 499 not-sent, the
+ * The query route's open wait against the real factory (docs/providers/CONTRACT.md, clause C-44): a request that leaves while its connection opens is answered at once, 499 not-sent, the
  * open goes on in the factory's open table, and its later failure, which no caller waits for any more, is logged by
  * the connection, the error's kind and its code, never its text. An open its connect budget ends (clause C-55) is
  * answered 504 not-sent, and the next request opens afresh rather than joining it.

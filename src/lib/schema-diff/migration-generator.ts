@@ -24,7 +24,7 @@ import type { SchemaDiff, TableDiff, ForeignKeyDiff, IndexDiff } from "./types";
 /**
  * The table as the statement names it: every segment of its path quoted on its own, container first, so
  * `b2a.t1` is `"b2a"."t1"` and never the `"t1"` that a search path resolves to another schema's table (SF-047,
- * BACKLOG D150). A diff with no paths, a snapshot taken before the object model, names it by `tableName` as before.
+ * backlog D150). A diff with no paths, a snapshot taken before the object model, names it by `tableName` as before.
  */
 function tableId(table: TableDiff, dialect: DatabaseType | undefined): string {
   if (table.path === undefined || table.path.length < 2) return escapeIdentifier(table.tableName, dialect);

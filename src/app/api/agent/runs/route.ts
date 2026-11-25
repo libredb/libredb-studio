@@ -631,7 +631,7 @@ export async function POST(req: Request) {
     // that dies leaves a run that CAN be resumed — POST /api/agent/drive does
     // exactly that, and the local resume sweep (#1000) now asks for one on its
     // own, so a process that dies mid-run leaves it running only until the
-    // sweep's next pass finds it stale (`docs/BACKLOG.md` B9 for what that
+    // sweep's next pass finds it stale (backlog B9 for what that
     // still does not cover).
     void driveAgentRun(record.runId).catch((error: unknown) => {
       logger.error("Agent run drive ended in failure", error, { route: "api/agent/runs", runId: record.runId });

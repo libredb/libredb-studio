@@ -323,7 +323,7 @@ function truncatedKey(key: string): string {
  * already is), and it is NOT audit-visible: catching up to a target's count never requires a decoy
  * to reach its OWN max, so no decoy bucket trips and no rate_limit_exceeded event fires. Do not
  * describe this as self-defeating or as leaving an audit trail; it does neither. (This residual
- * belongs in docs/BACKLOG.md - not added here.)
+ * belongs in the backlog - not added here.)
  *
  * Complexity note: this function runs once per request for a key with no live entry, before that
  * entry is created, so it is never asked to make room for more than one new arrival at a time - a

@@ -20,7 +20,7 @@ import tseslint from "typescript-eslint";
 //
 // Remove this wrapper once eslint-config-next depends on an eslint-plugin-react
 // that declares `eslint: ^10` - at that point these two lines can go back to a
-// bare spread. Tracked in docs/BACKLOG.md.
+// bare spread. Tracked in the backlog.
 const eslintConfig = defineConfig([
   ...fixupConfigRules(nextCoreWebVitals),
   ...fixupConfigRules(nextTypescript),

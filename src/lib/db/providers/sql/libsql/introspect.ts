@@ -13,7 +13,7 @@
  * - A batch answers EACH statement separately, so a per-table read that fails costs
  *   its own reading and nothing else. That is why the per-table sweep is one batch
  *   whose outcomes are read individually rather than a `Promise.all` that a single
- *   refusal collapses (BACKLOG D22, #477).
+ *   refusal collapses (backlog D22, #477).
  * - `dbstat` is available on BOTH deployments, which is more than the SQLite provider
  *   can say of its own drivers (`bun:sqlite` has no dbstat at all). So per-table and
  *   per-index bytes here are measured rather than absent - and when the table IS

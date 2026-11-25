@@ -4,21 +4,15 @@
  * The agent runtime is the first feature in this repository whose behaviour is
  * spread across a dozen modules, six API route paths, a rail, a durable backend and a
  * chart constraint, and none of that is derivable from any single file. `docs/AGENT.md`
- * is where it is written down. These tests keep three kinds of claim honest, because
+ * is where it is written down. These tests keep the claims below honest, because
  * prose is the one part of the repository nothing else checks:
  *
- *  1. **The document is reachable.** A behaviour document nobody links is a document
- *     nobody reads, so `docs/ARCHITECTURE.md` must link it and the link must resolve.
- *  2. **The configuration surface is complete.** Every environment variable the agent
+ *  1. **The configuration surface is complete.** Every environment variable the agent
  *     modules read is documented in BOTH `.env.example` and `docs/AGENT.md`, and the
  *     companion assertion is what keeps that check honest: across every agent-owned file
  *     (the runtime, the routes, the rail, its hooks, the run-access helper) only
  *     `config.ts` touches `process.env`, so a fourth variable read from one of them
  *     cannot slip past undocumented.
- *  3. **The deferral record is complete in both directions.** Every M2 backlog entry is
- *     cited by the behaviour document, and every id the document cites exists. A
- *     milestone that defers work and then documents nothing, or documents an entry that
- *     was later deleted, fails here rather than misleading a reader.
  *
  * The chart block covers the one deployment constraint the runtime imposes (the
  * zero-config durable backend takes file locks, so it is single-instance) plus the
@@ -36,7 +30,6 @@ import * as engineClientResolvers from "@/lib/agent/languages/engines/client";
 import * as enginePackResolvers from "@/lib/agent/languages/engines/index";
 import * as engineServerResolvers from "@/lib/agent/languages/engines/server";
 import { agentPosture } from "@/lib/agent/posture";
-import { runHeaderRefusal } from "@/lib/agent/run-ledger-ids";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { AGENT_EXECUTION_ENGINES, EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
@@ -51,8 +44,7 @@ const read = (relative: string): string => readFileSync(path.join(ROOT, relative
  * `src\app\api\agent\config\route.ts` (measured on windows-latest, where this file's own
  * non-vacuity control failed along with the nine assertions it guards). Every use of a
  * scanned path below is POSIX-spelled - the `src/app` prefix stripped off a route, the
- * route path looked up in `docs/API_DOCS.md`, the comparison against
- * `src/lib/agent/config.ts` - and so is the documentation being searched, which no
+ * comparison against `src/lib/agent/config.ts` - and so is the documentation being searched, which no
  * platform rewrites. So the separator is normalised once where the paths are produced
  * rather than in each comparison.
  *
@@ -65,25 +57,12 @@ const scan = (pattern: string): string[] =>
 
 const AGENT_DOC_PATH = "docs/AGENT.md";
 const AGENT_DOC = read(AGENT_DOC_PATH);
-const ARCHITECTURE = read("docs/ARCHITECTURE.md");
 const ENV_EXAMPLE = read(".env.example");
-const BACKLOG = read("docs/BACKLOG.md");
 const AGENT_CONFIG = read("src/lib/agent/config.ts");
 const CHART_VALUES = read("charts/libredb-studio/values.yaml");
 /** The ledger directory the chart writes; the same path the image will also set. */
 const CHART_LEDGER_PATH = "/app/data/workflow";
 const CHART_README = read("charts/libredb-studio/README.md");
-
-describe("docs/AGENT.md is reachable from the architecture document", () => {
-  test("docs/ARCHITECTURE.md links to it and the link resolves to a real file", () => {
-    const links = [...ARCHITECTURE.matchAll(/\]\(([^)]*AGENT\.md)\)/g)].map((m) => m[1]);
-    expect(links.length).toBeGreaterThan(0);
-    for (const link of links) {
-      // Links in docs/ARCHITECTURE.md are relative to docs/.
-      expect(existsSync(path.join(ROOT, "docs", link))).toBe(true);
-    }
-  });
-});
 
 describe("the agent's environment surface is documented where an operator looks", () => {
   /**
@@ -126,23 +105,7 @@ describe("the agent's environment surface is documented where an operator looks"
   });
 });
 
-describe("the milestone's deferral record is complete in both directions", () => {
-  const m2Section = BACKLOG.split(/^## Agent M2 deferrals/m)[1] ?? "";
-  const backlogIds = [...m2Section.matchAll(/^### (B\d+)\./gm)].map((m) => m[1]);
-  const citedIds = [...new Set([...AGENT_DOC.matchAll(/\bB(\d+)\b/g)].map((m) => `B${m[1]}`))];
-
-  test("the M2 backlog section was located and has entries", () => {
-    expect(backlogIds.length).toBeGreaterThan(0);
-  });
-
-  test.each(backlogIds)("%s is cited by docs/AGENT.md", (id) => {
-    expect(citedIds).toContain(id);
-  });
-
-  test.each(citedIds)("%s cited by docs/AGENT.md exists as a backlog entry", (id) => {
-    expect(backlogIds).toContain(id);
-  });
-
+describe("the milestone's deferral record", () => {
   test("the SQLite caveat is stated as behaviour, not implied", () => {
     // A budget meter or a deadline that let a reader assume an in-engine interrupt would
     // be the dishonest half of this feature, so AGENT.md says how SQLite really stops it.
@@ -154,7 +117,7 @@ describe("the two companion pages exist and are reachable", () => {
   /**
    * `docs/AGENT.md` is the behaviour document, and #331 T6 split two audiences out of
    * it: the user guide and the data-flow page. A page nobody links is a page nobody
-   * reads — the same reason the architecture link above is asserted — and the data-flow
+   * reads, and the data-flow
    * page in particular is what `docs/SECURITY.md` now points at for egress, so it
    * cannot quietly stop existing.
    */
@@ -300,43 +263,6 @@ describe("the guide's history bound is the retention constant", () => {
     const match = AGENT_GUIDE.match(/keeps the (\d+) newest conversations/);
     expect(match).not.toBeNull();
     expect(Number(match?.[1])).toBe(AGENT_HISTORY_MAX_CONVERSATIONS);
-  });
-});
-
-describe("the agent's HTTP surface is documented where a reader looks for a route", () => {
-  /**
-   * B19's own "done" text asked for this: nothing compared `docs/API_DOCS.md` against
-   * `src/app/api/`, so a route family could be absent from the API reference and every
-   * gate stayed green. The paths are DERIVED from the route tree rather than listed
-   * here, so a seventh agent path added tomorrow fails this test instead of being
-   * silently undocumented.
-   *
-   * Dynamic segments are compared in the reference's own notation (`{runId}`), which is
-   * what the rest of that document already uses for a path parameter.
-   */
-  const API_DOCS = read("docs/API_DOCS.md");
-
-  const routePaths = scan("src/app/api/agent/**/route.ts")
-    .map((file) =>
-      file
-        .replace(/^src\/app/, "")
-        .replace(/\/route\.ts$/, "")
-        .replace(/\[(\w+)\]/g, "{$1}"),
-    )
-    .sort();
-
-  test("the scan found the agent route tree (an empty scan would pass everything below)", () => {
-    expect(routePaths).toContain("/api/agent/config");
-    expect(routePaths).toContain("/api/agent/drive");
-    expect(routePaths.length).toBeGreaterThanOrEqual(6);
-  });
-
-  test.each(routePaths)("%s appears in docs/API_DOCS.md", (routePath) => {
-    expect(API_DOCS).toContain(routePath);
-  });
-
-  test("the family is reachable from the table of contents", () => {
-    expect(API_DOCS).toContain("#agent-api");
   });
 });
 
@@ -528,7 +454,6 @@ const ENGINE_CLAIM_FILES = [
   "docs/AGENT_DEMO.md",
   "docs/FEATURES.md",
   "docs/providers/libsql.md",
-  "docs/API_DOCS.md",
   "deploy/railway/TEMPLATE_OVERVIEW.md",
   "deploy/digitalocean/assets/description-long.md",
   "deploy/rancher/CATALOG_LISTING.md",
@@ -727,17 +652,6 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     const text = file === "deploy/rancher/CATALOG_LISTING.md" ? rancherSubmittedCopy() : read(file);
     // The READMEs and listings wrap their lines, so a count split by a line break is matched too.
     expect(text.replace(/\s+/g, " ")).not.toMatch(ENGINE_COUNT);
-  });
-
-  test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
-    const body = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body;
-    expect(read("docs/API_DOCS.md")).toContain(`"error": "${body}"`);
-  });
-
-  test("docs/API_DOCS.md quotes the sentence a run recorded in a statement language this Studio does not have is refused with", () => {
-    const sentence = runHeaderRefusal({ mode: "agent", statementLanguage: "cobol" })?.sentence;
-    expect(sentence).toBeDefined();
-    expect(read("docs/API_DOCS.md")).toContain(`"error": ${JSON.stringify(sentence)}`);
   });
 });
 

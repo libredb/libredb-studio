@@ -91,7 +91,7 @@ export function HeroProof() {
     // `space-y-1`, and no wider: the agent claim's detail names every engine agent mode
     // executes on, and at 1280x800 the login page fits without scrolling (#541) with a few
     // pixels to spare, so a wider gap here, or one more wrapped line in the detail, scrolls
-    // it. Why the claim should stop growing with the engine list is `docs/BACKLOG.md` U139.
+    // it. Why the claim should stop growing with the engine list is backlog U139.
     <div className="space-y-1">
       <dl data-testid="hero-proof" className="grid grid-cols-3 gap-x-6 gap-y-2 select-none">
         {claims.map((claim) => (

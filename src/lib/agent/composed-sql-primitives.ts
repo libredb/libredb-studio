@@ -165,7 +165,7 @@ export interface AgentCatalogRead {
  * that one name back at the cost of a rule whose boundary depends on where in the
  * string the character sits — and a selector is a name a caller can also reach by
  * narrowing to its schema instead. Escape handling is now a per-dialect grammar fact
- * (`backslashAlwaysEscapes`, `docs/BACKLOG.md` S2) that every shipped row declares
+ * (`backslashAlwaysEscapes`, backlog S2) that every shipped row declares
  * false, and the wide rule stays correct whichever way a row declares it.
  */
 export function assertSelector(value: string, field: string): string {

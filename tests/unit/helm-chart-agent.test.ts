@@ -26,7 +26,7 @@
  *     takes file locks and each pod gets its own `emptyDir`, so a run started on one
  *     pod is invisible to the next request. The only backend that lifts it
  *     (`@workflow/world-postgres`) is not loadable in the published image at all
- *     (docs/BACKLOG.md B16), so the message has to say that rather than sell an
+ *     (backlog B16), so the message has to say that rather than sell an
  *     opt-in that does not exist yet.
  *
  * Exercises real `helm template` output — no reimplementation of the templates.

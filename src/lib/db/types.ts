@@ -587,7 +587,7 @@ export function offersCountQuery(capabilities: ProviderCapabilities | undefined)
 
 /**
  * Whether the result export menu offers SQL `INSERT` and `CREATE TABLE` DDL, asked by `BottomPanel` for both its
- * Export and its Copy items (BACKLOG U69).
+ * Export and its Copy items (backlog U69).
  *
  * Both formats write a table of rows for a SQL database. A result whose records are not rows of such a table
  * cannot become one: a vector cell is written as quoted text into a `TEXT` column, a file that loads nowhere as a

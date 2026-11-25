@@ -736,7 +736,7 @@ function searchObjectDetail(path: readonly string[], columns: ColumnSchema[]): O
  *   (`hasMore`, `limit`, `offset`). A caveat attached to every ordinary query is
  *   the fastest way to train a user to ignore the ones that matter, which is the
  *   argument `druid/index.ts` makes about its own warnings. The count is therefore
- *   dropped here, knowingly; `docs/BACKLOG.md` is where it belongs if a surface for
+ *   dropped here, knowingly; the backlog is where it belongs if a surface for
  *   it ever exists.
  *
  * The declared column order is used verbatim, and it is already unique: the
@@ -2032,7 +2032,7 @@ abstract class SearchProvider extends SQLBaseProvider {
         // degrades an unavailable monitoring surface to no rows, then maps the absent row
         // to zero through `nonNegative`, a local `asNumber` or a `?? 0`: the same encoding
         // reached by a different route, and invisible because the refusal was swallowed a
-        // layer earlier (docs/BACKLOG.md D51).
+        // layer earlier (backlog D51).
         //
         // Zero still means "not published" for the CEILING beside it, and only for that:
         // `maxConnections` treats 0 and absence as one fact, which is why `druid` and

@@ -291,8 +291,8 @@ bun run test:coverage  # reporte de cobertura
 
 El material en profundidad está por ahora solo en inglés:
 
-- [Arquitectura](docs/ARCHITECTURE.md) · [Proveedores de bases de datos](docs/DATABASE_PROVIDERS.md) · [Referencia por motor](docs/providers/README.md)
-- [Documentación de la API](docs/API_DOCS.md) · [Configuración de OIDC](docs/OIDC.md) · [Capa de almacenamiento](docs/STORAGE.md)
+- [Proveedores de bases de datos](docs/DATABASE_PROVIDERS.md) · [Referencia por motor](docs/providers/README.md)
+- [Configuración de OIDC](docs/OIDC.md) · [Capa de almacenamiento](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [Canales de distribución](docs/CHANNELS.md)
 
 ## Contribuir

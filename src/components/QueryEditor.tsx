@@ -612,7 +612,7 @@ export const QueryEditor = forwardRef<QueryEditorRef, QueryEditorProps>(
       formatter over PromQL (`up == 0` became `up = = 0`, and setValue clears Monaco's undo
       history). The Cmd+Enter half is the standalone shell's alone, because only
       `use-query-execution.ts` listens for the `execute-query` event handleExecute dispatches and
-      the embedded `StudioWorkspace` registers no listener (docs/BACKLOG.md U47). There, after a
+      the embedded `StudioWorkspace` registers no listener (backlog U47). There, after a
       remount under PostgreSQL, Cmd+Enter cut an expression at a `;` inside its `#` comment, and
       on an SQL tab the same closure held the `monaco === null` of a fresh load, so Cmd+Enter
       sent the whole buffer rather than the statement at the caret.

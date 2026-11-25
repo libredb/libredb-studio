@@ -60,7 +60,7 @@ const PROVIDER_LAYER = [
 ];
 
 /**
- * The declared fields no module of the engine's provider layer reads, pinned by name (BACKLOG D494): SQLite, DuckDB
+ * The declared fields no module of the engine's provider layer reads, pinned by name (backlog D494): SQLite, DuckDB
  * and LibreDB list TLS modes in their declarations, so their declaration takes TLS settings their providers never read.
  * Emptying their lists is a dialog change of its own.
  */
@@ -445,8 +445,8 @@ describe("a provider module reads only the connection fields its engine declares
   test("every engine that lists TLS modes lists each of the provider contract's modes, in its order, and an engine lists none exactly where the dialog offers no SSL / TLS panel", () => {
     // Measured 2026-11-24 by building each listing engine's provider with each mode and connecting: no provider refuses
     // any of them as a mode, and every Studio surface that offers a mode offers them all, so a narrower list would
-    // refuse connections that load today. Six engines give four of the modes one meaning (BACKLOG D37) and three read
-    // none (BACKLOG D494, DECLARED_AND_UNREAD above); both keep every mode until their entries are closed.
+    // refuse connections that load today. Six engines give four of the modes one meaning (backlog D37) and three read
+    // none (backlog D494, DECLARED_AND_UNREAD above); both keep every mode until their entries are closed.
     // This test reads only the schema, the declarations and the form composed from them: that each provider takes
     // every mode its engine lists rests on that recorded measurement, not on this test.
     const schema = JSON.parse(

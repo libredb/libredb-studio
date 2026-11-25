@@ -2,8 +2,8 @@
  * `docs/AGENT.md` states what agent mode does on a MongoDB connection, and each claim it makes is read back here from
  * the code that decides it, the shape of `tests/unit/db/kubernetes/provider-doc.test.ts`: a claim copied into prose
  * is true only until the code moves. The section's tool table is the manifest's mongo variants, its command argument
- * is the language's, the tools and the setting it says are not offered are not, each with the backlog entry that
- * records why, its refusals end in the run reasons the runtime records for their codes, and the posture table carries
+ * is the language's, the tools and the setting it says are not offered are not, each with the backlog id it
+ * cites, its refusals end in the run reasons the runtime records for their codes, and the posture table carries
  * the row the safety strip renders.
  */
 import { describe, expect, test } from "bun:test";
@@ -16,7 +16,6 @@ import { MCP_STATEMENT_ARMS } from "@/lib/mcp/tools/statement-arms";
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (file: string): string => readFileSync(path.join(ROOT, file), "utf8");
 const AGENT_DOC = read("docs/AGENT.md");
-const BACKLOG = read("docs/BACKLOG.md");
 
 const HEADING = "### On a MongoDB connection";
 /** The section, from its heading to the next heading of its level or above. */
@@ -28,15 +27,6 @@ const cells = (row: string): string[] =>
     .slice(1, -1)
     .map((cell) => cell.trim());
 const ticked = (cell: string): string[] => [...cell.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
-
-/** The M2 backlog entry an id names, by its title, or undefined when the section holds no such entry. */
-function m2Title(id: string): string | undefined {
-  const m2 = BACKLOG.split(/^## Agent M2 deferrals/m)[1]?.split(/^## /m)[0] ?? "";
-  return m2
-    .split("\n")
-    .find((line) => line.startsWith(`### ${id}. `))
-    ?.slice(`### ${id}. `.length);
-}
 
 /** The backlog id the first sentence of the section matching `subject` cites. */
 function citedFor(subject: RegExp): string {
@@ -81,20 +71,19 @@ describe("the section's tool table is the manifest's mongo variants", () => {
   });
 });
 
-describe("what a MongoDB run is not offered is not offered, and the backlog says why", () => {
-  test("compare_plans: no mongo variant offers it, and the entry the section cites is about it", () => {
+describe("what a MongoDB run is not offered is not offered, and the section cites why", () => {
+  test("compare_plans: no mongo variant offers it, and the section cites a backlog id beside it", () => {
     for (const variant of Object.values(AGENT_WORKFLOW_VARIANTS.mongo)) {
       expect(variant?.tools ?? []).not.toContain("compare_plans");
     }
-    expect(m2Title(citedFor(/`compare_plans`/))).toContain("compare_plans");
+    expect(citedFor(/`compare_plans`/)).toMatch(/^B\d+$/);
   });
 
-  test("auto-execute: no mongo variant offers it, and the entry the section cites is about it", () => {
+  test("auto-execute: no mongo variant offers it, and the section cites a backlog id beside it", () => {
     for (const variant of Object.values(AGENT_WORKFLOW_VARIANTS.mongo)) expect(variant?.canAutoExecute).toBe(false);
     const id = citedFor(/[Aa]uto-execute/);
-    expect(m2Title(id)).toContain("auto-execute");
     // The mongo client pack's docblock names the change that would turn it on by the same entry.
-    expect(read("src/lib/agent/languages/mongo/client.ts")).toMatch(new RegExp(`BACKLOG\\.md\`?[\\s*]+${id}\\b`));
+    expect(read("src/lib/agent/languages/mongo/client.ts")).toMatch(new RegExp(`\\bbacklog\`?[\\s*]+${id}\\b`));
   });
 
   test("MCP: the section names the tool the mongo language's MCP arm registers, and cites no backlog entry for it", () => {

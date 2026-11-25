@@ -827,7 +827,7 @@ describe("the Connections tree against PostgreSQL, SQL Server, MySQL and MongoDB
     }
 
     // SQL Server refuses `SELECT * FROM master.dbo.order;` with "Incorrect syntax near the keyword 'order'.":
-    // quoteObjectPath writes a reserved word bare on SQL Server, on the web too (D388 in docs/BACKLOG.md).
+    // quoteObjectPath writes a reserved word bare on SQL Server, on the web too (D388 in the backlog).
     // This case runs again once D388 brackets a reserved word.
     it.skip("Select Rows runs on mssql's table named order (Review Focus 3, the quoting defect)", async () => {
       const container = await containerAt(

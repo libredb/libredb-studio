@@ -49,7 +49,7 @@ function firstAnswer<Answer>(ask: (row: DriverErrorClassifier) => Answer | undef
  * Whether the driver's own code fields say the STATEMENT is at fault (#1427).
  *
  * Read from codes and never from the message, so a table named `pool_items` or `timeouts`
- * cannot decide the class (BACKLOG B4). Each driver publishes its own field, measured on the
+ * cannot decide the class (backlog B4). Each driver publishes its own field, measured on the
  * installed drivers on 2026-10-04: the SQLSTATE in `code`, `sqlState` or `sqlstate`, read here,
  * and every other field by the driver's row in `DRIVER_ERROR_CLASSIFIERS`, which may also say a
  * code is not the statement's fault before any SQLSTATE is read.

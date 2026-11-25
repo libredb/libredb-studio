@@ -186,7 +186,7 @@ On 2026-10-04 it printed the same verdict for every row on 12.1.0.0 and on 11.5.
 K24 was found on 2026-10-04 while moving to 1.0.25, and 1.0.24 has it too: a `CLOB(1M)` or `BLOB(1M)` bound alone answered 0 rows on both, and beside another parameter 1.0.24 refused the statement with "parameter descriptor count 1 does not match parameter count 2" where 1.0.25 writes nothing.
 The README of 1.0.25 binds a Buffer through `CAST(? AS BLOB(1M))`, and that statement wrote nothing either, on 12.1.0.0 and 11.5.9.0.
 A `DBCLOB(1K)` and an `XML` column are written.
-It is reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31); D225 in `docs/BACKLOG.md` tracks it.
+It is reported upstream as [gurungabit/db2-node#31](https://github.com/gurungabit/db2-node/issues/31); D225 in the backlog tracks it.
 
 The provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns`, so the grid's inline editor opens no editor on such a cell and shows the reason on it, and a result with such a column carries a warning above the grid that names those columns and says the grid does not edit them.
 The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)` and a `CLOB(1K)` as `CLOB`, so every such column is refused and named, a short one included.
@@ -194,7 +194,7 @@ Reading them is exact since 1.0.25: `SELECT *` over `APP.ALLTYPES` answers all 2
 
 db2-node 1.0.25, the pinned version, and 1.0.27, the latest release, decode a fixed-length `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column as fixed-width although Db2 12.1 sends its values length-prefixed, so a query that selects one either fails with a protocol error ("query ended with undecoded row data" or "Non-null fetch SQLDIAGGRP is not supported") or returns wrong values without an error, sometimes with fewer rows, while `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns are not affected ([gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42)).
 It is not probed by `tests/live/db2-known-issues.ts` and was measured on 12.1.0.0 only.
-D422 in `docs/BACKLOG.md` tracks it.
+D422 in the backlog tracks it.
 
 ### Fixed in 1.0.25
 
@@ -431,7 +431,7 @@ Measured on 12.1.0.0 through 1.0.25: `close()` called while a statement runs ret
 So the timeout error says the statement keeps running, that the transaction is over and is rolled back once the connection closes, and that a new transaction is needed to continue.
 The shared client is not bounded the same way, because closing it would wait for the statement just the same and then end every other request on it.
 
-Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it ([`API_DOCS.md`](../API_DOCS.md), "How long the server waits").
+Studio waits for an editor statement at most the connection's statement timeout (`queryTimeout`, 60 s when the connection sets none) plus 10 s, because this provider does not apply that timeout to it.
 A statement still running then is answered `504 TIMEOUT_ERROR` with `kind: "studio-timeout-refusal"` and `outcome: "unknown"`.
 This provider cannot cancel a run, so Studio sends no cancel, and the statement runs on in the server, holding the shared client, until it ends.
 
@@ -765,7 +765,7 @@ A column modification is written as a comment, not as DDL: Db2 changes a column 
 Added and dropped columns use `ADD COLUMN` and `DROP COLUMN`, which Db2 LUW accepts; a dropped column can leave the table REORG-pending, measured, and Reorganize Table clears it.
 The migration is not wrapped in `BEGIN;` and `COMMIT;`, because in Db2 `BEGIN` opens a compound block.
 Db2 refuses `DROP CONSTRAINT IF EXISTS` and `DROP INDEX IF EXISTS`, so those statements are written without `IF EXISTS`.
-The shared diff keys objects by their schema and name, so `APP.T` and `REPORTING.T` are two tables, names each table as `"SCHEMA"."TABLE"`, and names a differing view or materialized query table in a comment instead of writing table DDL for it. A foreign key's cross-schema reference is still quoted as one identifier; read a Db2 migration before you run it (D150 in `docs/BACKLOG.md`).
+The shared diff keys objects by their schema and name, so `APP.T` and `REPORTING.T` are two tables, names each table as `"SCHEMA"."TABLE"`, and names a differing view or materialized query table in a comment instead of writing table DDL for it. A foreign key's cross-schema reference is still quoted as one identifier; read a Db2 migration before you run it (D150 in the backlog).
 
 ## 12. Packaging and platforms
 
@@ -782,7 +782,7 @@ Checked again through the OSV API on 2026-10-26, those crates carry six advisori
 They are RUSTSEC-2026-0346, RUSTSEC-2026-0347, RUSTSEC-2026-0348 and RUSTSEC-2026-0349 for `rustls` (patched in 0.23.46), RUSTSEC-2026-0382 for `rustls-webpki` (patched in 0.103.16), and RUSTSEC-2026-0386, an informational unsoundness notice for `tokio` 1.51.0 (patched in 1.51.6).
 Read against the driver's source, only RUSTSEC-2026-0382 is reachable: a verified connection builds its trust store from the operating system's roots plus the given CA, so a certificate path through one of the distrusted emSign intermediates is accepted wherever that store still trusts its root.
 The others need what the addons do not use: RUSTSEC-2026-0346 a custom `ClientSessionStore`, RUSTSEC-2026-0347 Encrypted Client Hello, RUSTSEC-2026-0348 the `brotli` feature, which is not in the `Cargo.lock`, RUSTSEC-2026-0349 a hybrid post-quantum group to downgrade from, which the `ring` provider the addons install does not offer (it offers X25519, secp256r1 and secp384r1), and RUSTSEC-2026-0386 `tokio::io::unix::AsyncFd`, which `db2-node` never calls.
-P10 in `docs/BACKLOG.md` tracks them.
+P10 in the backlog tracks them.
 The crates are compiled into the addon, so only a new `db2-node` release can move one; repeat the check on every bump.
 Only linux x64 was measured; arm64, macOS and Windows load the addon in the release probes but were not run against a Db2.
 

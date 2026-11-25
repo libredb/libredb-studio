@@ -53,7 +53,7 @@
  * `src/lib/llm`'s own union, factory, validation and providers — a chat-surface
  * feature in its own right, since `LLM_PROVIDER=anthropic` would then have to work
  * for every surface that resolves a provider, not only for a run. Deferred rather than
- * half-built; the reasoning and what closing it takes are in `docs/BACKLOG.md` B2.
+ * half-built; the reasoning and what closing it takes are in backlog B2.
  */
 
 import type { CallWarning, LanguageModel } from "ai";

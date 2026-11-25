@@ -1,5 +1,5 @@
 /**
- * The SSL / TLS panel read once for every gRPC provider (the gRPC mapping docs/BACKLOG.md D37 counts once), the TLS
+ * The SSL / TLS panel read once for every gRPC provider (the gRPC mapping backlog D37 counts once), the TLS
  * identity of one dialled host, the dial target and the endpoint host rule: what a provider hands the channel
  * credentials of credentials.ts and the server-name override of channel.ts. No socket opens here: every refusal is the
  * caller's DatabaseConfigError, worded with the caller's words, and none repeats the value it refuses. Nothing here

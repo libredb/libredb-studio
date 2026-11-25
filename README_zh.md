@@ -662,7 +662,7 @@ bun run test:coverage
 ### 关键细节
 
 - **测试 runner**：[`tests/run-tests.ts`](tests/run-tests.ts) 基于 `bun:test`。它会发现 `tests/` 下所有 `*.test.ts` 和 `*.test.tsx` 文件，`tests/live/` 除外，所以新增测试文件一落地就会被跑到；它让每个文件跑在自己的 bun 进程里，同时跑好几个（默认每 CPU 一个，用 `--jobs=N` 调整）。
-- **为什么每个文件一个进程**：bun 的 `mock.module()` 是进程级且无法撤销的，而整模块 mock 是 `tests/api/` 里的标准写法，所以共享进程的文件会互相污染。在 20 核的 Linux 上用 bun 1.4.2，整套测试一次跑一个文件耗时 211 秒，一次 4 个 61 秒，一次 20 个 36 秒，测量时间是 2026-09-15，覆盖当时仓库里的 538 个文件；`docs/BACKLOG.md` D86 记着同样这三个数字和同样的口径。
+- **为什么每个文件一个进程**：bun 的 `mock.module()` 是进程级且无法撤销的，而整模块 mock 是 `tests/api/` 里的标准写法，所以共享进程的文件会互相污染。在 20 核的 Linux 上用 bun 1.4.2，整套测试一次跑一个文件耗时 211 秒，一次 4 个 61 秒，一次 20 个 36 秒，测量时间是 2026-09-15，覆盖当时仓库里的 538 个文件；backlog D86 记着同样这三个数字和同样的口径。
 - **到哪都是同一条命令**：runner 用 TypeScript 而不是 shell 写，这样告诉贡献者的命令在 Linux、macOS 和 Windows 各自的 shell 里都能用。它替掉的那些 bash 脚本做不到：其中一个用了 `mapfile`，那是 bash 4 的内建命令，macOS 的 bash 3.2 没有。
 - **E2E**：Playwright 在 Chromium 上跑全套，在 WebKit 上跑 `security-headers` 这个 spec（`webkit-security`），都是针对生产构建（`bun run build && bun start`）
 - **CI**：GitHub Actions 跑 lint + typecheck + build、ubuntu 上必过的 `Unit & Integration Tests` 任务（先 `bun run test:coverage` 再 `bun run coverage:check`）、windows-latest 与 macos-latest 上非必过的 `Cross-platform Tests` 任务、E2E 测试，以及 SonarCloud 分析
@@ -1003,7 +1003,6 @@ docker compose -f docker-compose.vault-demo.yml up
 |----------|-------------|
 | [DeepWiki](https://deepwiki.com/libredb/libredb-studio) | AI 驱动的文档，始终与代码库保持同步 |
 | [SonarCloud](https://sonarcloud.io/project/overview?id=libredb_libredb-studio) | 代码质量、安全分析与技术债跟踪 |
-| [API 文档](docs/API_DOCS.md) | 完整的 REST API 参考 |
 | [Agent 指南](docs/AGENT_GUIDE.md) | 使用 Agent：一次运行、三种工作流、"已回答"的含义、预算表以及 Ollama 路径 |
 | [Agent 数据流向](docs/AGENT_DATA_FLOW.md) | 什么数据会离开本机、什么时候离开、发往哪个模型 provider，按调用点撰写 |
 | [本地模型](docs/llms/README.md) | 哪个本地模型真能驱动一次 Agent 运行，跨三种工作流实测，每个模型一页 |
@@ -1013,8 +1012,6 @@ docker compose -f docker-compose.vault-demo.yml up
 | [主题指南](docs/ui/theming.md) | CSS 主题、深色模式与样式定制 |
 | [登录页](docs/ui/login-page.md) | 登录页布局、OIDC/local 模式与设计系统 |
 | [编辑器文档](docs/editor/) | SQL 编辑器内部实现：补全、性能、查询优化 |
-| [架构](docs/ARCHITECTURE.md) | 系统架构与设计模式 |
-| [待办清单](docs/BACKLOG.md) | 已知缺陷以及尚未登记为 issue 的延期工作 |
 
 ### 跨浏览器测试
 
@@ -1064,8 +1061,8 @@ _成为第一个赞助 libredb-studio 的人！_
 
 深入内容目前只有英文版本：
 
-- [架构](docs/ARCHITECTURE.md) · [数据库提供方](docs/DATABASE_PROVIDERS.md) · [各引擎参考](docs/providers/README.md)
-- [API 文档](docs/API_DOCS.md) · [OIDC 配置](docs/OIDC.md) · [存储层](docs/STORAGE.md)
+- [数据库提供方](docs/DATABASE_PROVIDERS.md) · [各引擎参考](docs/providers/README.md)
+- [OIDC 配置](docs/OIDC.md) · [存储层](docs/STORAGE.md)
 - [Helm Chart](docs/HELM_CHART.md) · [分发渠道](docs/CHANNELS.md)
 
 ## 贡献

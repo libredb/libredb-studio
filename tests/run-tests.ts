@@ -131,7 +131,7 @@ function stopRun(): void {
  *
  * What it covers is what THIS process writes. A child can still drop part of its own
  * queued console output when it exits under load, with no runner in the picture at
- * all (measured on 1.4.2, and filed as D96 in docs/BACKLOG.md), and no drain here can
+ * all (measured on 1.4.2, and filed as D96 in the backlog), and no drain here can
  * put that back.
  */
 function written(stream: NodeJS.WriteStream, text: string): Promise<void> {
