@@ -663,13 +663,16 @@ describe("the lock's format", () => {
       expect(lockRefusal(loop)).toEqual({ rule: "directory-unreadable", errno: "ELOOP" });
     }
     if (process.platform !== "win32" && process.getuid?.() !== 0) {
+      // The lock, not its directory, loses its permissions: macOS's realpath opens the path it resolves, so a
+      // directory with none is refused one step earlier there, as directory-unreadable.
       const locked = freshProviders();
       writeLock(locked, []);
-      fs.chmodSync(locked, 0o000);
+      const lock = path.join(locked, LOCK_FILE_NAME);
+      fs.chmodSync(lock, 0o000);
       try {
         expect(lockRefusal(locked)).toEqual({ rule: "lock-unreadable", errno: "EACCES" });
       } finally {
-        fs.chmodSync(locked, 0o755);
+        fs.chmodSync(lock, 0o644);
       }
     }
   });
