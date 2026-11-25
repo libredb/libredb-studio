@@ -2819,7 +2819,7 @@ Its calls offer execute alone, honouring `offset` and `readOnly`.
 Its execute sends every row as its statement as written, with no prepare, and applies a bounded page through the provider's prepare, on a fresh options object of the page's limit and offset, refusing a non-zero offset the prepare did not apply before anything is sent, C-85.
 It then runs `queryReadOnly` with the statement it prepared, or as written, a fresh budget of the open's statement timeout and billed-read allowance, by reference, and the request's rows and bytes, and the request's mode, and never the probe or the plain query.
 It answers one source per result set, the main rows first, its page applied exactly when the prepare says it applied it, and its page's row limit is every row the provider returned, at least one, within one page.
-A statement Studio composed and its statement guard admitted, which must reach the provider exactly as composed, is served as a composed statement session of its own, built per call by its facade, C-80.
+A statement Studio composed and its statement guard admitted, which must reach the provider exactly as composed, is served as a composed statement session of its own, built per call by the one opener its facades read, C-80 and C-86.
 Its calls offer execute alone, honouring no request field, and it is no read-only statement session.
 Its execute runs the provider's plain `query` with exactly one argument, the request's statement, and never the prepare, the probe, params, a run id or a scope, so no page bound is appended to the statement.
 It answers and limits its page as the read-only statement session does, its page not applied, and reads no engine row.
@@ -3909,7 +3909,7 @@ A provider that ends nothing of its query path is sent no scope and asked to end
 - test `tests/api/db/multi-query.test.ts` "a script run before the host core is installed fails by name and sends no unit"
 - test `tests/api/db/multi-query.test.ts` "a script the request leaves still ends its scope once the statement in flight settled"
 - test `tests/unit/lib/api/route-statement-callers.test.ts` "the scan finds a call of a provider statement member, and not a comment or a field that names one"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the profile, whose statements still run on the provider"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member"
 
 ### C-84 (normative): The editor's script inside a transaction on the host
 
@@ -3948,7 +3948,48 @@ The script records its one `open` event as before, and after a unit Studio stopp
 - test `tests/api/db/transaction.test.ts` "a malformed connection queryTimeout is refused with the query route's sentence before a query action opens anything"
 - test `tests/api/db/transaction.test.ts` "governance: a script unit Studio stopped waiting for records the script's open row with its code, and the end found after it settled is recorded unknown"
 - test `tests/api/db/transaction.test.ts` "the transaction route reads no session state but through the host"
-- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member except the profile, whose statements still run on the provider"
+- test `tests/unit/lib/api/route-statement-callers.test.ts` "no route calls a provider statement member"
+
+### C-86 (normative): The data profile on the host
+
+The data profile route waits for its connection's open within the engine's connect budget and while the request stays, C-44 and C-55, so a request that leaves during the open, or an open past its budget, is answered not-sent.
+A connection statement timeout the host cannot wait on, one that is not a whole number of milliseconds from 1 to the longest timer, is refused before the open with the query route's sentence.
+The route reads the host core once, after the open and the language and column checks and before any read, so a profile run before the install fails by name, records no event and sends nothing.
+Every read the route composes, the row count, each column's measures and its null count, and MongoDB's sample aggregate and count, is one host core execute, C-48, on a composed statement session the legacy bridge serves, C-50, so the provider receives it exactly as written.
+The SQL sample is one host core execute on the bridge's console session asking a page of five, so the provider writes its own bound one row past it, and at most five rows are answered.
+Each request is fresh, every row as its page for a composed read and the page of five for the sample, with no params, run id or scope.
+Each context is fresh: its own deadline, the statement timeout plus 10 s from that read's start, a signal that aborts at it or when the request leaves, and the empty environment.
+The host pumps the first result within one page, C-53, answered by reference and released once read: a row larger than one page is refused as `StudioByteBudgetRefusal`, and an answer over 1 MiB waits for the host's large-page slot within the read's deadline.
+A read the request left answers the cancel, and a read its deadline stopped answers Studio's timeout refusal, each not-sent when refused at its start, C-51; either ends the profile as a lost connection does, and no further read is sent.
+A measure whose row is larger than one page is that measure's refusal, and a failure of the sample leaves the samples out.
+No cancel is sent for a stopped read, so the engine may run it on; its failure after the stop is logged under the route by kind and code, never its text.
+The route calls no provider statement member.
+
+- test `tests/unit/lib/api/profile-reads.test.ts` "a profile's composed read is one host core execute call on a composed statement session, its statement exactly as written, every row, and a context of its own deadline, the request's signal and env alone"
+- test `tests/unit/lib/api/profile-reads.test.ts` "each composed read takes a deadline of its own from its start"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read answers the provider's result by reference, and its page is released"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read its deadline stopped answers Studio's timeout refusal naming the statement timeout, and a later failure is logged by kind and code only"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read whose request leaves answers the cancel at once"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read after the request left or past its deadline is refused before the call, not-sent, and never reaches the provider"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read's row larger than one page is refused by the host's page budget"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a composed read passes the provider's error as the same object"
+- test `tests/unit/lib/api/profile-reads.test.ts` "opening the profile's reads before the host core is installed throws by name and calls no provider"
+- test `tests/unit/lib/api/profile-reads.test.ts` "the sample is one host core execute call on the console session asking a page of the given rows: the provider's own bound one row past it, and at most that many rows answered by reference"
+- test `tests/unit/lib/api/profile-reads.test.ts` "a sample its deadline stopped or whose request left answers the accessor's class"
+- test `tests/unit/lib/api/profile-reads-bounds.test.ts` "a profile's composed read whose provider never answers ends at its own deadline in Studio's timeout refusal"
+- test `tests/unit/lib/api/profile-reads-bounds.test.ts` "a profile's sample whose provider never answers ends at its own deadline in Studio's timeout refusal"
+- test `tests/api/db/profile.test.ts` "every read of a SQL profile is one host core execute call: each composed read on a composed statement session exactly as written, and the sample on the console session with a page of five, each under its own deadline and the request's signal"
+- test `tests/api/db/profile.test.ts` "a MongoDB profile's aggregate and count are each one host core execute call on a composed statement session, sent as written"
+- test `tests/api/db/profile.test.ts` "a read its deadline stops ends the profile with Studio's 504, and no further read is sent"
+- test `tests/api/db/profile.test.ts` "a request that leaves while a read runs ends the profile at once with 499, and no further read is sent"
+- test `tests/api/db/profile.test.ts` "a request that leaves while its connection opens answers 499 not-sent and sends nothing"
+- test `tests/api/db/profile.test.ts` "a connection queryTimeout the host cannot wait on is refused 400 before the connection opens"
+- test `tests/api/db/profile.test.ts` "a profile run before the host core is installed fails by name and sends nothing"
+- test `tests/api/db/profile.test.ts` "a measure whose row is larger than one page is that measure's refusal in Studio's page sentence"
+- test `tests/api/db/profile.test.ts` "the sample asks the provider one row past five and keeps five"
+- test `tests/api/db/profile.test.ts` "governance: a profile whose request leaves while a read runs records it cancelled with QUERY_CANCELLED, and one whose read passed its deadline records TIMEOUT_ERROR"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "only the agent's statistics read, under the operations profile, and the data profile's reads open a composed statement session"
+- test `tests/unit/db/operations/read-only-statement-callers.test.ts` "the data profile route calls no provider statement member: its reads run through the host core"
 
 ### C-85 (normative): A read-only execute's page, and MCP's offset paging on the host
 

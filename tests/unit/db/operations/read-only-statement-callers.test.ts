@@ -447,6 +447,16 @@ const AGENT_TOOLS = join("src", "lib", "agent", "tools.ts");
 const COMPOSED_OPENER = "composedStatementOn";
 /** The data profile's read facade, the second reader of that opener. */
 const PROFILE_READS = join("src", "lib", "api", "profile-reads.ts");
+/** The data profile route, whose reads run through the profile's read facade. */
+const PROFILE_ROUTE = join("src", "app", "api", "db", "profile", "route.ts");
+/** The provider statement members other than `query`, each held by any read: a read is how a call begins. */
+const PROVIDER_STATEMENT_MEMBERS = [
+  "prepareQuery",
+  "queryInTransaction",
+  "cancelQuery",
+  "queryReadOnly",
+  "endOpenQueryTransaction",
+] as const;
 
 interface FunctionCall {
   readonly file: string;
@@ -568,7 +578,24 @@ describe("the agent's statements and the hand-over replay on the host core", () 
     expect(facade.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${AGENT_TOOLS} in invoke`]);
     expect(facade[0]?.names.has("AGENT_OPERATIONS_PROFILE")).toBe(true);
     expect(firstCall(declaredFunction(AGENT_TOOLS, STATISTICS_READ), "runComposedStatement")).toBeGreaterThan(-1);
+    // The data profile's reads are opened by the profile route alone, on the provider it opened under the editor
+    // posture.
+    const profile = callsOutsideProviders("openProfileReads");
+    expect(profile.map((call) => `${call.file} in ${call.declaration}`)).toEqual([`${PROFILE_ROUTE} in POST`]);
   }, 60_000);
+
+  test("the data profile route calls no provider statement member: its reads run through the host core", () => {
+    const text = readFileSync(join(ROOT, PROFILE_ROUTE), "utf8");
+    const reached = [
+      ...queryCalls(PROFILE_ROUTE, text).map((finding) => `query in ${finding.declaration}`),
+      ...PROVIDER_STATEMENT_MEMBERS.flatMap((member) =>
+        memberReads(PROFILE_ROUTE, text, member).map((finding) => `${member} in ${finding.declaration}`),
+      ),
+    ];
+    expect(reached).toEqual([]);
+    // The scan is not vacuous: the route reads its statements through the profile's reads.
+    expect(firstCall(declaredFunction(PROFILE_ROUTE, "POST"), "openProfileReads")).toBeGreaterThan(-1);
+  });
 });
 
 /** The function declared as `name` in `file`, parsed from the source. */

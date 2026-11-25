@@ -28,12 +28,6 @@ const STATEMENT_MEMBERS: ReadonlySet<string> = new Set([
   "endOpenQueryTransaction",
 ]);
 
-/** The routes whose statements still run on the provider, each until its own part moves it. */
-const STILL_ON_THE_PROVIDER = [
-  // The data profile's reads.
-  path.join("src", "app", "api", "db", "profile", "route.ts"),
-].sort();
-
 /** `node` with every parenthesis, `as`, `satisfies` and `!` around it stepped over. */
 function inner(node: ts.Expression): ts.Expression {
   let at = node;
@@ -134,11 +128,11 @@ describe("the routes' statement calls", () => {
     ]);
   });
 
-  test("no route calls a provider statement member except the profile, whose statements still run on the provider", () => {
+  test("no route calls a provider statement member", () => {
     const callers = trackedRoutes()
       .filter((file) => statementCalls(file, readFileSync(path.join(ROOT, file), "utf8")).length > 0)
       .sort();
 
-    expect(callers).toEqual(STILL_ON_THE_PROVIDER);
+    expect(callers).toEqual([]);
   });
 });

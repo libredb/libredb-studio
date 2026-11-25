@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
 import { createMockProvider } from "../../helpers/mock-provider";
@@ -11,6 +11,17 @@ import { buildQueryEvent, queryEventPolicy } from "@/lib/query-events/build";
 import type { QueryEventInput } from "@/lib/query-events/types";
 import type { QueryEventSinkState } from "@/lib/query-events/sink";
 import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
+import type { DatabaseProvider } from "@/lib/db/types";
+import { createHostCore, type HostCore } from "@/lib/provider-host/core/host-core";
+import { forgetHostCore, hostCore, installHostCore } from "@/lib/provider-host/instance";
+import type { QueryResult } from "@/lib/types";
+import { deadlineSignal } from "@libredb/provider-sdk/calls";
+import { withRecordingHostCore } from "../../helpers/recording-host-core";
+
+// The route reads every statement through the host core, so the file installs one, as the server's composition root
+// does.
+beforeAll(() => installHostCore(createHostCore(), "test"));
+afterAll(forgetHostCore);
 
 // ─── Mock providers ─────────────────────────────────────────────────────────
 const mockSQLProvider = createMockProvider({
@@ -21,7 +32,32 @@ const mockMongoProvider = createMockProvider({
   capabilities: { queryLanguage: "json" },
 });
 
-const mockGetOrCreateProvider = mock(async () => mockSQLProvider);
+const mockGetOrCreateProvider = mock<(...args: unknown[]) => Promise<DatabaseProvider>>(async () => mockSQLProvider);
+
+/**
+ * Every stand-in the factory mock handed out whose type is not its connection's: the bridge reads the provider's type
+ * (its engine's facet row), so a stand-in typed as another engine would test that engine's path. Held empty after
+ * every test, so a leaked `mockResolvedValueOnce` fails loudly where it surfaces.
+ */
+const mistypedStandIns: string[] = [];
+
+/** The factory's open: the test's stand-in, refused by name when its type is not its connection's. */
+async function typedStandIn(...args: unknown[]): Promise<DatabaseProvider> {
+  const provider = await mockGetOrCreateProvider(...args);
+  const connection = args[0] as { type: string };
+  if (provider.type !== connection.type) {
+    const mismatch = `stand-in of type ${provider.type} for a ${connection.type} connection`;
+    mistypedStandIns.push(mismatch);
+    throw new Error(mismatch);
+  }
+  return provider;
+}
+
+afterEach(() => {
+  const found = [...mistypedStandIns];
+  mistypedStandIns.length = 0;
+  expect(found).toEqual([]);
+});
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "admin", username: "admin" }),
@@ -87,7 +123,7 @@ mock.module("@/lib/seed/resolve-connection", () => {
 
 // ─── Mock @/lib/db/factory BEFORE importing the route ───────────────────────
 mock.module("@/lib/db/factory", () => ({
-  getOrCreateProvider: mockGetOrCreateProvider,
+  getOrCreateProvider: typedStandIn,
   createDatabaseProvider: mock(async () => mockSQLProvider),
   // The barrel `@/lib/db` re-exports it from this module, and the route loads the barrel; never called here.
   readProviderDeclarations: mock(async () => {
@@ -113,6 +149,8 @@ const { createInfluxClient } = await import("@/lib/db/providers/timeseries/influ
 const { INFLUX_ERROR_SENTENCES } = await import("@/lib/db/providers/timeseries/influxdb/errors");
 const { loadInfluxCapture } = await import("../../helpers/influxdb-fixtures");
 const { recordingInfluxTransport } = await import("../../helpers/influxdb-transport");
+const { contextOn, EXECUTE_SLACK_MS, executeViews, queryTimeoutError } = await import("@/lib/api/editor-query");
+const { DEFAULT_QUERY_TIMEOUT } = await import("@/lib/db/types");
 
 // ─── Fixtures ───────────────────────────────────────────────────────────────
 const validConnection = {
@@ -145,6 +183,14 @@ const etcdConnection = {
   type: "etcd" as const,
   host: "localhost",
   port: 2379,
+};
+
+const redisConnection = {
+  id: "test-redis",
+  name: "Test Redis",
+  type: "redis" as const,
+  host: "localhost",
+  port: 6379,
 };
 
 const influxdbConnection = {
@@ -209,6 +255,49 @@ async function connectedInfluxdb3(
 /** The statement and database of a recorded `/api/v3/query_sql` request. */
 const sqlOf = (request: RecordedInfluxRequestT): { db: string; q: string } => JSON.parse(request.body as string);
 
+/** What a held read answers once its test has asserted: no row, after the profile stopped waiting for it. */
+const NO_ROWS: QueryResult = { rows: [], fields: [], rowCount: 0, executionTime: 0 };
+
+/** A request on `signal`, as a browser's request is aborted when its client leaves. */
+function abortableRequest(body: Record<string, unknown>, signal: AbortSignal): Request {
+  return new Request("http://localhost:3000/api/db/profile", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    signal,
+  });
+}
+
+/** Runs `run` on a core `make` builds around the installed one, and puts the installed one back however it ends. */
+async function withCoreAround<T>(make: (real: HostCore) => HostCore, run: () => Promise<T>): Promise<T> {
+  const real = hostCore();
+  forgetHostCore();
+  installHostCore(make(real), "test");
+  try {
+    return await run();
+  } finally {
+    forgetHostCore();
+    installHostCore(real, "test");
+  }
+}
+
+/** Runs `run` with the second execute call given a deadline `ms` out and a signal that aborts at it alone. */
+function withSecondCallDeadline<T>(ms: number, run: () => Promise<T>): Promise<T> {
+  let calls = 0;
+  return withCoreAround(
+    (real) => ({
+      ...real,
+      executeCall: (session, request, ctx, limits, ports) => {
+        calls += 1;
+        if (calls !== 2) return real.executeCall(session, request, ctx, limits, ports);
+        const deadline = Date.now() + ms;
+        return real.executeCall(session, request, contextOn(deadline, deadlineSignal(deadline)), limits, ports);
+      },
+    }),
+    run,
+  );
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 describe("POST /api/db/profile", () => {
   beforeEach(() => {
@@ -227,6 +316,8 @@ describe("POST /api/db/profile", () => {
   // (`'<col>' as column_name`), which needed the dialect's literal quoting (#290); the
   // statement no longer carries the name as a value at all, only as a quoted identifier.
   test("never writes the column name into the statement as a string literal", async () => {
+    const mysqlProvider = createMockProvider({ type: "mysql", capabilities: { queryLanguage: "sql" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mysqlProvider);
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
       body: {
@@ -238,10 +329,10 @@ describe("POST /api/db/profile", () => {
 
     await POST(req as never);
 
-    const emitted = (mockSQLProvider.query as ReturnType<typeof mock>).mock.calls
+    const emitted = (mysqlProvider.query as ReturnType<typeof mock>).mock.calls
       .map((call) => String(call[0]))
       .join("\n");
-    expect(emitted).toContain('"a\\\' UNION SELECT 1 -- "');
+    expect(emitted).toContain("`a\\' UNION SELECT 1 -- `");
     expect(emitted).not.toContain("column_name");
   });
 
@@ -769,6 +860,7 @@ describe("POST /api/db/profile", () => {
 
   test("returns column profiles for MongoDB provider", async () => {
     const mongoProvider = createMockProvider({
+      type: "mongodb",
       capabilities: {
         queryLanguage: "json",
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
@@ -873,6 +965,8 @@ describe("POST /api/db/profile", () => {
    * 200 with somebody else's statistics.
    */
   test("profiles the object at the ADDRESS it was given, not the label's first match", async () => {
+    const mssqlProvider = createMockProvider({ type: "mssql", capabilities: { queryLanguage: "sql" } });
+    mockGetOrCreateProvider.mockResolvedValueOnce(mssqlProvider);
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
       body: {
@@ -884,7 +978,7 @@ describe("POST /api/db/profile", () => {
 
     await POST(req as never);
 
-    const emitted = (mockSQLProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => String(call[0]));
+    const emitted = (mssqlProvider.query as ReturnType<typeof mock>).mock.calls.map((call) => String(call[0]));
     expect(emitted.length).toBeGreaterThan(0);
     for (const sql of emitted) {
       expect(sql).toContain("FROM shop.dbo.customers");
@@ -912,6 +1006,7 @@ describe("POST /api/db/profile", () => {
     // the connected database's same-named collection. `jsonCommandAddress` is the reading
     // the generators use too.
     const mongoProvider = createMockProvider({
+      type: "mongodb",
       capabilities: {
         queryLanguage: "json",
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
@@ -948,6 +1043,7 @@ describe("POST /api/db/profile", () => {
     // city` (mongo:8.2.12). The sample comes back nested, so `address.city` is not a key of
     // the row and has to be read by walking the document.
     const mongoProvider = createMockProvider({
+      type: "mongodb",
       capabilities: {
         queryLanguage: "json",
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
@@ -1001,6 +1097,7 @@ describe("POST /api/db/profile", () => {
   // Only the absent case used to count, and a `null` was also counted as a distinct value.
   test("MongoDB counts an absent field and an explicit null alike as null", async () => {
     const mongoProvider = createMockProvider({
+      type: "mongodb",
       capabilities: {
         queryLanguage: "json",
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
@@ -1039,7 +1136,7 @@ describe("POST /api/db/profile", () => {
   test("MongoDB with no column to profile answers 400 and sends nothing", async () => {
     // An empty list would build `$project: {}`, which MongoDB refuses; refused here as the
     // SQL branch refuses it.
-    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    const mongoProvider = createMockProvider({ type: "mongodb", capabilities: { queryLanguage: "json" } });
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
     const req = createMockRequest("/api/db/profile", {
       method: "POST",
@@ -1108,11 +1205,15 @@ describe("POST /api/db/profile", () => {
   });
 
   test("refuses JSON in a dialect of its own, which is not the document the route builds", async () => {
-    const redisProvider = createMockProvider({ capabilities: { queryLanguage: "json", queryDialect: "redis" } });
-    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    const redisProvider = createMockProvider({
+      type: "redis",
+      capabilities: { queryLanguage: "json", queryDialect: "redis" },
+    });
+    const mongoProvider = createMockProvider({ type: "mongodb", capabilities: { queryLanguage: "json" } });
     mockGetOrCreateProvider.mockResolvedValueOnce(redisProvider);
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
-    const body = { connection: mongoConnection, tablePath: ["refusal_probe_prefix"], columns: ["refusal_probe_field"] };
+    const address = { tablePath: ["refusal_probe_prefix"], columns: ["refusal_probe_field"] };
+    const body = { connection: redisConnection, ...address };
 
     const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
     const data = await parseResponseJSON<{ error: string; code: string }>(refused);
@@ -1125,7 +1226,8 @@ describe("POST /api/db/profile", () => {
     expect(redisProvider.query).not.toHaveBeenCalled();
 
     // The control: MongoDB's JSON, with no dialect, is profiled with its two statements.
-    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const control = { connection: mongoConnection, ...address };
+    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body: control }) as never);
     expect(profiled.status).toBe(200);
     expect(mongoProvider.query).toHaveBeenCalledTimes(2);
   });
@@ -1133,11 +1235,12 @@ describe("POST /api/db/profile", () => {
   test("refuses a Kafka connection, whose read request is JSON of its own dialect, and sends nothing (#1088)", async () => {
     // The provider's own declaration, so the refusal is the one a topic's profile request meets.
     const kafka = new KafkaProvider({ ...kafkaConnection, createdAt: new Date(0) }).getCapabilities();
-    const kafkaProvider = createMockProvider({ capabilities: kafka });
-    const mongoProvider = createMockProvider({ capabilities: { queryLanguage: "json" } });
+    const kafkaProvider = createMockProvider({ type: "kafka", capabilities: kafka });
+    const mongoProvider = createMockProvider({ type: "mongodb", capabilities: { queryLanguage: "json" } });
     mockGetOrCreateProvider.mockResolvedValueOnce(kafkaProvider);
     mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
-    const body = { connection: kafkaConnection, tablePath: ["refusal_probe_topic"], columns: ["refusal_probe_key"] };
+    const address = { tablePath: ["refusal_probe_topic"], columns: ["refusal_probe_key"] };
+    const body = { connection: kafkaConnection, ...address };
 
     const refused = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
     const data = await parseResponseJSON<{ error: string; code: string }>(refused);
@@ -1150,7 +1253,8 @@ describe("POST /api/db/profile", () => {
     expect(kafkaProvider.query).not.toHaveBeenCalled();
 
     // The control: MongoDB's JSON, with no dialect, is profiled with its two statements.
-    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const control = { connection: mongoConnection, ...address };
+    const profiled = await POST(createMockRequest("/api/db/profile", { method: "POST", body: control }) as never);
     expect(profiled.status).toBe(200);
     expect(mongoProvider.query).toHaveBeenCalledTimes(2);
   });
@@ -1158,7 +1262,7 @@ describe("POST /api/db/profile", () => {
   test("refuses an etcd connection, whose text is a line of etcdctl's, and sends nothing (#1089)", async () => {
     // The provider's own declaration, so the refusal is the one a key-prefix group's profile request meets.
     const etcd = new EtcdProvider({ ...etcdConnection, createdAt: new Date(0) }).getCapabilities();
-    const etcdProvider = createMockProvider({ capabilities: etcd });
+    const etcdProvider = createMockProvider({ type: "etcd", capabilities: etcd });
     mockGetOrCreateProvider.mockResolvedValueOnce(etcdProvider);
     const body = { connection: etcdConnection, tablePath: ["/refusal_probe/*"], columns: ["refusal_probe_column"] };
 
@@ -1191,7 +1295,7 @@ describe("POST /api/db/profile", () => {
     // Correct as a fall-through: `offersColumnProfiling` names the two languages the route writes. The provider's own
     // declaration, so the refusal is the one a measurement's profile request meets.
     const influxql = new InfluxDBProvider({ ...influxdbConnection, createdAt: new Date(0) }).getCapabilities();
-    const influxqlProvider = createMockProvider({ capabilities: influxql });
+    const influxqlProvider = createMockProvider({ type: "influxdb", capabilities: influxql });
     mockGetOrCreateProvider.mockResolvedValueOnce(influxqlProvider);
     const body = {
       connection: influxdbConnection,
@@ -1245,7 +1349,7 @@ describe("POST /api/db/profile", () => {
     expect(sent.map((statement) => statement.db)).toEqual(["home", "home", "home"]);
     expect(sent[0].q).toBe('SELECT COUNT(*) AS total FROM "home"');
     expect(sent[1].q).toContain('COUNT(DISTINCT "temp") AS distinct_count');
-    expect(sent[2].q).toBe('SELECT "temp" FROM "home" LIMIT 5');
+    expect(sent[2].q).toBe('SELECT "temp" FROM "home" LIMIT 6');
   });
 
   test("an InfluxDB 3 profile past the Core file limit fails with the file-limit sentence (R25)", async () => {
@@ -1261,6 +1365,286 @@ describe("POST /api/db/profile", () => {
     expect(data.error).toBe(INFLUX_ERROR_SENTENCES.fileLimit as string);
     // The first COUNT(*) failed the request: nothing was sent after it.
     expect(requests.slice(2).map((request) => sqlOf(request).q)).toEqual(['SELECT COUNT(*) AS total FROM "home"']);
+  });
+});
+
+/**
+ * The route on the host core (docs/providers/CONTRACT.md, clause C-86): every read is one host core execute, each
+ * composed read on a composed statement session exactly as written and the sample on the console session asking a page
+ * of five, each under a deadline of its own and the request's signal. A deadline case gives one call a deadline 30 ms
+ * out through a core around the real one and holds the provider's read until after the answer, settled with a plain
+ * `await` before asserting; a request-leaves case aborts once the provider says the read reached it.
+ */
+describe("POST /api/db/profile on the host core", () => {
+  beforeEach(() => {
+    clearRateLimitState();
+    mockGetOrCreateProvider.mockClear();
+    mockGetOrCreateProvider.mockImplementation(async () => mockSQLProvider);
+    mockGetSession.mockImplementation(async () => ({ role: "admin", username: "admin" }));
+  });
+
+  /** A SQL stand-in answering a profile of `id` over two rows, the sample rows as `sample` gives them. */
+  function profiledSql(sample: () => Record<string, unknown>[] = () => [{ id: 1 }, { id: 2 }]) {
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 2 }], fields: ["total"] };
+      if (sql.includes("non_null_count")) {
+        const row = { total_count: 2, non_null_count: 2, distinct_count: 2, min_value: 1, max_value: 2 };
+        return { rows: [row], fields: Object.keys(row) };
+      }
+      const rows = sample();
+      return { rows, fields: ["id"], rowCount: rows.length };
+    });
+    return provider;
+  }
+
+  const body = { connection: validConnection, tablePath: ["public", "users"], columns: ["id"] };
+
+  test("every read of a SQL profile is one host core execute call: each composed read on a composed statement session exactly as written, and the sample on the console session with a page of five, each under its own deadline and the request's signal", async () => {
+    const provider = profiledSql();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const controller = new AbortController();
+    const before = Date.now();
+
+    const { res, record } = await withRecordingHostCore(async (recorded) => ({
+      res: await POST(abortableRequest(body, controller.signal) as never),
+      record: recorded,
+    }));
+    const after = Date.now();
+
+    expect(res.status).toBe(200);
+    const composed = [
+      "SELECT COUNT(*) AS total FROM public.users",
+      'SELECT COUNT(*) AS total_count, COUNT("id") AS non_null_count, COUNT(DISTINCT "id") AS distinct_count, MIN("id") AS min_value, MAX("id") AS max_value FROM public.users',
+    ];
+    expect(record.executes.map((execute) => execute.request)).toEqual([
+      ...composed.map((statement) => ({ statement, page: { unlimited: true as const } })),
+      { statement: 'SELECT "id" FROM public.users', page: { limit: 5, offset: 0 } },
+    ]);
+    expect(record.executes.map((execute) => execute.readOnlyStatements)).toEqual([false, false, false]);
+    // A composed read reaches the provider as written, its one argument; the sample is prepared by the provider.
+    const calls = (provider.query as ReturnType<typeof mock>).mock.calls;
+    expect(calls.slice(0, 2)).toEqual(composed.map((statement) => [statement]));
+    expect(provider.prepareQuery).toHaveBeenCalledWith('SELECT "id" FROM public.users', { limit: 5 });
+    const slack = DEFAULT_QUERY_TIMEOUT + EXECUTE_SLACK_MS;
+    for (const { ctx } of record.executes) {
+      expect(Reflect.ownKeys(ctx).sort()).toEqual(["deadline", "env", "signal"]);
+      expect(ctx.deadline).toBeGreaterThanOrEqual(before + slack);
+      expect(ctx.deadline).toBeLessThanOrEqual(after + slack);
+      expect(ctx.signal.aborted).toBe(false);
+    }
+    expect(new Set(record.executes.map((execute) => execute.ctx.signal)).size).toBe(3);
+    controller.abort();
+    expect(record.executes.map((execute) => execute.ctx.signal.aborted)).toEqual([true, true, true]);
+  });
+
+  test("a MongoDB profile's aggregate and count are each one host core execute call on a composed statement session, sent as written", async () => {
+    const mongoProvider = createMockProvider({
+      type: "mongodb",
+      capabilities: {
+        queryLanguage: "json",
+        containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
+      },
+    });
+    (mongoProvider.query as ReturnType<typeof mock>).mockImplementation(async (query: string) =>
+      JSON.parse(query).operation === "count"
+        ? { rows: [{ count: 1 }], fields: ["count"] }
+        : { rows: [{ name: "a" }], fields: ["name"] },
+    );
+    mockGetOrCreateProvider.mockResolvedValueOnce(mongoProvider);
+    const mongoBody = { connection: mongoConnection, tablePath: ["shop", "items"], columns: ["name"] };
+
+    const { res, record } = await withRecordingHostCore(async (recorded) => ({
+      res: await POST(createMockRequest("/api/db/profile", { method: "POST", body: mongoBody }) as never),
+      record: recorded,
+    }));
+
+    expect(res.status).toBe(200);
+    const calls = (mongoProvider.query as ReturnType<typeof mock>).mock.calls;
+    expect(calls.map((call) => call.length)).toEqual([1, 1]);
+    expect(record.executes.map((execute) => execute.request)).toEqual(
+      calls.map((call) => ({ statement: call[0], page: { unlimited: true as const } })),
+    );
+    expect(record.executes.map((execute) => execute.readOnlyStatements)).toEqual([false, false]);
+    expect(mongoProvider.prepareQuery).not.toHaveBeenCalled();
+  });
+
+  test("a read its deadline stops ends the profile with Studio's 504, and no further read is sent", async () => {
+    const held = Promise.withResolvers<QueryResult>();
+    const provider = profiledSql();
+    const answer = (provider.query as ReturnType<typeof mock>).getMockImplementation() as (sql: string) => unknown;
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) =>
+      sql.includes("non_null_count") ? held.promise : answer(sql),
+    );
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+
+    // A plain await of the profile, whose second read a 30 ms deadline ends.
+    const res = await withSecondCallDeadline(30, () =>
+      POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never),
+    );
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+    held.resolve(NO_ROWS);
+    await held.promise;
+
+    expect(res.status).toBe(504);
+    expect(data).toMatchObject({
+      code: "TIMEOUT_ERROR",
+      kind: "studio-timeout-refusal",
+      outcome: "unknown",
+      error: executeViews(provider, new AbortController().signal).view.deadlineSentence,
+    });
+    expect((provider.query as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+  });
+
+  test("a request that leaves while a read runs ends the profile at once with 499, and no further read is sent", async () => {
+    const held = Promise.withResolvers<QueryResult>();
+    const reached = Promise.withResolvers<void>();
+    const provider = profiledSql();
+    const answer = (provider.query as ReturnType<typeof mock>).getMockImplementation() as (sql: string) => unknown;
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (!sql.includes("non_null_count")) return answer(sql);
+      reached.resolve();
+      return held.promise;
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const controller = new AbortController();
+
+    const pending = POST(abortableRequest(body, controller.signal) as never);
+    await reached.promise;
+    controller.abort();
+    const res = await pending;
+    const data = await parseResponseJSON<Record<string, unknown>>(res);
+    held.resolve(NO_ROWS);
+    await held.promise;
+
+    expect(res.status).toBe(499);
+    expect(data).toMatchObject({ code: "QUERY_CANCELLED", kind: "cancelled", outcome: "unknown" });
+    expect((provider.query as ReturnType<typeof mock>).mock.calls).toHaveLength(2);
+  });
+
+  test("a request that leaves while its connection opens answers 499 not-sent and sends nothing", async () => {
+    const provider = profiledSql();
+    const opening = Promise.withResolvers<void>();
+    mockGetOrCreateProvider.mockImplementation((async (...args: unknown[]) => {
+      const wait = args[3] as { signal: AbortSignal };
+      opening.resolve();
+      // An open that never connects: only the request's own wait ends it, as `openOnce` ends a caller's wait.
+      return new Promise((_resolve, reject) => {
+        wait.signal.addEventListener("abort", () => reject(wait.signal.reason), { once: true });
+      });
+    }) as never);
+    const controller = new AbortController();
+
+    const pending = POST(abortableRequest(body, controller.signal) as never);
+    await opening.promise;
+    controller.abort();
+    const res = await pending;
+
+    expect(res.status).toBe(499);
+    expect(await parseResponseJSON(res)).toMatchObject({
+      code: "QUERY_CANCELLED",
+      kind: "cancelled",
+      outcome: "not-sent",
+    });
+    expect(provider.query).not.toHaveBeenCalled();
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+  });
+
+  test("a connection queryTimeout the host cannot wait on is refused 400 before the connection opens", async () => {
+    const timeouts = ["abc", 0, 1.5];
+    const answers = await Promise.all(
+      timeouts.map(async (queryTimeout) => {
+        const refused = { ...body, connection: { ...validConnection, queryTimeout } };
+        const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body: refused }) as never);
+        return { status: res.status, body: await parseResponseJSON(res) };
+      }),
+    );
+
+    expect(timeouts.map((queryTimeout) => queryTimeoutError(queryTimeout))).not.toContain(null);
+    expect(answers).toEqual(
+      timeouts.map((queryTimeout) => ({ status: 400, body: { error: queryTimeoutError(queryTimeout) } })),
+    );
+    expect(mockGetOrCreateProvider).not.toHaveBeenCalled();
+  });
+
+  test("a profile run before the host core is installed fails by name and sends nothing", async () => {
+    const provider = profiledSql();
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+    const real = hostCore();
+    forgetHostCore();
+    let res: Response;
+    try {
+      res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    } finally {
+      installHostCore(real, "test");
+    }
+    const data = await parseResponseJSON<{ error: string }>(res);
+
+    expect(res.status).toBe(500);
+    expect(data.error).toContain("The provider host core is not installed in this process");
+    expect(provider.query).not.toHaveBeenCalled();
+    expect(provider.prepareQuery).not.toHaveBeenCalled();
+  });
+
+  test("a measure whose row is larger than one page is that measure's refusal in Studio's page sentence", async () => {
+    const provider = createMockProvider({ capabilities: { queryLanguage: "sql" } });
+    (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+      if (sql.startsWith("SELECT COUNT(*) AS total FROM")) return { rows: [{ total: 4 }], fields: ["total"] };
+      if (sql.includes("COUNT(DISTINCT") && sql.includes("MIN(")) throw new QueryError("one statement refused");
+      if (sql.includes("COUNT(DISTINCT")) return { rows: [{ distinct_count: 3 }], fields: ["distinct_count"] };
+      if (sql.includes("non_null_count")) return { rows: [{ total_count: 4, non_null_count: 3 }], fields: [] };
+      return { rows: [], fields: [] };
+    });
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+
+    // The real core answers this record only for a row over 32 MiB; a core around it answers it for the range read.
+    const res = await withCoreAround(
+      (real) => ({
+        ...real,
+        executeCall: (session, request, ctx, limits, ports) =>
+          request.statement.startsWith("SELECT MIN(")
+            ? Promise.resolve({
+                kind: "refused" as const,
+                called: true,
+                refusals: [{ rule: "row-over-page" as const, pointer: "/rows/0", limit: 33554432, size: 40000000 }],
+              })
+            : real.executeCall(session, request, ctx, limits, ports),
+      }),
+      () => POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never),
+    );
+    const data = await parseResponseJSON<{ columns: Record<string, unknown>[] }>(res);
+
+    expect(res.status).toBe(200);
+    expect(data.columns[0]).toMatchObject({
+      name: "id",
+      nullCount: 1,
+      distinctCount: 3,
+      warnings: [
+        "Min/max: A row of the result is 40000000 bytes, over the 33554432 bytes one page of a result may hold, so Studio answers no page of it.",
+      ],
+    });
+  });
+
+  test("the sample asks the provider one row past five and keeps five", async () => {
+    const six = Array.from({ length: 6 }, (_, id) => ({ id: id + 1 }));
+    const provider = profiledSql(() => six);
+    (provider.prepareQuery as ReturnType<typeof mock>).mockImplementation(
+      (statement: string, options: { limit: number }) => ({
+        query: `${statement} LIMIT ${options.limit}`,
+        wasLimited: true,
+        limit: options.limit,
+        offset: 0,
+      }),
+    );
+    mockGetOrCreateProvider.mockResolvedValueOnce(provider);
+
+    const res = await POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never);
+    const data = await parseResponseJSON<{ columns: { sampleValues: string[] }[] }>(res);
+
+    expect(res.status).toBe(200);
+    const sent = (provider.query as ReturnType<typeof mock>).mock.calls.map((call) => call[0]);
+    expect(sent.at(-1)).toBe('SELECT "id" FROM public.users LIMIT 6');
+    expect(data.columns[0]?.sampleValues).toEqual(["1", "2", "3", "4", "5"]);
   });
 });
 
@@ -1360,6 +1744,7 @@ describe("POST /api/db/profile under governance", () => {
   test("governance: a MongoDB profile records its address as the statement, still a SELECT", async () => {
     settings({ "queryLog.statementCapture": "full" });
     const mongoProvider = createMockProvider({
+      type: "mongodb",
       capabilities: {
         queryLanguage: "json",
         containerLevels: [{ id: "schema", label: "Database", labelPlural: "Databases" }],
@@ -1447,6 +1832,49 @@ describe("POST /api/db/profile under governance", () => {
       access_level: "read",
       error_code: "AUDIT_UNAVAILABLE",
     });
+  });
+
+  test("governance: a profile whose request leaves while a read runs records it cancelled with QUERY_CANCELLED, and one whose read passed its deadline records TIMEOUT_ERROR", async () => {
+    settings({ "queryLog.statementCapture": "full" });
+    const body = { connection: governedConnection, tablePath: ["public", "users"], columns: ["id"] };
+    /** A stand-in whose column read waits on `held`, saying when it is reached. */
+    const heldAtColumn = (held: Promise<QueryResult>, reached: () => void) => {
+      const provider = sqlAnswers();
+      const answer = (provider.query as ReturnType<typeof mock>).getMockImplementation() as (sql: string) => unknown;
+      (provider.query as ReturnType<typeof mock>).mockImplementation(async (sql: string) => {
+        if (!sql.includes("non_null_count")) return answer(sql);
+        reached();
+        return held;
+      });
+      return provider;
+    };
+
+    const leftHeld = Promise.withResolvers<QueryResult>();
+    const leftReached = Promise.withResolvers<void>();
+    mockGetOrCreateProvider.mockResolvedValueOnce(heldAtColumn(leftHeld.promise, leftReached.resolve));
+    const controller = new AbortController();
+    const leaving = POST(abortableRequest(body, controller.signal) as never);
+    await leftReached.promise;
+    controller.abort();
+    const left = await leaving;
+    leftHeld.resolve(NO_ROWS);
+    await leftHeld.promise;
+
+    expect(left.status).toBe(499);
+    expect(onlyRow()).toMatchObject({ source: "profile", status: "cancelled", error_code: "QUERY_CANCELLED" });
+
+    recordedEvents.length = 0;
+    const lateHeld = Promise.withResolvers<QueryResult>();
+    mockGetOrCreateProvider.mockResolvedValueOnce(heldAtColumn(lateHeld.promise, () => {}));
+    // A plain await of the profile, whose second read a 30 ms deadline ends.
+    const late = await withSecondCallDeadline(30, () =>
+      POST(createMockRequest("/api/db/profile", { method: "POST", body }) as never),
+    );
+    lateHeld.resolve(NO_ROWS);
+    await lateHeld.promise;
+
+    expect(late.status).toBe(504);
+    expect(onlyRow()).toMatchObject({ source: "profile", status: "error", error_code: "TIMEOUT_ERROR" });
   });
 
   test("with governance off a profile records nothing and the refuse setting has no say", async () => {
