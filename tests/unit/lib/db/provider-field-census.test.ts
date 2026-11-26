@@ -12,11 +12,11 @@
  * typed as text, a connection handed to code declared outside the repository or to a parameter that is not a
  * connection, a `for-in` over one, or a cast of one to a type that holds no connection field.
  *
- * WHICH ENGINE A MODULE SERVES. A module is attributed to every type-id whose factory entry module reaches it by value
- * import, except that the two provider directories serving two type-ids are split by `PROVIDER_DIRECTORY_MAP`
- * (tests/helpers/provider-directory-map.ts). A module reached from several type-ids is held to the union of their
- * received fields: it cannot tell which engine it serves without a type branch, and a field it reads for one engine
- * answers undefined for another, as for a record that never set it.
+ * WHICH ENGINE A MODULE SERVES. A module is attributed to every type-id whose entry module, the one the legacy
+ * adapter's open imports for it, reaches it by value import, except that the two provider directories serving two
+ * type-ids are split by `PROVIDER_DIRECTORY_MAP` (tests/helpers/provider-directory-map.ts). A module reached from
+ * several type-ids is held to the union of their received fields: it cannot tell which engine it serves without a type
+ * branch, and a field it reads for one engine answers undefined for another, as for a record that never set it.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
@@ -34,7 +34,7 @@ import { typeIdsOfProviderFile } from "../../../helpers/provider-directory-map";
 import { valueImportClosure } from "../../../helpers/value-import-closure";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
-const FACTORY = "src/lib/db/factory.ts";
+const OPEN_MODULE = "src/lib/provider-host/legacy-adapter/open.ts";
 const TYPES_MODULE = "src/lib/types.ts";
 
 /**
@@ -74,24 +74,29 @@ const DECLARED_AND_UNREAD: Readonly<Partial<Record<DatabaseType, readonly string
 const PROGRAM_TIMEOUT_MS = 60_000;
 
 // ============================================================================
-// The factory's entry modules and the population
+// The legacy open's entry modules and the population
 // ============================================================================
 
-/** The repository module a factory `import()` specifier names, relative to src/lib/db/. */
-function factoryModule(specifier: string): string {
-  const base = posix.join("src/lib/db", specifier);
+/** The repository module an `import()` specifier of the legacy adapter's open names, an `@/` path under src/. */
+function legacyOpenModule(specifier: string): string {
+  const base = posix.join("src", specifier.slice("@/".length));
   const found = [`${base}.ts`, posix.join(base, "index.ts")].find((candidate) => existsSync(join(ROOT, candidate)));
-  if (found === undefined) throw new Error(`the factory imports ${specifier}, which no module answers`);
+  if (found === undefined) throw new Error(`the legacy open imports ${specifier}, which no module answers`);
   return found;
 }
 
 /**
- * Each type-id's provider modules, read from the `case` clauses of the switch in the factory's `buildProvider`: every
- * module the clause imports, its entry module first (OPC UA's clause also imports the module that opens its library
- * session at connect).
+ * Each type-id's provider modules, read from the `case` clauses of the switch in the legacy adapter's
+ * `openLegacyEngine`: every module the clause imports, its entry module first (OPC UA's clause also imports the module
+ * that opens its library session at connect).
  */
-function factoryEntries(): Map<DatabaseType, string[]> {
-  const file = ts.createSourceFile(FACTORY, readFileSync(join(ROOT, FACTORY), "utf8"), ts.ScriptTarget.Latest, true);
+function legacyOpenEntries(): Map<DatabaseType, string[]> {
+  const file = ts.createSourceFile(
+    OPEN_MODULE,
+    readFileSync(join(ROOT, OPEN_MODULE), "utf8"),
+    ts.ScriptTarget.Latest,
+    true,
+  );
   const entries = new Map<DatabaseType, string[]>();
   const visit = (node: ts.Node, label: string | undefined): void => {
     if (ts.isCaseClause(node) && ts.isStringLiteral(node.expression)) {
@@ -106,7 +111,7 @@ function factoryEntries(): Map<DatabaseType, string[]> {
       ts.isStringLiteral(node.arguments[0])
     ) {
       const type = label as DatabaseType;
-      entries.set(type, [...(entries.get(type) ?? []), factoryModule(node.arguments[0].text)]);
+      entries.set(type, [...(entries.get(type) ?? []), legacyOpenModule(node.arguments[0].text)]);
     }
     ts.forEachChild(node, (child) => visit(child, label));
   };
@@ -308,7 +313,7 @@ let census: Census | undefined;
 
 function theCensus(): Census {
   if (census !== undefined) return census;
-  const entries = factoryEntries();
+  const entries = legacyOpenEntries();
   const closures = layerClosures(entries);
   const servedBy = new Map<string, DatabaseType[]>();
   for (const [type, modules] of closures) {
@@ -378,7 +383,7 @@ const escapesOf = (body: string): string[] => scanPlanted(PLANTED_HEADER + body)
 
 describe("a provider module reads only the connection fields its engine declares, and every declared field is read (FND-2 slice 6)", () => {
   test(
-    "the census's population holds every factory entry module and every type-id",
+    "the census's population holds every legacy open entry module and every type-id",
     () => {
       const { entries, closures, scans } = theCensus();
       expect([...entries.keys()].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());

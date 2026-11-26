@@ -24,8 +24,9 @@
  * - `deadline` and `signal`: the caller's, the deadline being the open's start plus the engine's connect budget
  *   (`packageConnectBudget`).
  * - `env`: the package's declared environment (`packageEnvironment`), which every later call of the session gets too.
- * No `admittedFile`, `admittedHostPaths`, `tunnelFarEnd`, `tunnelRoute` or `timezone`: the open checks refuse every
- * connection that would need one (src/lib/db/package-sessions.ts).
+ * No `admittedFile`, `admittedHostPaths`, `tunnelFarEnd`, `tunnelRoute` or `timezone`: the one ordered open check
+ * refuses every connection that would need one (`assertOpenable` in src/lib/db/open-check.ts, which `openEngine` in
+ * ./open-engine runs before it builds this context).
  */
 import {
   type ConnectionFieldValue,

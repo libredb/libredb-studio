@@ -174,9 +174,10 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   /**
    * `options` IS CARRIED, and dropping it would have been a silent loss rather than a tidy-up.
    *
-   * MEASURED: the factory resolves the connection's own `queryTimeout` into `options` before it
-   * builds anything (`factory.ts`, `options = { ...options, queryTimeout: options.queryTimeout ??
-   * connection.queryTimeout }`), and `BaseDatabaseProvider` reads it there
+   * MEASURED: the legacy adapter's open resolves the connection's own `queryTimeout` into `options`
+   * before it builds anything (`openLegacyEngine` in `src/lib/provider-host/legacy-adapter/open.ts`,
+   * `options = { ...options, queryTimeout: options.queryTimeout ?? connection.queryTimeout }`), and
+   * `BaseDatabaseProvider` reads it there
    * (`BaseDatabaseProvider` in `base-provider.ts`, `options.queryTimeout ?? DEFAULT_QUERY_TIMEOUT`). This provider then
    * uses `this.queryTimeout` twice: the limiter's permit wait and the request's own abort signal. So
    * a constructor that ignored `options` would quietly replace a reader's configured timeout with the

@@ -1,14 +1,15 @@
 /**
  * Database Provider Factory
- * Creates appropriate provider instance based on connection type
- * Uses dynamic imports to reduce memory footprint - providers are loaded on demand
+ * The entry points that build, cache, tunnel and tear down legacy providers. Every build opens through its engine's
+ * record and the one open function (`openEngine` in @/lib/provider-host/open-engine), whose legacy open
+ * (`openLegacyEngine` in @/lib/provider-host/legacy-adapter/open) imports each engine's provider module on demand and
+ * constructs its class; this module imports no provider module itself.
  */
 
 import {
   type DatabaseProvider,
   type DatabaseConnection,
   type EditorExecutionContext,
-  type ProviderBuildContext,
   type ProviderCapabilities,
   type ProviderLabels,
   type ProviderOptions,
@@ -31,12 +32,10 @@ import { createSSHTunnel, closeSSHTunnel, releaseUnopenedTunnel, tunnelProviderO
 import type { TunnelInfo } from "@/lib/ssh/tunnel";
 import { isEnvelopeClaim } from "@/lib/storage/envelope-claim";
 import { providerCacheKey, providerOwner } from "./provider-cache-key";
-import { assertConnectionIsPlainData, providerConnection, providerFields } from "./provider-connection";
+import { assertConnectionIsPlainData, providerFields } from "./provider-connection";
 import { decideTunnel } from "./tunnel-decision";
 import { supportsQueryCancel } from "./query-cancel";
 import { egressDecision } from "./egress-decision";
-import { trustMaterial } from "./trust-material";
-import { admittedFileConnection, admittedHostPathConnection, opcuaPkiRoot } from "./provider-files";
 import { registerOwnerRemoval } from "./owner-removal";
 import { sessionCapacity } from "./session-capacity";
 import { assertStatementsReviewed } from "./statement-review";
@@ -46,13 +45,12 @@ import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from
 import { type EngineRecord, legacyProviderEngine } from "./server-catalog";
 import {
   assertClaimsGranted,
-  assertOpenable,
   assertOwnerPoolHonoured,
   assertProviderEnabled,
   assertReadOnlyHonoured,
-  type OpenPurpose,
 } from "./open-check";
 import { closePackageSessions, removePackageSessions } from "./package-sessions";
+import { openedProvider, openEngine } from "@/lib/provider-host/open-engine";
 import { enabledProviderTypes } from "./enabled-providers";
 import { type DatabaseType, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { logger } from "@/lib/logger";
@@ -80,8 +78,9 @@ import * as path from "path";
 // ============================================================================
 
 /**
- * Create a database provider based on connection configuration
- * Uses dynamic imports to load providers on-demand, reducing initial memory usage
+ * Create a database provider for a connection, not connected: the engine's record (`legacyProviderEngine` in
+ * ./server-catalog), then the one open function (`openEngine` in @/lib/provider-host/open-engine), which runs the one
+ * ordered open check and the legacy adapter's open, where the engine's provider module is imported on demand.
  *
  * @param connection - Database connection configuration, plain data. The provider is built from
  *   `providerConnection(connection)` (./provider-connection): a new object holding only the fields the engine declares
@@ -153,30 +152,10 @@ import * as path from "path";
  * `not-sent` (`buildPhase` in ./errors): a build sends no statement.
  *
  * @example
- * // SQL Database
- * const provider = await createDatabaseProvider({
- *   id: '1',
- *   name: 'My PostgreSQL',
- *   type: 'postgres',
- *   host: 'localhost',
- *   port: 5432,
- *   database: 'mydb',
- *   user: 'admin',
- *   password: 'secret',
- *   createdAt: new Date(),
- * });
- *
- * // MongoDB
- * const mongoProvider = await createDatabaseProvider({
- *   id: '2',
- *   name: 'My MongoDB',
- *   type: 'mongodb',
- *   connectionString: 'mongodb://localhost:27017/mydb',
- *   createdAt: new Date(),
- * });
- *
+ * // `connection` is a saved connection the caller resolved, of an engine whose record offers a legacy provider.
+ * const provider = await createDatabaseProvider(connection);
  * await provider.connect();
- * const result = await provider.query('SELECT * FROM users');
+ * const result = await provider.query(statement);
  * await provider.disconnect();
  */
 /**
@@ -238,7 +217,19 @@ export async function createDatabaseProvider(
   options: ProviderOptions = {},
   execution: ProviderExecutionContext = {},
 ): Promise<DatabaseProvider> {
-  return await buildPhase(() => buildProvider(connection, options, execution, "connect"));
+  // The engine's record first, before every other check and the log line: a type that names no provider is refused by
+  // name, and no other refusal speaks for it (FND-1). Every later read of the engine is its record's, through the one
+  // open function.
+  return await buildPhase(async () =>
+    openedProvider(
+      await openEngine(legacyProviderEngine(connection.type, "open"), {
+        connection,
+        execution,
+        purpose: "connect",
+        options,
+      }),
+    ),
+  );
 }
 
 /**
@@ -261,8 +252,9 @@ export interface ProviderDeclarations {
  * mode, its execution context or its tunnel (a malformed tunnel, an engine that takes none, a tunnel with nothing to
  * forward to) is refused here by the same sentence, except three: a tunnel that is on and was not opened, a field its
  * engine refuses by name, and a required secret its engine declares left blank (the open check's `"declarations"`
- * purpose, `assertOpenable` in ./open-check), since reading what a connection declares never signs in. It builds the
- * provider from such a connection, reads it and lets it go, so the provider, whose `host` and `port` are the
+ * purpose, `assertOpenable` in ./open-check), since reading what a connection declares never signs in. It opens the
+ * provider from such a connection through the one open function (`openEngine` in @/lib/provider-host/open-engine),
+ * reads it and lets it go, so the provider, whose `host` and `port` are the
  * database's own, is never handed out and can never be connected past the tunnel. It is not exported from the package
  * (`src/exports/`); an embedder reads a tunnelled connection's declarations inside `withOneShotTunnel`.
  *
@@ -273,415 +265,21 @@ export async function readProviderDeclarations(
   connection: DatabaseConnection,
   execution: ProviderExecutionContext = {},
 ): Promise<ProviderDeclarations> {
-  const provider = await buildPhase(() => buildProvider(connection, {}, execution, "declarations"));
+  const provider = await buildPhase(async () =>
+    openedProvider(
+      await openEngine(legacyProviderEngine(connection.type, "open"), {
+        connection,
+        execution,
+        purpose: "declarations",
+        options: {},
+      }),
+    ),
+  );
   return {
     capabilities: clientCapabilities(connection.type, provider.getCapabilities()),
     labels: provider.getLabels(),
     supportsQueryCancel: supportsQueryCancel(provider),
   };
-}
-
-/**
- * The build `createDatabaseProvider` and `readProviderDeclarations` share: the engine's record (`legacyProviderEngine`
- * in ./server-catalog), the one ordered open check over it (`assertOpenable` in ./open-check), then the provider. The
- * check differs by `purpose`: a tunnel that is on must have been opened, a connection must not set a field its engine
- * refuses and a required secret the engine declares must not be blank, each only for `"connect"`, the build of a
- * provider that may be connected. Both callers run it inside `buildPhase` (./errors), so every error it raises, a
- * provider constructor's included, answers `outcome` `not-sent`: a build sends no statement.
- */
-async function buildProvider(
-  connection: DatabaseConnection,
-  options: ProviderOptions,
-  execution: ProviderExecutionContext,
-  purpose: OpenPurpose,
-): Promise<DatabaseProvider> {
-  // First, before every other check, the log line and the switch below: a type that names no provider is refused by
-  // name, and no other refusal or default speaks for it (FND-1). Every later read of the engine is its record's.
-  const engine = legacyProviderEngine(connection.type, "open");
-  // The one ordered open check (./open-check): enabled, read-only, claims, the connection and the context as plain
-  // data, the owner's pool, the file-access posture, core's decision about the tunnel, the process's egress decision
-  // and Studio's storage location, and, to connect, a refused field and a required secret, each read from the record.
-  assertOpenable(engine, connection, execution, purpose);
-  // The decision the check took, read again to hand to the provider: the process keeps it.
-  const egress = egressDecision();
-  // Every provider is built from the connection `providerConnection` answers: a copy holding only the fields its engine
-  // declares and core's markers, the tunnel's route under `TUNNEL_ROUTE` for a record that carries a tunnel, so no
-  // provider receives the tunnel or its password, private key or passphrase, the agent credential or a field its engine
-  // does not declare (FND-2, docs/SECURITY.md 3.41). When core opens a tunnel (getOrCreateProvider,
-  // acquireExecutionProfileProvider, withOneShotTunnel), it dials with those before it calls this function; a tunnel that is on and was not opened was
-  // refused above, except for readProviderDeclarations, which never hands its provider out.
-  connection = providerConnection(connection);
-  // A SQLite, DuckDB or LibreDB connection (`GRANTED_OPENS_LOCAL_FILE`) is handed the file core admitted, resolved
-  // against the working directory now; one of Studio's own storage files, a path the reserved check cannot read, a NUL
-  // byte, a connection string that names no file after `file:` or a name that is not text is refused here, by name,
-  // before any provider exists (FND-2 slice 3, docs/SECURITY.md 3.45). Every other connection passes unchanged.
-  connection = admittedFileConnection(connection);
-  // The files on Studio's host a connection's `GRANTED_HOST_PATH_FIELDS` name (OPC UA's client certificate and key)
-  // are admitted the same way, each refused by name with its field, and handed to the provider as absolute paths.
-  connection = admittedHostPathConnection(connection);
-  // What every provider that takes a context is handed: a copy of the caller's execution context, plain data as checked
-  // above, the process's egress decision, which a guarded provider hands its guard, and, for an engine whose record's
-  // `connection.readsTrustMaterial` is true, the trust material core read from the file NODE_EXTRA_CA_CERTS names,
-  // which that provider's own TLS library would never read (FND-2, the provider plugins design section 0.1). The
-  // material is read only for such an engine, so an invalid bundle refuses that build here, before the log line, and no
-  // other. One rule for every case below, and never a caller's `egress` or `trust`: both are set here, last.
-  const context: ProviderBuildContext = {
-    ...execution,
-    egress,
-    trust: engine.connection.readsTrustMaterial ? trustMaterial() : undefined,
-  };
-  console.log(`[DB] Creating ${sanitize(connection.type)} provider for "${sanitize(connection.name || "")}"`);
-
-  // Explicit overrides (such as the connectivity probe) take precedence over saved settings.
-  options = { ...options, queryTimeout: options.queryTimeout ?? connection.queryTimeout };
-  // An owned provider serves one user (docs/GOVERNANCE.md#per-user-providers): its pool opens nothing until that user
-  // asks, and never more than the user's share, whatever size the caller's options name. The rest of the caller's pool
-  // options stand.
-  if (execution.owner !== undefined) {
-    options = { ...options, pool: { ...options.pool, min: 0, max: execution.ownerPoolMax } };
-  }
-
-  // No `default`: `legacyProviderEngine` above refused every value that is not a type id, and the compiler holds this
-  // switch exhaustive over the `DatabaseType` union, so a type id without a case fails the typecheck (TS2366) rather
-  // than reaching the end of the function at run time.
-  switch (connection.type) {
-    // SQL Databases - dynamically imported to reduce memory
-    case "postgres": {
-      const { PostgresProvider } = await import("./providers/sql/postgres");
-      return new PostgresProvider(connection, options, context);
-    }
-
-    case "mysql": {
-      const { MySQLProvider } = await import("./providers/sql/mysql");
-      return new MySQLProvider(connection, options, context);
-    }
-
-    case "sqlite": {
-      const { SQLiteProvider } = await import("./providers/sql/sqlite");
-      return new SQLiteProvider(connection, options, context);
-    }
-
-    case "duckdb": {
-      const { DuckDBProvider } = await import("./providers/sql/duckdb");
-      return new DuckDBProvider(connection, options, context);
-    }
-
-    case "libsql": {
-      const { LibSQLProvider } = await import("./providers/sql/libsql");
-      return new LibSQLProvider(connection, options, context);
-    }
-
-    case "oracle": {
-      const { OracleProvider } = await import("./providers/sql/oracle/index");
-      return new OracleProvider(connection, options, context);
-    }
-
-    case "db2": {
-      const { Db2Provider } = await import("./providers/sql/db2/index");
-      return new Db2Provider(connection, options, context);
-    }
-
-    case "mssql": {
-      const { MSSQLProvider } = await import("./providers/sql/mssql");
-      return new MSSQLProvider(connection, options, context);
-    }
-
-    case "clickhouse": {
-      // The explicit /index specifier keeps this dynamic import statically analysable: a bare directory resolves
-      // only at runtime, which the bundler cannot trace into a chunk. The execution context's `readOnly` and
-      // `sendsStatements` together are what the open-time proof keys on.
-      const { ClickHouseProvider } = await import("./providers/sql/clickhouse/index");
-      return new ClickHouseProvider(connection, options, context);
-    }
-
-    case "druid": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { DruidProvider } = await import("./providers/sql/druid/index");
-      return new DruidProvider(connection, options, context);
-    }
-
-    case "trino": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { TrinoProvider } = await import("./providers/sql/trino/index");
-      return new TrinoProvider(connection, options, context);
-    }
-
-    case "databend": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The constructor validates
-      // nothing and opens nothing; the connection's rules run in connect(), before any socket.
-      const { DatabendProvider } = await import("./providers/sql/databend/index");
-      return new DatabendProvider(connection, options, context);
-    }
-
-    case "bigquery": {
-      const { BigQueryProvider } = await import("./providers/sql/bigquery/index");
-      return new BigQueryProvider(connection, options, context);
-    }
-
-    case "snowflake": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The build context is third;
-      // the transport deps are a fourth argument, a test's seam the factory never passes, and the origin comes from
-      // the Account field alone.
-      const { SnowflakeProvider } = await import("./providers/sql/snowflake/index");
-      return new SnowflakeProvider(connection, options, context);
-    }
-
-    case "spark": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. Two arguments only: the
-      // third, the wire transport, is a test's seam the factory never passes.
-      const { SparkProvider } = await import("./providers/sql/spark/index");
-      return new SparkProvider(connection, options);
-    }
-
-    case "cassandra": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { CassandraProvider } = await import("./providers/sql/cassandra/index");
-      return new CassandraProvider(connection, options, context);
-    }
-
-    // Search engines - two type-ids, ONE implementation module (issue #424 Phase 1).
-    // The explicit /index specifier keeps this dynamic import statically
-    // analysable: a bare directory resolves only at runtime, which the bundler
-    // cannot trace into a chunk.
-    case "elasticsearch": {
-      const { ElasticsearchProvider } = await import("./providers/sql/search/index");
-      return new ElasticsearchProvider(connection, options, context);
-    }
-
-    case "opensearch": {
-      const { OpenSearchProvider } = await import("./providers/sql/search/index");
-      return new OpenSearchProvider(connection, options, context);
-    }
-
-    // Document Databases - dynamically imported. The execution context reaches the
-    // MongoDB constructor like the SQL engines' and Kubernetes': its `readOnly` and
-    // `sendsStatements` together are what the connect-time verification keys on (issue #1614).
-    case "mongodb": {
-      const { MongoDBProvider } = await import("./providers/document/mongodb");
-      return new MongoDBProvider(connection, options, context);
-    }
-
-    case "couchbase": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { CouchbaseProvider } = await import("./providers/document/couchbase/index");
-      return new CouchbaseProvider(connection, options, context);
-    }
-
-    case "firestore": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context decides
-      // whether the handle answers agent reads, and every surface of an agent-mode handle reads metadata only.
-      const { FirestoreProvider } = await import("./providers/document/firestore/index");
-      return new FirestoreProvider(connection, options, context);
-    }
-
-    // Key-Value Stores - dynamically imported
-    case "redis": {
-      const { RedisProvider } = await import("./providers/keyvalue/redis");
-      return new RedisProvider(connection, options, context);
-    }
-
-    case "etcd": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The
-      // execution context rides along, so an execution profile opens it read-only (#1089 E6).
-      const { EtcdProvider } = await import("./providers/keyvalue/etcd/index");
-      return new EtcdProvider(connection, options, context);
-    }
-
-    case "oxia": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
-      // along, so a refusal names the read-only mode an execution profile set (O1).
-      const { OxiaProvider } = await import("./providers/keyvalue/oxia/index");
-      return new OxiaProvider(connection, options, context);
-    }
-
-    // Time-series stores - dynamically imported
-    case "prometheus": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk. The execution context decides whether the handle answers agent reads.
-      const { PrometheusProvider } = await import("./providers/timeseries/prometheus/index");
-      return new PrometheusProvider(connection, options, context);
-    }
-
-    // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
-    // whatever the flag says. The execution context decides whether the open proves the principal reads only, for
-    // the agent read-only profile.
-    case "influxdb": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDBProvider(connection, options, context);
-    }
-
-    case "influxdb3": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { InfluxDB3Provider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDB3Provider(connection, options, context);
-    }
-
-    // Message logs - dynamically imported
-    case "kafka": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { KafkaProvider } = await import("./providers/stream/kafka/index");
-      return new KafkaProvider(connection, options, context);
-    }
-
-    // Graph databases - dynamically imported
-    case "neo4j": {
-      // The explicit /index specifier keeps this dynamic import statically
-      // analysable: a bare directory resolves only at runtime, which the bundler
-      // cannot trace into a chunk.
-      const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
-      // The execution context decides whether the open proves the user reads only, for the agent read-only profile.
-      return new Neo4jProvider(connection, options, context);
-    }
-
-    // Vector databases - dynamically imported
-    case "milvus": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
-      // rides along, so an execution profile opens it read-only (vector-family spec E8).
-      const { MilvusProvider } = await import("./providers/vector/milvus/index");
-      return new MilvusProvider(connection, options, context);
-    }
-
-    case "qdrant": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
-      // rides along, so an execution profile opens it read-only, as etcd's does.
-      const { QdrantProvider } = await import("./providers/vector/qdrant/index");
-      return new QdrantProvider(connection, options, context);
-    }
-
-    case "weaviate": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context
-      // rides along, so an execution profile opens it read-only, as Qdrant's does.
-      const { WeaviateProvider } = await import("./providers/vector/weaviate/index");
-      return new WeaviateProvider(connection, options, context);
-    }
-
-    // Object storage - dynamically imported
-    case "s3": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context rides
-      // along, so an execution profile opens it read-only, as Qdrant's does.
-      const { S3Provider } = await import("./providers/objectstore/s3/index");
-      return new S3Provider(connection, options, context);
-    }
-
-    // MQTT: a key-value provider beside the platforms, its Keys panel the whole surface and no query console
-    // of its own. The execution context decides whether the handle answers agent reads.
-    case "mqtt": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { MqttProvider } = await import("./providers/keyvalue/mqtt/index");
-      return new MqttProvider(connection, options, context);
-    }
-
-    // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution
-    // context for its agent read path; no seam is passed: it runs on its production transport, AMQP dial and clock.
-    case "rabbitmq": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { RabbitMQProvider } = await import("./providers/stream/rabbitmq/index");
-      return new RabbitMQProvider(connection, options, context);
-    }
-
-    // OPC UA: an address space browsed level by level, read-only by its seam of eight read services. The execution
-    // context decides whether the handle answers agent reads; an agent-mode handle holds no session.
-    case "opcua": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { OpcuaProvider } = await import("./providers/industrial/opcua/index");
-      // THE LIBRARY IS IMPORTED BY THE FIRST CONNECT, NOT BY CONSTRUCTION, and that is measured
-      // rather than tidy: `node-opcua-hostname` calls `prepareFQDN()` at import time, un-awaited,
-      // and its `dns.lookupService` throws inside a callback where the library's own try/catch
-      // cannot see it. Under Node 24.14.0 here the hostname resolves to `::1` and nothing happens;
-      // under Bun 1.4.2 it resolved to a zone-indexed link-local address
-      // (`fe80::…%15`) and the error surfaced as an uncaught one. Constructing a provider must not
-      // depend on that, so the import happens when a session is actually opened.
-      //
-      // The PKI root is core's decision (FND-2 slice 3): `LIBREDB_OPCUA_PKI_ROOT`, or `opcua-pki` under Studio's data
-      // directory, read now and handed over, so nothing the environment says at connect reaches the provider; a relative
-      // variable is refused here, before the provider is built.
-      return new OpcuaProvider(
-        connection,
-        options,
-        context,
-        async (read) => {
-          const { openLibrarySession } = await import("./providers/industrial/opcua/library");
-          return openLibrarySession(read);
-        },
-        opcuaPkiRoot(connection.type),
-      );
-    }
-
-    // MTConnect: an agent in front of machine tools, read over HTTP, read-only by its closed table of nine GET routes.
-    // The execution context decides whether the handle answers agent reads. No library: the client is this
-    // repository's own over the shared transport, so the import is the provider module and nothing else.
-    case "mtconnect": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { MTConnectProvider } = await import("./providers/industrial/mtconnect/index");
-      return new MTConnectProvider(connection, options, context);
-    }
-    // SNMP: an agent on a device, read over UDP by this repository's own client through the shared egress rule.
-    // Read-only by construction: the outgoing valve parses every datagram and refuses any PDU that is not a Get,
-    // GetNext or GetBulk, so a Set never reaches the socket. No library, so the import is the provider module itself.
-    // The execution context decides whether the handle answers agent reads; an agent-mode handle refuses the console.
-    case "snmp": {
-      const { SnmpProvider } = await import("./providers/network/snmp/index");
-      return new SnmpProvider(connection, options, context);
-    }
-
-    // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client through the shared
-    // egress rule. Read-only by construction: the valve refuses every function code but the four reads and 43/14. No
-    // library, so the import is the provider module. The execution context decides whether the handle answers agent
-    // reads; an agent-mode handle refuses the console and paces the device.
-    case "modbus": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { ModbusProvider } = await import("./providers/industrial/modbus/index");
-      return new ModbusProvider(connection, options, context);
-    }
-
-    // Platforms - dynamically imported
-    case "kubernetes": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says; the execution context rides along, so `queryReadOnly` answers only under an agent profile.
-      const { KubernetesProvider } = await import("./providers/platform/kubernetes/index");
-      return new KubernetesProvider(connection, options, {}, context);
-    }
-
-    // Network devices - dynamically imported
-    //
-    // Before `libredb` on purpose, and the reason is in the tests rather than in style: five
-    // regexes in `tests/isolated/factory.test.ts` anchor on `libredb$`, so a case appended after
-    // it breaks checks that have nothing to do with this engine.
-    case "netconf": {
-      // The explicit /index specifier keeps this import statically analysable; the context gates agent reads.
-      const { NetconfProvider } = await import("./providers/network/netconf/index");
-      return new NetconfProvider(connection, options, context);
-    }
-
-    // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session rather than the
-    // shipped MQTT read, which returns one row per topic, since a Sparkplug read depends on the order of successive
-    // messages on one topic. The execution context decides whether the handle answers agent reads.
-    case "sparkplug": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
-      const { SparkplugProvider } = await import("./providers/industrial/sparkplug/index");
-      return new SparkplugProvider(connection, options, context);
-    }
-
-    // Embedded databases - dynamically imported
-    case "libredb": {
-      // The execution context decides the open: an acquisition that sends statements opens the file through the
-      // read-only adapter, with no writer lock, beside the editor's writer.
-      const { LibreDBProvider } = await import("./providers/embedded/libredb");
-      return new LibreDBProvider(connection, options, context);
-    }
-  }
 }
 
 // ============================================================================

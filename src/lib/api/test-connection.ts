@@ -19,7 +19,8 @@ import {
   waitedSeconds,
 } from "@/lib/db/errors";
 import { assertOpenable } from "@/lib/db/open-check";
-import { type OpenedPackageSession, openPackageSessionOnce, teardownPackageSession } from "@/lib/db/package-sessions";
+import { openPackageSessionOnce, teardownPackageSession } from "@/lib/db/package-sessions";
+import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
 import {
   type ProviderTextScrub,
   providerTextScrub,
@@ -115,7 +116,8 @@ function testDeadlineSentence(budgetMs: number): string {
  * before the budget starts, `connection` is read by the engine's own field rules, composed from its declaration
  * (`engine.fieldRules`), a refusal rejecting with a not-sent `DatabaseConfigError` carrying the declared sentence, and
  * then by the one ordered open check (`assertOpenable` in src/lib/db/open-check.ts). Then, within the engine's connect
- * budget from `now`, one session opens through the package (`openPackageSessionOnce`), never cached; its health is read
+ * budget from `now`, one session opens through the package (`openPackageSessionOnce`, which opens through the one open
+ * function, `openEngine` in src/lib/provider-host/open-engine.ts), never cached; its health is read
  * through the host core's health call on the test's own deadline and signal (`readSessionHealthWithin`); and it is
  * closed under a cleanup context, waited for at most the teardown's close deadline, a close that fails or is cut logged
  * by kind and code and never changing the answer. Nothing is built by the provider factory and no tunnel opens.

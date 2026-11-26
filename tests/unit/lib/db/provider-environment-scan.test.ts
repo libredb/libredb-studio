@@ -6,15 +6,18 @@ import ts from "typescript";
 import { valueImportClosure, valueImportsOf } from "../../../helpers/value-import-closure";
 
 // Core owns the egress decision (FND-2, the provider plugins design section 0.1): one module reads
-// DB_HTTP_BLOCK_PRIVATE_HOSTS, the factory hands its decision to every provider that takes a context, and the guard
-// takes it as an argument, so no provider reads the setting or imports the module that does. Parsed, not grepped, as
-// the sign-in mode's scan (`tests/unit/lib/config/auth-provider-single-reader.test.ts`) is: comments and sentences that
-// name the variable are not reads. Imports are walked with the repository's own walker, so a type-only import is erased
-// and a dynamic import() counts.
+// DB_HTTP_BLOCK_PRIVATE_HOSTS, the legacy adapter's open hands its decision to every provider that takes a context, and
+// the guard takes it as an argument, so no provider reads the setting or imports the module that does. Parsed, not
+// grepped, as the sign-in mode's scan (`tests/unit/lib/config/auth-provider-single-reader.test.ts`) is: comments and
+// sentences that name the variable are not reads. Imports are walked with the repository's own walker, so a type-only
+// import is erased and a dynamic import() counts.
 const VARIABLE = "DB_HTTP_BLOCK_PRIVATE_HOSTS";
 const READER = "src/lib/db/egress-decision.ts";
 const PROVIDERS = "src/lib/db/providers/";
 const FACTORY = "src/lib/db/factory.ts";
+// The legacy adapter's open imports every legacy provider module and hands each provider core's egress decision and
+// trust material; the provider factory takes the egress decision before it caches, dials or builds anything.
+const LEGACY_OPEN = "src/lib/provider-host/legacy-adapter/open.ts";
 const BOOT_PREFLIGHT = "src/lib/config/egress-preflight.ts";
 // The one ordered open check is core and runs before every session of every engine opens:
 // `src/lib/db/open-check.ts` takes the egress decision among its checks, so an invalid setting is refused before
@@ -49,17 +52,17 @@ function trackedSources(...roots: string[]): string[] {
 
 /**
  * The provider modules the reach tests below scan: every tracked module under `src/lib/db/providers/`. The population
- * tests hold that it is not empty and that every provider module the factory builds from lies inside it, so a provider
- * module that leaves the directory fails here instead of leaving the scan.
+ * tests hold that it is not empty and that every provider module the legacy adapter's open builds from lies inside it,
+ * so a provider module that leaves the directory fails here instead of leaving the scan.
  */
 function providerModules(): string[] {
   return trackedSources(PROVIDERS).filter((name) => /\.tsx?$/.test(name));
 }
 
-/** The specifiers of the factory's dynamic `import()` calls, one for each provider module it builds from. */
-function factoryDynamicImports(): string[] {
+/** The specifiers of the legacy adapter's open's dynamic `import()` calls, one for each provider module it builds from. */
+function legacyOpenDynamicImports(): string[] {
   return new Bun.Transpiler({ loader: "ts" })
-    .scanImports(readFileSync(join(process.cwd(), FACTORY), "utf8"))
+    .scanImports(readFileSync(join(process.cwd(), LEGACY_OPEN), "utf8"))
     .filter((entry) => entry.kind === "dynamic-import")
     .map((entry) => entry.path);
 }
@@ -126,13 +129,13 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(readsTheSetting(readFileSync(join(process.cwd(), READER), "utf8"), READER)).toBe(true);
   });
 
-  test("the provider population the reach tests scan is not empty and holds every provider module the factory builds from", () => {
+  test("the provider population the reach tests scan is not empty and holds every provider module the legacy adapter's open builds from", () => {
     const population = providerModules();
     expect(population).not.toEqual([]);
-    const dynamic = factoryDynamicImports();
+    const dynamic = legacyOpenDynamicImports();
     expect(dynamic).not.toEqual([]);
-    expect(dynamic.filter((specifier) => !specifier.startsWith("./providers/"))).toEqual([]);
-    const built = valueImportsOf(FACTORY).filter((name) => name.startsWith(PROVIDERS));
+    expect(dynamic.filter((specifier) => !specifier.startsWith("@/lib/db/providers/"))).toEqual([]);
+    const built = valueImportsOf(LEGACY_OPEN).filter((name) => name.startsWith(PROVIDERS));
     expect(built).not.toEqual([]);
     expect(built.filter((name) => !population.includes(name))).toEqual([]);
   });
@@ -146,8 +149,10 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
     expect(packageImportersOf(READER)).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/egress-decision.ts are the provider factory, the boot preflight, the open check and the package open context", () => {
-    expect(importersOfTheReader()).toEqual([BOOT_PREFLIGHT, FACTORY, OPEN_CHECK, PACKAGE_OPEN_CONTEXT].sort());
+  test("the modules that import src/lib/db/egress-decision.ts are the boot preflight, the provider factory, the open check, the legacy adapter's open and the package open context", () => {
+    expect(importersOfTheReader()).toEqual(
+      [BOOT_PREFLIGHT, FACTORY, OPEN_CHECK, LEGACY_OPEN, PACKAGE_OPEN_CONTEXT].sort(),
+    );
   });
 
   test("no module under src/lib/db/providers/ reaches src/lib/db/egress-decision.ts through its imports", () => {
@@ -165,16 +170,17 @@ describe("a setting core owns has one reader, and no provider imports it (FND-2 
 });
 
 // The operator's CA bundle is core's to read too (FND-2 slice 4, the provider plugins design section 0.1):
-// `src/lib/db/trust-material.ts` reads the file NODE_EXTRA_CA_CERTS names once per process, and the factory hands its
-// certificates to the providers whose TLS library does not read Node's store, so no provider reads the variable or
-// reaches a module that does. Sign-in's token trust (`src/lib/openshift-auth/http.ts`) reads it on every token call by
-// design; it is core code, not a provider, and no provider reaches it either.
+// `src/lib/db/trust-material.ts` reads the file NODE_EXTRA_CA_CERTS names once per process, and the legacy adapter's
+// open hands its certificates to the providers whose TLS library does not read Node's store, so no provider reads the
+// variable or reaches a module that does. Sign-in's token trust (`src/lib/openshift-auth/http.ts`) reads it on every
+// token call by design; it is core code, not a provider, and no provider reaches it either.
 const CA_VARIABLE = "NODE_EXTRA_CA_CERTS";
 const TRUST_READER = "src/lib/db/trust-material.ts";
 const TOKEN_TRUST_READER = "src/lib/openshift-auth/http.ts";
 const CA_PREFLIGHT = "src/lib/config/ca-bundle-preflight.ts";
 // The package open context hands the material to a package's `open` when the engine's declaration reads it
-// (docs/providers/CONTRACT.md, clause C-109), as the factory hands it to a bundled engine, so it imports the reader.
+// (docs/providers/CONTRACT.md, clause C-109), as the legacy adapter's open hands it to a bundled engine, so it imports
+// the reader.
 
 describe("the operator's CA bundle is read by core alone, and no provider reaches a module that reads it (FND-2 slice 4)", () => {
   test("the read detector finds NODE_EXTRA_CA_CERTS in a property, an element, a destructuring and the name as a string literal, and ignores a sentence that names it", () => {
@@ -223,8 +229,8 @@ describe("the operator's CA bundle is read by core alone, and no provider reache
     expect(packageImportersOf(TRUST_READER)).toEqual([]);
   });
 
-  test("the modules that import src/lib/db/trust-material.ts are the provider factory, the CA bundle preflight and the package open context", () => {
-    expect(importersOfTheTrustReader()).toEqual([CA_PREFLIGHT, FACTORY, PACKAGE_OPEN_CONTEXT].sort());
+  test("the modules that import src/lib/db/trust-material.ts are the CA bundle preflight, the legacy adapter's open and the package open context", () => {
+    expect(importersOfTheTrustReader()).toEqual([CA_PREFLIGHT, LEGACY_OPEN, PACKAGE_OPEN_CONTEXT].sort());
   });
 
   test("no module under src/lib/db/providers/ reaches a module that reads NODE_EXTRA_CA_CERTS, or the CA bundle preflight, through its imports", () => {
@@ -238,8 +244,8 @@ describe("the operator's CA bundle is read by core alone, and no provider reache
 
 // Core owns Studio's storage location and OPC UA's PKI root the same way (FND-2 slice 3, the provider plugins design
 // section 0.1): `src/lib/data-dir.ts` reads STORAGE_SQLITE_PATH, `src/lib/db/provider-files.ts` reads
-// LIBREDB_OPCUA_PKI_ROOT, and the factory hands a provider the file it admitted and the root it decided, so no provider
-// reads either setting or reaches the module that keeps Studio's own files.
+// LIBREDB_OPCUA_PKI_ROOT, and the legacy adapter's open hands a provider the file it admitted and the root it decided,
+// so no provider reads either setting or reaches the module that keeps Studio's own files.
 const STORAGE_VARIABLE = "STORAGE_SQLITE_PATH";
 const STORAGE_READER = "src/lib/data-dir.ts";
 const PKI_VARIABLE = "LIBREDB_OPCUA_PKI_ROOT";

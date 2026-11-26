@@ -6,10 +6,11 @@
  *
  * Fixture packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function of a package calls the hook the case sets. Every module the
- * factory's switch imports a legacy provider from is replaced by a module that records its import, so a case reads
- * whether the legacy path was reached. Nothing awaits a timer: every wait settles on a promise a case resolves, the
- * deadline cases run on a record whose budget is 50 ms, and the cut of a close is read under fake timers here and in a
- * bounded child. The child prints JSON lines, read after `trimEnd()` (CRLF on Windows); no file mode or link is used.
+ * legacy adapter's open (src/lib/provider-host/legacy-adapter/open.ts) imports a legacy provider from is replaced by a
+ * module that records its import, so a case reads whether the legacy path was reached. Nothing awaits a timer: every
+ * wait settles on a promise a case resolves, the deadline cases run on a record whose budget is 50 ms, and the cut of a
+ * close is read under fake timers here and in a bounded child. The child prints JSON lines, read after `trimEnd()`
+ * (CRLF on Windows); no file mode or link is used.
  */
 // oxlint-disable no-await-in-loop -- each check runs after the one before, so its hooks read one open at a time.
 import { afterAll, beforeAll, describe, expect, jest, mock, spyOn, test } from "bun:test";
@@ -27,15 +28,18 @@ import { admitSessionPackages, hooksKey, type SessionHooks, setHooks } from "../
 import { removeScratch, scratchDirectory } from "../helpers/provider-artifacts";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..");
-const FACTORY_SOURCE = readFileSync(path.join(REPOSITORY_ROOT, "src", "lib", "db", "factory.ts"), "utf8");
+const OPEN_SOURCE = readFileSync(
+  path.join(REPOSITORY_ROOT, "src", "lib", "provider-host", "legacy-adapter", "open.ts"),
+  "utf8",
+);
 
-/** Every module the factory's switch imports a legacy provider from, as the factory names it. */
-const LEGACY_MODULES = [...FACTORY_SOURCE.matchAll(/await import\("(\.\/providers\/[^"]+)"\)/g)].map(
+/** Every module the legacy adapter's open imports a legacy provider from, as the open module names it. */
+const LEGACY_MODULES = [...OPEN_SOURCE.matchAll(/await import\("(@\/lib\/db\/providers\/[^"]+)"\)/g)].map(
   (match) => match[1] as string,
 );
 const imported: string[] = [];
 for (const specifier of LEGACY_MODULES) {
-  mock.module(`@/lib/db/${specifier.slice(2)}`, () => {
+  mock.module(specifier, () => {
     imported.push(specifier);
     return {};
   });
@@ -223,7 +227,7 @@ describe("the sessions of a provider package's engine", () => {
 
     // The control: a bundled engine's build imports its own legacy module.
     await rejection(factory.createDatabaseProvider({ id: "c", name: "c", type: "postgres", host: "h" } as never));
-    expect(imported).toEqual(["./providers/sql/postgres"]);
+    expect(imported).toEqual(["@/lib/db/providers/sql/postgres"]);
     imported.length = 0;
   });
 
@@ -697,6 +701,46 @@ describe("the sessions of a provider package's engine", () => {
     expect(typeof once.session.health).toBe("function");
     expect(sessions.packageSessionStats().size).toBe(0);
   });
+
+  test("a package engine's cached session and Test Connection's session open through the one open function with the engine's record", async () => {
+    const openEngineModule = await import("@/lib/provider-host/open-engine");
+    const open = spyOn(openEngineModule, "openEngine");
+    const connection = connectionOf(MAIN);
+    try {
+      record(MAIN);
+      await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), ADMIN);
+      expect(open).toHaveBeenCalledTimes(1);
+      expect(open.mock.calls[0]?.[0]).toBe(engineOf(MAIN));
+      expect(open.mock.calls[0]?.[1].connection).toBe(connection);
+
+      const once = connectionOf(MAIN);
+      await sessions.openPackageSessionOnce(
+        once,
+        engineOf(MAIN),
+        ADMIN,
+        Date.now() + 1_000,
+        new AbortController().signal,
+      );
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(open.mock.calls[1]?.[0]).toBe(engineOf(MAIN));
+      expect(open.mock.calls[1]?.[1].connection).toBe(once);
+    } finally {
+      open.mockRestore();
+      await sessions.removePackageSessions(connection.id);
+    }
+  });
+
+  test("an absent file-access posture is not refused by the open check and reaches the package's open as false, as before", async () => {
+    const hooks = record(MAIN);
+    const connection = connectionOf(MAIN);
+    try {
+      await sessions.getOrCreatePackageSession(connection, engineOf(MAIN), {});
+      expect(names(hooks)).toEqual(["open"]);
+      expect((argsOf(hooks, "open")[0] as OpenContext).policy.allowExternalFileAccess).toBe(false);
+    } finally {
+      await sessions.removePackageSessions(connection.id);
+    }
+  });
 });
 
 /** The hooks `id`'s package calls now. */
@@ -717,9 +761,24 @@ function hooksEnv() {
 }
 
 const SOURCE = path.join(REPOSITORY_ROOT, "src");
+
+/**
+ * The one open function the child bundles in place of the real one: the real one reaches the legacy adapter's open,
+ * whose provider modules reach native addons the child's bundle cannot load, and the child tears a session down and
+ * opens none.
+ */
+const OPEN_ENGINE_STUB = `
+const notHere = () => {
+  throw new Error("No engine opens in this child: it tears a package's session down.");
+};
+export const openEngine = notHere;
+export const openedSession = notHere;
+`;
+
 const child = boundedChild({
   label: "package-session-teardown",
   imports: [{ from: path.join(SOURCE, "lib", "db", "package-sessions.ts"), names: ["teardownPackageSession"] }],
+  stubs: [{ specifier: "@/lib/provider-host/open-engine", source: OPEN_ENGINE_STUB }],
   runCase: async (deps: { teardownPackageSession: (...args: unknown[]) => Promise<unknown> }) => {
     const env = { get: () => undefined };
     const session = { close: () => new Promise<void>(() => {}) };

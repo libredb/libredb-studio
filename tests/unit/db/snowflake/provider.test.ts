@@ -6,7 +6,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { KeyObject } from "node:crypto";
-import { requiredSecretRefusal } from "@/lib/db/connection-field-rules";
+import { requiredSecretOf } from "@/lib/db/connection-field-rules";
 import { enumerateContainers, scopeGroundingContainers } from "@/lib/db/container-walk";
 import {
   AuthenticationError,
@@ -33,6 +33,8 @@ import {
 } from "@/lib/db/providers/sql/snowflake/statements";
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { logger } from "@/lib/logger";
+import type { EngineRecord } from "@/lib/db/server-catalog";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseConnection } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { failureAnswer, handleAnswer, resultAnswer } from "../../../helpers/snowflake-answers";
@@ -237,6 +239,9 @@ describe("connect() validates the configuration before any socket", () => {
 });
 
 describe("core reads a required secret as connect() does", () => {
+  /** What the open check reads of a required secret: `requiredSecretOf` over the engine record's field rules. */
+  const coreRefusal = (record: DatabaseConnection): string | undefined =>
+    requiredSecretOf((LEGACY_ENGINES.get("snowflake") as EngineRecord).fieldRules, record);
   const signIns: readonly unknown[] = [undefined, null, "keypair", "pat", "", "oauth"];
   const blanks: readonly unknown[] = [undefined, "", " \n\t", null, 42];
   for (const authMethod of signIns) {
@@ -246,7 +251,7 @@ describe("core reads a required secret as connect() does", () => {
         const entry = build(overrides);
         const refused = ((await caught(entry.provider.connect())) as Error).message;
         expect(entry.transports.requests).toHaveLength(0);
-        const core = requiredSecretRefusal("snowflake", connection(overrides));
+        const core = coreRefusal(connection(overrides));
         if (refused === SNOWFLAKE_FIELD_SENTENCES.method) {
           expect(core).toBeUndefined();
         } else {
@@ -263,16 +268,14 @@ describe("core reads a required secret as connect() does", () => {
 
   test("a present secret is not core's to refuse: a key that is no PEM is refused by connect() for its shape, nothing sent", async () => {
     const key = { authMethod: "keypair", privateKey: crypto.randomUUID() };
-    expect(requiredSecretRefusal("snowflake", connection(key))).toBeUndefined();
+    expect(coreRefusal(connection(key))).toBeUndefined();
     const entry = build(key);
     const error = await caught(entry.provider.connect());
     expect(error).toBeInstanceOf(DatabaseConfigError);
     expect((error as Error).message).not.toBe(SNOWFLAKE_FIELD_SENTENCES.keyEmpty);
     expect(entry.transports.requests).toHaveLength(0);
     // A token is never connected here: a present one would reach the transport.
-    expect(
-      requiredSecretRefusal("snowflake", connection({ authMethod: "pat", password: crypto.randomUUID() })),
-    ).toBeUndefined();
+    expect(coreRefusal(connection({ authMethod: "pat", password: crypto.randomUUID() }))).toBeUndefined();
   });
 });
 

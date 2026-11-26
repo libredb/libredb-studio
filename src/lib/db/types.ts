@@ -2800,9 +2800,10 @@ export interface ProviderOptions {
  * factory called without a context opens a DuckDB handle with file access denied, see
  * `allowExternalFileAccess`.
  *
- * The factory hands a provider a copy of this context with core's egress decision and, for the engines that take it,
- * core's trust material added, as `ProviderBuildContext`, so `createDatabaseProvider` refuses a context that is not
- * plain data with a `DatabaseConfigError`.
+ * The legacy adapter's open (`openLegacyEngine` in src/lib/provider-host/legacy-adapter/open.ts) hands a provider a
+ * copy of this context with core's egress decision and, for the engines that take it, core's trust material added, as
+ * `ProviderBuildContext`, so `createDatabaseProvider` refuses a context that is not plain data with a
+ * `DatabaseConfigError`, in the open check it runs first.
  */
 export interface ProviderExecutionContext {
   /**
@@ -2931,9 +2932,10 @@ export interface TrustMaterial {
 }
 
 /**
- * What `createDatabaseProvider` hands a provider it builds as its context argument: the caller's execution context,
- * `egress`, the egress decision core took, and `trust`, the trust material core read (FND-2, the provider plugins
- * design section 0.1). The factory builds it; `egress` and `trust` are always core's, never a caller's. A provider whose
+ * What the legacy adapter's open (`openLegacyEngine` in src/lib/provider-host/legacy-adapter/open.ts) hands a provider
+ * it builds as its context argument: the caller's execution context, `egress`, the egress decision core took, and
+ * `trust`, the trust material core read (FND-2, the provider plugins design section 0.1). The open builds it; `egress`
+ * and `trust` are always core's, never a caller's. A provider whose
  * connections pass the shared egress guard keeps `egress` and, when it builds its origin, transport or dial, hands
  * `requireEgressDecision(context.egress)` from `./http/egress-policy` to the guard, so a provider built without a
  * decision refuses by name and dials nothing.

@@ -7,10 +7,10 @@
  * needs nothing from here. A provider whose TLS is a library of its own never sees the variable: measured on
  * 2026-11-22, the one such provider is Db2, whose driver verifies with rustls against the operating system's store.
  * Core owns that read (FND-2, the provider plugins design section 0.1): this module is the only database code that
- * reads the variable or the file, and the provider factory hands the material, as data, to the engines whose record's
- * `connection.readsTrustMaterial` is true, for a legacy engine its `READS_TRUST_MATERIAL` row in `./compatibility`;
- * for an engine a provider package serves, the package open context (`@/lib/provider-host/open-context`) hands it to
- * the package's `open` when the engine's declaration reads it.
+ * reads the variable or the file, and the legacy adapter's open (`@/lib/provider-host/legacy-adapter/open`) hands the
+ * material, as data, to the engines whose record's `connection.readsTrustMaterial` is true, for a legacy engine its
+ * `READS_TRUST_MATERIAL` row in `./compatibility`; for an engine a provider package serves, the package open context
+ * (`@/lib/provider-host/open-context`) hands it to the package's `open` when the engine's declaration reads it.
  *
  * What is read: an unset or empty variable is no certificate, as it is for Node.js. Otherwise the file is read as
  * UTF-8 and refused, with its reason, when it cannot be read, is empty or blank, holds a block under the legacy
@@ -28,11 +28,12 @@
  *
  * Who reads first: on a standalone server the CA bundle preflight (`@/lib/config/ca-bundle-preflight`), which refuses
  * an invalid file before the server serves; in a channel with no boot hook, the published package, the provider
- * factory's first build of an engine that takes the material. The outcome is kept for the life of the process, so a
- * change of the variable or of the file takes effect when Studio restarts, as it does for Node.js. A read that takes
- * the material from a set variable logs it once, with the file and the count; an unset variable logs nothing, and a
- * refusal logs nothing, since the boot banner or the thrown error speaks for it. The thrown error names the variable
- * and the reason, never the path or the content, since it can reach a browser through a route.
+ * factory's first build of an engine that takes the material, in the legacy adapter's open. The outcome is kept for the
+ * life of the process, so a change of the variable or of the file takes effect when Studio restarts, as it does for
+ * Node.js. A read that takes the material from a set variable logs it once, with the file and the count; an unset
+ * variable logs nothing, and a refusal logs nothing, since the boot banner or the thrown error speaks for it. The
+ * thrown error names the variable and the reason, never the path or the content, since it can reach a browser through
+ * a route.
  *
  * The outcome lives on `globalThis` under a registered symbol, not in a module-level variable: Next.js bundles the
  * instrumentation, which reads at boot, apart from the route handlers, so one server process holds this module twice
@@ -143,8 +144,8 @@ export function trustMaterialSetting(): TrustSetting {
 }
 
 /**
- * The material the provider factory hands the engines that take it: throws a `DatabaseConfigError` naming the variable
- * and the reason for a refused file, on every call.
+ * The material the legacy adapter's open hands the engines that take it: throws a `DatabaseConfigError` naming the
+ * variable and the reason for a refused file, on every call.
  */
 export function trustMaterial(): TrustMaterial {
   const setting = trustMaterialSetting();

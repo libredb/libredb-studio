@@ -36,8 +36,8 @@ export const dynamic = "force-dynamic";
  * request and not a bound, and the providers that implement the method are the population
  * that reaches this handler. CORRECTED after review: the first version of this sentence also named
  * the embedded seam's host, and MEASURED, a host cannot reach here at all, because the provider
- * comes from a closed `switch (connection.type)` in `src/lib/db/factory.ts` and the embedded shell
- * has no API routes.
+ * comes from a closed `switch (connection.type)` in `src/lib/provider-host/legacy-adapter/open.ts`
+ * and the embedded shell has no API routes.
  */
 export async function POST(req: NextRequest) {
   return handleObjectRequest(req, "api/db/objects/source", async (provider, body, context) => {

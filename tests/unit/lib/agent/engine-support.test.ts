@@ -24,8 +24,8 @@ import type { DatabaseType } from "@/lib/types";
  * `DatabaseType` union, and derives all three inputs from source:
  *
  * 1. the union itself, parsed out of `src/lib/types.ts` (the ids are erased at runtime);
- * 2. the module specifier and class name per id, parsed out of the `createProvider` switch
- *    in `src/lib/db/factory.ts` - the same map the factory dispatches on;
+ * 2. the module specifier and class name per id, parsed out of the `openLegacyEngine` switch
+ *    in `src/lib/provider-host/legacy-adapter/open.ts` - the same map the factory dispatches on;
  * 3. `typeof Class.prototype.queryReadOnly`, read off the real class after importing it.
  *    Property lookup walks the prototype chain, so an implementation inherited from
  *    `SQLBaseProvider` counts exactly as the factory's `typeof provider.queryReadOnly`
@@ -37,7 +37,7 @@ import type { DatabaseType } from "@/lib/types";
 
 const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
 const typesSource = readFileSync(join(repoRoot, "src", "lib", "types.ts"), "utf8");
-const factorySource = readFileSync(join(repoRoot, "src", "lib", "db", "factory.ts"), "utf8");
+const openSource = readFileSync(join(repoRoot, "src", "lib", "provider-host", "legacy-adapter", "open.ts"), "utf8");
 
 /** Every member of the `DatabaseType` union, parsed from its declaration in `src/lib/types.ts`. */
 function parseDatabaseTypes(): DatabaseType[] {
@@ -58,7 +58,7 @@ function parseDatabaseTypes(): DatabaseType[] {
   return ids;
 }
 
-/** type-id -> { class name, module specifier }, parsed from the `createProvider` switch. */
+/** type-id -> { class name, module specifier }, parsed from the `openLegacyEngine` switch. */
 function parseFactoryDispatch(): Map<DatabaseType, { exportName: string; specifier: string }> {
   const dispatch = new Map<DatabaseType, { exportName: string; specifier: string }>();
   // `(?:(?!case ")[\s\S])*?` instead of a bare `[\s\S]*?`: a lazy any-run would let a case
@@ -66,13 +66,13 @@ function parseFactoryDispatch(): Map<DatabaseType, { exportName: string; specifi
   // the NEXT case, silently measuring the wrong provider class for it. Refusing to cross a
   // `case "` boundary makes such a case fail to parse, which the union-parity test below
   // then reports as a missing id.
-  const cases = factorySource.matchAll(
-    /case "([a-z0-9]+)": \{(?:(?!case ")[\s\S])*?const \{ (\w+) \} = await import\("(\.[^"]+)"\)/g,
+  const cases = openSource.matchAll(
+    /case "([a-z0-9]+)": \{(?:(?!case ")[\s\S])*?const \{ (\w+) \} = await import\("(@\/[^"]+)"\)/g,
   );
   for (const [, id, exportName, specifier] of cases) {
     dispatch.set(id as DatabaseType, { exportName, specifier });
   }
-  if (dispatch.size === 0) throw new Error("parsed no cases out of the createProvider switch");
+  if (dispatch.size === 0) throw new Error("parsed no cases out of the openLegacyEngine switch");
   return dispatch;
 }
 
@@ -91,8 +91,8 @@ const dispatch = parseFactoryDispatch();
  */
 async function hasReadOnlyPath(type: DatabaseType): Promise<boolean> {
   const entry = dispatch.get(type);
-  if (!entry) throw new Error(`no createProvider case for "${type}"`);
-  const modulePath = join(repoRoot, "src", "lib", "db", entry.specifier);
+  if (!entry) throw new Error(`no openLegacyEngine case for "${type}"`);
+  const modulePath = join(repoRoot, "src", entry.specifier.slice("@/".length));
 
   const imported = (await import(modulePath)) as Record<string, unknown>;
   const exported = imported[entry.exportName];

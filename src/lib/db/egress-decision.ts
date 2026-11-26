@@ -20,12 +20,13 @@
  * instrumentation, which takes the decision at boot, apart from the route handlers, so one server process holds this
  * module twice (src/lib/governance/keyring.ts does the same for the same reason).
  *
- * No provider reads the decision here: the provider factory hands it to every provider that takes a context, in the
- * build context (`ProviderBuildContext` in `./types`), and every guard and transport takes it as an argument or an
- * option. For an engine a provider package serves, the package session path plays the factory's role:
- * `./package-sessions` takes the decision in its open checks, and `@/lib/provider-host/open-context` hands it to the
- * package's `open` in its open context. No other module reads it. `tests/unit/lib/db/provider-environment-scan.test.ts` holds who imports this
- * module, that no provider module reaches it, and that no module under `packages/` imports it.
+ * No provider reads the decision here: the legacy adapter's open (`@/lib/provider-host/legacy-adapter/open`) hands it
+ * to every provider that takes a context, in the build context (`ProviderBuildContext` in `./types`), and every guard
+ * and transport takes it as an argument or an option. For an engine a provider package serves,
+ * `@/lib/provider-host/open-context` hands it to the package's `open` in its open context. Every open takes the
+ * decision first in the one ordered open check (`./open-check`), and the provider factory (`./factory`) takes it before
+ * it caches, dials or builds anything. No other module reads it. `tests/unit/lib/db/provider-environment-scan.test.ts`
+ * holds who imports this module, that no provider module reaches it, and that no module under `packages/` imports it.
  *
  * `forgetEgressDecision` is a test seam.
  */

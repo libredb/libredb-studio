@@ -3,7 +3,7 @@
  *
  * It extends the repository's base class and answers the seventeen members that class declares
  * abstract. Its type-id is now in the shared unions - `DatabaseType`, `QueryDialect`, and the
- * factory's switch - because this file landed together with the registration.
+ * legacy adapter's open switch - because this file landed together with the registration.
  *
  * WHAT THE DIALECT IS FOR, MEASURED RATHER THAN ARGUED. `resolveTabType` gives every provider
  * whose `queryLanguage` is `"json"` and which declares no dialect of its own MongoDB's tab type.
@@ -149,7 +149,8 @@ const WRITE_WORDS =
  *
  * The import is dynamic and not static for one mechanical reason: `open.ts` pulls in
  * `node-ports.ts`, which holds `ssh2` and `node:net`, and this module is reachable from code that
- * is bundled for the browser. The factory imports this file the same way and for the same reason.
+ * is bundled for the browser. The legacy adapter's open imports this file the same way and for the
+ * same reason.
  *
  * `openNetconfReader` already defaults the SSH and socket ports, so the only port named here is
  * the XML reader, which is the one decision this provider makes about its own parsing (K-10).

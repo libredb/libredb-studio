@@ -27,7 +27,8 @@
  * answered `::1` and nothing happened; Bun 1.4.2 answered `fe80::18aa:2794:76e0:ef24%15`, and
  * `lookupService` threw `ERR_INVALID_ARG_VALUE` inside the callback, where the library's own
  * try/catch cannot see it. Bun printed it and survived; a test runner attributed it to whichever
- * test happened to be running. So `factory.ts` imports this module when a session is opened rather
+ * test happened to be running. So the legacy adapter's open (`openLegacyEngine` in
+ * `src/lib/provider-host/legacy-adapter/open.ts`) imports this module when a session is opened rather
  * than when a provider is built, and nothing that merely constructs a provider loads the library.
  */
 import { createHash } from "node:crypto";

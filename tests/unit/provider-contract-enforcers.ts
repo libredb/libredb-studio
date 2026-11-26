@@ -404,7 +404,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "connection.refused is the engine's REFUSED_CONNECTION_FIELDS row, each field with its sentence, in the order core checks them",
         "core refuses a connection that sets a refused field with the sentence its declaration states",
       ],
-      "tests/unit/lib/db/provider-connection.test.ts": ["the first set field in the row's order answers its sentence"],
+      "tests/unit/lib/db/open-check.test.ts": ["the first set field in the row's order answers its sentence"],
     },
     schema: ["/$defs/refusedField"],
   },

@@ -420,3 +420,41 @@ describe("the one ordered open check", () => {
     expect(openRefusal(LEGACY, connectionOf(LEGACY)).outcome).toBe("not-sent");
   });
 });
+
+describe("a connection that sets a field its engine refuses is refused, to connect, with the sentence its record states (FND-2 slice 6c)", () => {
+  const RABBITMQ = LEGACY_ENGINES.get("rabbitmq") as EngineRecord;
+  const POSTGRES = LEGACY_ENGINES.get("postgres") as EngineRecord;
+  const refused: Readonly<Record<string, string>> = RABBITMQ.connection.refused;
+
+  /** The sentence the open check refuses `fields` of `engine` with, to connect, or undefined when it opens. */
+  function refusedWith(engine: EngineRecord, fields: Record<string, unknown>): string | undefined {
+    try {
+      assertOpenable(engine, connectionOf(engine, fields), {}, "connect");
+      return undefined;
+    } catch (error) {
+      return (error as Error).message;
+    }
+  }
+
+  test("the first set field in the row's order answers its sentence", () => {
+    expect(refusedWith(RABBITMQ, { tlsServerName: "a", database: "b" })).toBe(refused.database);
+    expect(refusedWith(RABBITMQ, { tlsServerName: "a", namespaces: "b" })).toBe(refused.namespaces);
+    expect(refusedWith(RABBITMQ, { tlsServerName: "a" })).toBe(refused.tlsServerName);
+  });
+
+  test("undefined, null and empty text are not set", () => {
+    for (const value of [undefined, null, ""]) {
+      expect(refusedWith(RABBITMQ, { database: value, namespaces: value, tlsServerName: value })).toBeUndefined();
+    }
+    expect(refusedWith(RABBITMQ, {})).toBeUndefined();
+  });
+
+  test("whitespace, zero, false and an object are set", () => {
+    for (const value of [" ", 0, false, {}]) expect(refusedWith(RABBITMQ, { database: value })).toBe(refused.database);
+  });
+
+  test("an engine whose row is empty answers undefined, whatever the connection holds", () => {
+    expect(Object.keys(POSTGRES.connection.refused)).toEqual([]);
+    expect(refusedWith(POSTGRES, { user: "u", database: "d", apiKeyId: "k" })).toBeUndefined();
+  });
+});

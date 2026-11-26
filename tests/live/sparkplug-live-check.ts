@@ -110,7 +110,7 @@ class SkipItem extends Error {}
 /**
  * The provider class directly, not `createDatabaseProvider`.
  *
- * MEASURED, and the reason belongs here: the factory imports every shipped provider, so
+ * MEASURED, and the reason belongs here: the factory reaches every shipped provider, so
  * `bun build --target=node` on this file pulls DuckDB's platform bindings in and fails to
  * resolve the Windows one on a Mac. The factory's own job - picking a class from a type id - is
  * covered by `tests/unit/db/factory.test.ts`; what this file measures is the Sparkplug path,

@@ -595,10 +595,11 @@ export function requireSourceReader(
  *
  * CORRECTED after review, because the first version of this paragraph named a caller that cannot
  * reach it. MEASURED: `handleObjectRequest` takes its provider from `getOrCreateProvider`, which
- * resolves through a closed `switch (connection.type)` in `src/lib/db/factory.ts` with no
- * registration point for anyone else, and the embedded shell has no API routes at all, so a host
- * implementing the workspace source seam reads through its own function and never through this
- * module. The bound is here for a PROVIDER defect, which is enough on its own.
+ * resolves through a closed `switch (connection.type)` in
+ * `src/lib/provider-host/legacy-adapter/open.ts` with no registration point for anyone else, and the
+ * embedded shell has no API routes at all, so a host implementing the workspace source seam reads
+ * through its own function and never through this module. The bound is here for a PROVIDER
+ * defect, which is enough on its own.
  *
  * A provider that bounded correctly is returned unchanged, which is what makes the walk safe to
  * run on every answer. A provider that bounded at its own SMALLER limit is also unchanged, because

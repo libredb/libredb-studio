@@ -102,7 +102,7 @@ Where that part mixes pure code with host state, the destination is the stricter
 | `src/lib/db/sql-writing/shared.ts` | SDK /manifest | The literal, identifier and placeholder building blocks Studio's SQL writing function table binds and an engine's own SQL writing function reads. |
 | `src/lib/db/sql-writing/types.ts` | SDK /manifest | The types of the SQL writing row and of the SQL writing functions a declaration names. |
 | `src/lib/db/types.ts` | SDK /types | The provider interface types, capabilities, results and schema shapes; the core-only types it also declares stay behind when PR 9 splits it. |
-| `src/lib/db/utils/admitted-file.ts` | host service: file admission | The file the host's factory admitted, read from what the host passed. |
+| `src/lib/db/utils/admitted-file.ts` | host service: file admission | The file the host's legacy open admitted, read from what the host passed. |
 | `src/lib/db/utils/bounded-limiter.ts` | host service: run registry | Process-wide in-flight bounds and the run registry a provider cancels by. |
 | `src/lib/db/utils/catalog-sessions.ts` | SDK /util | An instance-scoped holder of per-catalog sessions with an injected clock, holding no process-wide state. |
 | `src/lib/db/utils/create-directory.ts` | host service: files | It creates folders on the host's file system. |
@@ -238,7 +238,6 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/driver-errors/index.ts` | 7 driver error rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
 | `src/lib/db/editor-language/index.ts` | 15 editor language code modules, composed with the accent and console the declarations state | etcd native PR, firestore native PR, influxdb native PR, kubernetes native PR, libredb native PR, milvus native PR, mongodb native PR, mtconnect native PR, neo4j native PR, oxia native PR, prometheus native PR, qdrant native PR, redis native PR, s3 native PR, weaviate native PR | each engine's provider package, which decides where its browser-side code runs (M-32, S-24) |
 | `src/lib/db/engine-facets/index.ts` | 43 engine facets rows | PR 11 policy | manifest rows: the PR 9 schema, collected by the PR 11 projection |
-| `src/lib/db/factory.ts` | 42 provider entry modules, imported dynamically | PR 12 | providers loaded at runtime by the loader |
 | `src/lib/db/graph-policy-profiles.ts` | 1 neo4j policy profile | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
 | `src/lib/db/migration-ddl/index.ts` | 14 migration DDL function modules, bound by Studio's migration DDL function table to the names the declarations give | bigquery native PR, cassandra native PR, clickhouse native PR, databend native PR, db2 native PR, duckdb native PR, libsql native PR, mssql native PR, mysql native PR, oracle native PR, snowflake native PR, spark native PR, sqlite native PR, trino native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/db/operations/cypher-admission.ts` | 1 statement reader module | PR 8 cypher | the Cypher family, `src/lib/db/graph/cypher/` |
@@ -265,6 +264,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | `src/lib/db/sql-writing/index.ts` | 13 SQL writing function modules, bound by Studio's SQL writing function table to the names the declarations give | cassandra native PR, clickhouse native PR, databend native PR, duckdb native PR, mongodb native PR, mssql native PR, oracle native PR, postgres native PR, snowflake native PR, spark native PR, trino native PR | each engine's provider package, which decides where its browser-side functions run (M-32) |
 | `src/lib/explain/firestore-explain.ts` | 1 firestore console parser | PR 8 fsquery | the fsquery family, `src/lib/languages/fsquery/` |
 | `src/lib/kubernetes/kubeconfig-import.ts` | 1 kubernetes limits module | kubernetes native PR | moves with the kubernetes provider package as its connection importer |
+| `src/lib/provider-host/legacy-adapter/open.ts` | 42 provider entry modules, imported dynamically | PR 12 | providers loaded at runtime by the loader |
 
 ## Slices of PR 8
 
@@ -273,7 +273,7 @@ The Imports cell starts with the file's module count, and "Removed by" names the
 | PR 8a | This census and its guard, with no source change. |
 | PR 8b | The 13 confirmation vocabulary rows with no closure inside the provider tree (mongodb, neo4j, modbus, mtconnect, opcua, sparkplug, mqtt, netconf, snmp, kafka, rabbitmq, prometheus, and redis with its command text reader) move into their statement language's core family module. |
 | PR 8 `<language>` | One slice per statement language, or a few small ones together: the language's remaining confirmation row with its reader closure, its admission reader, its agent pack's provider imports and its other core readers move into the family module. |
-| Later program PRs | PR 11 turns the registry indexes into generated projections, PR 12's loader replaces the factory's static imports, and the snmp native PR takes its generator script. |
+| Later program PRs | PR 11 turns the registry indexes into generated projections, PR 12's loader replaces the legacy adapter's open module's imports, and the snmp native PR takes its generator script. |
 
 The recommended order of the language slices is the confirmation families first (influxql, oxiacli, weaviateapi, kubectl, qdrantapi, milvusrpc, fsquery, s3api, etcdctl), then the admission-only ones from small to large (libredbkv, kafkaread, cypher, promql, rediscli, mqttread, sparkplugread, modbusread, mongo, mtconnectread, rabbitread, netconfrpc, opcuaread, snmpget), then `sql`.
 A family module lives in `src/lib/sql/` for `sql`, in `src/lib/db/graph/cypher/` for `cypher`, and in `src/lib/languages/<language>/` for every other statement language.

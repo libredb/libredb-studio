@@ -10,7 +10,7 @@ import type {
 } from "@/lib/types";
 import { GRANTED_SSH_TUNNEL_REFUSAL } from "./claim-grants";
 import { CONNECTION_STRING_ACCEPTED } from "./compatibility";
-import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
+import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "./connection-fields";
 import { offersSslPanel } from "./connection-form";
 import { tunnelRoute } from "./connection-fingerprint";
 import { DatabaseConfigError } from "./errors";
@@ -54,8 +54,8 @@ export const PROVIDER_CORE_FIELDS = Object.freeze([
  *    receives is a tunnel's endpoint;
  * 6. `PROVIDER_CORE_FIELDS`, Studio's own fields every provider receives.
  * Each field once, in that order. The answer is frozen. A field its engine refuses by name (`REFUSED_CONNECTION_FIELDS`)
- * is in none of those rows, so no provider receives one: core refuses a connection to be built to connect that sets one
- * (`refusedFieldRefusal`), and drops it otherwise.
+ * is in none of those rows, so no provider receives one: the open check refuses a connection to be built to connect that
+ * sets one (`assertOpenable` in ./open-check, which reads the record's `connection.refused`), and drops it otherwise.
  *
  * @throws {UnknownProviderError} When `type` is absent, not text, or names no provider.
  */
@@ -69,26 +69,6 @@ export function providerFields(type: DatabaseType): readonly (keyof DatabaseConn
     ...PROVIDER_CORE_FIELDS,
   ];
   return Object.freeze([...new Set(fields)]);
-}
-
-/**
- * The sentence a connection is refused with for setting a field its engine refuses by name (FND-2 slice 6c,
- * docs/SECURITY.md control 3.41): of the engine's `REFUSED_CONNECTION_FIELDS` row, read through `typeIdRow` so it names
- * no type id, the sentence of the first field in row order that the connection sets, or undefined when it sets none.
- * A field is set when the record holds it as its own property with a value other than `undefined`, `null` and `""`,
- * whatever its type: the engine takes the field in no form, so any value in it is a mistake the operator should see by
- * name. The sentence names the field and never its value. Pure: it reads its argument and writes nothing.
- *
- * @throws {UnknownProviderError} When the record's type names no provider (`typeIdRow`).
- */
-export function refusedFieldRefusal(connection: DatabaseConnection): string | undefined {
-  const row: Readonly<Record<string, string>> = typeIdRow(REFUSED_CONNECTION_FIELDS, connection.type);
-  for (const [field, sentence] of Object.entries(row)) {
-    if (!Object.hasOwn(connection, field)) continue;
-    const value: unknown = Reflect.get(connection, field);
-    if (value !== undefined && value !== null && value !== "") return sentence;
-  }
-  return undefined;
 }
 
 /**
@@ -185,9 +165,9 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * before the build, `TUNNEL_FAR_END` (the tunnel's far end, set where core opens the tunnel) and `LITERAL_SEED_FILE`
  * (a seed-file row read in literal mode, set by the operator's seed loader). Both are made with `Symbol()`, so no
  * caller outside the source can name them. Every other symbol key is dropped: `TUNNEL_ROUTE` is set by
- * `providerConnection` itself, and `ADMITTED_FILE` and `ADMITTED_HOST_PATHS` by the factory's later steps
- * (`admittedFileConnection` and `admittedHostPathConnection` in ./provider-files), so a caller's value of any of them
- * never survives.
+ * `providerConnection` itself, and `ADMITTED_FILE` and `ADMITTED_HOST_PATHS` by the legacy open's later steps
+ * (`admittedFileConnection` and `admittedHostPathConnection` in ./provider-files, which `openLegacyEngine` in
+ * src/lib/provider-host/legacy-adapter/open.ts runs), so a caller's value of any of them never survives.
  */
 const CALLER_MARKERS: readonly symbol[] = Object.freeze([TUNNEL_FAR_END, LITERAL_SEED_FILE]);
 
@@ -213,12 +193,14 @@ export type ProviderConnection = DatabaseConnection & WithTunnelFarEnd & WithLit
  * routes frame the seal on this function's answer for the record they resolved, so both sides digest the same fields.
  * Databend's sign-in latch reads the route through `requireTunnelRoute` in `./utils/require-tunnel-route`. A field the
  * engine does not declare is dropped and never refused here: stored records carry fields their engine does not take.
- * A field its engine refuses by name is dropped here too; the open check that `buildProvider` in `./factory` runs
- * refuses it first, for a provider built to connect (`assertOpenable` in `./open-check`).
+ * A field its engine refuses by name is dropped here too; the open check the one open function runs
+ * (`openEngine` in src/lib/provider-host/open-engine.ts) refuses it first, for a provider built to connect
+ * (`assertOpenable` in `./open-check`).
  *
- * PRECONDITION. The tunnel is one core's decision accepted: its caller, `buildProvider` in `./factory`, runs the open
- * check first (`assertOpenable` in `./open-check`, hence `assertProviderTunnel` and `decideTunnel`), which holds
- * `host` and `username` to text on every present tunnel, the values `tunnelRoute` measures. The field checks are not
+ * PRECONDITION. The tunnel is one core's decision accepted: its caller, `openLegacyEngine` in
+ * src/lib/provider-host/legacy-adapter/open.ts, runs after the open check (`assertOpenable` in `./open-check`, hence
+ * `assertProviderTunnel` and `decideTunnel`, which `openEngine` runs first), which holds `host` and `username` to text
+ * on every present tunnel, the values `tunnelRoute` measures. The field checks are not
  * repeated here, which would be a second copy of the decision and an import cycle with `./tunnel-decision`. The edit
  * routes call it after `handleObjectRequest` built their provider through `getOrCreateProvider`.
  *

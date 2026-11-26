@@ -1,10 +1,12 @@
 /**
  * The one ordered open check (issue #2537): what core refuses before a session of any engine opens, read from the
  * engine's record (`EngineRecord` in ./server-catalog), its grants, its connection tables and its offers, and never from
- * a table keyed by type or from who serves the engine. A legacy engine's provider (`buildProvider` in ./factory) and a
- * package engine's session (`getOrCreatePackageSession` in ./package-sessions, `testPackageConnection` in
- * src/lib/api/test-connection.ts) are both checked by `assertOpenable`, so one connection is refused by one sentence
- * whichever source serves its engine.
+ * a table keyed by type or from who serves the engine. Every engine opens through the one open function (`openEngine`
+ * in src/lib/provider-host/open-engine.ts), which runs `assertOpenable` before the record's open, a legacy engine's
+ * provider and a package engine's session alike, so one connection is refused by one sentence whichever source serves
+ * its engine. The package session path also runs it before its cache key (`getOrCreatePackageSession` in
+ * ./package-sessions) and Test Connection before its budget starts (`testPackageConnection` in
+ * src/lib/api/test-connection.ts), each on the context it then opens with.
  *
  * IN THIS ORDER, the first refusal thrown, each a `DatabaseConfigError` naming the engine by `legacyProviderType`
  * (./server-catalog), a legacy record's type and nothing for a package record's:
@@ -42,8 +44,8 @@
  * nothing, as before.
  *
  * The record's open refuses further after the check: a legacy build admits the connection's file and host paths and
- * reads trust material (./factory), and a package's open context refuses a value form or a TLS mode it cannot hand on
- * (src/lib/provider-host/open-context.ts).
+ * reads trust material (`openLegacyEngine` in src/lib/provider-host/legacy-adapter/open.ts), and a package's open
+ * context refuses a value form or a TLS mode it cannot hand on (src/lib/provider-host/open-context.ts).
  */
 import { storageLocation } from "@/lib/data-dir";
 import { requiredSecretOf } from "./connection-field-rules";

@@ -6,7 +6,9 @@
 import { describe, expect, test } from "bun:test";
 import { builtinModules } from "node:module";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { connectionFieldRefusal, fieldRuleRefusal, requiredSecretRefusal } from "@/lib/db/connection-field-rules";
+import { connectionFieldRefusal, fieldRuleRefusal, requiredSecretOf } from "@/lib/db/connection-field-rules";
+import type { EngineRecord } from "@/lib/db/server-catalog";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { fieldRuleBase, fieldRuleCorpus } from "../../../helpers/field-rule-corpus";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
@@ -58,7 +60,9 @@ describe("src/lib/db/connection-field-rules.ts", () => {
     expect(connectionFieldRefusal(CONNECTION_FORM.snowflake, pat)).toBe(
       CONNECTION_FORM.snowflake.fieldRules?.password?.required,
     );
-    expect(requiredSecretRefusal("snowflake", pat)).toBe(CONNECTION_FORM.snowflake.fieldRules?.password?.required);
+    expect(requiredSecretOf((LEGACY_ENGINES.get("snowflake") as EngineRecord).fieldRules, pat)).toBe(
+      CONNECTION_FORM.snowflake.fieldRules?.password?.required,
+    );
     // The control: a value that is text is still read by every check.
     expect(connectionFieldRefusal(CONNECTION_FORM.rabbitmq, withFields("rabbitmq", { amqpPort: "null" }))).toBe(
       CONNECTION_FORM.rabbitmq.fieldRules?.amqpPort?.format?.sentence,

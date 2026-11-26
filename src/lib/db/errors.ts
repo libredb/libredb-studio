@@ -29,16 +29,17 @@ export class DatabaseError extends Error {
    * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; the constructor of
    * `TransactionLostError`, when the provider raising it says it found the held session ended before sending;
    * `connectPhase`, on what a provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
-   * factory raises it inside the connect it runs there); `buildPhase`, which `buildProvider` in ./factory runs, on what building a provider
-   * raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the error it answers
-   * in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through `markNotSent`, on the
-   * class it builds for a console call the host refused before making it; and `checkoutPhase`, which a provider's execute
-   * runs around taking a connection or session from its pool or client before it sends, on what that checkout raised,
-   * mapped; and `testConnection` (src/lib/api/test-connection.ts), through `markNotSent`, on the refusal of a
-   * connection its engine's field rules refuse before anything is built. Absent otherwise, which `errorOutcome` in
-   * ./error-record reads as `unknown`, because the statement may have run. An own field only when set, so every other
-   * error keeps the own keys it had. An instance a failed build or connect raised is never raised by a later statement:
-   * the factory keeps no provider whose build or connect failed.
+   * factory raises it inside the connect it runs there); `buildPhase`, which the factory's `createDatabaseProvider` and
+   * `readProviderDeclarations` run around the one open function (src/lib/provider-host/open-engine.ts), on what
+   * building a provider raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the
+   * error it answers in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through
+   * `markNotSent`, on the class it builds for a console call the host refused before making it; and `checkoutPhase`,
+   * which a provider's execute runs around taking a connection or session from its pool or client before it sends, on
+   * what that checkout raised, mapped; and `testConnection` (src/lib/api/test-connection.ts), through `markNotSent`, on
+   * the refusal of a connection its engine's field rules refuse before anything is built. Absent otherwise, which
+   * `errorOutcome` in ./error-record reads as `unknown`, because the statement may have run. An own field only when set,
+   * so every other error keeps the own keys it had. An instance a failed build or connect raised is never raised by a
+   * later statement: the factory keeps no provider whose build or connect failed.
    */
   declare outcome?: ExecuteOutcome;
 
