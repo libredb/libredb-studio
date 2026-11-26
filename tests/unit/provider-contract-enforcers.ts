@@ -117,7 +117,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
     tests: {
       "tests/unit/lib/db/provider-files.test.ts": [
         "either path naming one of Studio's own storage files is refused by name, with the field and the connection's type, before any provider is built",
-        "every field HOST_PATH_FIELDS names is a seed-only field, so only an operator's seed file or an embedder's own code names one",
+        "every field a legacy row names as a host path field is a seed-only field, so only an operator's seed file or an embedder's own code names one",
       ],
     },
   },

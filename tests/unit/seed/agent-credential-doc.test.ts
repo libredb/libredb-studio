@@ -1,17 +1,17 @@
 /**
  * The "An agent credential" subsection of docs/SEED_CONNECTIONS.md names, per form, the engines whose seed takes it,
  * and the engines on which the credential narrows agent runs only or `inspect_schema` and agent runs. Each list is
- * derived here from `SEED_AGENT_CREDENTIAL` and the MCP registries, so a row that changes fails this until the
+ * derived here from the legacy rows of the grant register, so a row that changes fails this until the
  * document follows.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 
+const agentCredential = legacyAgentCredentialTable();
 const exposable = legacyRegisterTable("exposable");
 const statementRead = legacyRegisterTable("statementRead");
 
@@ -30,15 +30,15 @@ function namedOn(lead: string): string[] {
 const where = (keep: (type: DatabaseType) => boolean): string[] => SHIPPED_DATABASE_TYPES.filter(keep).sort();
 
 describe("docs/SEED_CONNECTIONS.md: an agent credential", () => {
-  test("names the engines of each form from SEED_AGENT_CREDENTIAL", () => {
+  test("names the engines of each form from the legacy rows' agent credential", () => {
     expect(namedOn("- `agentUser` and `agentPassword` together:")).toEqual(
-      where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "pair"),
+      where((type) => agentCredential[type]?.form === "pair"),
     );
     expect(namedOn("- `agentUser` and `agentPassword` together, with an `agentUser` other than `user`:")).toEqual(
-      where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "dedicated-pair"),
+      where((type) => agentCredential[type]?.form === "dedicated-pair"),
     );
-    expect(namedOn("- `agentPassword` alone")).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type]?.form === "secret"));
-    expect(namedOn("- Neither:")).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type] === null));
+    expect(namedOn("- `agentPassword` alone")).toEqual(where((type) => agentCredential[type]?.form === "secret"));
+    expect(namedOn("- Neither:")).toEqual(where((type) => agentCredential[type] === null));
   });
 
   test("names where the credential narrows agent runs only and where inspect_schema too, from the MCP registries", () => {
@@ -50,9 +50,9 @@ describe("docs/SEED_CONNECTIONS.md: an agent credential", () => {
         .map((match) => match[1])
         .filter((name) => name !== "inspect_schema")
         .sort();
-    expect(named(runsOnly)).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type] !== null && !exposable[type]));
+    expect(named(runsOnly)).toEqual(where((type) => agentCredential[type] !== null && !exposable[type]));
     expect(named(inspectToo)).toEqual(
-      where((type) => SEED_AGENT_CREDENTIAL[type] !== null && exposable[type] && !statementRead[type]),
+      where((type) => agentCredential[type] !== null && exposable[type] && !statementRead[type]),
     );
   });
 });

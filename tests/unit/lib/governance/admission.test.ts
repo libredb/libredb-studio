@@ -11,7 +11,7 @@ import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
-import { OPENS_LOCAL_FILE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   type AdmissionOptions,
   type AdmissionResult,
@@ -27,6 +27,7 @@ import { openGovernedSecret } from "@/lib/governance/secrets";
 import { keyringFileOf, removeKeyringFiles, testKey } from "../../../helpers/governance/keyring-file";
 import { sealSecret } from "../../../helpers/governance/lsb1-seal";
 import { OUTSIDE_THE_UNION } from "../../../helpers/outside-the-union";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 
@@ -270,7 +271,8 @@ describe("admitConnectionRows", () => {
   });
 
   test("every engine that opens a local file stays ENGINE_UNSUPPORTED, named in GOVERNANCE_ALLOWED_ENGINES or not", () => {
-    const files = SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type]);
+    const opensLocalFile = legacyRegisterTable("opensLocalFile");
+    const files = SHIPPED_DATABASE_TYPES.filter((type) => opensLocalFile[type]);
     expect(files).toEqual(expect.arrayContaining(["sqlite", "duckdb", "libredb"]));
     for (const allowedEngines of [OPTIONS.allowedEngines, [...OPTIONS.allowedEngines, ...files]]) {
       const result = admit(

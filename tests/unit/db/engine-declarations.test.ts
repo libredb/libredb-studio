@@ -116,12 +116,8 @@ import {
   AGENT_STATEMENT_LANGUAGE,
   CONNECTION_FORM_URI_MODE,
   CONNECTION_STRING_ACCEPTED,
-  HOST_PATH_FIELDS,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   READS_TRUST_MATERIAL,
   SHIPPED_DATABASE_TYPES,
-  SSH_TUNNEL_REFUSAL,
 } from "@/lib/db/compatibility";
 import {
   CONNECTION_FIELD_DESCRIPTORS,
@@ -131,7 +127,6 @@ import {
   PLACEABLE_FIELDS,
   type PlaceableField,
   REFUSED_CONNECTION_FIELDS,
-  SEED_AGENT_CREDENTIAL,
   SEED_ONLY_FIELD_NAMES,
   SEED_ONLY_FIELDS,
   type SeedAgentCredential,
@@ -245,7 +240,7 @@ import {
   slotNameAt,
   valueAt,
 } from "./engine-declarations/declared-slots";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
@@ -258,6 +253,11 @@ const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
 const singleWriterFile = legacyRegisterTable("singleWriterFile");
 const writeReach = legacyRegisterTable("writeReach");
 const agentCredentialForm = legacyRegisterTable("agentCredentialForm");
+const opensLocalFile = legacyRegisterTable("opensLocalFile");
+const hostPathFields = legacyRegisterTable("hostPathFields");
+const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
+const sshTunnel = legacyRegisterTable("sshTunnel");
+const agentCredential = legacyAgentCredentialTable();
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -1707,40 +1707,45 @@ function maintenanceFromDeclaration(capabilities: ProviderCapabilities, d: Engin
   };
 }
 
-/** How the census reads one claim of an earlier segment: the engine's request, and Studio's record of it. */
+/** How the census reads one claim of an earlier segment: the engine's request, and Studio's review of it. */
 interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
   readonly request: (declaration: EngineDeclaration) => unknown;
-  /** The row of Studio's review record for `type`, written in the declaration's form. */
+  /**
+   * Studio's review row for `type`, written in the declaration's form: for a connection claim, that member of the
+   * engine's legacy row in the grant register; for every other claim, the row of Studio's review record.
+   */
   readonly record: (type: DatabaseType) => unknown;
 }
 
 /**
- * Studio's review record of each claim of the connection, facets, agent and SQL text segments, by the dotted member
- * that requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the table every gate reads and each
- * declaration's request is generated from. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ * Studio's review of each claim of the connection, facets, agent and SQL text segments, by the dotted member that
+ * requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the review the grant reader grants each request
+ * against and each declaration's request is generated from. A connection claim's review is that member of every
+ * engine's legacy row in the grant register, and every other claim's a record Studio still keeps in core. Written here
+ * apart from the generator, as `POLICY_CLAIM_RECORDS` is.
  */
 const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   "connection.opensLocalFile": {
     request: (d) => d.connection.opensLocalFile,
-    record: (type) => OPENS_LOCAL_FILE[type],
+    record: (type) => opensLocalFile[type],
   },
   "connection.hostPathFields": {
     request: (d) => d.connection.hostPathFields,
-    record: (type) => HOST_PATH_FIELDS[type],
+    record: (type) => hostPathFields[type],
   },
   "connection.serverLevelWithoutDatabase": {
     request: (d) => d.connection.serverLevelWithoutDatabase,
-    record: (type) => OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type],
+    record: (type) => serverLevelWithoutDatabase[type],
   },
   "connection.sshTunnel": {
     request: (d) => (d.connection.sshTunnel.offered ? null : d.connection.sshTunnel.refusal),
-    record: (type) => SSH_TUNNEL_REFUSAL[type],
+    record: (type) => sshTunnel[type],
   },
   "connection.agentCredential": {
     request: (d) => d.connection.agentCredential,
     record: (type) => {
-      const row = SEED_AGENT_CREDENTIAL[type];
+      const row = agentCredential[type];
       return row === null ? null : { form: row.form, supersededBy: row.supersededBy };
     },
   },
@@ -1878,13 +1883,13 @@ describe("the census", () => {
     expect(differing(matches)).toEqual([]);
   });
 
-  test("connection.hostPathFields is the engine's HOST_PATH_FIELDS row", () => {
-    expect(differing((type, d) => sameList(d.connection.hostPathFields, HOST_PATH_FIELDS[type]))).toEqual([]);
+  test("connection.hostPathFields is the engine's legacy register row", () => {
+    expect(differing((type, d) => sameList(d.connection.hostPathFields, hostPathFields[type]))).toEqual([]);
   });
 
-  test("connection.agentCredential is the engine's SEED_AGENT_CREDENTIAL row", () => {
+  test("connection.agentCredential is the engine's legacy register row", () => {
     const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
-      const row = SEED_AGENT_CREDENTIAL[type];
+      const row = agentCredential[type];
       const credential = d.connection.agentCredential;
       if (row === null || credential === null) return row === credential;
       return credential.form === row.form && sameList(credential.supersededBy, row.supersededBy);
@@ -1902,9 +1907,9 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("connection.sshTunnel is offered exactly where no SSH_TUNNEL_REFUSAL sentence is, and carries that sentence", () => {
+  test("connection.sshTunnel is offered exactly where the engine's legacy register row holds no sentence, and carries that sentence", () => {
     const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
-      const sentence = SSH_TUNNEL_REFUSAL[type];
+      const sentence = sshTunnel[type];
       const tunnel = d.connection.sshTunnel;
       return tunnel.offered ? sentence === null : tunnel.refusal === sentence;
     };
@@ -1922,9 +1927,9 @@ describe("the census", () => {
   });
 
   test("connection.opensLocalFile and serverLevelWithoutDatabase are their records", () => {
-    expect(differing((type, d) => d.connection.opensLocalFile === OPENS_LOCAL_FILE[type])).toEqual([]);
+    expect(differing((type, d) => d.connection.opensLocalFile === opensLocalFile[type])).toEqual([]);
     expect(
-      differing((type, d) => d.connection.serverLevelWithoutDatabase === OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type]),
+      differing((type, d) => d.connection.serverLevelWithoutDatabase === serverLevelWithoutDatabase[type]),
     ).toEqual([]);
   });
 

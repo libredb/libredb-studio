@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import type { AgentCredentialForm } from "@/lib/db/types";
 import type { DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 
 const agentCredentialForm = legacyRegisterTable("agentCredentialForm");
+const agentCredential = legacyAgentCredentialTable();
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 
@@ -41,9 +42,10 @@ describe("the legacy rows' agent credential form against each provider's own dec
 });
 
 /**
- * `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) against the two sources it follows: the built provider's
- * `agentCredential` and the engine's `CONNECTION_FIELDS` row. The expected row is derived here from those two, the
- * actual one is the hand-written table, so a provider that changes its form fails this until the row follows.
+ * The agent credential of every shipped engine's legacy row in the grant register, Studio's review of
+ * `connection.agentCredential`, against the two sources it follows: the built provider's `agentCredential` and the
+ * engine's `CONNECTION_FIELDS` row. The expected row is derived here from those two, the actual one is the
+ * hand-reviewed register row, so a provider that changes its form fails this until the row follows.
  *
  * The rows a provider with no declared form is given no agent credential by, each with its reason. They are the only
  * rows accepted without a matching form: a user and a password together is what the factory asks such a provider for,
@@ -75,7 +77,7 @@ function expectedRow(
   return fields.includes("user") && fields.includes("password") ? "pair" : null;
 }
 
-describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () => {
+describe("the legacy rows' agent credential against each provider's form and field row", () => {
   test.each([...SHIPPED_DATABASE_TYPES])(
     "%s takes the seed agent credential its provider's form gives",
     async (type) => {
@@ -83,7 +85,7 @@ describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () 
       const form = provider.getCapabilities().agentCredential;
       const derived = expectedRow(form, CONNECTION_FIELDS[type]);
       const expected = NO_AGENT_CREDENTIAL[type] === undefined ? derived : null;
-      expect(SEED_AGENT_CREDENTIAL[type]?.form ?? null).toBe(expected);
+      expect(agentCredential[type]?.form ?? null).toBe(expected);
     },
   );
 
@@ -104,7 +106,7 @@ describe("SEED_AGENT_CREDENTIAL against each provider's form and field row", () 
   test("only Elasticsearch names a field that supersedes the agent's user and password", () => {
     const superseding = Object.fromEntries(
       SHIPPED_DATABASE_TYPES.flatMap((type) => {
-        const fields = SEED_AGENT_CREDENTIAL[type]?.supersededBy ?? [];
+        const fields = agentCredential[type]?.supersededBy ?? [];
         return fields.length === 0 ? [] : [[type, fields]];
       }),
     );

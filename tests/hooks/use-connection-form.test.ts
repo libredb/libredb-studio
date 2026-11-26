@@ -173,8 +173,8 @@ mock.module("@/lib/db-ui-config", () => ({
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
   connectionFieldRefusal: mockFieldRefusal,
   connectionFieldShown: mockFieldShown,
-  // The real rule: core's SSH_TUNNEL_REFUSAL row (FND-2 slice 5).
-  offersSshTunnel: (type: string) => SSH_TUNNEL_REFUSAL[type as DatabaseType] === null,
+  // The real rule: the engine's legacy register row of the tunnel claim (FND-2 slice 5).
+  offersSshTunnel: (type: string) => sshTunnel[type as DatabaseType] === null,
   offersSslPanel: (type: string) => type !== "bigquery" && type !== "firestore",
 }));
 
@@ -188,13 +188,14 @@ import {
   DATABEND_SSLMODE_NOTICES,
   databendNotAppliedNotice,
 } from "@/lib/connection-string-parser";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { providerCacheKey } from "@/lib/db/provider-cache-key";
 import { CONNECTION_FORM, CONNECTION_PICKER_ORDER } from "@/lib/db/connection-form";
 import { BODY_CONNECTION_FIELDS, initialFieldValues } from "@/lib/db/connection-fields";
 import { legacyRegisterTable } from "../helpers/legacy-register";
 
 const writeReach = legacyRegisterTable("writeReach");
+const sshTunnel = legacyRegisterTable("sshTunnel");
 
 // =============================================================================
 // useConnectionForm Tests

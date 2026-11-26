@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import * as path from "node:path";
 import * as dataDir from "@/lib/data-dir";
 import { BOOTSTRAP_FILE_NAME, forgetStorageLocation, LINKS_FOLLOWED_LIMIT, storageLocation } from "@/lib/data-dir";
-import { HOST_PATH_FIELDS, OPENS_LOCAL_FILE } from "@/lib/db/compatibility";
 import { SEED_ONLY_FIELD_NAMES } from "@/lib/db/connection-fields";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -35,6 +34,10 @@ import {
   type WithAdmittedHostPaths,
 } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const opensLocalFile = legacyRegisterTable("opensLocalFile");
+const hostPathFields = legacyRegisterTable("hostPathFields");
 
 /**
  * Core decides the file a SQLite, DuckDB or LibreDB connection opens, and OPC UA's PKI root, before the provider is built
@@ -91,11 +94,11 @@ function refusalOf(value: DatabaseConnection): unknown {
 }
 
 describe("core decides the file a local-file connection opens (FND-2 slice 3)", () => {
-  test("a postgres connection, and any engine OPENS_LOCAL_FILE does not mark, comes back as the same object", () => {
+  test("a postgres connection, and any engine whose legacy register row opens no local file, comes back as the same object", () => {
     const postgres = connection("postgres", { database: "app.db", connectionString: "file:app.db" });
     expect(admittedFileConnection(postgres)).toBe(postgres);
-    for (const type of Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]) {
-      if (OPENS_LOCAL_FILE[type]) continue;
+    for (const type of Object.keys(opensLocalFile) as DatabaseType[]) {
+      if (opensLocalFile[type]) continue;
       const other = connection(type, { database: "app.db" });
       expect(admittedFileConnection(other)).toBe(other);
     }
@@ -301,7 +304,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
    */
   // Windows makes a symbolic link only with a privilege the runner may lack (the rows above).
   test.skipIf(onWindows)(
-    "a path whose resolution follows more than LINKS_FOLLOWED_LIMIT links is refused by name with ELOOP when the provider is built, for every engine OPENS_LOCAL_FILE marks",
+    "a path whose resolution follows more than LINKS_FOLLOWED_LIMIT links is refused by name with ELOOP when the provider is built, for every engine whose legacy register row opens a local file",
     async () => {
       const chain = path.join(scratch, "link-chain");
       fs.mkdirSync(chain);
@@ -318,7 +321,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
         return realpath(file, options as fs.EncodingOption);
       }) as typeof fs.realpathSync);
       try {
-        const marked = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+        const marked = (Object.keys(opensLocalFile) as DatabaseType[]).filter((type) => opensLocalFile[type]);
         for (const type of marked) {
           // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
           const refused = await createDatabaseProvider(connection(type, { database })).then(
@@ -391,7 +394,7 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
     expect(admitted(record)).toBe("/caller/chose.db");
   });
 
-  test("every engine OPENS_LOCAL_FILE marks, built by createDatabaseProvider from its census connection, holds an absolute admitted file, and no other engine holds one", async () => {
+  test("every engine whose legacy register row opens a local file, built by createDatabaseProvider from its census connection, holds an absolute admitted file, and no other engine holds one", async () => {
     const holders: string[] = [];
     for (const type of Object.keys(CENSUS_CONNECTION) as DatabaseType[]) {
       // oxlint-disable-next-line no-await-in-loop -- one build at a time, each read before the next.
@@ -401,13 +404,13 @@ describe("core decides the file a local-file connection opens (FND-2 slice 3)", 
       holders.push(type);
       expect(path.isAbsolute(file)).toBe(true);
     }
-    const marked = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+    const marked = (Object.keys(opensLocalFile) as DatabaseType[]).filter((type) => opensLocalFile[type]);
     expect(holders.sort()).toEqual(marked.sort());
   });
 });
 
 /**
- * OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` (`HOST_PATH_FIELDS`) name files on Studio's own host that
+ * OPC UA's `clientCertificatePath` and `clientPrivateKeyPath` (its legacy register row's host path fields) name files on Studio's own host that
  * the provider reads, so core admits them as it admits a local-file connection's database: resolved against the working
  * directory when the provider is built, refused by name when one names Studio's own storage files, and handed to the
  * provider under `ADMITTED_HOST_PATHS` (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`).
@@ -536,14 +539,14 @@ describe("core admits OPC UA's certificate and key paths like a database file", 
     expect(hostPaths(marked)).toEqual({ clientCertificatePath: "/caller/chose.pem" });
   });
 
-  test("every field HOST_PATH_FIELDS names is a seed-only field, so only an operator's seed file or an embedder's own code names one", () => {
-    const named = new Set(Object.values(HOST_PATH_FIELDS).flat());
+  test("every field a legacy row names as a host path field is a seed-only field, so only an operator's seed file or an embedder's own code names one", () => {
+    const named = new Set(Object.values(hostPathFields).flat());
     expect(named.size).toBeGreaterThan(0);
     for (const field of named)
       expect([field, (SEED_ONLY_FIELD_NAMES as readonly string[]).includes(field)]).toEqual([field, true]);
   });
 
-  test("every engine HOST_PATH_FIELDS names, built from its census connection with both paths set, holds absolute admitted paths, and no other engine holds any", async () => {
+  test("every engine whose legacy register row names a host path field, built from its census connection with both paths set, holds absolute admitted paths, and no other engine holds any", async () => {
     const holders: string[] = [];
     for (const type of Object.keys(CENSUS_CONNECTION) as DatabaseType[]) {
       // oxlint-disable-next-line no-await-in-loop -- one build at a time, each read before the next.
@@ -555,10 +558,10 @@ describe("core admits OPC UA's certificate and key paths like a database file", 
       const admittedPaths = hostPaths(provider.config);
       if (admittedPaths === undefined) continue;
       holders.push(type);
-      expect(Object.keys(admittedPaths).sort()).toEqual([...HOST_PATH_FIELDS[type]].sort());
+      expect(Object.keys(admittedPaths).sort()).toEqual([...hostPathFields[type]].sort());
       for (const file of Object.values(admittedPaths)) expect(path.isAbsolute(file)).toBe(true);
     }
-    const named = (Object.keys(HOST_PATH_FIELDS) as DatabaseType[]).filter((type) => HOST_PATH_FIELDS[type].length > 0);
+    const named = (Object.keys(hostPathFields) as DatabaseType[]).filter((type) => hostPathFields[type].length > 0);
     expect(holders.sort()).toEqual(named.sort());
     expect(named).toEqual(["opcua"]);
   });
@@ -628,7 +631,7 @@ describe("core refuses a connection naming the providers directory", () => {
     forgetProvidersDirectory();
     const named = [providers, artifactFile, path.join(providers, "later.db"), path.join(providers, LOCK_FILE_NAME)];
 
-    const fileTypes = (Object.keys(OPENS_LOCAL_FILE) as DatabaseType[]).filter((type) => OPENS_LOCAL_FILE[type]);
+    const fileTypes = (Object.keys(opensLocalFile) as DatabaseType[]).filter((type) => opensLocalFile[type]);
     expect(fileTypes.length).toBeGreaterThan(0);
     for (const type of fileTypes) {
       for (const file of named) {
@@ -643,12 +646,12 @@ describe("core refuses a connection naming the providers directory", () => {
       }
     }
 
-    const hostPathTypes = (Object.keys(HOST_PATH_FIELDS) as DatabaseType[]).filter(
-      (type) => HOST_PATH_FIELDS[type].length > 0,
+    const hostPathTypes = (Object.keys(hostPathFields) as DatabaseType[]).filter(
+      (type) => hostPathFields[type].length > 0,
     );
     expect(hostPathTypes.length).toBeGreaterThan(0);
     for (const type of hostPathTypes) {
-      for (const field of HOST_PATH_FIELDS[type]) {
+      for (const field of hostPathFields[type]) {
         for (const file of named) {
           // oxlint-disable-next-line no-await-in-loop -- each refusal is read before the next build.
           const refused = await createDatabaseProvider(connection(type, { [field]: file })).then(

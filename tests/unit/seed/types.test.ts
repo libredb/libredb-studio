@@ -6,7 +6,6 @@ import { z } from "zod";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
-import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import {
   refuseInvalidAgentCredential,
   refuseMcpWhereNotOffered,
@@ -17,12 +16,17 @@ import {
   SeedConfigSchema,
   SeedDefaultsSchema,
 } from "@/lib/seed/types";
-import { type LegacyRegisterTable, legacyRegisterTable } from "../../helpers/legacy-register";
+import {
+  type LegacyRegisterTable,
+  legacyAgentCredentialTable,
+  legacyRegisterTable,
+} from "../../helpers/legacy-register";
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 const exposable = legacyRegisterTable("exposable");
 const readRootsRequired = legacyRegisterTable("readRootsRequired");
 const writeReach = legacyRegisterTable("writeReach");
+const agentCredential = legacyAgentCredentialTable();
 
 const STAND_IN_MARKER = ["not", "a", "real", "marker"].join("-");
 
@@ -1631,8 +1635,9 @@ describe("SeedConnectionSchema: Snowflake's static checks (SF-038)", () => {
 
 /**
  * A seed's agent credential, `agentUser` and `agentPassword`: the principal its agent execution profiles and its MCP
- * calls sign in as. Which fields an engine's seed may carry is `SEED_AGENT_CREDENTIAL`, and every refusal names the
- * connection and the field, never the value. A reference is unknown at load, so only what the file shows is refused.
+ * calls sign in as. Which fields an engine's seed may carry is Studio's grant of its agent credential claim, and every
+ * refusal names the connection and the field, never the value. A reference is unknown at load, so only what the file
+ * shows is refused.
  */
 describe("SeedConnectionSchema: an agent credential", () => {
   const base = (type: string, fields: Record<string, unknown> = {}) => ({
@@ -1803,7 +1808,7 @@ describe("SeedConnectionSchema: an agent credential", () => {
 });
 
 describe("refuseInvalidAgentCredential: a dedicated agent user", () => {
-  const table = { ...SEED_AGENT_CREDENTIAL, postgres: { form: "dedicated-pair", supersededBy: [] } } as const;
+  const table = { ...agentCredential, postgres: { form: "dedicated-pair", supersededBy: [] } } as const;
   const schema = z
     .object({
       id: z.string(),

@@ -84,8 +84,8 @@ import {
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 import { DB_UI_CONFIG, offersSshTunnel } from "@/lib/db-ui-config";
-import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 
 // ============================================================================
 // The domains
@@ -1410,7 +1410,7 @@ describe("what the provider does not offer", () => {
   });
 
   test("no SSH tunnel and no connection string are offered, by core's row, the dialog and the capabilities", () => {
-    expect(SSH_TUNNEL_REFUSAL.kafka).not.toBeNull();
+    expect(legacyRegisterTable("sshTunnel").kafka).not.toBeNull();
     expect(offersSshTunnel("kafka")).toBe(false);
     expect(DB_UI_CONFIG.kafka.showConnectionStringToggle).toBe(false);
     expect(new KafkaProvider(KAFKA).getCapabilities().supportsConnectionString).toBe(false);

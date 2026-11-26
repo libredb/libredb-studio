@@ -88,7 +88,7 @@ import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import { closeProviderCaches, resetShutdownHooks } from "@/lib/shutdown";
 import { TUNNEL_ROUTE, type DatabaseType, type SSHTunnelConfig, type WithTunnelRoute } from "@/lib/types";
 import { providerFields } from "@/lib/db/provider-connection";
-import { REFUSED_CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
+import { REFUSED_CONNECTION_FIELDS } from "@/lib/db/connection-fields";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
@@ -100,9 +100,10 @@ import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outsid
 import { markersReachableFrom } from "../helpers/reachable-markers";
 import { setEgressFlag } from "../helpers/egress-flag";
 import { sealVersionOne } from "../helpers/storage-envelope-v1";
-import { legacyRegisterTable } from "../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../helpers/legacy-register";
 
 const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
+const agentCredential = legacyAgentCredentialTable();
 
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
 const STAND_IN_OWNER_PASSWORD = ["not", "a", "real", "owner", "password"].join("-");
@@ -8800,7 +8801,7 @@ describe("a field its engine refuses is refused by core on every connect path (F
 
   test("the agent credential is overlaid only into fields its engine receives, and every engine with an agent credential receives them", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
-      const credential = SEED_AGENT_CREDENTIAL[type];
+      const credential = agentCredential[type];
       if (credential === null) continue;
       const fields: readonly string[] = providerFields(type);
       expect({ type, password: fields.includes("password") }).toEqual({ type, password: true });

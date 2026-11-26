@@ -23,7 +23,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import type { EngineDeclaration } from "@libredb/provider-sdk/manifest";
-import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CONNECTION_FIELDS, REFUSED_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { offersSslPanel } from "@/lib/db/connection-form";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
@@ -32,7 +32,9 @@ import { PROVIDER_CORE_FIELDS, providerFields } from "@/lib/db/provider-connecti
 import type { DatabaseType } from "@/lib/types";
 import { typeIdsOfProviderFile } from "../../../helpers/provider-directory-map";
 import { valueImportClosure } from "../../../helpers/value-import-closure";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
+const sshTunnel = legacyRegisterTable("sshTunnel");
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const OPEN_MODULE = "src/lib/provider-host/legacy-adapter/open.ts";
 const TYPES_MODULE = "src/lib/types.ts";
@@ -407,7 +409,7 @@ describe("a provider module reads only the connection fields its engine declares
         ...(SEED_ONLY_FIELDS[type]?.fields ?? []),
         ...(CONNECTION_STRING_ACCEPTED[type] ? ["connectionString"] : []),
         ...(offersSslPanel(type) ? ["ssl"] : []),
-        ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
+        ...(sshTunnel[type] === null ? ["host", "port"] : []),
         ...PROVIDER_CORE_FIELDS,
       ]);
       const fields: readonly string[] = providerFields(type);
@@ -432,7 +434,7 @@ describe("a provider module reads only the connection fields its engine declares
           ...(connection.seedOnly?.fields ?? []),
           ...(connection.connectionString.accepted ? ["connectionString"] : []),
           ...(connection.tls.modes.length > 0 ? ["ssl"] : []),
-          ...(SSH_TUNNEL_REFUSAL[type] === null ? ["host", "port"] : []),
+          ...(sshTunnel[type] === null ? ["host", "port"] : []),
           ...PROVIDER_CORE_FIELDS,
         ]),
       ];

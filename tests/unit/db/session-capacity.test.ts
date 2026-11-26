@@ -3,10 +3,13 @@ import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { forgetStorageLocation } from "@/lib/data-dir";
-import { OPENS_LOCAL_FILE, SERVES_ONE_SESSION, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SERVES_ONE_SESSION, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { admittedFileConnection, namesInMemoryDatabase } from "@/lib/db/provider-files";
 import { sessionCapacity } from "@/lib/db/session-capacity";
 import { ADMITTED_FILE, type DatabaseConnection, type DatabaseType, type WithAdmittedFile } from "@/lib/types";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const opensLocalFile = legacyRegisterTable("opensLocalFile");
 
 /**
  * The host's session capacity class (docs/providers/CONTRACT.md, clause C-66): whether a connection's object tree reads
@@ -37,7 +40,7 @@ afterAll(() => {
 
 /** A connection of `type`: a file where the engine opens a local file, a host otherwise, with `overrides` on top. */
 function connection(type: DatabaseType, overrides: Partial<DatabaseConnection> = {}): DatabaseConnection {
-  const opensFile = OPENS_LOCAL_FILE[type];
+  const opensFile = opensLocalFile[type];
   return {
     id: `capacity-${type}`,
     name: `Capacity ${type}`,
@@ -83,7 +86,7 @@ describe("sessionCapacity", () => {
     expect(SERVES_ONE_SESSION.sqlite).toBeNull();
     expect(sessionCapacity(connection("sqlite"))).toBe("several");
     // Every engine that opens a local file answers one for an in-memory name, whatever its record says.
-    for (const type of SHIPPED_DATABASE_TYPES.filter((each) => OPENS_LOCAL_FILE[each])) {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((each) => opensLocalFile[each])) {
       expect([type, sessionCapacity(connection(type, { database: ":memory:" }))]).toEqual([type, "one"]);
     }
   });
