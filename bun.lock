@@ -99,6 +99,7 @@
         "@arethetypeswrong/cli": "^0.18.5",
         "@biomejs/biome": "^2.5.12",
         "@eslint/compat": "^2.1.1",
+        "@libredb/grant-register": "workspace:*",
         "@libredb/provider-loader": "file:./src/lib/provider-loader",
         "@libredb/provider-sdk": "workspace:*",
         "@modelcontextprotocol/client": "2.4.0",
@@ -139,6 +140,13 @@
       "peerDependencies": {
         "react": "^19",
         "react-dom": "^19",
+      },
+    },
+    "packages/grant-register": {
+      "name": "@libredb/grant-register",
+      "version": "0.1.0",
+      "devDependencies": {
+        "ajv": "^8.17.1",
       },
     },
     "packages/provider-sdk": {
@@ -516,6 +524,8 @@
     "@leichtgewicht/ip-codec": ["@leichtgewicht/ip-codec@2.0.5", "", {}, "sha512-Vo+PSpZG2/fmgmiNzYK9qWRh8h/CHrwD0mo1h1DzL4yzHNSfWYujGTYsWGreD000gcgmZ7K4Ys6Tx9TxtsKdDw=="],
 
     "@levischuck/tiny-cbor": ["@levischuck/tiny-cbor@0.2.11", "", {}, "sha512-llBRm4dT4Z89aRsm6u2oEZ8tfwL/2l6BwpZ7JcyieouniDECM5AqNgr/y08zalEIvW3RSK4upYyybDcmjXqAow=="],
+
+    "@libredb/grant-register": ["@libredb/grant-register@workspace:packages/grant-register"],
 
     "@libredb/libredb": ["@libredb/libredb@0.2.2", "", { "bin": { "libredb": "dist/cli/main.js" } }, "sha512-x/7Bc42njLHcG2BCwGHX/UA5wmKG82NkVBlYXj7C4TNy+9LpXKQGZRzhgfORv+wlxMG7WQP4sDEqiM2rZymZUg=="],
 

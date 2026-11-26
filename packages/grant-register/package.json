@@ -1,0 +1,16 @@
+{
+  "name": "@libredb/grant-register",
+  "version": "0.1.0",
+  "description": "LibreDB Studio's grant register: the reviewed rows that grant an engine's claims, keyed by package or, for an engine Studio still serves through its legacy adapter, by Studio and the engine id, with the register's schema and its reader.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./register.schema.json": "./src/register.schema.json"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
+  }
+}
