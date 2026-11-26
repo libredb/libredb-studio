@@ -1,11 +1,10 @@
 /**
  * BigQuery's credential policy over the shared Google auth: its pins (the kinds it accepts, its opt-in, its three
- * sentences and their quotes in docs/providers/bigquery.md, its project id rule, its token deps and their production
- * transport factory), and the credential a connection resolves to, read through a fake IO, plus the real IO it reads
- * at each connect.
+ * sentences, its project id rule, its token deps and their production transport factory), and the credential a
+ * connection resolves to, read through a fake IO, plus the real IO it reads at each connect.
  */
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { acceptedKindSentences, GOOGLE_CREDENTIAL_SENTENCES as G } from "@/lib/db/auth/google/credentials";
@@ -73,13 +72,6 @@ describe("bigquery credential policy pins", () => {
       withoutOptIn: S.seedWithoutOptIn,
       literalSeedFile: S.literalSeedFile,
     });
-  });
-
-  test("docs/providers/bigquery.md quotes each of the three sentences as the code words it", () => {
-    const doc = readFileSync(join(import.meta.dir, "../../../../docs/providers/bigquery.md"), "utf8");
-    for (const sentence of [S.browserEmpty, S.seedWithoutOptIn, S.literalSeedFile]) {
-      expect({ sentence, quoted: doc.includes(`"${sentence}"`) }).toEqual({ sentence, quoted: true });
-    }
   });
 
   test("the token deps carry BigQuery's scope and label, and createNodeTransport itself in production", async () => {

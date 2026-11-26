@@ -3,8 +3,8 @@
  *
  * docs/DISTRIBUTION.md "Stopping the server" is where an operator reads who ends the server on SIGTERM and SIGINT,
  * how long each step may take and what the exit code says. The variable, the bounds and the codes are the modules'
- * own, so a change to either side that the other misses fails here. The pages that describe the boot, the query event
- * delivery and the provider closes link the section.
+ * own, so a change to either side that the other misses fails here. docs/GOVERNANCE.md, which describes the query
+ * event delivery, links the section.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -123,12 +123,7 @@ describe("docs/DISTRIBUTION.md, Stopping the server", () => {
     expect(text).toContain("(#stopping-the-server)");
   });
 
-  test.each([
-    "docs/GOVERNANCE.md",
-    "docs/providers/libredb.md",
-    "docs/providers/redis.md",
-    "docs/providers/postgres.md",
-  ])("%s links the section", (page) => {
+  test.each(["docs/GOVERNANCE.md"])("%s links the section", (page) => {
     expect(read(page)).toContain(LINK);
   });
 });

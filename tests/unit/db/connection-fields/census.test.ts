@@ -190,18 +190,6 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
     }
   });
 
-  test("each refused field's sentence is quoted in its engine's provider doc", () => {
-    const flatten = (text: string): string => text.replace(/\s+/g, " ");
-    for (const id of EVERY_TYPE as DatabaseType[]) {
-      const row = Object.entries(REFUSED_CONNECTION_FIELDS[id]);
-      if (row.length === 0) continue;
-      const doc = flatten(readFileSync(join(ROOT, "docs/providers", `${id}.md`), "utf8"));
-      for (const [field, sentence] of row) {
-        expect({ id, field, quoted: doc.includes(flatten(sentence as string)) }).toEqual({ id, field, quoted: true });
-      }
-    }
-  });
-
   test("a fresh process loads the module on its own", () => {
     const run = Bun.spawnSync(["bun", "-e", `await import(${JSON.stringify(MODULE)})`], { cwd: ROOT });
     expect(run.stderr.toString()).toBe("");

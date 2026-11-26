@@ -11,7 +11,6 @@
 
 import { afterEach, describe, expect, spyOn, test, afterAll, beforeAll } from "bun:test";
 import { tmpdir } from "node:os";
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   ConnectionError,
@@ -92,7 +91,6 @@ import type {
 import { TRUST_MATERIAL_MISSING } from "@/lib/db/utils/require-trust-material";
 import { TUNNEL_FAR_END } from "@/lib/types";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import {
   databaseContentNotice,
@@ -2788,13 +2786,8 @@ describe("MCP run_read_query on a Db2 connection", () => {
     bounded = [];
   });
 
-  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/db2.md"), "utf8");
-
+  test("MCP_STATEMENT_READ opens Db2", () => {
     expect(MCP_STATEMENT_READ.db2).toBe(true);
-    expect(doc).toContain("`MCP_STATEMENT_READ.db2` is true");
-    expect(doc).not.toContain("MCP's statement read stays closed on Db2");
-    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("db2").statements}:`);
   });
 
   test("reads rows under the agent profile, the check before the statement, paged one row past max_rows", async () => {

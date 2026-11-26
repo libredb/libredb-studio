@@ -63,10 +63,7 @@ describe("what plan mode is told", () => {
 });
 
 describe("the B entry, closed with MCP read", () => {
-  test("docs/AGENT.md cites no entry for it, and the provider document points at its MCP section", () => {
+  test("docs/AGENT.md cites no entry for it", () => {
     expect(read("docs/AGENT.md")).not.toContain("- **B158**:");
-    const doc = read("docs/providers/snmp.md");
-    expect(doc).toContain("## 14. MCP read");
-    expect(doc).toContain("A v2c community is no principal.");
   });
 });

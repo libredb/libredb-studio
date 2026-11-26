@@ -3512,8 +3512,9 @@ describe("Trino object source", () => {
 });
 
 /**
- * Every function COUNT this engine's shipped files state, checked against the fixture that
- * decides it (#789).
+ * Every function COUNT this engine's provider sources and fixture state, checked against the
+ * fixture that decides it (#789). The provider document is frozen (tests/unit/provider-doc-freeze.test.ts),
+ * so it is not scanned.
  *
  * WHY THIS GUARD EXISTS. Three shipped files carried the sentence "`system.jdbc.procedures`
  * answers zero rows for a schema holding three functions". It was true when `memory.app`
@@ -3522,7 +3523,7 @@ describe("Trino object source", () => {
  * paragraph and seven in another. A reviewer found two of the three by grep and missed the
  * third, because a docblock wraps `three\n * functions` across a line and no grep for
  * "three functions" can see it. That is the whole reason this is a test rather than a
- * careful read: the population is every file the engine ships, the number is derived from
+ * careful read: the population is every provider source file and the fixture, the number is derived from
  * the fixture, and a line wrap does not hide anything from it.
  *
  * The rule it enforces is the ledger's standing remedy for a stale numeral, which is to fix
@@ -3533,7 +3534,6 @@ describe("Trino object source", () => {
 describe("Trino function counts stated in shipped files", () => {
   const TRINO_FIXTURE_FILE = join(import.meta.dir, "..", "..", "..", "docker", "trino-init", "01-object-fixture.sql");
   const TRINO_PROVIDER_DIR = join(import.meta.dir, "..", "..", "..", "src", "lib", "db", "providers", "sql", "trino");
-  const TRINO_PROVIDER_DOC = join(import.meta.dir, "..", "..", "..", "docs", "providers", "trino.md");
 
   /** Spelled-out numbers, because prose in this repository writes a small count as a word. */
   const NUMBER_WORDS: Record<string, number> = {
@@ -3595,11 +3595,7 @@ describe("Trino function counts stated in shipped files", () => {
     if (shipped.length === 0) {
       throw new Error("no Trino provider source file was scanned, so this guard read nothing");
     }
-    const scanned = [
-      ...shipped,
-      { name: "docs/providers/trino.md", path: TRINO_PROVIDER_DOC },
-      { name: "docker/trino-init/01-object-fixture.sql", path: TRINO_FIXTURE_FILE },
-    ];
+    const scanned = [...shipped, { name: "docker/trino-init/01-object-fixture.sql", path: TRINO_FIXTURE_FILE }];
 
     const wrong: string[] = [];
     const claims: string[] = [];
@@ -3611,10 +3607,11 @@ describe("Trino function counts stated in shipped files", () => {
     }
 
     expect(wrong).toEqual([]);
-    // The inventory, so the guard cannot go quiet. A claim that disappears is as visible
-    // here as a claim that arrives, and a run that matched nothing at all fails by name
-    // rather than passing over an empty loop.
-    expect(claims).toEqual(["docs/providers/trino.md: nine functions"]);
+    // The inventory, so the guard cannot go quiet: a claim that arrives is as visible here as
+    // a wrong one. The matcher is shown to read a claim, so an empty inventory is not a scan
+    // that matched nothing.
+    expect(claims).toEqual([]);
+    expect(countClaims("it holds nine\n * functions")).toEqual([{ phrase: "nine functions", count: 9 }]);
   });
 });
 
@@ -5120,30 +5117,10 @@ describe("Trino object edit: the derivations, driven to their BOUND values", () 
 // ============================================================================
 
 describe("endOpenQueryTransaction()", () => {
-  /** The only three answers D75 accepts from a provider that does not implement the surface. */
-  const ABSENCES = [
-    "the engine has no transaction to leave open",
-    "the driver cannot be asked",
-    "nobody has measured it yet",
-  ] as const;
-
-  test("is not implemented, and the doc names WHICH absence that is", () => {
+  test("is not implemented", () => {
     const provider: DatabaseProvider = new TrinoProvider(makeConnection(), {}, { egress: ALLOWS_PRIVATE_HOSTS });
 
     expect(provider.endOpenQueryTransaction).toBeUndefined();
-
-    // A boundary nobody wrote down becomes a fallback the next reader trusts, so the
-    // absence has to be readable in the doc as well as in the type. Exactly one of the
-    // three: "one of these two" is not an answer, and a doc that names none has not
-    // declared anything.
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/trino.md"), "utf8");
-    expect(doc).toContain("endOpenQueryTransaction");
-
-    // The set that DOES implement the surface is read from the type, never enumerated
-    // here: a closed list repeated across the provider docs went stale the day a further
-    // provider implemented the surface, which is exactly what happened during D75.
-    expect(doc).not.toContain("`postgres`, `sqlite` and `duckdb`");
-    expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["nobody has measured it yet"]);
   });
 
   test("an editor statement carries no transaction header, which is what leaves the question open", async () => {

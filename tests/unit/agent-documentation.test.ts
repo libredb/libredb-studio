@@ -453,7 +453,6 @@ const ENGINE_CLAIM_FILES = [
   "docs/AGENT_GUIDE.md",
   "docs/AGENT_DEMO.md",
   "docs/FEATURES.md",
-  "docs/providers/libsql.md",
   "deploy/railway/TEMPLATE_OVERVIEW.md",
   "deploy/digitalocean/assets/description-long.md",
   "deploy/rancher/CATALOG_LISTING.md",
@@ -787,14 +786,6 @@ describe("docs/AGENT.md states agent execution on Kubernetes as the code decides
 describe("the SQL engines' boundaries are stated in the order their provider documents measured", () => {
   const clausesOf = (sentence: string, label: string): string[] =>
     sentence.split("; ").filter((clause) => clause.includes(label));
-
-  test("the MySQL provider document is still the source: the principal first, read at the first statement", () => {
-    const mysql = read("docs/providers/mysql.md");
-    expect(mysql).toContain(
-      "### 12.1 The principal is the first layer, because a read-only transaction ends where DDL begins",
-    );
-    expect(mysql).toContain("The verification runs at the FIRST `queryReadOnly` call, not at `connect()`");
-  });
 
   test("docs/AGENT.md's engine paragraph puts MySQL's principal before its transaction, and PostgreSQL's role beside its own", () => {
     const paragraph = AGENT_DOC.split("- **Agent mode requires ")[1]?.split(/\n\n/)[0] ?? "";

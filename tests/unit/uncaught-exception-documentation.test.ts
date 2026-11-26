@@ -78,7 +78,6 @@ describe("docs/DISTRIBUTION.md, Uncaught errors and restarts", () => {
 
   test.each([
     ["docs/HELM_CHART.md", [`uncaught exception exits with code ${C}`]],
-    ["docs/providers/kafka.md", [`the exception ends the process with exit code ${C}`]],
     ["docs/GOVERNANCE.md", []],
   ])("%s links the section and names the code as the module does", (page, phrases) => {
     const text = read(page);

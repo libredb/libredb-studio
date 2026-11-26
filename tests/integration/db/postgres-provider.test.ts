@@ -10525,13 +10525,9 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
      * What DOES carry a parenthesis before the parameter list closes, every one of them measured on
      * 18.4 by creating the object and reading `pg_get_functiondef` back, in the order the array
      * below holds them, and the array below is the population, so its length is the count. That
-     * count is a literal in exactly two places in these two files, and each of them is bound to
-     * this array: the population guard under this block, whose literal an added fixture turns red,
-     * and one sentence in `docs/providers/postgres.md` that a test under this block reads out of
-     * that file and asserts against this array's length. An earlier revision of this line claimed
-     * the guard was the only place in the REPOSITORY that stated a count, which that doc sentence
-     * already falsified. No PROSE sentence in either file states the count, here or there, and a
-     * second test under this block is what keeps that true:
+     * count is a literal in exactly one place in this file, bound to this array: the population
+     * guard under this block, whose literal an added fixture turns red. No PROSE sentence in this
+     * file states the count, and a second test under this block is what keeps that true:
      *
      *     CREATE FUNCTION app.dc(a integer DEFAULT abs(-1), b integer DEFAULT 2) ...
      *     CREATE FUNCTION app.dl(a text DEFAULT ')', b integer DEFAULT 1) ...
@@ -10674,68 +10670,23 @@ describe("PostgreSQL object edit (#789 Phase 3)", () => {
       });
 
       /**
-       * THE DOC LEG OF THE COUNT, which until this test nothing in this repository bound (#789
-       * Phase 3, fix round 1 of task 34).
-       *
-       * `docs/providers/postgres.md` states the size of this population in prose, and the review
-       * of the first commit found that the count had been stated in six prose places in this file
-       * and three in that one while exactly ONE place asserted it. Prose numerals that no check
-       * reads are how this section drifted in the first place: an eighth shape makes the
-       * population guard above red, the implementer corrects the array and that guard, and the
-       * doc's numeral silently becomes the wrong record again.
-       *
-       * So the doc now states the count exactly once, in the word this test reads back, and every
-       * other sentence there says "every one of those" or "all of them". If the sentence itself is
-       * reworded the regex finds nothing and this test fails loudly rather than passing vacuously,
-       * which is the point: a guard whose population can go empty certifies nothing.
-       */
-      test("the provider doc's numeral for this population is the array's length", () => {
-        const doc = readFileSync(path.join(import.meta.dir, "../../..", "docs/providers/postgres.md"), "utf8");
-        const words = ["ZERO", "ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "TEN"];
-        const matches = [...doc.matchAll(/^([A-Z]+) such shapes were measured on 18\.4\b/gm)];
-        // The sentence must exist and must be the only one of its shape, or the assertion below
-        // would be reading a numeral that is not the one the doc's reader sees.
-        expect(matches.length).toBe(1);
-        const stated = words.indexOf(matches[0][1]);
-        expect(stated).toBeGreaterThanOrEqual(0);
-        expect(stated).toBe(PAREN_HEADER_FIXTURES.length);
-      });
-
-      /**
-       * THE OTHER HALF OF THAT BINDING, and a defect this task's own fix round 1 introduced.
-       *
-       * The test above binds ONE sentence in the provider doc to this array's length. The commit
-       * that wrote it also wrote two OTHER sentences that state the count in prose, one in the
-       * doc's paragraph on the in-place replace of `app.dc` and one in the docblock of the
-       * DEFAULT-change test below, and nothing bound either of them. An eighth fixture would then
-       * have been caught once, at the bound sentence, and left the two prose counts wrong with the
-       * suite green: the drift the test above exists to remove, over a population that excluded
-       * two live cases. Found by this task's round 2 reviewer.
-       *
-       * The repair is that no prose sentence states the count at all: the array is the count, and
-       * a sentence that needs to point at the population writes `the shapes above`. This guard
-       * keeps it that way. MEASURED by running it on 2026-09-15 before the prose was corrected:
-       * exactly those two sentences matched, one per file, the doc leg and this file's leg each
-       * measured on its own, and `grep -nEi` over the two files found the same two and nothing
-       * else.
+       * The array is the count, and a sentence that needs to point at the population writes `the
+       * shapes above`, so no prose sentence in this file states the count. This guard keeps it
+       * that way.
        *
        * WHAT IT DOES NOT SEE, said here rather than left to be found: it sees a spelled numeral or
-       * a digit written DIRECTLY in front of `shapes` or `fixtures`, which is the shape both
-       * drifted sentences had and the shape the next one is likeliest to have. A count written any
-       * other way passes it, and no cheap check over English prose does better. The doc's own
-       * `such shapes` sentence is not matched, because `such` sits between its numeral and the
-       * noun, and it does not need to be: the test above is what binds that one.
+       * a digit written DIRECTLY in front of `shapes` or `fixtures`, which is the shape a drifted
+       * prose count had and the shape the next one is likeliest to have. A count written any other
+       * way passes it, and no cheap check over English prose does better.
        */
-      test("no prose sentence in either file states this population's count", () => {
+      test("no prose sentence in this file states this population's count", () => {
         // Built so the pattern cannot match its own source: in the alternation each word is
         // followed by `|`, never by the whitespace the pattern requires.
         const counted = /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|\d+)[ \t]+(?:shapes|fixtures)\b/gi;
-        for (const file of ["docs/providers/postgres.md", "tests/integration/db/postgres-provider.test.ts"]) {
-          const text = readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
-          const stated = [...text.matchAll(counted)].map((match) => match[0]);
-          // Paired with the file name so a failure names WHICH file and the exact words to remove.
-          expect([file, stated]).toEqual([file, []]);
-        }
+        const file = "tests/integration/db/postgres-provider.test.ts";
+        const text = readFileSync(path.join(import.meta.dir, "../../..", file), "utf8");
+        const stated = [...text.matchAll(counted)].map((match) => match[0]);
+        expect(stated).toEqual([]);
       });
 
       for (const fixture of PAREN_HEADER_FIXTURES) {

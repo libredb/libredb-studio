@@ -18,13 +18,10 @@
  * tables other than `home` and the hostile one, answered with `home`'s.
  */
 import { beforeEach, describe, expect, test, afterAll, beforeAll } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
@@ -517,15 +514,9 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     requests = [];
   });
 
-  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
-    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/influxdb3.md"), "utf8");
-
+  test("MCP_STATEMENT_READ opens InfluxDB 3 and keeps InfluxDB 1.x and 2.x closed", () => {
     expect(MCP_STATEMENT_READ.influxdb3).toBe(true);
     expect(MCP_STATEMENT_READ.influxdb).toBe(false);
-    expect(doc).toContain("`MCP_STATEMENT_READ.influxdb3` is true");
-    expect(doc).not.toContain("MCP's statement read stays closed");
-    expect(doc).not.toContain("No MCP `run_read_query`");
-    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("influxdb3").statements}:`);
   });
 
   test("reads rows under the agent profile after the open's server check, paged one row past max_rows", async () => {

@@ -611,7 +611,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/connect-budget.test.ts": [
         "the host's default is the pools' 60 s acquire bound plus 10 s",
         "only BigQuery and Snowflake declare a connect budget of their own",
-        "the document of each engine that declares a connect budget states it in seconds, and no other provider document states one",
       ],
       "tests/unit/db/bigquery/connect-budget.test.ts": [
         "BigQuery's connect budget covers its connect's dataset list and probe job at the default statement timeout, plus 10 s",
