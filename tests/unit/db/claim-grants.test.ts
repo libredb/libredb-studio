@@ -1102,13 +1102,21 @@ describe("the grant reader's inputs", () => {
   });
 });
 
-/** Whether `value` is keyed by engine by its shape: a frozen table keyed by exactly the shipped engines, or a frozen non-empty list of shipped engines. */
+/**
+ * Whether `value` is keyed by engine by its shape, frozen or not: a non-empty list or set whose every member is a
+ * shipped engine id, a non-empty map whose every key is one, or a non-empty object whose every own key is one.
+ */
 function engineKeyed(value: unknown): boolean {
-  if (typeof value !== "object" || value === null || !Object.isFrozen(value)) return false;
+  if (typeof value !== "object" || value === null) return false;
   const shipped = new Set<string>(SHIPPED_DATABASE_TYPES);
-  if (Array.isArray(value)) return value.length > 0 && value.every((member) => shipped.has(member as string));
-  const keys = Object.keys(value);
-  return keys.length === shipped.size && keys.every((id) => shipped.has(id));
+  const ids: unknown[] = Array.isArray(value)
+    ? value
+    : value instanceof Set
+      ? [...value]
+      : value instanceof Map
+        ? [...value.keys()]
+        : Reflect.ownKeys(value);
+  return ids.length > 0 && ids.every((id) => typeof id === "string" && shipped.has(id));
 }
 
 /** The names of `exports` whose value is keyed by engine by its shape, sorted. */
@@ -1130,8 +1138,23 @@ describe("the grant reader's engine-keyed exports", () => {
     expect(exported).toContain("GRANTED_WRITE_REACH");
     expect(exported).toContain("GRANTED_AGENT_EXECUTION_ENGINES");
     expect(engineKeyed(claimGrants.STATEMENT_LANGUAGE_NAMES)).toBe(false);
+    // The shape is read whether or not the value is frozen, and a value keyed by some engines is keyed by engine too:
+    // a table, a list, a set and a map are each found, and a value holding a name that is no engine id is not.
     expect(
-      engineKeyedExports({ a: Object.freeze({ ...claimGrants.GRANTED_WRITE_REACH }), b: { postgres: 1 } }),
-    ).toEqual(["a"]);
+      engineKeyedExports({
+        frozenTable: Object.freeze({ ...claimGrants.GRANTED_WRITE_REACH }),
+        table: { ...claimGrants.GRANTED_WRITE_REACH },
+        someEngines: { postgres: 1 },
+        list: [...claimGrants.GRANTED_AGENT_EXECUTION_ENGINES],
+        set: new Set(["postgres"]),
+        map: new Map([["postgres", 1]]),
+        mixed: { postgres: 1, rowFor: 2 },
+        mixedList: ["postgres", "sql"],
+        empty: {},
+        emptyList: [],
+        reader: claimGrants.legacyEngineGrants,
+        sentence: "postgres",
+      }),
+    ).toEqual(["frozenTable", "list", "map", "set", "someEngines", "table"]);
   });
 });

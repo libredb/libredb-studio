@@ -76,10 +76,10 @@
  *
  * Each legacy engine's grants are granted once, when this module loads, from its bundled request and its legacy row,
  * and read through `legacyEngineGrants`, which every legacy record holds; the tables below are cut from them for the
- * browser modules that still read a table, until M7. The server catalog's composer grants an admitted provider package's engine through
- * the same `grantEngineClaims`. The module holds literals,
- * generated data and the register's rows only, and the register's reader compiles no code, so the browser's readers,
- * the read-only marker, the connection form and the agent rail, load it as they load the records.
+ * browser modules that still read a table, until M7. The server catalog's composer grants an admitted provider
+ * package's engine through the same `grantEngineClaims`. The module holds literals, generated data and the register's
+ * rows only, and the register's reader compiles no code, so the browser's readers, the read-only marker, the
+ * connection form and the agent rail, load it as they load the records.
  */
 import type {
   AgentCredentialFormClaim,
@@ -807,9 +807,9 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * and the core read path every agent, hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's
  * statistics read under `agent-operations` does not), both through `assertStatementsReviewed`
  * (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`), and MCP's served set
- * (`src/lib/mcp/tools/served-engines.ts`) read the engine record's `grants.agentExecution`. A provider's read-only statement path is a second
- * precondition, required and never enough: an engine on the list whose provider has no `queryReadOnly` is still refused
- * `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
+ * (`src/lib/mcp/tools/served-engines.ts`) read the engine record's `grants.agentExecution`. A provider's read-only
+ * statement path is a second precondition, required and never enough: an engine on the list whose provider has no
+ * `queryReadOnly` is still refused `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
  *
  * The engines do not draw the boundary the same way, and the list deliberately says nothing about that: each listed
  * engine's boundary is its legacy row's `reasons.agentExecution` note, where one is written, and each provider's own

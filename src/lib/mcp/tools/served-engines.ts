@@ -1,7 +1,7 @@
 import type { AgentStatementLanguageId } from "@/lib/agent/agent-manifest";
 import type { EngineGrants } from "@/lib/db/claim-grants";
-import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type { DatabaseType } from "@/lib/types";
 
 /**
@@ -15,7 +15,7 @@ import type { DatabaseType } from "@/lib/types";
  * whose agent PR has merged closed to MCP until its own change opens it. The acquisition and the core read path read
  * the first grant again at run time, so an engine without it is refused by name there too.
  *
- * Only the engines the legacy adapter serves are asked, in catalog order (`SHIPPED_DATABASE_TYPES`): every MCP open
+ * Only the engines the legacy adapter serves are asked, in catalog order (`LEGACY_ENGINE_IDS`): every MCP open
  * refuses a package's engine before any grant is read, and `MCP_STATEMENT_ARMS` reads this set once, when its module
  * loads, so a set that held a package's engine would depend on whether boot had installed the catalog by then. Opening
  * MCP to package engines composes the set from the installed catalog (M5).
@@ -32,7 +32,7 @@ export function mcpStatementEngines(
   language: AgentStatementLanguageId,
   exposure: McpExposure = (type) => servedEngineRecord(type).grants,
 ): readonly DatabaseType[] {
-  return SHIPPED_DATABASE_TYPES.filter((type) => {
+  return (LEGACY_ENGINE_IDS as readonly DatabaseType[]).filter((type) => {
     const grants = exposure(type);
     return grants.agentExecution && grants.exposable && grants.statementRead && grants.statementLanguage === language;
   });
