@@ -28,9 +28,9 @@ import { ALL_ROUTES, CONNECTION_ROUTES } from "../../security/helpers/provider-r
  * resolves each item of its list and reports a refusal as that item's error, are sent them beside the inventory.
  *
  * Only the session reader is replaced, with an admin session, so the admin-only routes reach their connection handling
- * too. `resolveConnection` and the factory are the real ones. A provider is counted where it is built, by the
- * factory's `[DB] Creating <type> provider` line, as tests/security/custom-connections.test.ts counts it, and the
- * control at the end sees that line for a well-formed record.
+ * too. `resolveConnection` and the factory are the real ones. A provider is counted where it is built, by the legacy
+ * adapter's open's `[DB] Creating <type> provider` line, as tests/security/custom-connections.test.ts counts it, and
+ * the control at the end sees that line for a well-formed record.
  */
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));

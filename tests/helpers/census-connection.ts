@@ -25,8 +25,8 @@ import { rabbitmqConnection } from "./rabbitmq-connection";
 /**
  * The fields every provider's `validate()` demands, none of which is ever dialled.
  *
- * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a
- * constructor, and the constructors validate their configuration without opening a socket or a
+ * Nothing here connects: `createDatabaseProvider` ends in the legacy adapter's switch over dynamic
+ * imports and a constructor, and the constructors validate their configuration without opening a socket or a
  * file. The host is the loopback address and the port is 1 so that a provider which ever did
  * try to dial would fail loudly rather than reach something real.
  */

@@ -1,6 +1,7 @@
 /**
  * The sessions of the engines admitted provider packages serve (docs/providers/CONTRACT.md, clause C-109):
- * opened through the package's own `open`, never through a legacy provider class, and kept in a cache of their own.
+ * opened through the one open function (`openEngine` in src/lib/provider-host/open-engine.ts), which opens a package's
+ * record through the package's own `open`, never through a legacy provider class, and kept in a cache of their own.
  *
  * The provider factory's entry points (./factory) answer a `DatabaseProvider`, which a contract session is not, so each
  * refuses an engine whose record offers no legacy provider by name (`assertLegacyProvider` in ./server-catalog) and
@@ -13,7 +14,8 @@
  * Before anything is read from the host, keyed or opened, the one ordered open check (`assertOpenable` in
  * ./open-check), the check a legacy engine's build runs too, refuses what core cannot hand the package, each as a
  * not-sent `DatabaseConfigError`, reading only the engine's record: a package's record offers no SSH tunnel and no
- * host file, so a tunnel that is on and a host path field its grants name are refused there.
+ * host file, so a tunnel that is on and a host path field its grants name are refused there. `openEngine` runs it again
+ * on the context it opens with, which keeps the caller's file-access posture as given, so both read the same.
  *
  * The cache keys a session by the package's name and the frame `frameCacheKey` (./provider-cache-key) computes from the
  * connection, the engine's posture grant, the posture and the owner, which is kept unless the engine's grant keeps one
@@ -32,9 +34,9 @@
  *
  * Module state of this copy, as the factory's caches are: each Next.js bundle that loads it keeps its own sessions.
  */
-import { callRefusalSentence, cleanupContext, deadlineSignal, type EnvReader } from "@libredb/provider-sdk/calls";
+import { cleanupContext, deadlineSignal, type EnvReader } from "@libredb/provider-sdk/calls";
 import { logger } from "@/lib/logger";
-import { type ContractSession, openContractSession } from "@/lib/provider-host/core/contract-session";
+import type { ContractSession } from "@/lib/provider-host/core/contract-session";
 import {
   createOpenFlights,
   discardFlights,
@@ -49,7 +51,8 @@ import {
   type TeardownOutcome,
   teardownWithin,
 } from "@/lib/provider-host/core/teardown";
-import { packageConnectBudget, packageEnvironment, packageOpenContext } from "@/lib/provider-host/open-context";
+import { packageConnectBudget } from "@/lib/provider-host/open-context";
+import { type OpenedPackageSession, openedSession, openEngine } from "@/lib/provider-host/open-engine";
 import { openDeadlineSentence } from "./connect-budget";
 import { errorCode, errorKind } from "./error-record";
 import { ConnectionError, connectPhase, DatabaseConfigError, markNotSent, StudioTimeoutRefusal } from "./errors";
@@ -108,38 +111,6 @@ function logLate(connectionId: string, line: string): (error: unknown) => void {
   return (error) => {
     logger.warn(line, { connectionId, kind: errorKind(error), code: errorCode(error) });
   };
-}
-
-/** An opened session, and the package's declared environment its calls are given. */
-export interface OpenedPackageSession {
-  readonly session: ContractSession;
-  readonly env: EnvReader;
-}
-
-/**
- * Opens a session of `engine` for `connection` through the package's `open`, with the context core builds; see
- * `packageOpenContext`. A stop answers the signal's reason; an answer the host refuses is a package defect, an `Error`
- * naming each refusal.
- */
-async function openPackage(
-  connection: EngineConnection,
-  engine: EngineRecord,
-  execution: EditorExecutionContext,
-  deadline: number,
-  signal: AbortSignal,
-): Promise<OpenedPackageSession> {
-  const served = servedPackage(engine);
-  const env = packageEnvironment(served.manifest);
-  const ctx = packageOpenContext({ connection, engine, execution, deadline, signal });
-  const late = logLate(connection.id, "[DB] A provider package's open Studio stopped waiting for failed afterwards.");
-  const record = await openContractSession(served.record.impl, ctx, served.session, late);
-  if (record.kind === "stopped") throw record.reason;
-  if (record.kind === "refused") {
-    throw new Error(
-      `The provider package's open was refused: ${record.refusals.map((refusal) => callRefusalSentence(refusal)).join(" ")}`,
-    );
-  }
-  return { session: record.session, env };
 }
 
 /**
@@ -248,7 +219,15 @@ async function openCached(
   let opened: OpenedPackageSession | undefined;
   await connectPhase(async () => {
     try {
-      opened = await openPackage(connection, engine, execution, Date.now() + flight.meta.budget, flight.signal);
+      opened = openedSession(
+        await openEngine(engine, {
+          connection,
+          execution,
+          purpose: "connect",
+          options: {},
+          within: { deadline: Date.now() + flight.meta.budget, signal: flight.signal },
+        }),
+      );
     } catch (error) {
       if (flight.signal.aborted && error === flight.signal.reason) {
         throw new ConnectionError(OVERTAKEN_OPEN);
@@ -312,8 +291,12 @@ export async function getOrCreatePackageSession(
     frame,
     budget: packageConnectBudget(engine),
   };
+  // The open is handed the posture as the caller gave it, so the open check `openEngine` runs reads what the check
+  // above read; `packageOpenContext` hands the package the definite boolean. The derived boolean frames the key alone.
   const opened: EditorExecutionContext = {
-    allowExternalFileAccess,
+    ...(execution.allowExternalFileAccess !== undefined && {
+      allowExternalFileAccess: execution.allowExternalFileAccess,
+    }),
     ...(owner !== undefined && { owner, ownerPoolMax: execution.ownerPoolMax }),
   };
   return openOnce(flights, key, meta, (flight) => openCached(connection, engine, opened, flight), wait);
@@ -322,7 +305,8 @@ export async function getOrCreatePackageSession(
 /**
  * Opens a session of `engine` for `connection` once, never cached, for Test Connection: the open's deadline `deadline`
  * and its signal `signal` are the test's own. The caller runs `assertOpenable` (./open-check) first, before its budget
- * starts. A stop answers the signal's reason, and a session answered after it is closed by the host core.
+ * starts, and `openEngine` runs it again before the package's `open`. A stop answers the signal's reason, and a
+ * session answered after it is closed by the host core.
  *
  * @throws The package's error by reference, marked not-sent.
  */
@@ -335,7 +319,15 @@ export async function openPackageSessionOnce(
 ): Promise<OpenedPackageSession> {
   let opened: OpenedPackageSession | undefined;
   await connectPhase(async () => {
-    opened = await openPackage(connection, engine, execution, deadline, signal);
+    opened = openedSession(
+      await openEngine(engine, {
+        connection,
+        execution,
+        purpose: "connect",
+        options: {},
+        within: { deadline, signal },
+      }),
+    );
   });
   return opened as OpenedPackageSession;
 }

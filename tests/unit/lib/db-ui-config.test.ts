@@ -527,13 +527,13 @@ describe("db-ui-config", () => {
       catches every real read today. If you add one of those shapes, widen this first.
   */
   describe("the write list names every addressing field its provider reads", () => {
-    const FACTORY = readFileSync(path.join(ROOT, "src/lib/db/factory.ts"), "utf8");
+    const OPEN = readFileSync(path.join(ROOT, "src/lib/provider-host/legacy-adapter/open.ts"), "utf8");
 
-    /** `case "redis": ... await import("./providers/keyvalue/redis")` */
+    /** `case "redis": ... await import("@/lib/db/providers/keyvalue/redis")` */
     const moduleForType = (type: DatabaseType): string => {
-      const pattern = new RegExp(`case "${type}":[\\s\\S]{0,400}?await import\\("\\./providers/([^"]+)"\\)`);
-      const match = pattern.exec(FACTORY);
-      if (match === null) throw new Error(`factory.ts declares no module for ${type}`);
+      const pattern = new RegExp(`case "${type}":[\\s\\S]{0,400}?await import\\("@/lib/db/providers/([^"]+)"\\)`);
+      const match = pattern.exec(OPEN);
+      if (match === null) throw new Error(`open.ts declares no module for ${type}`);
       return match[1].replace(/\/index$/, "");
     };
 

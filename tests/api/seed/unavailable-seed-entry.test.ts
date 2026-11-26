@@ -19,8 +19,9 @@ import { ALL_ROUTES, CONNECTION_ROUTES } from "../../security/helpers/provider-r
  *
  * Only the session reader is replaced, with an admin session. `resolveConnection`, the seed loader and the factory are
  * the real ones, reading a seed file in a temp directory named by SEED_CONFIG_PATH. A provider is counted where it is
- * built, by the factory's `[DB] Creating <type> provider` line, as tests/api/db/inline-connection-record.test.ts counts
- * it. The model gate and the classifier are spied on, never replaced, to prove neither is reached.
+ * built, by the legacy adapter's open's `[DB] Creating <type> provider` line, as
+ * tests/api/db/inline-connection-record.test.ts counts it. The model gate and the classifier are spied on, never
+ * replaced, to prove neither is reached.
  */
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));

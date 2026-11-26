@@ -7,8 +7,8 @@
  * only when a socket reaches the local forward, so it is never asked to reach 169.254.169.254.
  *
  * Apart from tests/live/s3-live-check.ts because it builds the provider through `getOrCreateProvider`, the only path
- * that opens a tunnel and sets TUNNEL_FAR_END, and the factory statically imports every engine's provider, which the
- * Node bundle of that check must not carry. So this runs under Bun only.
+ * that opens a tunnel and sets TUNNEL_FAR_END, and the factory reaches every engine's provider through the legacy
+ * adapter's open, which the Node bundle of that check must not carry. So this runs under Bun only.
  *
  * The signed and sent Host is the local forward: the server verifies the Host it receives, so the signature holds; a
  * server behind the tunnel that routes by Host name is not supported in v1, and this row is where that is measured.

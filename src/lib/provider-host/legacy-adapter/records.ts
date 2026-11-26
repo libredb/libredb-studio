@@ -16,7 +16,8 @@
  * - `offers`: `LEGACY_OFFERS`, every offer a legacy provider makes today.
  * The records are kept in one `Map`, typed read-only and keyed in the engine catalog's order, each record and every
  * plain object and array it holds frozen; a compiled pattern and a bound check are Studio's shared objects, held by
- * reference. Nothing here opens a session: the open through a record is a later step of the provider plugins program.
+ * reference. Nothing here opens a session: a legacy record's open is `openLegacyEngine` (./open), which the one open
+ * function (`openEngine` in ../open-engine) calls.
  */
 import type { CredentialWarning } from "@libredb/provider-sdk/manifest";
 import { bundledEngineGrants } from "@/lib/db/claim-grants";

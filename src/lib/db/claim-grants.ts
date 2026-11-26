@@ -695,12 +695,14 @@ export const READ_ONLY_ENFORCED: Readonly<Record<DatabaseType, boolean>> = BUNDL
 export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.ungrantedRefusals;
 
 /**
- * Studio's grant of `connection.opensLocalFile`, which the provider factory, governance and the VS Code backend read.
+ * Studio's grant of `connection.opensLocalFile`, which the file admission of the legacy adapter's open
+ * (`admittedFileConnection` in ./provider-files), governance and the VS Code backend read.
  */
 export const GRANTED_OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.opensLocalFile;
 
 /**
- * Studio's grant of `connection.hostPathFields`, the fields the provider factory admits before a provider reads one.
+ * Studio's grant of `connection.hostPathFields`, the fields the legacy adapter's open admits before a provider reads
+ * one (`admittedHostPathConnection` in ./provider-files).
  */
 export const GRANTED_HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> =
   BUNDLED_GRANTS.hostPathFields;

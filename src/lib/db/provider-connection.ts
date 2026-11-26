@@ -165,9 +165,9 @@ export function assertExecutionContextIsPlainData(execution: ProviderExecutionCo
  * before the build, `TUNNEL_FAR_END` (the tunnel's far end, set where core opens the tunnel) and `LITERAL_SEED_FILE`
  * (a seed-file row read in literal mode, set by the operator's seed loader). Both are made with `Symbol()`, so no
  * caller outside the source can name them. Every other symbol key is dropped: `TUNNEL_ROUTE` is set by
- * `providerConnection` itself, and `ADMITTED_FILE` and `ADMITTED_HOST_PATHS` by the factory's later steps
- * (`admittedFileConnection` and `admittedHostPathConnection` in ./provider-files), so a caller's value of any of them
- * never survives.
+ * `providerConnection` itself, and `ADMITTED_FILE` and `ADMITTED_HOST_PATHS` by the legacy open's later steps
+ * (`admittedFileConnection` and `admittedHostPathConnection` in ./provider-files, which `openLegacyEngine` in
+ * src/lib/provider-host/legacy-adapter/open.ts runs), so a caller's value of any of them never survives.
  */
 const CALLER_MARKERS: readonly symbol[] = Object.freeze([TUNNEL_FAR_END, LITERAL_SEED_FILE]);
 
@@ -193,12 +193,14 @@ export type ProviderConnection = DatabaseConnection & WithTunnelFarEnd & WithLit
  * routes frame the seal on this function's answer for the record they resolved, so both sides digest the same fields.
  * Databend's sign-in latch reads the route through `requireTunnelRoute` in `./utils/require-tunnel-route`. A field the
  * engine does not declare is dropped and never refused here: stored records carry fields their engine does not take.
- * A field its engine refuses by name is dropped here too; the open check that `buildProvider` in `./factory` runs
- * refuses it first, for a provider built to connect (`assertOpenable` in `./open-check`).
+ * A field its engine refuses by name is dropped here too; the open check the one open function runs
+ * (`openEngine` in src/lib/provider-host/open-engine.ts) refuses it first, for a provider built to connect
+ * (`assertOpenable` in `./open-check`).
  *
- * PRECONDITION. The tunnel is one core's decision accepted: its caller, `buildProvider` in `./factory`, runs the open
- * check first (`assertOpenable` in `./open-check`, hence `assertProviderTunnel` and `decideTunnel`), which holds
- * `host` and `username` to text on every present tunnel, the values `tunnelRoute` measures. The field checks are not
+ * PRECONDITION. The tunnel is one core's decision accepted: its caller, `openLegacyEngine` in
+ * src/lib/provider-host/legacy-adapter/open.ts, runs after the open check (`assertOpenable` in `./open-check`, hence
+ * `assertProviderTunnel` and `decideTunnel`, which `openEngine` runs first), which holds `host` and `username` to text
+ * on every present tunnel, the values `tunnelRoute` measures. The field checks are not
  * repeated here, which would be a second copy of the decision and an import cycle with `./tunnel-decision`. The edit
  * routes call it after `handleObjectRequest` built their provider through `getOrCreateProvider`.
  *

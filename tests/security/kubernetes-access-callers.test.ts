@@ -65,6 +65,8 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "withOneShotTunnel",
     "findCachedProvider",
   ],
+  "src/lib/provider-host/open-engine.ts": ["openEngine"],
+  "src/lib/provider-host/legacy-adapter/open.ts": ["openLegacyEngine"],
   "src/lib/api/editor-provider.ts": ["editorProvider", "metadataProvider", "cachedEditorProvider"],
   "src/lib/api/object-route.ts": ["handleObjectRequest"],
   "src/lib/api/test-connection.ts": ["testConnection"],
@@ -218,6 +220,16 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/db/query/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/app/api/db/statement/analyze/route.ts": BUILDS_WHAT_THE_ROUTE_RESOLVED,
     "src/lib/agent/runtime.ts": AGENT_RUNTIME,
+  },
+  openEngine: {
+    "src/lib/db/factory.ts":
+      "createDatabaseProvider and readProviderDeclarations, gated above, open through it for the connection their caller hands them",
+    "src/lib/db/package-sessions.ts":
+      "the package session path opens only connections the query route and Test Connection resolved through resolveConnection, which opens a seed id only through visibleConnectionById and so through the review",
+  },
+  openLegacyEngine: {
+    "src/lib/provider-host/open-engine.ts":
+      "the one open function, gated above, calls it for a record no package serves, after the open check",
   },
   createDatabaseProvider: {
     "src/lib/api/test-connection.ts":

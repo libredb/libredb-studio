@@ -3,7 +3,7 @@
  *
  * A pinned environment, a real seed file, real SQLite and DuckDB files, and patches of a real
  * provider's prototype methods that count, hold or fail a call. A prototype patch reaches every
- * provider the factory builds, because the factory's dynamic import and a test's static import
+ * provider the factory builds, because the legacy adapter's dynamic import and a test's static import
  * load the same module record, and it leaves no process-wide module replacement behind: every
  * patch is undone by its own restore().
  */

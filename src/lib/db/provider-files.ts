@@ -4,8 +4,9 @@
  * A provider package runs in Studio's own process (the provider plugins design section 0.1), so which file on Studio's
  * host a connection opens, and which directory OPC UA keeps its client identity in, are core's decisions, not a
  * provider's: a provider that resolved a path against the working directory at connect, or read a setting of
- * Studio's, would answer by whatever the process's working directory and environment were then. The provider factory
- * (`createDatabaseProvider` in `./factory`) calls the functions here and hands the provider their outcome.
+ * Studio's, would answer by whatever the process's working directory and environment were then. The legacy adapter's
+ * open (`openLegacyEngine` in src/lib/provider-host/legacy-adapter/open.ts), which the provider factory's
+ * `createDatabaseProvider` (`./factory`) opens through, calls the functions here and hands the provider their outcome.
  *
  * `admittedFileConnection`: the file a SQLite, DuckDB or LibreDB connection names (`GRANTED_OPENS_LOCAL_FILE`),
  * resolved against the working directory when the provider is built and refused, by name, when it is one of Studio's
@@ -238,8 +239,8 @@ export const OPCUA_PKI_DIRECTORY = "opcua-pki";
 /**
  * Where OPC UA keeps its client key pair and trust list: `LIBREDB_OPCUA_PKI_ROOT`, trimmed, when it is set and absolute;
  * `opcua-pki` under the data directory of the storage location this process took when it is unset, empty or blank; a
- * relative value is refused by name, naming `type`. Read at each OPC UA build in the provider factory, which hands the
- * root to the provider.
+ * relative value is refused by name, naming `type`. Read at each OPC UA build in the legacy adapter's open
+ * (src/lib/provider-host/legacy-adapter/open.ts), which hands the root to the provider.
  *
  * THE LIBRARY'S DEFAULT CANNOT WORK IN THE PRODUCT IMAGE, AND THAT IS MEASURED, NOT FEARED. On a first connect, even in
  * None mode, `node-opcua-client` generates a private key and a self-signed client certificate under the platform's own

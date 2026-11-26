@@ -37,7 +37,9 @@
  * registration, and `bun test tests/unit` is clean again.
  */
 import { describe, test, expect, mock, beforeEach, beforeAll, afterAll, afterEach, jest, spyOn } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
+import ts from "typescript";
 import { open as libreOpen, kv as libreKv } from "@libredb/libredb";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
@@ -92,6 +94,7 @@ import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport"
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 import { TrinoTransportError } from "@/lib/db/providers/sql/trino/transport";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
+import { resolveSpecifier } from "../unit/lib/db/provider-imports/scan";
 import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
 import { markersReachableFrom } from "../helpers/reachable-markers";
@@ -550,6 +553,40 @@ beforeEach(async () => {
 // ─── createDatabaseProvider ────────────────────────────────────────────────
 
 describe("createDatabaseProvider", () => {
+  test("the factory builds a legacy engine's provider through its record's open and imports no provider module itself", async () => {
+    const legacyOpen = await import("@/lib/provider-host/legacy-adapter/open");
+    const open = spyOn(legacyOpen, "openLegacyEngine");
+    try {
+      const connection = makeConnection("sqlite", { database: ":memory:" });
+      const provider = await createDatabaseProvider(connection);
+      await readProviderDeclarations(connection);
+      const record = legacyProviderEngine("sqlite", "open");
+      expect(open).toHaveBeenCalledTimes(2);
+      expect(open.mock.calls[0]?.[0]).toBe(record);
+      expect(open.mock.calls[1]?.[0]).toBe(record);
+      expect(await open.mock.results[0]?.value).toBe(provider);
+    } finally {
+      open.mockRestore();
+    }
+
+    const FACTORY = "src/lib/db/factory.ts";
+    const root = join(import.meta.dir, "..", "..");
+    const listed = new Set(
+      execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+        cwd: root,
+        encoding: "utf8",
+      }).split("\0"),
+    );
+    const text = readFileSync(join(root, FACTORY), "utf8");
+    const resolved = ts
+      .preProcessFile(text, true, true)
+      .importedFiles.map(({ fileName }) => resolveSpecifier(FACTORY, fileName, listed))
+      .flatMap((resolution) => (resolution.kind === "package" ? [] : [resolution.path]));
+    expect(resolved.length).toBeGreaterThan(0);
+    expect(resolved.filter((file) => file.startsWith("src/lib/db/providers/"))).toEqual([]);
+    expect(text).not.toContain("typeIdRow");
+  });
+
   test.each([
     [undefined, undefined, 60000],
     [120000, undefined, 120000],
@@ -8038,7 +8075,7 @@ describe("the Snowflake provider in the factory", () => {
   }
 
   test("builds SnowflakeProvider with three arguments, the third the build context, so no deps reach it from a connection", async () => {
-    const source = readFileSync(join(import.meta.dir, "../../src/lib/db/factory.ts"), "utf8");
+    const source = readFileSync(join(import.meta.dir, "../../src/lib/provider-host/legacy-adapter/open.ts"), "utf8");
     const start = source.indexOf('case "snowflake": {');
     expect(start).toBeGreaterThan(-1);
     // The case block ends at its own closing brace, the first one at the case's indentation.

@@ -8,9 +8,9 @@
  * the generator, and which provider files import the shared transport under src/lib/db/grpc/ (the registry row's
  * transportImporters, which the shared guard's G5 holds too). Two isolation rules hold over the repository: no Spark
  * file imports a module under src/lib/db/providers/ outside its directory but the base class ../sql-base, and no file
- * under src/ outside the directory but the factory and the connection-string parser imports a Spark module, except that
- * a per-engine contract's registry imports the one Spark module that declares that contract. Every rule is proven both
- * ways: the real sources pass it and a planted file fails it by name.
+ * under src/ outside the directory but the legacy adapter's open and the connection-string parser imports a Spark
+ * module, except that a per-engine contract's registry imports the one Spark module that declares that contract. Every
+ * rule is proven both ways: the real sources pass it and a planted file fails it by name.
  *
  * The pure modules (PURE_MODULES) import no I/O, no logger and no transport, and write nothing to the console
  * at all; that rule is proven both ways too, and so is the allowlist rule: grpc-client.ts names no
@@ -49,7 +49,7 @@ const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, HARNESS];
 /** The provider files that import src/lib/db/grpc/, type-only imports included, as the shared guard's G5 counts them. */
 const TRANSPORT_IMPORTERS: readonly string[] = [`${SPARK}/connection-options.ts`, ADAPTER];
 /** The only files under src/ outside the provider directory that may import a Spark module. */
-const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/db/factory.ts"];
+const OUTSIDE_IMPORTERS_ALLOWED: readonly string[] = ["src/lib/provider-host/legacy-adapter/open.ts"];
 /** Each per-engine contract's registry, with the one Spark module, the engine's declaration, it may import. */
 const CONTRACT_REGISTRIES: Readonly<Record<string, string>> = {
   "src/lib/db/connection-string/index.ts": `${SPARK}/connection-string`,
@@ -322,11 +322,11 @@ describe("isolation", () => {
     expect(providerImportFindings(replaced(HELD, `${SPARK}/stray.ts`, allowed))).toEqual([]);
   });
 
-  test("no file under src/ outside the directory but the factory and the parser imports a Spark module", () => {
+  test("no file under src/ outside the directory but the legacy adapter's open and the parser imports a Spark module", () => {
     expect(outsideImportFindings(SOURCES)).toEqual([]);
   });
 
-  test("a planted importer under src/ fails by name, and the factory may import", () => {
+  test("a planted importer under src/ fails by name, and the legacy adapter's open may import", () => {
     const planted = 'import { quoteSparkName } from "@/lib/db/providers/sql/spark/namespace";\n';
     expect(outsideImportFindings(replaced(SOURCES, "src/lib/stray.ts", planted))).toEqual([
       "src/lib/stray.ts imports @/lib/db/providers/sql/spark/namespace, a Spark module",
@@ -335,8 +335,8 @@ describe("isolation", () => {
     expect(outsideImportFindings(replaced(SOURCES, "src/lib/db/stray.ts", relative))).toEqual([
       "src/lib/db/stray.ts imports ./providers/sql/spark/constants, a Spark module",
     ]);
-    const factory = 'const load = () => import("./providers/sql/spark");\n';
-    expect(outsideImportFindings(replaced(SOURCES, "src/lib/db/factory.ts", factory))).toEqual([]);
+    const open = 'const load = () => import("@/lib/db/providers/sql/spark/index");\n';
+    expect(outsideImportFindings(replaced(SOURCES, "src/lib/provider-host/legacy-adapter/open.ts", open))).toEqual([]);
   });
 
   test("a contract registry may import the Spark module that declares its contract, and no other", () => {

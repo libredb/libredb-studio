@@ -6,9 +6,11 @@
  * the deadline the child waits until the spawn timeout kills it, and the case fails within seconds; the child holds a
  * referenced interval, so Node cannot exit early on the unsettled wait (tests/helpers/bounded-node-child.ts).
  *
- * The provider factory reaches ssh2's native addon, which the child's bundle cannot load, so the child takes a stub
- * of it: a provider whose connect never settles, or, for the health case, whose connect resolves and whose health
- * never settles, no open single-writer handle, and a tunnel scope that runs its function on the connection as it is.
+ * The provider factory reaches ssh2's native addon, and the one open function the package session path imports reaches
+ * the legacy adapter's provider modules, which the child's bundle cannot load either, so the child takes a stub of
+ * each. The factory's stub is a provider whose connect never settles, or, for the health case, whose connect resolves
+ * and whose health never settles, no open single-writer handle, and a tunnel scope that runs its function on the
+ * connection as it is.
  * The case reaches the stub through one global the case sets before the test starts, `__testConnectionBoundsCase`,
  * since the stub is bundled in place of the factory and the case imports nothing from it. The child installs a host
  * core, as the extension's child and the server's instrumentation do.
@@ -51,6 +53,19 @@ export const isSingleWriterFileOpen = () => false;
 export const withOneShotTunnel = async (connection, run) => run(connection);
 `;
 
+/**
+ * The one open function the child bundles in place of the real one: the package session path imports it, and the real
+ * one reaches the legacy adapter's open, whose provider modules reach native addons the child's bundle cannot load.
+ * Every case here opens a legacy engine through the stubbed factory, so nothing calls it.
+ */
+const OPEN_ENGINE_STUB = `
+const notHere = () => {
+  throw new Error("No engine opens through the one open function in this child: it tests a legacy engine.");
+};
+export const openEngine = notHere;
+export const openedSession = notHere;
+`;
+
 const child = boundedChild({
   label: "test-connection-bounds",
   imports: [
@@ -59,7 +74,10 @@ const child = boundedChild({
     { from: path.join(SOURCE, "lib", "provider-host", "core", "host-core.ts"), names: ["createHostCore"] },
     { from: path.join(SOURCE, "lib", "provider-host", "instance.ts"), names: ["installHostCore"] },
   ],
-  stubs: [{ specifier: "@/lib/db/factory", source: FACTORY_STUB }],
+  stubs: [
+    { specifier: "@/lib/db/factory", source: FACTORY_STUB },
+    { specifier: "@/lib/provider-host/open-engine", source: OPEN_ENGINE_STUB },
+  ],
   runCase: async (deps: ChildDeps, name: string) => {
     (globalThis as { __testConnectionBoundsCase?: string }).__testConnectionBoundsCase = name;
     deps.installHostCore(deps.createHostCore(), "test");

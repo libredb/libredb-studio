@@ -324,10 +324,10 @@ export const REGISTRIES: readonly Listed[] = [
       "the confirmation gate's registry, each row declared in its statement language's family module or beside its provider",
   },
   {
-    path: "src/lib/db/factory.ts",
-    declaration: "buildProvider",
+    path: "src/lib/provider-host/legacy-adapter/open.ts",
+    declaration: "openLegacyEngine",
     count: 43,
-    reason: "the composition root, which maps each type id to its provider class",
+    reason: "the legacy adapter's composition root, which maps each legacy type id to its provider class",
   },
   {
     path: "src/lib/db/type-id.ts",
