@@ -66,7 +66,8 @@
  *   `Exclude<` or `Extract<`, across line breaks. A list such as `readonly DatabaseType[]` is not a key.
  * - `nonEnginePackages.linesNamingAnEngine`: lines naming an engine in non-engine package files.
  * - `grantRegister.linesNamingAnEngine`: lines naming an engine in grant register files. A row of the register names
- *   its engine, so the counter falls as each engine's legacy row is deleted when the engine moves into a package.
+ *   its engine, so the counter holds the legacy rows' engine-naming lines. A legacy row leaves when its engine moves
+ *   into a package, and the engine's package row is counted the same way, so a move by itself does not lower it.
  * The baseline also lists the ids behind four id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`,
  * `nonEnginePackages.engineIdsNamed` and `grantRegister.engineIdsNamed`: an id named in core, in a non-engine package
  * or in the grant register that the baseline does not list is refused even when the count is unchanged, and a packaged
