@@ -68,7 +68,8 @@ export interface KafkaConnectionOptions {
 
 export function kafkaConnectionOptions(config: DatabaseConnection, timeoutMs: number): KafkaConnectionOptions {
   // No SSH tunnel is read here: core refuses a Kafka connection whose tunnel is on before any provider is built
-  // (Kafka's row of SSH_TUNNEL_REFUSAL in src/lib/db/compatibility.ts, FND-2 slice 5).
+  // (Studio's grant of the engine's tunnel claim, `GRANTED_SSH_TUNNEL_REFUSAL` in src/lib/db/claim-grants.ts, FND-2
+  // slice 5).
   // validateHost answers an IPv6 literal bracketed, which is the URL form; the client
   // takes a separate host and port, where the brackets would be part of the name.
   const host = validateHost(config.host).replace(/^\[(.*)\]$/, "$1");

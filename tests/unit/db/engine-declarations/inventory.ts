@@ -108,14 +108,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "CONNECTION_STRING_ACCEPTED",
     destination: "engine declaration: connection.connectionString.accepted",
   },
-  { module: COMPATIBILITY, name: "OPENS_LOCAL_FILE", destination: claim("connection.opensLocalFile") },
-  { module: COMPATIBILITY, name: "HOST_PATH_FIELDS", destination: claim("connection.hostPathFields") },
-  { module: COMPATIBILITY, name: "SSH_TUNNEL_REFUSAL", destination: claim("connection.sshTunnel") },
-  {
-    module: COMPATIBILITY,
-    name: "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
-    destination: claim("connection.serverLevelWithoutDatabase"),
-  },
   { module: COMPATIBILITY, name: "AGENT_STATEMENT_LANGUAGE", destination: claim("agent.statementLanguage") },
   { module: CONNECTION_FIELDS_MODULE, name: "CONNECTION_FIELDS", destination: "engine declaration: connection.fields" },
   {
@@ -127,11 +119,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     module: CONNECTION_FIELDS_MODULE,
     name: "REFUSED_CONNECTION_FIELDS",
     destination: "engine declaration: connection.refused, each field with its sentence",
-  },
-  {
-    module: CONNECTION_FIELDS_MODULE,
-    name: "SEED_AGENT_CREDENTIAL",
-    destination: claim("connection.agentCredential"),
   },
   {
     module: "src/lib/db/connection-form.ts",

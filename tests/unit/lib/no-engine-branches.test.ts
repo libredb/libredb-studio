@@ -77,24 +77,15 @@ const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins wi
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
-  ...[
-    "READS_TRUST_MATERIAL",
-    "SERVES_ONE_SESSION",
-    "CONNECTION_FORM_URI_MODE",
-    "CONNECTION_STRING_ACCEPTED",
-    "OPENS_LOCAL_FILE",
-    "HOST_PATH_FIELDS",
-    "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
-    "SSH_TUNNEL_REFUSAL",
-  ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
-  ...["CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "REFUSED_CONNECTION_FIELDS", "SEED_AGENT_CREDENTIAL"].map(
-    (declaration) => ({
-      path: "src/lib/db/connection-fields.ts",
-      declaration,
-      count: 1,
-      reason: FIELDS,
-    }),
+  ...["READS_TRUST_MATERIAL", "SERVES_ONE_SESSION", "CONNECTION_FORM_URI_MODE", "CONNECTION_STRING_ACCEPTED"].map(
+    (declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY }),
   ),
+  ...["CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "REFUSED_CONNECTION_FIELDS"].map((declaration) => ({
+    path: "src/lib/db/connection-fields.ts",
+    declaration,
+    count: 1,
+    reason: FIELDS,
+  })),
   ...[
     "GRANTED_WRITE_REACH",
     "GRANTED_READS_FILE_ACCESS_POSTURE",

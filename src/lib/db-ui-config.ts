@@ -362,10 +362,8 @@ export function hostUriSchemes(type: DatabaseType): readonly HostUriScheme[] {
 /**
  * Whether this engine's connections may carry an SSH tunnel: true exactly where Studio's grant of its tunnel claim,
  * `GRANTED_SSH_TUNNEL_REFUSAL` (`src/lib/db/claim-grants.ts`), is null, so the dialog offers a tunnel exactly where
- * core takes one (FND-2 slice 5). Studio's record of the claim, `SSH_TUNNEL_REFUSAL`, says why each other engine it
- * ships takes none: Kafka, Apache Cassandra and Couchbase reach addresses the server advertises, RabbitMQ uses two
- * ports, BigQuery, Firestore and Snowflake reach several vendor API hosts, SNMP sends datagrams, and SQLite, DuckDB and
- * LibreDB open a file with no address to forward to.
+ * core takes one (FND-2 slice 5). Each other engine's review row of the claim, its legacy row of the grant register,
+ * holds the sentence that says why it takes none.
  *
  * One rule, two readers, as the engine's field list is: the connection modal renders the SSH
  * toggle only when this says so, and `buildConnection` writes `sshTunnel` only when this says

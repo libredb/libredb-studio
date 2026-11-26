@@ -846,7 +846,7 @@ describe("engine declaration readers", () => {
     const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    expect(records.length).toBe(7);
+    expect(records.length).toBe(2);
     expect(records).toContainEqual(
       expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
     );

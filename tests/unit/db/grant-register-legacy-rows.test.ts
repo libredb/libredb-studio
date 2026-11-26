@@ -28,16 +28,8 @@ import {
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_CLAIM_RECORDS,
 } from "@/lib/db/claim-grants";
-import {
-  AGENT_EXECUTION_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
-  HOST_PATH_FIELDS,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  SERVES_ONE_SESSION,
-  SSH_TUNNEL_REFUSAL,
-} from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, SERVES_ONE_SESSION } from "@/lib/db/compatibility";
+import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
@@ -72,6 +64,11 @@ const REGISTER_ONLY = [
   "statementRead",
   "metadataReadChangesState",
   "agentCredentialRequired",
+  "opensLocalFile",
+  "hostPathFields",
+  "serverLevelWithoutDatabase",
+  "sshTunnel",
+  "agentCredential",
 ] as const satisfies readonly Member[];
 
 /** The members held equal to a record here: every grant member but the register-only ones and `ownWords`. */
@@ -79,15 +76,6 @@ type RecordMember = Exclude<Member, "ownWords" | (typeof REGISTER_ONLY)[number]>
 
 /** Each grant member read from a keyed record: the record's name, its module and its rows. */
 const KEYED: Readonly<Record<Exclude<RecordMember, "agentExecution">, readonly [string, string, unknown]>> = {
-  opensLocalFile: ["OPENS_LOCAL_FILE", "src/lib/db/compatibility.ts", OPENS_LOCAL_FILE],
-  hostPathFields: ["HOST_PATH_FIELDS", "src/lib/db/compatibility.ts", HOST_PATH_FIELDS],
-  serverLevelWithoutDatabase: [
-    "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
-    "src/lib/db/compatibility.ts",
-    OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  ],
-  sshTunnel: ["SSH_TUNNEL_REFUSAL", "src/lib/db/compatibility.ts", SSH_TUNNEL_REFUSAL],
-  agentCredential: ["SEED_AGENT_CREDENTIAL", "src/lib/db/connection-fields.ts", SEED_AGENT_CREDENTIAL],
   statementLanguage: ["AGENT_STATEMENT_LANGUAGE", "src/lib/db/compatibility.ts", AGENT_STATEMENT_LANGUAGE],
   servesOneSession: ["SERVES_ONE_SESSION", "src/lib/db/compatibility.ts", SERVES_ONE_SESSION],
 };
