@@ -87,35 +87,17 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   { module: CLAIM_GRANTS_MODULE, name: "GRANTED_WRITE_REACH", destination: GRANTED_DESTINATION },
   { module: CLAIM_GRANTS_MODULE, name: "READ_ONLY_ENFORCED", destination: GRANTED_DESTINATION },
   { module: CLAIM_GRANTS_MODULE, name: "UNGRANTED_CLAIM_REFUSALS", destination: GRANTED_DESTINATION },
-  { module: COMPATIBILITY, name: "WRITE_REACH", destination: claim("policy.writeReach") },
-  { module: COMPATIBILITY, name: "READS_FILE_ACCESS_POSTURE", destination: claim("policy.readsFileAccessPosture") },
   {
     module: COMPATIBILITY,
     name: "READS_TRUST_MATERIAL",
     destination: "engine declaration: connection.readsTrustMaterial",
   },
-  { module: COMPATIBILITY, name: "REFUSES_DENIED_FILE_ACCESS", destination: claim("policy.deniedFileAccessRefusal") },
-  { module: COMPATIBILITY, name: "SINGLE_WRITER_FILE", destination: claim("policy.singleWriterFile") },
   {
     module: COMPATIBILITY,
     name: "SERVES_ONE_SESSION",
     destination:
       "core-owned: which engines serve their tree from one session is the host's own measurement, and no manifest declares it",
   },
-  { module: COMPATIBILITY, name: "MASKING_EXEMPT_COLUMNS", destination: claim("policy.maskingExemptColumns") },
-  { module: COMPATIBILITY, name: "MCP_EXPOSABLE", destination: claim("mcp.exposable") },
-  { module: COMPATIBILITY, name: "MCP_STATEMENT_READ", destination: claim("mcp.statementRead") },
-  {
-    module: COMPATIBILITY,
-    name: "MCP_METADATA_READ_CHANGES_STATE",
-    destination: claim("mcp.metadataReadChangesState"),
-  },
-  {
-    module: COMPATIBILITY,
-    name: "MCP_AGENT_CREDENTIAL_REQUIRED",
-    destination: claim("mcp.agentCredentialRequired"),
-  },
-  { module: COMPATIBILITY, name: "READ_ROOTS_REQUIRED", destination: claim("policy.readRootsRequired") },
   {
     module: COMPATIBILITY,
     name: "CONNECTION_FORM_URI_MODE",
@@ -151,7 +133,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "SEED_AGENT_CREDENTIAL",
     destination: claim("connection.agentCredential"),
   },
-  { module: CONNECTION_FIELDS_MODULE, name: "AGENT_CREDENTIAL_FORM", destination: claim("policy.agentCredentialForm") },
   {
     module: "src/lib/db/connection-form.ts",
     name: "CONNECTION_FORM",

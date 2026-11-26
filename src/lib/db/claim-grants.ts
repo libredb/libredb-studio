@@ -660,54 +660,96 @@ export function bundledEngineGrants(id: DatabaseType): EngineGrants {
   return engineGrantsOf(BUNDLED_GRANTS, id);
 }
 
-/** Studio's grant of `policy.writeReach`, which the seed schema and the connection form read. */
+/**
+ * Studio's grant of `policy.writeReach`, which the seed schema and the connection form read, each before a provider
+ * exists. It is no MCP criterion and no MCP code reads it (tests/unit/mcp/no-write-reach.test.ts): whether a machine
+ * client may read an engine is the grant of `mcp.exposable`, whatever the engine's write reach.
+ */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 
 /**
  * Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key reads; the factory's borrow reads a
- * legacy engine's row as its record's `grants.readsFileAccessPosture`.
+ * legacy engine's row as its record's `grants.readsFileAccessPosture`. Static because both decide while finding or
+ * opening a provider, before one exists: the key carries the deny posture as a segment, so a denied and a full-reach
+ * handle of one connection never share an entry, and the borrow lends a handle only to a caller of its own posture.
  */
 export const GRANTED_READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.readsFileAccessPosture;
 
 /**
  * Studio's grant of `policy.deniedFileAccessRefusal`, which MCP availability reads; the open check reads a legacy
- * engine's row as its record's `grants.deniedFileAccessRefusal`.
+ * engine's row as its record's `grants.deniedFileAccessRefusal`. A connection whose execution context denies file
+ * access is refused with the sentence before Studio reads the path it names, and the provider raises it again at
+ * `connect()`. Static because `list_connections` and `inspect_schema` decide before any provider exists.
  */
 export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
 /**
  * Studio's grant of `policy.singleWriterFile`, which the provider cache key reads; the factory's borrow reads a legacy
- * engine's row as its record's `grants.singleWriterFile`.
+ * engine's row as its record's `grants.singleWriterFile`. Static because the key decides before a provider exists:
+ * under governance every user of a connection gets a provider of their own, and the key frames the user as its owner,
+ * except on an engine granted a single-writer file, where a provider per user would be a second handle on one file.
+ * The built provider's own `singleWriterFile` reaches no gate (clause M-57).
  */
 export const GRANTED_SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.singleWriterFile;
 
-/** Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read. */
+/**
+ * Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read: the runs
+ * route refuses an agent-mode Start whose workflow sends statements on a connection without read roots, the seed schema
+ * refuses `mcp: true` without them, the MCP context refuses such a connection at open with `READ_ROOTS_REQUIRED`, and a
+ * governed record, which carries no roots, is never opted in to MCP.
+ */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
 /**
- * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary: every agent acquisition reads a legacy
- * engine's row as its record's `grants.agentCredentialForm`.
+ * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary, null for the user-and-password pair: every
+ * agent acquisition reads a legacy engine's row as its record's `grants.agentCredentialForm`, before the provider it
+ * built connects. It is not the seed agent credential, which is coarser: its `secret` covers both secret-only forms,
+ * and its null covers both `none` and an engine that takes the pair at open but no agent credential on a seed.
  */
 export const GRANTED_AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> =
   BUNDLED_GRANTS.agentCredentialForm;
 
-/** Studio's grant of `policy.maskingExemptColumns`, which the producers of client capabilities answer. */
+/**
+ * Studio's grant of `policy.maskingExemptColumns`, which the producers of client capabilities answer in place of the
+ * provider's own (`clientCapabilities` in ./client-capabilities), so a provider that declares a wider pattern than its
+ * grant exempts nothing more. The embedded workspace and the published grid take the exemption from the embedder, and
+ * this grant does not reach them.
+ */
 export const GRANTED_MASKING_EXEMPT_COLUMNS: Readonly<Record<DatabaseType, MaskingExemption>> =
   BUNDLED_GRANTS.maskingExemptColumns;
 
-/** Studio's grant of `mcp.exposable`, which the seed schema, governance and the MCP tools read. */
+/**
+ * Studio's grant of `mcp.exposable`, which the seed schema, governance and the MCP tools read: the seed schema refuses
+ * `mcp: true` at load on an engine it does not grant, naming the engine, since the seed file is validated before any
+ * provider exists.
+ */
 export const GRANTED_MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.exposable;
 
-/** Studio's grant of `mcp.statementRead`, which the MCP statement tools read. */
+/**
+ * Studio's grant of `mcp.statementRead`, which the MCP statement tools read: a second claim beside exposure, which also
+ * opens `list_connections` and `inspect_schema`. A statement tool serves an engine only where agent mode executes
+ * statements on it, it is exposed and this grant is true (src/lib/mcp/tools/served-engines.ts), so an engine that joins
+ * agent mode does not open to MCP as a side effect.
+ */
 export const GRANTED_MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.statementRead;
 
-/** Studio's grant of `mcp.metadataReadChangesState`, which the MCP tool annotations read. */
+/**
+ * Studio's grant of `mcp.metadataReadChangesState`, which the MCP tool annotations read: true for an engine whose
+ * metadata read changes state the engine keeps though it writes no data, so a token whose `tools/list` reaches one is
+ * told `readOnlyHint: false` and `destructiveHint: false` on `inspect_schema` (`metadataReadAnnotations`). A grant per
+ * engine rather than the provider's `resumesBilledCompute`, which `tools/list` cannot read before any provider exists.
+ */
 export const GRANTED_MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.metadataReadChangesState;
 
-/** Studio's grant of `mcp.agentCredentialRequired`, which the seed schema, MCP and governance read. */
+/**
+ * Studio's grant of `mcp.agentCredentialRequired`, which the seed schema, MCP and governance read: an engine MCP reads
+ * only under the seed's own agent credential, whose grants bound what an MCP client reads, so the seed schema refuses
+ * `mcp: true` without one at load and the MCP context refuses such a connection at open with
+ * `AGENT_CREDENTIAL_REQUIRED`.
+ */
 export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.agentCredentialRequired;
 

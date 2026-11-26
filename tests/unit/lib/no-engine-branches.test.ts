@@ -78,18 +78,8 @@ const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins wi
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
   ...[
-    "WRITE_REACH",
-    "READS_FILE_ACCESS_POSTURE",
     "READS_TRUST_MATERIAL",
-    "REFUSES_DENIED_FILE_ACCESS",
-    "SINGLE_WRITER_FILE",
     "SERVES_ONE_SESSION",
-    "MASKING_EXEMPT_COLUMNS",
-    "MCP_EXPOSABLE",
-    "MCP_STATEMENT_READ",
-    "MCP_METADATA_READ_CHANGES_STATE",
-    "MCP_AGENT_CREDENTIAL_REQUIRED",
-    "READ_ROOTS_REQUIRED",
     "CONNECTION_FORM_URI_MODE",
     "CONNECTION_STRING_ACCEPTED",
     "OPENS_LOCAL_FILE",
@@ -97,18 +87,14 @@ export const REGISTRIES: readonly Listed[] = [
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     "SSH_TUNNEL_REFUSAL",
   ].map((declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY })),
-  ...[
-    "CONNECTION_FIELDS",
-    "SEED_ONLY_FIELDS",
-    "REFUSED_CONNECTION_FIELDS",
-    "SEED_AGENT_CREDENTIAL",
-    "AGENT_CREDENTIAL_FORM",
-  ].map((declaration) => ({
-    path: "src/lib/db/connection-fields.ts",
-    declaration,
-    count: 1,
-    reason: FIELDS,
-  })),
+  ...["CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "REFUSED_CONNECTION_FIELDS", "SEED_AGENT_CREDENTIAL"].map(
+    (declaration) => ({
+      path: "src/lib/db/connection-fields.ts",
+      declaration,
+      count: 1,
+      reason: FIELDS,
+    }),
+  ),
   ...[
     "GRANTED_WRITE_REACH",
     "GRANTED_READS_FILE_ACCESS_POSTURE",

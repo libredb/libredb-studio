@@ -362,12 +362,12 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toMatch(/^\| MTConnect \| /m);
   });
 
-  test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
+  test("claims only SELECT for every engine, and names the claim that opens MCP read", () => {
     expect(MCP_DOC).toContain(
       "A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
     expect(MCP_DOC).not.toContain("A `SELECT` (a `WITH` is fine) runs on every engine it serves");
-    expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
+    expect(MCP_DOC).toContain("Studio's grant of `mcp.statementRead` opens statement reads on it");
   });
 
   test("names each served engine's statement forms from its READ_QUERY_FORMS row, and no other engine's", () => {

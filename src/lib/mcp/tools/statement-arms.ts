@@ -239,7 +239,7 @@ export function mcpStatementArm(tool: McpStatementTool): McpStatementArm {
 
 /**
  * The arms that serve at least one engine, in record order: the statement tools this build registers. An arm whose
- * served set is empty, as one is while its engines' `MCP_STATEMENT_READ` rows are false, is never listed. `arms` is
+ * served set is empty, as one is while its engines' grants of `mcp.statementRead` are false, is never listed. `arms` is
  * the record, and a test passes one of its own.
  */
 export function servingStatementArms(

@@ -5,12 +5,13 @@
  * (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75, M-77, M-82 and M-83).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
- * Studio grants only as far as its review record of each claim allows. A module that read a claim from a declaration
+ * Studio grants only as far as its review of each claim for the engine allows. A module that read a claim from a declaration
  * could hand a request to a gate as if it were granted, so every module that reads a declaration or a projection of the
  * declarations is listed here with the members it reads and why, and a listed member that is a claim fails here, with
  * the rule M-54 states for how a host grants one, unless `CLAIM_READERS` lists it: the policy, MCP, connection and
  * agent mode claims are authored and projected into one generated module, and read from it only by Studio's grant
- * reader, which grants each against Studio's review record (clauses M-82 and M-83).
+ * reader, which grants each against Studio's review of the claim, which src/lib/db/claim-grants.ts states (clauses M-82
+ * and M-83).
  *
  * The scan reads Studio's source under `src/`, and parses every `.ts` and `.tsx` file there with the TypeScript
  * compiler (a `.tsx` file as TSX). A file is a reader when its syntax tree holds `engine-declarations` or
@@ -845,7 +846,7 @@ describe("engine declaration readers", () => {
     const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    expect(records.length).toBe(18);
+    expect(records.length).toBe(7);
     expect(records).toContainEqual(
       expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
     );

@@ -6,8 +6,8 @@
  * `open`: at least one path sends a write no Studio gate refuses. The value is a fact about Studio's code, not about
  * the engine, the role or the deployment: a Postgres role holding only `SELECT` is still `open`.
  *
- * Pure and UI-free, and it names no engine: `WRITE_REACH` in `./compatibility.ts` is the static per-engine answer,
- * and `tests/unit/db/write-reach-capability.test.ts` holds it equal to this summary of every provider's declaration.
+ * Pure and UI-free, and it names no engine: Studio's grant of `policy.writeReach` in `./claim-grants.ts` is the static
+ * per-engine answer, and `tests/unit/db/write-reach-capability.test.ts` holds each engine's review row equal to this summary of every provider's declaration.
  * It is not an MCP criterion, and no MCP code reads it.
  */
 import type { ProviderCapabilities, WritePath, WritePathReach, WriteProof } from "./types";

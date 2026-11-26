@@ -19,6 +19,13 @@
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
  * module reads the records through it either.
  *
+ * Studio's review of each policy and MCP claim is the grant register's legacy rows, `@libredb/grant-register`, and no
+ * longer a record of core: no module but the grant reader loads the register, by an import declaration, a side-effect
+ * import, a re-export, an `export *`, a dynamic `import()` or a `require()` of its package name, a subpath of it or a
+ * relative path into packages/grant-register/, while a type-only import or export, which loads nothing, passes. The
+ * grant reader imports none of the records whose rows moved there, `MOVED_TO_REGISTER`, and no module of
+ * `CLAIM_RECORD_MODULES` exports one.
+ *
  * Studio's record of the agent readings is a member of each `ENGINE_FACETS` row, `agentReadings`, beside members other
  * gates read, so it is held by member rather than by name: no module but the grant reader and the claim projection,
  * which reads each declaration's request and never Studio's row, reads a member named `agentReadings`, by a property
@@ -346,6 +353,17 @@ function grantRegisterImporters(files: readonly SourceText[]): string[] {
     .map((file) => `${file.path} imports the grant register`);
 }
 
+/** Whether `file` declares an exported variable named `name`, by a TypeScript parse of its statements. */
+function exportsName(file: SourceText, name: string): boolean {
+  const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
+  return source.statements.some(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
+      statement.declarationList.declarations.some((declaration) => declaration.name.getText(source) === name),
+  );
+}
+
 /** The names `file`'s import declarations bind by name from any module, a type-only one included. */
 function importedNames(file: SourceText): string[] {
   const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
@@ -579,11 +597,31 @@ describe("the claim record readers", () => {
     const imported = importedNames(grantReader);
 
     expect(imported.filter((name) => MOVED_TO_REGISTER.includes(name))).toEqual([]);
-    // Vacuity: the parse reads the grant reader's named imports, a record it still imports among them.
+    const modules = Object.keys(CLAIM_RECORD_MODULES).map((recordModule) => {
+      const file = `${recordModule}.ts`;
+      return { path: file, text: readFileSync(path.join(ROOT, file), "utf8") };
+    });
+    expect(
+      modules.flatMap((file) =>
+        MOVED_TO_REGISTER.filter((name) => exportsName(file, name)).map((name) => `${file.path} exports ${name}`),
+      ),
+    ).toEqual([]);
+    // Vacuity: the parse reads the grant reader's named imports, a record it still imports among them, and each
+    // module's exported records.
     expect(imported).toContain("SEED_AGENT_CREDENTIAL");
     expect(
       importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
     ).toEqual(["WRITE_REACH"]);
+    for (const file of modules) {
+      const records = CLAIM_RECORD_MODULES[file.path.replace(/\.ts$/, "")] ?? [];
+      expect({ module: file.path, exports: records.filter((name) => exportsName(file, name)) }).toEqual({
+        module: file.path,
+        exports: [...records],
+      });
+    }
+    expect(
+      exportsName({ path: "src/lib/db/a.ts", text: "export const WRITE_REACH = Object.freeze({});" }, "WRITE_REACH"),
+    ).toBe(true);
   });
 
   test("the agent readings of Studio's facet rows are read only by the grant reader, and the scan finds each way a module could read them", () => {

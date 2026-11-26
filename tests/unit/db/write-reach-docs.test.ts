@@ -68,8 +68,8 @@ describe("docs/SECURITY.md row 3.8", () => {
   const security = readFileSync(join(import.meta.dir, "..", "..", "..", "docs", "SECURITY.md"), "utf8");
   const row = security.split("\n").find((line) => line.startsWith("| 3.8 |")) ?? "";
 
-  test("states its rule by the record and points at the Write reach table rather than naming engines", () => {
-    expect(row).toContain("on every engine whose `WRITE_REACH` is `open`");
+  test("states its rule by the grant and points at the Write reach table rather than naming engines", () => {
+    expect(row).toContain("on every engine whose granted `policy.writeReach` is `open`");
     expect(row).toContain("](./DATABASE_PROVIDERS.md#write-reach)");
   });
 

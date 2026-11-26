@@ -678,13 +678,13 @@ export function connectionFieldPlacement(config: ConnectionFormSpec, field: Plac
 
 /**
  * The sentence under the Read-only toggle, which the dialog draws where every write path of the engine is gated
- * (`WRITE_REACH` `guarded`): there the mode changes what the connection may send, and it can be turned off.
+ * (granted write reach `guarded`): there the mode changes what the connection may send, and it can be turned off.
  */
 export const READ_ONLY_TOGGLE_HINT =
   "Writes, value edits and maintenance are refused on this connection. You can turn this off here, so on your own connection it is a safety rail, not a permission.";
 
 /**
- * The sentence under the fixed Read-only label, one for every engine Studio has no write path on (`WRITE_REACH`
- * `none`): there is no box, because no setting is what keeps such a connection read-only.
+ * The sentence under the fixed Read-only label, one for every engine Studio has no write path on (granted write
+ * reach `none`): there is no box, because no setting is what keeps such a connection read-only.
  */
 export const READ_ONLY_FIXED_HINT = "Studio has no write path on this engine, so every connection to it is read-only.";

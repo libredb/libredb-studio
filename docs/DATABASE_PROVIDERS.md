@@ -324,7 +324,7 @@ monitoring, limitations, …) see the prime docs in **[`docs/providers/`](./prov
 
 ## Write reach
 
-What a Studio user can change on each engine through Studio, and what stops it, is `WRITE_REACH` in [`src/lib/db/compatibility.ts`](../src/lib/db/compatibility.ts).
+What a Studio user can change on each engine through Studio, and what stops it, is Studio's grant of each engine's `policy.writeReach` claim, in [`src/lib/db/claim-grants.ts`](../src/lib/db/claim-grants.ts).
 It is a fact about Studio's code, not about the engine, the deployment or the role a connection signs in as: a PostgreSQL connection whose role holds only `SELECT` is still `open`, because the boundary there is the database role ([GOVERNANCE.md](./GOVERNANCE.md)).
 
 A write path is a Studio server route that can send the engine a request that changes stored data, schema or server state.

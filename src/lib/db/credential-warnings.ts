@@ -11,7 +11,7 @@
  *
  * Pure, browser-safe and UI-free: it imports types and the generated record only. It is not in
  * src/lib/db-ui-config.ts because that module imports React icon components, which the seed loader must not load, the
- * reason the seed schema reads `WRITE_REACH` from src/lib/db/compatibility.ts.
+ * reason the seed schema reads the granted write reach from src/lib/db/claim-grants.ts.
  *
  * A JWT is decoded here, locally, with `atob`: its signature is never checked and nothing is sent anywhere. The
  * sentence says what the token declares, never what a server granted, and names no claim value.

@@ -1,13 +1,15 @@
 /**
- * The grant register's legacy rows (packages/grant-register/src/register.json) against Studio's hand-written records:
- * one legacy row for every engine the legacy adapter serves, each member equal to the engine's row of the record it
- * answers, each review note equal to the comment above that row, and the grants `grantClaims` computes from the rows
- * equal to the grants it computes from the records, for every claim and every engine.
+ * The grant register's legacy rows (packages/grant-register/src/register.json) against the hand-written records Studio
+ * still keeps in core: one legacy row for every engine the legacy adapter serves, each member a record answers equal to
+ * the engine's row of that record, each review note of such a member equal to the comment above that row, and the
+ * grants `grantClaims` computes from the rows equal to the grants it computes from `STUDIO_CLAIM_RECORDS`, for every
+ * claim and every engine.
  *
  * The rows were written once from the records and are hand-reviewed data from then on, never a projection of a
- * declaration; while both exist, this census holds them equal, so the change that deletes the records reads the
- * register in their place with no grant changed. It lives in core, not in the package's tests, because a package
- * imports nothing of Studio's.
+ * declaration; while a record and its member's rows both exist, this census holds them equal, so the change that
+ * deletes the record reads the register in its place with no grant changed. A member whose record is deleted is on
+ * `REGISTER_ONLY`: the register is its only copy, and its review notes are the register's own. It lives in core, not
+ * in the package's tests, because a package imports nothing of Studio's.
  *
  * A record row's review note is the text of the comments the TypeScript compiler attaches to the row as leading
  * comments, each comment's text after its `//`, trimmed, joined with one space.
@@ -29,22 +31,12 @@ import {
   AGENT_EXECUTION_ENGINES,
   AGENT_STATEMENT_LANGUAGE,
   HOST_PATH_FIELDS,
-  MASKING_EXEMPT_COLUMNS,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_METADATA_READ_CHANGES_STATE,
-  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
-  REFUSES_DENIED_FILE_ACCESS,
   SERVES_ONE_SESSION,
-  SINGLE_WRITER_FILE,
   SSH_TUNNEL_REFUSAL,
-  WRITE_REACH,
 } from "@/lib/db/compatibility";
-import { AGENT_CREDENTIAL_FORM, SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
@@ -62,27 +54,30 @@ const REGISTER_PACKAGE = "packages/grant-register";
 
 type Member = keyof RegisterGrants;
 
+/**
+ * The grant members whose hand-written record core no longer keeps: the grant register's legacy rows are their only
+ * copy, read by the grant reader, so no record is compared with them here. A closed list, which only grows as records
+ * leave core.
+ */
+const REGISTER_ONLY = [
+  "writeReach",
+  "readsFileAccessPosture",
+  "deniedFileAccessRefusal",
+  "singleWriterFile",
+  "readRootsRequired",
+  "agentCredentialForm",
+  "maskingExemptColumns",
+  "exposable",
+  "statementRead",
+  "metadataReadChangesState",
+  "agentCredentialRequired",
+] as const satisfies readonly Member[];
+
+/** The members held equal to a record here: every grant member but the register-only ones and `ownWords`. */
+type RecordMember = Exclude<Member, "ownWords" | (typeof REGISTER_ONLY)[number]>;
+
 /** Each grant member read from a keyed record: the record's name, its module and its rows. */
-const KEYED: Readonly<Record<Exclude<Member, "agentExecution" | "ownWords">, readonly [string, string, unknown]>> = {
-  writeReach: ["WRITE_REACH", "src/lib/db/compatibility.ts", WRITE_REACH],
-  readsFileAccessPosture: ["READS_FILE_ACCESS_POSTURE", "src/lib/db/compatibility.ts", READS_FILE_ACCESS_POSTURE],
-  deniedFileAccessRefusal: ["REFUSES_DENIED_FILE_ACCESS", "src/lib/db/compatibility.ts", REFUSES_DENIED_FILE_ACCESS],
-  singleWriterFile: ["SINGLE_WRITER_FILE", "src/lib/db/compatibility.ts", SINGLE_WRITER_FILE],
-  readRootsRequired: ["READ_ROOTS_REQUIRED", "src/lib/db/compatibility.ts", READ_ROOTS_REQUIRED],
-  agentCredentialForm: ["AGENT_CREDENTIAL_FORM", "src/lib/db/connection-fields.ts", AGENT_CREDENTIAL_FORM],
-  maskingExemptColumns: ["MASKING_EXEMPT_COLUMNS", "src/lib/db/compatibility.ts", MASKING_EXEMPT_COLUMNS],
-  exposable: ["MCP_EXPOSABLE", "src/lib/db/compatibility.ts", MCP_EXPOSABLE],
-  statementRead: ["MCP_STATEMENT_READ", "src/lib/db/compatibility.ts", MCP_STATEMENT_READ],
-  metadataReadChangesState: [
-    "MCP_METADATA_READ_CHANGES_STATE",
-    "src/lib/db/compatibility.ts",
-    MCP_METADATA_READ_CHANGES_STATE,
-  ],
-  agentCredentialRequired: [
-    "MCP_AGENT_CREDENTIAL_REQUIRED",
-    "src/lib/db/compatibility.ts",
-    MCP_AGENT_CREDENTIAL_REQUIRED,
-  ],
+const KEYED: Readonly<Record<Exclude<RecordMember, "agentExecution">, readonly [string, string, unknown]>> = {
   opensLocalFile: ["OPENS_LOCAL_FILE", "src/lib/db/compatibility.ts", OPENS_LOCAL_FILE],
   hostPathFields: ["HOST_PATH_FIELDS", "src/lib/db/compatibility.ts", HOST_PATH_FIELDS],
   serverLevelWithoutDatabase: [
@@ -97,7 +92,7 @@ const KEYED: Readonly<Record<Exclude<Member, "agentExecution" | "ownWords">, rea
 };
 
 /** The value Studio's records hold for `member` of `engine`. */
-function recordValue(member: Member, engine: string): unknown {
+function recordValue(member: RecordMember | "ownWords", engine: string): unknown {
   if (member === "agentExecution") return (AGENT_EXECUTION_ENGINES as readonly string[]).includes(engine);
   if (member === "ownWords") return LEGACY_OFFERS.ownWords;
   const rows = KEYED[member][2] as Readonly<Record<string, unknown>>;
@@ -116,10 +111,13 @@ function legacyRows(): RegisterRow[] {
 }
 
 /** The review note of each row of each record: engine to member to note. */
-function recordNotes(): Map<string, Partial<Record<Member, string>>> {
-  const notes = new Map<string, Partial<Record<Member, string>>>();
-  const byModule = new Map<string, [string, Member][]>();
-  for (const [member, [name, module]] of Object.entries(KEYED) as [Member, readonly [string, string, unknown]][]) {
+function recordNotes(): Map<string, Partial<Record<RecordMember, string>>> {
+  const notes = new Map<string, Partial<Record<RecordMember, string>>>();
+  const byModule = new Map<string, [string, RecordMember][]>();
+  for (const [member, [name, module]] of Object.entries(KEYED) as [
+    RecordMember,
+    readonly [string, string, unknown],
+  ][]) {
     byModule.set(module, [...(byModule.get(module) ?? []), [name, member]]);
   }
   const compatibility = byModule.get("src/lib/db/compatibility.ts");
@@ -180,12 +178,17 @@ function rowEngine(element: ts.Node, source: ts.SourceFile): string {
 }
 
 describe("the legacy rows", () => {
-  test("every legacy row's grants equal the engine's row of each of Studio's records, for every engine the legacy adapter serves", () => {
+  test("every legacy row's grants equal the engine's row of each record Studio still keeps in core, for every engine the legacy adapter serves", () => {
     const rows = legacyRows();
+    const compared: readonly (RecordMember | "ownWords")[] = [
+      ...(Object.keys(KEYED) as RecordMember[]),
+      "agentExecution",
+      "ownWords",
+    ];
 
     expect(rows.map((row) => row.engine)).toEqual([...LEGACY_ENGINE_IDS]);
     for (const row of rows) {
-      for (const member of Object.keys(row.grants) as Member[]) {
+      for (const member of compared) {
         expect({ engine: row.engine, member, value: row.grants[member] }).toEqual({
           engine: row.engine,
           member,
@@ -194,17 +197,19 @@ describe("the legacy rows", () => {
       }
       expect({ engine: row.engine, members: Object.keys(row.grants).sort() }).toEqual({
         engine: row.engine,
-        members: [...Object.keys(KEYED), "agentExecution", "ownWords"].sort(),
+        members: [...compared, ...REGISTER_ONLY].sort(),
       });
     }
   });
 
-  test("every row comment of Studio's records is the reason the register holds for that engine and member", () => {
+  test("every row comment of the records Studio still keeps in core is the reason the register holds for that engine and member", () => {
     const notes = recordNotes();
+    const compared = new Set<string>([...Object.keys(KEYED), "agentExecution"]);
 
     expect([...notes.keys()].filter((engine) => !LEGACY_ENGINE_IDS.includes(engine))).toEqual([]);
     for (const row of legacyRows()) {
-      expect({ engine: row.engine, reasons: row.reasons ?? {} }).toEqual({
+      const reasons = Object.fromEntries(Object.entries(row.reasons ?? {}).filter(([member]) => compared.has(member)));
+      expect({ engine: row.engine, reasons }).toEqual({
         engine: row.engine,
         reasons: notes.get(row.engine) ?? {},
       });
@@ -300,8 +305,8 @@ describe("the register's forms", () => {
       }
     }
 
-    // A review note is the record row's comment word for word, so it may name another engine; no grant value, schema
-    // line or reader line does.
+    // A review note is the record row's comment word for word, or the register's own note of a register-only member,
+    // so it may name another engine; no grant value, schema line or reader line does.
     const notes = new Set(
       legacyRows().flatMap((row) =>
         Object.entries(row.reasons ?? {}).flatMap(([member, note]) => {
