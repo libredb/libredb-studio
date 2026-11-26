@@ -225,7 +225,7 @@ describe("the accepted forms each engine's refusal names", () => {
   });
 
   test("every engine pages with OFFSET but Elasticsearch and Cassandra, whose SQL has none", () => {
-    expect(RUN_READ_QUERY_TYPES.filter((type) => !pagesWithOffset(type))).toEqual(["elasticsearch", "cassandra"]);
+    expect(RUN_READ_QUERY_TYPES.filter((type) => !pagesWithOffset(type))).toEqual(["cassandra", "elasticsearch"]);
     expect(READ_QUERY_FORMS.elasticsearch?.paging).toBe(KEYSET);
     expect(READ_QUERY_FORMS.cassandra?.paging).toBe(BY_TOKEN);
   });
