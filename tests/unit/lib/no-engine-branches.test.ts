@@ -201,13 +201,6 @@ export const REGISTRIES: readonly Listed[] = [
     reason: "each engine's SQL writing row, composed from the generated SQL writing and typed over the type-id union",
   },
   {
-    path: "src/lib/db/sql-grammar/redaction.ts",
-    declaration: "SQL_TEXT_REDACTION",
-    count: 1,
-    reason:
-      "Studio's hand-written review record of the sqlText.redaction claim, compile-enforced over the type-id union",
-  },
-  {
     path: "src/lib/db/engine-catalog/editor.generated.ts",
     declaration: "BUNDLED_EXECUTION_UI",
     count: 1,

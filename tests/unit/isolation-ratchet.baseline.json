@@ -3,8 +3,8 @@
   "counters": {
     "enginesInPackages": 0,
     "coreHandwritten.distinctEngineIds": 43,
-    "coreHandwritten.filesNamingAnEngine": 103,
-    "coreHandwritten.linesNamingAnEngine": 1313,
+    "coreHandwritten.filesNamingAnEngine": 102,
+    "coreHandwritten.linesNamingAnEngine": 1270,
     "coreGenerated.lines": 11102,
     "legacyProviders.files": 783,
     "agentLanguages.filesInLanguageDirs": 212,
@@ -13,7 +13,7 @@
     "providerDocsInCore": 43,
     "providerIntegrationTestsInCore": 43,
     "inwardImportPairs": 259,
-    "engineKeyedTypePositions": 56,
+    "engineKeyedTypePositions": 55,
     "nonEnginePackages.linesNamingAnEngine": 89,
     "grantRegister.linesNamingAnEngine": 44
   },

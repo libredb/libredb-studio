@@ -163,7 +163,6 @@ import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
@@ -1801,7 +1800,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "sqlText.redaction": {
     request: (d) => d.sqlText.redaction,
-    record: (type) => SQL_TEXT_REDACTION[type],
+    record: (type) => redactionRow[type],
   },
   "agent.overlay.dialect.catalogRead.commandShaped": {
     request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,

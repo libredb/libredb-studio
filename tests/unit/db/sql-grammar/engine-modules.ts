@@ -92,8 +92,8 @@ const FUNCTION_SUFFIXES = ["_REDACTION_READER", "_FORMAT_SEGMENT", "_READ_QUOTED
 
 /**
  * Every function module the registry imports from a provider directory, one per engine, with the bindings it imports
- * from it: the modules that hold the functions Studio's grammar function table binds to the names a declaration or the
- * redaction record gives.
+ * from it: the modules that hold the functions Studio's grammar function table binds to the names a declaration or a
+ * legacy register row's granted redaction gives.
  */
 export function engineModules(): EngineModule[] {
   const modules: EngineModule[] = [];

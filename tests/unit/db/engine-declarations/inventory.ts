@@ -28,8 +28,11 @@ const CONNECTION_FLAGS_MODULE = "src/lib/db/engine-catalog/connection-flags.gene
 /** What a claim table is, in every claim table's destination: tests/unit/db/no-core-grant-records.test.ts finds them by it. */
 export const REVIEW_RECORD_PHRASE = "Studio's review record of the claim";
 
-/** The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. */
-function claim(member: string): string {
+/**
+ * The destination of a claim table: the member that requests the claim, which the table grants as Studio's record. No
+ * claim table is left in the inventory; the guards that find one by this destination plant one with it.
+ */
+export function claim(member: string): string {
   return `engine declaration: ${member}, the engine's request, which this table grants as ${REVIEW_RECORD_PHRASE}`;
 }
 /** The destination of a generated connection table: the member it projects, authored in each declaration. */
@@ -235,11 +238,6 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "SQL_GRAMMAR",
     destination:
       "engine declaration: sqlText.readsSqlText, sqlText.grammar, sqlText.updateTarget and sqlText.completion, authored in each declaration and composed with Studio's grammar function table",
-  },
-  {
-    module: "src/lib/db/sql-grammar/redaction.ts",
-    name: "SQL_TEXT_REDACTION",
-    destination: claim("sqlText.redaction"),
   },
   {
     module: "src/lib/db/sql-writing/index.ts",

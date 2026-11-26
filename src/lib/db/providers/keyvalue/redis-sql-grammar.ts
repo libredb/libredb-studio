@@ -18,7 +18,7 @@ function commandShape(command: string, argumentCount: number): string {
  * holds keys and values alike. A text that sends nothing (blank, only comments, a second command or an unclosed
  * quote) keeps nothing, and so does a JSON command the provider would refuse.
  *
- * Redis's command redaction reader, the `redactionReader` Studio's redaction record names for it, bound by Studio's
+ * Redis's command redaction reader, the `redactionReader` the engine's granted redaction names, bound by Studio's
  * grammar function table (src/lib/db/sql-grammar/index.ts, `SQL_GRAMMAR_FUNCTIONS`).
  */
 export const REDIS_REDACTION_READER: CommandRedactionReader = function redactRedisCommand(text: string): string {

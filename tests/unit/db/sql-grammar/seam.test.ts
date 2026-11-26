@@ -26,7 +26,7 @@ const LEAVES: Readonly<Record<string, string>> = {
 const MODULES = engineModules();
 
 describe("the engine modules the registry imports", () => {
-  test("are the function modules of the engines whose declaration or redaction record names a grammar function", () => {
+  test("are the function modules of the engines whose declaration or legacy register row names a grammar function", () => {
     expect(MODULES.map((m) => m.id)).toEqual(["mongodb", "postgres", "redis"]);
     expect(MODULES.map((m) => m.exportNames)).toEqual([
       ["MONGODB_REDACTION_READER"],
@@ -86,12 +86,6 @@ describe("the contract's own modules", () => {
 
   test("shared.ts imports nothing", () => {
     expect(importsOf(join(REGISTRY_DIR, "shared.ts"))).toEqual([]);
-  });
-
-  test("redaction.ts, Studio's record of the redaction claim, has only type-only imports", () => {
-    const imports = importsOf(join(REGISTRY_DIR, "redaction.ts"));
-    expect(imports.length).toBeGreaterThan(0);
-    expect(imports.filter((entry) => !entry.typeOnly)).toEqual([]);
   });
 });
 

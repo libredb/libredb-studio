@@ -19,8 +19,9 @@ import { REDIS_REDACTION_READER } from "@/lib/db/providers/keyvalue/redis-sql-gr
 import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import { SQL_GRAMMAR_FUNCTIONS, type SqlGrammarFunctions } from "@/lib/db/sql-grammar";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
+import { LEGACY_KEY, readGrantRegister } from "@libredb/grant-register";
 import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { admittedFor, admittedManifest } from "../../../helpers/package-catalog";
 import { valueImportClosure, valueImportsOf } from "../../../helpers/value-import-closure";
 
@@ -51,12 +52,14 @@ describe("the statement redaction composed from the engine record's grant", () =
   test("every legacy record's statement redaction is its granted redaction, a command reader bound through the grammar function table", () => {
     const kinds = new Set<string>();
     const nameQuotes = new Set<string | null>();
+    const register = readGrantRegister(LEGACY_ENGINE_IDS);
     for (const id of SHIPPED_DATABASE_TYPES) {
       const record = servedEngineRecord(id);
       const granted: StatementRedaction = record.grants.redaction;
       const redaction = composeStatementRedaction(record);
-      // The record's grant is Studio's record of the claim for every legacy engine.
-      expect({ id, granted }).toEqual({ id, granted: SQL_TEXT_REDACTION[id] });
+      // The record's grant is the engine's legacy register row's redaction for every legacy engine.
+      const row = register.rowFor({ legacy: LEGACY_KEY, engine: id });
+      expect({ id, granted }).toEqual({ id, granted: row?.grants.redaction as StatementRedaction });
       expect({ id, frozen: Object.isFrozen(redaction) }).toEqual({ id, frozen: true });
       kinds.add(redaction.kind);
       if (granted.kind === "command") {

@@ -30,7 +30,7 @@ import path from "node:path";
 import ts from "typescript";
 import { AUTHORED_MEMBERS } from "../../../scripts/generate-engine-declarations";
 import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
-import { ENGINE_TABLE_INVENTORY } from "./engine-declarations/inventory";
+import { claim, ENGINE_TABLE_INVENTORY, type InventoryEntry } from "./engine-declarations/inventory";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -842,15 +842,18 @@ describe("engine declaration readers", () => {
   }, 60_000);
 
   test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
-    const records = ENGINE_TABLE_INVENTORY.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
+    const claimRecords = (inventory: readonly InventoryEntry[]) =>
+      inventory.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
+    const records = claimRecords(ENGINE_TABLE_INVENTORY);
     const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    expect(records.length).toBe(1);
-    expect(records).toContainEqual(
-      expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
-    );
+    // No claim table is left in the inventory: the confirmation gate's review record is the one claim record in core.
+    expect(records).toEqual([]);
     expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
+    // Vacuity: a claim table planted in the inventory is found by its destination.
+    const plantedTable = { module: "src/lib/db/planted-claims.ts", name: "LITERAL", destination: claim("policy") };
+    expect(claimRecords([...ENGINE_TABLE_INVENTORY, plantedTable])).toEqual([plantedTable]);
 
     const planted: SourceText = {
       path: "src/lib/db/planted-claims.ts",
