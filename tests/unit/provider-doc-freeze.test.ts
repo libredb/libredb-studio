@@ -33,8 +33,6 @@ import { trackedFiles } from "../helpers/repo-text-scope";
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 
-const SLICE_TWO = "per-engine doc test; its doc cases retire in slice 2 of #2541";
-
 /** The files allowed to build a per-engine provider document path, each with the reason it may. */
 const ALLOWED: Readonly<Record<string, string>> = {
   "tests/helpers/provider-layout.ts":
@@ -49,23 +47,6 @@ const ALLOWED: Readonly<Record<string, string>> = {
   "tests/unit/source-line-citation-matcher.test.ts": "a planted path in the matcher's citation test",
   "tests/unit/mcp-documentation.test.ts":
     "globs every provider doc for a fixed-text absence rule (no doc sends a language to an arm of its own) held to no code",
-  "tests/unit/db/s3/live-environment.test.ts": SLICE_TWO,
-  "tests/unit/db/databend/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/etcd/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/firestore/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/influxdb/provider-doc-influxdb.test.ts": SLICE_TWO,
-  "tests/unit/db/influxdb/provider-doc-influxdb3.test.ts": SLICE_TWO,
-  "tests/unit/db/kafka/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/kubernetes/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/milvus/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/neo4j/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/oxia/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/prometheus/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/qdrant/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/rabbitmq/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/s3/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/snowflake/provider-doc.test.ts": SLICE_TWO,
-  "tests/unit/db/spark/provider-doc.test.ts": SLICE_TWO,
 };
 
 const CODE_FILE = /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/;
