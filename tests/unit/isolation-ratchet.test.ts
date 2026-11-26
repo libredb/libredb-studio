@@ -172,6 +172,14 @@ describe("naming an engine in hand-written core", () => {
       });
     }
   });
+
+  test("a file under src/lib/provider-host/legacy-adapter/ counts as hand-written core, so moving engine code into the adapter is no fall", () => {
+    const before = gate({ "src/lib/old.ts": 'x = "kafka";\n' });
+    const after = gate({ "src/lib/provider-host/legacy-adapter/kafka.ts": 'x = "kafka";\n' });
+
+    expect(after).toEqual(before);
+    expect(after["coreHandwritten.filesNamingAnEngine"]).toBe(2);
+  });
 });
 
 describe("generated and legacy provider files", () => {
@@ -304,6 +312,92 @@ describe("engine ids and packages", () => {
 
     expect(measured.stale).toEqual(["NON_ENGINE_PACKAGES: provider-kit names no directory under packages/"]);
   });
+
+  test("a core source file with an engine id as a path segment counts toward coreSource.filesWithEngineInPath, and a file whose name only contains the id inside a word does not", () => {
+    const counted = [
+      "src/lib/explain/postgres-json.ts",
+      "src/lib/kafka/x.ts",
+      "scripts/generate-kafka-descriptor.mjs",
+      "src/lib/x.postgres.ts",
+      "src/lib/a_kafka.ts",
+      "vscode-extension/src/types/kafka.d.ts",
+      "src/lib/kafka.generated.ts",
+    ];
+    const ignored = [
+      "src/lib/postgresql.ts",
+      "src/lib/kafkaish/x.ts",
+      "src/lib/Kafka.ts",
+      "src/lib/db/providers/stream/kafka.ts",
+      "tests/unit/kafka.test.ts",
+      "packages/provider-kafka/src/x.ts",
+      "src/lib/kafka.md",
+    ];
+    const files = Object.fromEntries([...counted, ...ignored].map((file) => [file, ""]));
+
+    expect(measureFiles({}).report["coreSource.filesWithEngineInPath"]).toBe(0);
+    expect(measureFiles(files).report["coreSource.filesWithEngineInPath"]).toBe(counted.length);
+    for (const file of ignored) {
+      expect({ file, files: measureFiles({ [file]: "" }).report["coreSource.filesWithEngineInPath"] }).toEqual({
+        file,
+        files: 0,
+      });
+    }
+  });
+});
+
+describe("non-engine packages", () => {
+  const SDK_LINES = "nonEnginePackages.linesNamingAnEngine";
+  const SDK_IDS = "nonEnginePackages.engineIdsNamed";
+
+  test("a line naming an engine in a non-engine package's source counts toward nonEnginePackages.linesNamingAnEngine", () => {
+    const before = gate({});
+    const measured = measureFiles({
+      "packages/provider-sdk/src/x.ts":
+        'export type D = "kafka" | "postgres";\nconst k = { kafka: 1 };\nconst n = 1;\n',
+    }).baseline;
+
+    expect(before[SDK_LINES]).toBe(0);
+    expect(measured.counters[SDK_LINES]).toBe(2);
+    expect(measured.ids[SDK_IDS]).toEqual(["kafka", "postgres"]);
+    const core: Record<string, number> = { ...measured.counters, [SDK_LINES]: 0 };
+    expect(core).toEqual(before);
+  });
+
+  test("a file under a non-engine package's tests/ does not count", () => {
+    expect(gate({ "packages/provider-sdk/tests/x.test.ts": 'x = "kafka";\n' })[SDK_LINES]).toBe(0);
+    expect(gate({ "packages/provider-sdk/src/tests/x.ts": 'x = "kafka";\n' })[SDK_LINES]).toBe(1);
+  });
+
+  test("a JSON file of a non-engine package counts like a source file", () => {
+    expect(gate({ "packages/provider-sdk/src/manifest/schema.json": '"enum": ["kafka"]\n' })[SDK_LINES]).toBe(1);
+    expect(gate({ "packages/provider-sdk/README.md": "the `kafka` engine\n" })[SDK_LINES]).toBe(1);
+  });
+
+  test("a packages/provider-<id>/ directory of an engine counts toward engines in packages, not toward non-engine packages", () => {
+    const measured = measureFiles({ "packages/provider-kafka/src/x.ts": 'export const ID = "kafka";\n' }).baseline;
+
+    expect(measured.counters[SDK_LINES]).toBe(0);
+    expect(measured.ids[SDK_IDS]).toEqual([]);
+    expect(measured.counters.enginesInPackages).toBe(1);
+  });
+
+  test("an engine id newly named in a non-engine package is refused at an unchanged line count", () => {
+    const file = "packages/provider-sdk/src/x.ts";
+    const before = measureFiles({ [file]: 'x = "kafka";\n' }).baseline;
+    const after = measureFiles({ [file]: 'x = "postgres";\n' }).baseline;
+
+    expect(after.counters[SDK_LINES]).toBe(before.counters[SDK_LINES]);
+    expect(compareWithBaseline(before, after)).toEqual([
+      {
+        kind: "worse",
+        message: `${SDK_IDS}: postgres is named in a non-engine package and the baseline does not list it`,
+      },
+      {
+        kind: "better",
+        message: `${SDK_IDS}: kafka is no longer named in a non-engine package; ${REGENERATE}`,
+      },
+    ]);
+  });
 });
 
 describe("direction and messages", () => {
@@ -320,6 +414,7 @@ describe("direction and messages", () => {
     providerIntegrationTestsInCore: { "tests/integration/db/kafka-provider.test.ts": "" },
     inwardImportPairs: {},
     engineKeyedTypePositions: { "src/lib/k.ts": "type K = Record<DatabaseType, 1>;\n" },
+    "nonEnginePackages.linesNamingAnEngine": { "packages/provider-sdk/src/x.ts": 'x = "postgres";\n' },
   };
 
   test.each(GATE_COUNTERS.filter((counter) => counter.direction === "falls").map((counter) => counter.name))(
@@ -493,7 +588,11 @@ describe("the baseline file", () => {
       "Generated by bun run isolation:baseline from scripts/isolation-ratchet.ts; never edit by hand.",
     );
     expect(Object.keys(parsed.counters as object)).toEqual(GATE_COUNTERS.map((counter) => counter.name));
-    expect(Object.keys(parsed.ids as object)).toEqual(["coreHandwritten.engineIdsNamed", "enginesInPackages.ids"]);
+    expect(Object.keys(parsed.ids as object)).toEqual([
+      "coreHandwritten.engineIdsNamed",
+      "enginesInPackages.ids",
+      "nonEnginePackages.engineIdsNamed",
+    ]);
     for (const name of REPORT_COUNTERS) expect(JSON.stringify(parsed)).not.toContain(`"${name}"`);
     expect(renderBaseline(measured.baseline).endsWith("}\n")).toBe(true);
     expect(parseBaseline(renderBaseline(measured.baseline))).toEqual(measured.baseline);
@@ -533,6 +632,9 @@ describe("the baseline file", () => {
     );
     expect(refusal(variant((copy) => delete copy.ids["enginesInPackages.ids"]))).toBe(
       `${BASELINE_FILE}: id list enginesInPackages.ids is missing${suffix}`,
+    );
+    expect(refusal(variant((copy) => delete copy.ids["nonEnginePackages.engineIdsNamed"]))).toBe(
+      `${BASELINE_FILE}: id list nonEnginePackages.engineIdsNamed is missing${suffix}`,
     );
     expect(refusal(variant((copy) => Object.assign(copy.ids, { "enginesInPackages.ids": [1] })))).toBe(
       `${BASELINE_FILE}: id list enginesInPackages.ids is not a list of strings${suffix}`,

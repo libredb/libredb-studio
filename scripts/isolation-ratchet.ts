@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * The isolation ratchet: counters of provider knowledge in Studio's core that may only fall, and of engines in
- * packages that may only rise (issue #2514).
+ * The isolation ratchet: counters of provider knowledge in Studio's core and in its non-engine packages that may only
+ * fall, and of engines in packages that may only rise (issue #2514).
  * `tests/unit/isolation-ratchet.test.ts` measures the working tree and holds it to the committed baseline
  * `tests/unit/isolation-ratchet.baseline.json`, so a change that adds engine knowledge to core fails, and a change
  * that removes some fails too until it regenerates the baseline, so an improvement can never be undone silently.
@@ -31,6 +31,8 @@
  *   `packages/`, except this script: its exception list quotes the excepted lines, so counting it would keep those ids
  *   named in core for as long as the list exists.
  * - Generated: a core source file whose base name holds `.generated.`. It counts toward generated lines only.
+ * - Non-engine package files: every file, of any extension, under `packages/<directory>/` for each
+ *   `NON_ENGINE_PACKAGES` entry, except those under that directory's `tests/`. No exception applies to them.
  * - Lines of a file: the number of newlines, plus one when the text is non-empty and does not end with one.
  * - Exceptions: `EXCEPTIONS`, a closed list of reviewed lines that name an id but carry no engine knowledge, each with
  *   its file, its ids, the exact trimmed text of the line and the reason. Only two kinds exist: a `STORAGE_PROVIDER`
@@ -56,14 +58,18 @@
  * - `engineKeyedTypePositions`: in hand-written core source, every `Record<`, `Map<`, `ReadonlyMap<` or `WeakMap<`
  *   whose first type argument is `DatabaseType`, and every mapped type `[K in DatabaseType]`, either optionally inside
  *   `Exclude<` or `Extract<`, across line breaks. A list such as `readonly DatabaseType[]` is not a key.
- * The baseline also lists the ids behind the two id counters, `coreHandwritten.engineIdsNamed` and
- * `enginesInPackages.ids`: an id named in core that the baseline does not list is refused even when the count is
- * unchanged, and a packaged id that is gone is refused.
+ * - `nonEnginePackages.linesNamingAnEngine`: lines naming an engine in non-engine package files.
+ * The baseline also lists the ids behind three id counters, `coreHandwritten.engineIdsNamed`, `enginesInPackages.ids`
+ * and `nonEnginePackages.engineIdsNamed`: an id named in core or in a non-engine package that the baseline does not
+ * list is refused even when the count is unchanged, and a packaged id that is gone is refused.
  *
  * Report counters, printed and never compared: the engine id count, generated core files, lines of the legacy
  * provider, agent language and languages files and of the declarations, and over test code (`tests/`, `e2e/`,
  * `vscode-extension/test/`) the files and lines naming an engine (no exceptions), plus the test code and fixture files
- * under `tests/` and `e2e/` with an engine id as a path segment.
+ * under `tests/` and `e2e/` with an engine id as a path segment, and the core source files with an engine id as a path
+ * segment.
+ * An id is a path segment when it is bounded on each side by the path's start or end or by one of `/`, `_`, `.` or `-`,
+ * matched case-sensitively.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -103,6 +109,7 @@ export const GATE_COUNTERS: readonly GateCounter[] = [
   { name: "providerIntegrationTestsInCore", direction: "falls" },
   { name: "inwardImportPairs", direction: "falls" },
   { name: "engineKeyedTypePositions", direction: "falls" },
+  { name: "nonEnginePackages.linesNamingAnEngine", direction: "falls" },
 ];
 
 /** The report counters, printed and never compared. */
@@ -117,16 +124,21 @@ export const REPORT_COUNTERS = [
   "coreTests.linesNamingAnEngine",
   "coreTests.codeFilesWithEngineInPath",
   "coreTests.fixtureFilesWithEngineInPath",
+  "coreSource.filesWithEngineInPath",
 ] as const;
 
 type ReportCounter = (typeof REPORT_COUNTERS)[number];
 
-/** The two id lists the baseline records, in its order. */
-const ID_LISTS = ["coreHandwritten.engineIdsNamed", "enginesInPackages.ids"] as const;
+/** The id lists the baseline records, in its order. */
+const ID_LISTS = [
+  "coreHandwritten.engineIdsNamed",
+  "enginesInPackages.ids",
+  "nonEnginePackages.engineIdsNamed",
+] as const;
 
 type IdList = (typeof ID_LISTS)[number];
 
-/** What the baseline file holds: every gate counter and the two id lists, sorted. */
+/** What the baseline file holds: every gate counter and the id lists, sorted. */
 export interface Baseline {
   readonly counters: Readonly<Record<string, number>>;
   readonly ids: Readonly<Record<IdList, readonly string[]>>;
@@ -480,9 +492,17 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
   );
   const generated = core.filter((file) => baseName(file).includes(".generated."));
   const handwritten = core.filter((file) => !baseName(file).includes(".generated."));
+  const inPath = (file: string) =>
+    [...engineIds].some((id) => new RegExp(`(^|[/_.-])${escapeRegExp(id)}([/_.-]|$)`).test(file));
 
   const used = new Set<Exception>();
   const naming = scanNaming(tree, handwritten, pattern, lists.exceptions, used);
+  const nonEngineFiles = files.filter((file) =>
+    lists.nonEnginePackages.some(
+      ({ directory }) => file.startsWith(`packages/${directory}/`) && !file.startsWith(`packages/${directory}/tests/`),
+    ),
+  );
+  const nonEngineNaming = scanNaming(tree, nonEngineFiles, pattern, [], new Set());
   for (const entry of lists.exceptions) {
     if (!used.has(entry)) {
       stale.push(
@@ -498,8 +518,6 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
 
   const testCode = files.filter((file) => under(TEST_ROOTS, file) && TEST_CODE_FILE.test(file));
   const testNaming = scanNaming(tree, testCode, pattern, [], new Set());
-  const inPath = (file: string) =>
-    [...engineIds].some((id) => new RegExp(`(^|[/_.-])${escapeRegExp(id)}([/_.-]|$)`).test(file));
   const pathTestFiles = files.filter((file) => under(PATH_TEST_ROOTS, file) && inPath(file));
 
   const counters: Record<string, number> = {
@@ -516,6 +534,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
     providerIntegrationTestsInCore: files.filter((file) => PROVIDER_INTEGRATION_TEST.test(file)).length,
     inwardImportPairs: lists.inward.reduce((sum, entry) => sum + entry.modules.length, 0),
     engineKeyedTypePositions: keyed,
+    "nonEnginePackages.linesNamingAnEngine": nonEngineNaming.lines,
   };
   return {
     baseline: {
@@ -523,6 +542,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
       ids: {
         "coreHandwritten.engineIdsNamed": [...naming.ids].sort(),
         "enginesInPackages.ids": [...packaged].sort(),
+        "nonEnginePackages.engineIdsNamed": [...nonEngineNaming.ids].sort(),
       },
     },
     report: {
@@ -536,6 +556,7 @@ export function measure(tree: Tree, lists: MeasureLists): Measurement {
       "coreTests.linesNamingAnEngine": testNaming.lines,
       "coreTests.codeFilesWithEngineInPath": pathTestFiles.filter((file) => TEST_CODE_FILE.test(file)).length,
       "coreTests.fixtureFilesWithEngineInPath": pathTestFiles.filter((file) => !TEST_CODE_FILE.test(file)).length,
+      "coreSource.filesWithEngineInPath": core.filter(inPath).length,
     },
     stale,
   };
@@ -570,17 +591,7 @@ export function compareWithBaseline(baseline: Baseline, current: Baseline): Find
       });
     }
   }
-  const named = "coreHandwritten.engineIdsNamed";
-  for (const id of current.ids[named]) {
-    if (!baseline.ids[named].includes(id)) {
-      findings.push({ kind: "worse", message: `${named}: ${id} is named in core and the baseline does not list it` });
-    }
-  }
-  for (const id of baseline.ids[named]) {
-    if (!current.ids[named].includes(id)) {
-      findings.push({ kind: "better", message: `${named}: ${id} is no longer named in core; ${REGENERATE_SENTENCE}` });
-    }
-  }
+  findings.push(...namedIdFindings(baseline, current, "coreHandwritten.engineIdsNamed", "core"));
   const packaged = "enginesInPackages.ids";
   for (const id of baseline.ids[packaged]) {
     if (!current.ids[packaged].includes(id)) {
@@ -592,10 +603,33 @@ export function compareWithBaseline(baseline: Baseline, current: Baseline): Find
       findings.push({ kind: "better", message: `${packaged}: ${id} is a new package; ${REGENERATE_SENTENCE}` });
     }
   }
+  findings.push(...namedIdFindings(baseline, current, "nonEnginePackages.engineIdsNamed", "a non-engine package"));
   return findings;
 }
 
-/** The baseline file's text: a header, every gate counter and both id lists in a fixed order, and a final newline. */
+/** The findings of one list of ids named in `place`: a new id is worse, a gone id an improvement to take in. */
+function namedIdFindings(baseline: Baseline, current: Baseline, list: IdList, place: string): Finding[] {
+  const findings: Finding[] = [];
+  for (const id of current.ids[list]) {
+    if (!baseline.ids[list].includes(id)) {
+      findings.push({
+        kind: "worse",
+        message: `${list}: ${id} is named in ${place} and the baseline does not list it`,
+      });
+    }
+  }
+  for (const id of baseline.ids[list]) {
+    if (!current.ids[list].includes(id)) {
+      findings.push({
+        kind: "better",
+        message: `${list}: ${id} is no longer named in ${place}; ${REGENERATE_SENTENCE}`,
+      });
+    }
+  }
+  return findings;
+}
+
+/** The baseline file's text: a header, every gate counter and every id list in a fixed order, and a final newline. */
 export function renderBaseline(baseline: Baseline): string {
   const counters = Object.fromEntries(GATE_COUNTERS.map(({ name }) => [name, baseline.counters[name]]));
   const ids = Object.fromEntries(ID_LISTS.map((name) => [name, baseline.ids[name]]));

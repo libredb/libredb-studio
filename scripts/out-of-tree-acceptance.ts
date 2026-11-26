@@ -30,7 +30,7 @@
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement.
  * 7. Assert `git status --porcelain` is empty and that no engine id of the fixture appears, in any letter case, in a
- *    file under src, bin, scripts or vscode-extension/src (the isolation ratchet's core roots).
+ *    file under src, bin, scripts or vscode-extension/src (the isolation ratchet's core roots) or packages.
  * 8. Assert that no file under the standalone's .next, the server's build output, equals a fixture file or holds the
  *    package name, an engine id as a quoted literal or an engine's display name.
  *
@@ -657,6 +657,14 @@ export function regularFiles(directory: string): string[] {
     }
   }
   return files.sort();
+}
+
+/** The roots step 7 scans for the fixture's engine ids, relative to the repository root. */
+export const NAMING_SCAN_ROOTS: readonly string[] = Object.freeze([...STUDIO.coreRoots, "packages"]);
+
+/** Every regular file under each of `NAMING_SCAN_ROOTS` in `repositoryRoot`, as `regularFiles` lists them. */
+export function namingScanFiles(repositoryRoot: string): string[] {
+  return NAMING_SCAN_ROOTS.flatMap((root) => regularFiles(path.join(repositoryRoot, root)));
 }
 
 /** The files of `files` whose text names any of `ids`, in any letter case. */
@@ -1368,11 +1376,11 @@ async function repositoryUnchanged(ctx: Context): Promise<string> {
   );
   assertNone(porcelainProblems(status.stdout));
   const ids = ctx.fixture.engines.map((engine) => engine.id);
-  const files = STUDIO.coreRoots.flatMap((root) => regularFiles(path.join(REPO_ROOT, root)));
-  if (files.length === 0) throw new Error(`no file under ${STUDIO.coreRoots.join(", ")}`);
+  const files = namingScanFiles(REPO_ROOT);
+  if (files.length === 0) throw new Error(`no file under ${NAMING_SCAN_ROOTS.join(", ")}`);
   const naming = filesNaming(files, ids, (file) => readFileSync(file, "utf8"));
   assertNone(naming.map((file) => `${path.relative(REPO_ROOT, file)} names ${ids.join(" or ")}`));
-  return `git status --porcelain is empty; none of ${files.length} files under ${STUDIO.coreRoots.join(", ")} names ${ids.join(", ")}`;
+  return `git status --porcelain is empty; none of ${files.length} files under ${NAMING_SCAN_ROOTS.join(", ")} names ${ids.join(", ")}`;
 }
 
 async function buildHoldsNoFixture(ctx: Context): Promise<string> {

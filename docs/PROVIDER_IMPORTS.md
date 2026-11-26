@@ -284,8 +284,7 @@ A language slice may move an agent fact to PR 11 agent instead, changing its row
 No core file gains an import into a provider directory.
 `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly the pairs of its allowlist: a new pair fails by name, and so does a listed pair the source no longer holds.
 Each slice deletes its pairs from the allowlist and its rows from the inward table in the same PR, so both only shrink.
-The one growth allowed before PR 11 and PR 12 land is a new type-id's row modules in the ten collector entries, the six registry indexes and `src/lib/db/factory.ts`, added to the allowlist and counted here in the PR that adds the type-id.
-The connection string index takes a module only for a new engine whose declaration names a connection string function, the SQL writing index only for one whose declaration names an SQL writing function of its own, and the migration DDL index only for one whose declaration names a migration DDL function of its own, and the query generators index, for an SQL engine, only for one that names a generator function of its own.
+The allowlist never grows, a new engine included: the isolation ratchet (`scripts/isolation-ratchet.ts`) holds `inwardImportPairs` to only fall.
 
 A provider that imports a core module the outward table does not list fails the same test until the module gets a row and a destination here.
 The same test holds the outward rows whose destination is SDK /sql: the value imports of each such module reach no provider module, so the readers it names can move into the SDK without bringing a provider row with them.

@@ -4,8 +4,9 @@
  *
  * The guard in `tests/unit/lib/db/provider-imports.test.ts` holds the tree to exactly these pairs, and
  * `docs/PROVIDER_IMPORTS.md` names, for each file, the change that removes its imports and where they go.
- * A change that removes an import deletes its module here, and the file's entry with its last module; the one growth
- * allowed is a new type-id's row modules in the collector entries, as that record's "The rule" says.
+ * A change that removes an import deletes its module here, and the file's entry with its last module. No entry or
+ * module is ever added, a new engine's included: the isolation ratchet's `inwardImportPairs` counter, which only
+ * falls, holds the module count.
  */
 import type { AllowlistEntry } from "./scan";
 
