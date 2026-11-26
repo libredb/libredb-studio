@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "46eccadcfafb2daa47c76d59303847d7e9b6856fa04edf80d17d550145d39e63";
+export const MANIFEST_SCHEMA_SHA256 = "f0fa50610ea1e7b811942ea88f544796f2bb2761cf5e01ae2957752d1e7036b1";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -1216,7 +1216,7 @@ export type SqlGenerators = {
 /** The count Generate Count Query writes for the engine, COUNT(*) where the engine's is the shared one: one aggregate call over every row, a letter, then letters, digits or underscores, then (*), up to 64 characters, so it fills one expression of the statement Studio writes and never adds a clause or a statement. */
 export type CountExpression = string;
 
-/** What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. */
+/** What the engine asks of the gates Studio decides before or around a provider. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as the engine's row of Studio's grant register allows, a row keyed by the package's name, version and digest, and reads a claim where no row exists at its restrictive value, named at the end of each member's description. */
 export interface PolicyClaims {
   readonly writeReach: WriteReachClaim;
   /** Whether the engine's provider opens its handle under a file-access posture, opening with external file access off where the caller's is denied, so a denied handle and a full-reach one never share a cached provider or a borrowed handle. Restrictive value: true. */
@@ -1245,7 +1245,7 @@ export type MaskingExemption = {
 /** What Studio's code can write on the engine. none: no code of the provider can send a write on any write path. guarded: every write path it has is refused by a named gate while read-only mode holds. open: at least one path sends a write no Studio gate refuses. Studio keeps a connection's read-only mode only where the reach is not open, so no manifest states read-only enforcement. Restrictive value: open, under which read-only mode is refused, ordered open, guarded, none from the most restrictive. */
 export type WriteReachClaim = "none" | "guarded" | "open";
 
-/** What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as its own review record of the claim, or an operator's audited grant, allows, and reads a claim with neither at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states. */
+/** What the engine asks of the gates Studio's MCP server decides. Every member is a claim: a request, never a fact Studio believes as declared. Studio grants a request only as far as the engine's row of Studio's grant register allows, a row keyed by the package's name, version and digest, and reads a claim where no row exists at its restrictive value, named at the end of each member's description. The engines agent and MCP statements run on are Studio's own record, which no manifest states. */
 export interface McpClaims {
   /** Whether a connection of the engine may be exposed to MCP clients at all. Restrictive value: false. */
   readonly exposable: boolean;
