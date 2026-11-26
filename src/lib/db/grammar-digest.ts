@@ -11,7 +11,9 @@
  * Server-only: it hashes with node:crypto. The server catalog's composer (./server-catalog-compose) computes a provider
  * package's grammar digest here when it grants the package's engine; a legacy engine's request carries its legacy
  * row's digest, which tests/unit/db/grant-register-legacy-rows.test.ts holds equal to the digest of its declaration's
- * grammar computed here. No module the browser loads imports it.
+ * grammar computed here. No module the browser loads imports it: tests/unit/db/grammar-digest-boundary.test.ts holds
+ * the composer the one module of src that imports it, directly or by a re-export, and the grant reader's value imports
+ * free of it and of node:crypto.
  */
 import { createHash } from "node:crypto";
 
