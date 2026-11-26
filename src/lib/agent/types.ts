@@ -250,8 +250,8 @@ export const AGENT_WORKFLOW_PRESENTS_ANSWER: Readonly<Record<AgentRunWorkflowTyp
  *
  * `operations` is the false one, and it is the whole reason this record exists rather
  * than a blanket rule about agent mode. Its tools are the curated provider readings
- * the run's engine offers (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`), served under
- * `AGENT_OPERATIONS_PROFILE`, whose acquisition does not require `queryReadOnly`
+ * the run's engine offers (Studio's grant of its agent readings, its engine record's `grants.agentReadings`),
+ * served under `AGENT_OPERATIONS_PROFILE`, whose acquisition does not require `queryReadOnly`
  * (`PROFILE_ACQUISITION` in `src/lib/db/factory.ts`). A refusal that ignored this axis
  * would withhold from MySQL, Oracle, SQL Server, MongoDB, Redis and the rest a workflow
  * that runs on them today (#411). Where it does not open is decided by the other axis,
@@ -343,7 +343,7 @@ export type AgentRunFailureReason =
   /**
    * The connection's engine has no read-only statement path under a declared boundary,
    * or is not on Studio's review record of the engines agent statements run on
-   * (`GRANTED_AGENT_EXECUTION_ENGINES`, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
+   * (its engine record's `agentExecution` grant, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
    * have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *
@@ -1918,7 +1918,7 @@ export interface AgentRunRecord {
   readonly statementLanguage?: AgentStatementLanguageId;
   /**
    * The type id of the run's connection when it opened, which picks the curated `inspect_operations` readings
-   * the run is offered (Studio's grant of its agent readings, `GRANTED_AGENT_READINGS`).
+   * the run is offered (Studio's grant of its agent readings, its engine record's `grants.agentReadings`).
    *
    * Decided once at open and read by tool selection and the curated reading, never from the live connection,
    * for the reason `statementLanguage` gives.

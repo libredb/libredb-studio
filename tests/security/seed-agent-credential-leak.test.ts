@@ -214,7 +214,7 @@ describe("a seed's agent secret", () => {
     await refusalOf(() =>
       assertAgentCredentialWhereRequired(
         { ...projected, agentUser: undefined, agentPassword: undefined, password: MARKER },
-        { ...agentCredentialRequired, postgres: true },
+        (type) => ({ agentCredentialRequired: type === "postgres" || agentCredentialRequired[type] }),
       ),
     );
     await refusalOf(() => acquireExecutionProfileProvider({ ...projected, agentUser: undefined }, "agent-read-only"));

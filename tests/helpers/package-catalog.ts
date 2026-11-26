@@ -14,10 +14,20 @@ import path from "node:path";
 import type { RegisterGrants, RegisterRow } from "@libredb/grant-register";
 import type { ProviderImpl } from "@libredb/provider-sdk/calls";
 import type { ProviderManifest } from "@libredb/provider-sdk/manifest";
-import { UNGRANTED_DENIED_FILE_ACCESS_SENTENCE, UNGRANTED_SSH_TUNNEL_SENTENCE } from "@/lib/db/claim-grants";
+import {
+  type EngineGrants,
+  STUDIO_GRANT_REGISTER,
+  UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
+  UNGRANTED_SSH_TUNNEL_SENTENCE,
+} from "@/lib/db/claim-grants";
 import { hostManifestValidator } from "@/lib/provider-host/admission";
-import type { EngineRecord, ServerCatalog } from "@/lib/db/server-catalog";
-import type { AdmittedForCatalog } from "@/lib/db/server-catalog-compose";
+import {
+  type EngineRecord,
+  forgetServerCatalog,
+  installServerCatalog,
+  type ServerCatalog,
+} from "@/lib/db/server-catalog";
+import { type AdmittedForCatalog, composeServerCatalog } from "@/lib/db/server-catalog-compose";
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dir, "..", "..");
 const SCHEMA_FILE = path.join(REPOSITORY_ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -256,4 +266,31 @@ export function withEngineRecord(
   if (engine === undefined) throw new Error(`the catalog holds no record of ${id}`);
   engines.set(id, Object.freeze(change(engine)));
   return Object.freeze({ engines, unavailable: catalog.unavailable });
+}
+
+/**
+ * Studio's own catalog with the grants of each engine `changes` names replaced by its record's grants and the change: a
+ * crafted catalog, for the tests that hold a reader of a grant to the installed record rather than to Studio's tables.
+ *
+ * @throws {Error} Naming the engine, for an engine Studio's catalog holds no record of.
+ */
+export function craftedCatalog(changes: Readonly<Record<string, Partial<EngineGrants>>>): ServerCatalog {
+  let catalog = composeServerCatalog([], [], STUDIO_GRANT_REGISTER);
+  for (const [id, change] of Object.entries(changes)) {
+    catalog = withEngineRecord(catalog, id, (engine) => ({
+      ...engine,
+      grants: Object.freeze({ ...engine.grants, ...change }),
+    }));
+  }
+  return catalog;
+}
+
+/** Runs `read` with `catalog` installed, and forgets it whatever `read` does. */
+export async function withCatalog<T>(catalog: ServerCatalog, read: () => T | Promise<T>): Promise<T> {
+  installServerCatalog(catalog);
+  try {
+    return await read();
+  } finally {
+    forgetServerCatalog();
+  }
 }

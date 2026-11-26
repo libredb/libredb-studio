@@ -1,10 +1,10 @@
 /**
  * Names, joined the way a sentence joins them: `a`, `a and b`, `a, b and c`.
  *
- * It lives here because the review record it joins, `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`, is
- * printed in three places: the login hero
- * (`src/components/login/hero-proof.tsx`), the agent posture popover (`src/lib/agent/posture.ts`)
- * and the MCP `run_read_query` description (`src/lib/mcp/tools/statement-arms.ts`), which
+ * It lives here because the review record it joins is printed in three places: the login hero
+ * (`src/components/login/hero-proof.tsx`) and the agent posture popover (`src/lib/agent/posture.ts`), which read it as
+ * `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`, and the MCP `run_read_query` description
+ * (`src/lib/mcp/tools/statement-arms.ts`), which reads each engine record's `agentExecution` grant and which
  * `docs/MCP.md` repeats under `tests/unit/mcp-documentation.test.ts`. The first two had each
  * written `join(" and ")`, which was indistinguishable from correct while the array held two
  * engines and became "PostgreSQL and SQLite and DuckDB" on the login page the moment it held three.

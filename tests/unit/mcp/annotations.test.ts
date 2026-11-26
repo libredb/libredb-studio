@@ -56,19 +56,20 @@ describe("metadataReadAnnotations", () => {
     }
   });
 
-  test("reads the record it is given", () => {
+  test("reads the grants of the reader it is given", () => {
+    const changed =
+      (change: Partial<Record<DatabaseType, boolean>>) =>
+      (type: DatabaseType): { metadataReadChangesState: boolean } => ({
+        metadataReadChangesState: change[type] ?? metadataReadChangesState[type],
+      });
+    expect(metadataReadAnnotations(new Set<DatabaseType>(["postgres"]), changed({ postgres: true }))).toEqual(
+      STATE_CHANGING,
+    );
     expect(
-      metadataReadAnnotations(new Set<DatabaseType>(["postgres"]), {
-        ...metadataReadChangesState,
-        postgres: true,
-      }),
-    ).toEqual(STATE_CHANGING);
-    expect(
-      metadataReadAnnotations(new Set<DatabaseType>(["databend", "libredb"]), {
-        ...metadataReadChangesState,
-        databend: false,
-        libredb: false,
-      }),
+      metadataReadAnnotations(
+        new Set<DatabaseType>(["databend", "libredb"]),
+        changed({ databend: false, libredb: false }),
+      ),
     ).toBe(MCP_READ_ONLY_ANNOTATIONS);
   });
 

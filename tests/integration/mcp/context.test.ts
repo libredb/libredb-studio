@@ -750,7 +750,9 @@ describe("an engine MCP reads only under an agent credential", () => {
     seedId: "store",
     ...fields,
   });
-  const required = { ...agentCredentialRequired, postgres: true };
+  const required = (type: DatabaseType) => ({
+    agentCredentialRequired: type === "postgres" || agentCredentialRequired[type],
+  });
 
   test("refuses a connection with no agent credential in Studio's words, naming the connection", () => {
     let refusal: unknown;

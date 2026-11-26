@@ -8,8 +8,8 @@ import { join } from "node:path";
  * Whether a machine client may read an engine is the grant of `mcp.exposable` and `mcp.statementRead`, held by the
  * agent's read-only profiles on every engine whatever Studio can write there: an engine Studio writes freely is
  * MCP-readable, and one with no write path may not be. So the two answers are independent, and an MCP gate that
- * read the write reach, Studio's grant of it, `GRANTED_WRITE_REACH`, or an engine record's `readOnlyEnforced`, derived
- * from that grant, would tie them. Studio's review of the write reach is the grant register's, which only the grant reader loads
+ * read the write reach, Studio's grant of it, `GRANTED_WRITE_REACH` or an engine record's `grants.writeReach`, or an
+ * engine record's `readOnlyEnforced`, derived from that grant, would tie them. Studio's review of the write reach is the grant register's, which only the grant reader loads
  * (tests/unit/db/claim-record-readers.test.ts).
  */
 const REPO = join(import.meta.dir, "../../..");
@@ -22,11 +22,14 @@ const SOURCES = readdirSync(MCP, { recursive: true, encoding: "utf8" })
 
 /**
  * A static import, a dynamic import() or a require() of the write-reach module, a name it exports, or the name of
- * Studio's grant of the write reach or the read-only answer derived from the grant.
+ * Studio's grant of the write reach, the engine record's member that holds it, or the read-only answer derived from the
+ * grant. The member's name is matched case-sensitively as a whole word, so `summarizeWriteReach` is matched once, by its
+ * own pattern.
  */
 const READS_WRITE_REACH = [
   /(from\s+|import\s*\(\s*|require\s*\(\s*)["'][^"']*write-reach["']/,
   /\bGRANTED_WRITE_REACH\b/,
+  /\bwriteReach\b/,
   /\breadOnlyEnforced\b/,
   /\bsummarizeWriteReach\b/,
 ];
@@ -41,12 +44,13 @@ describe("the MCP layer and the write-reach record", () => {
     ["the summary's name", "summarizeWriteReach(engine);"],
     ["the granted write reach's name", 'import { GRANTED_WRITE_REACH } from "@/lib/db/claim-grants";'],
     ["the read-only answer's name", "const enforced = engine.grants.readOnlyEnforced;"],
+    ["the write reach grant's name", "const reach = servedEngineRecord(type).grants.writeReach;"],
   ])("the scan catches %s", (_, text) => {
     expect(readsWriteReach(text)).toBe(true);
   });
 
   test("the scan passes a file that names neither", () => {
-    expect(readsWriteReach('import { GRANTED_MCP_EXPOSABLE } from "@/lib/db/claim-grants";')).toBe(false);
+    expect(readsWriteReach("const exposed = servedEngineRecord(type).grants.exposable;")).toBe(false);
   });
 
   test("the scan reads the MCP sources", () => {

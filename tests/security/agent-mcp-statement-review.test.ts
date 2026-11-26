@@ -1,15 +1,18 @@
 /**
- * Every agent and MCP statement gate reads Studio's review record of the engines statements run on
- * (`GRANTED_AGENT_EXECUTION_ENGINES` in src/lib/db/claim-grants.ts), at run time, and a provider's own read-only statement path
- * never opens an engine the record does not list.
+ * Every agent and MCP statement gate reads Studio's review record of the engines statements run on at run time, and a
+ * provider's own read-only statement path never opens an engine the record does not list. The server's gates, the
+ * factory, the core read paths and the MCP statement tools, read it as each engine record's `agentExecution` grant
+ * (`servedEngineRecord` in src/lib/db/server-catalog.ts); the start of a run reads it through the browser-safe agent
+ * manifest as the list `GRANTED_AGENT_EXECUTION_ENGINES` (src/lib/db/claim-grants.ts), until M7.
  *
- * The record is narrowed for this one process: SQLite is dropped from it, because its real provider implements
- * `queryReadOnly` and needs only a temporary file, so each gate is shown refusing an engine whose provider claims the
- * path. PostgreSQL, still on the record, is the control in each test. The shipped module is copied into a plain object
- * before `mock.module` replaces it (bun patches the namespace in place, so a copy taken afterwards would read the
- * narrowed record), and every module under test is imported after the substitution, so a module that derives a set
- * from the record as it loads (the MCP statement arms) derives it from the narrowed one. Run in its own process by
- * `tests/run-tests.ts`, so the substitution reaches no other file.
+ * The record is narrowed for this one process in both forms: SQLite is dropped from the list and its engine record's
+ * grant is false, because its real provider implements `queryReadOnly` and needs only a temporary file, so each gate
+ * is shown refusing an engine whose provider claims the path. PostgreSQL, still on the record, is the control in each
+ * test. The shipped grant module is copied into a plain object before `mock.module` replaces it (bun patches the
+ * namespace in place, so a copy taken afterwards would read the narrowed list), and Studio's own catalog with SQLite's
+ * record changed is installed before any module under test is imported, so a module that derives a set from the
+ * records as it loads (the MCP statement arms) derives it from the narrowed one. The catalog is forgotten when the
+ * file ends. Run in its own process by `tests/run-tests.ts`, so neither substitution reaches another file.
  */
 import { afterAll, describe, expect, mock, spyOn, test, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -31,6 +34,15 @@ mock.module("@/lib/db/claim-grants", () => ({
   ...shippedGrants,
   GRANTED_AGENT_EXECUTION_ENGINES: Object.freeze(shipped.filter((type) => type !== "sqlite")),
 }));
+
+// The server's gates read SQLite's engine record, so Studio's own catalog with that record's grant changed is installed
+// before any of them loads, and forgotten when the file ends.
+const { craftedCatalog } = await import("../helpers/package-catalog");
+const { forgetServerCatalog, installServerCatalog, serverCatalogInstalled, servedEngineRecord } = await import(
+  "@/lib/db/server-catalog"
+);
+installServerCatalog(craftedCatalog({ sqlite: { agentExecution: false } }));
+afterAll(forgetServerCatalog);
 
 const { workflowAvailability } = await import("@/lib/agent/agent-manifest");
 const { acquireExecutionProfileProvider, clearProviderCache, getExecutionProfileCacheStats } = await import(
@@ -104,6 +116,10 @@ describe("an engine the review record does not list, though its provider impleme
     expect(shipped).toContain("sqlite");
     expect(GRANTED_AGENT_EXECUTION_ENGINES).not.toContain("sqlite");
     expect(GRANTED_AGENT_EXECUTION_ENGINES).toContain("postgres");
+    // The server's gates read the installed engine record's grant, the browser-safe manifest the list above.
+    expect(serverCatalogInstalled()).toBe(true);
+    expect(servedEngineRecord("sqlite").grants.agentExecution).toBe(false);
+    expect(servedEngineRecord("postgres").grants.agentExecution).toBe(true);
     expect(typeof SQLiteProvider.prototype.queryReadOnly).toBe("function");
   });
 

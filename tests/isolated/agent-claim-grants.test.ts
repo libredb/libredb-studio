@@ -1,8 +1,10 @@
 /**
- * Each agent mode gate answers Studio's grant of its claim, never Studio's review record of it
- * (docs/providers/CONTRACT.md, clause M-83): the agent posture, workflow availability, the MCP served set and arms,
- * and the engine pack resolver read the granted statement language, and the operations requirement, the readings
- * `inspect_operations` offers and the run ledger's reading check read the granted agent readings.
+ * Each agent mode gate that reads a granted table answers Studio's grant of its claim, never Studio's review record of
+ * it (docs/providers/CONTRACT.md, clause M-83): the agent posture and workflow availability read the granted statement
+ * language, and the operations requirement reads the granted agent readings. Those are the browser modules' tables,
+ * until M7. The engine pack resolver, the readings `inspect_operations` offers, the run ledger's reading check and the
+ * MCP served set and arms read the engine record's grant instead, held by
+ * tests/unit/lib/agent/record-grant-readers.test.ts and tests/unit/mcp/record-grant-readers.test.ts.
  *
  * Under tests/isolated because it replaces `@/lib/db/claim-grants` with `mock.module()` before it imports any gate,
  * which holds only while this file is the first in its bun process to evaluate them. The grant module is the real one
@@ -25,11 +27,6 @@ mock.module("@/lib/db/claim-grants", () => ({
 const { legacyRegisterTable } = await import("../helpers/legacy-register");
 const { agentPosture } = await import("@/lib/agent/posture");
 const { operationsWorkflowOpens, workflowAvailability } = await import("@/lib/agent/agent-manifest");
-const { agentReadingsOf } = await import("@/lib/agent/tools");
-const { RUN_HEADER_VOCABULARY } = await import("@/lib/agent/run-ledger-ids");
-const { mcpStatementEngines } = await import("@/lib/mcp/tools/served-engines");
-const { mcpStatementToolFor } = await import("@/lib/mcp/tools/statement-arms");
-const { agentEnginePack } = await import("@/lib/agent/languages/engines");
 
 describe("the agent mode gates", () => {
   test("each agent mode gate answers Studio's grant of its claim, not the record", () => {
@@ -48,15 +45,6 @@ describe("the agent mode gates", () => {
       statementLanguage: null,
       variant: null,
     });
-    // MCP serves no statement on it and names no arm for it.
-    expect(mcpStatementEngines("sql")).not.toContain("postgres");
-    expect(mcpStatementEngines("sql")).toContain("mysql");
-    expect(mcpStatementToolFor("postgres")).toBeNull();
-    // The engine pack resolver refuses it by name.
-    expect(() => agentEnginePack("postgres")).toThrow(
-      "no engine pack for postgres: Studio grants it no statement language",
-    );
-    expect(agentEnginePack("mysql").id).toBe("sql");
 
     // The records hold the readings the planted grants take away.
     expect(legacyRegisterTable("agentReadings").mongodb?.length).toBeGreaterThan(0);
@@ -71,10 +59,5 @@ describe("the agent mode gates", () => {
       cause: "requirement-unmet",
       sentence: expect.stringContaining("Agent mode takes no operational reading on this engine"),
     });
-    // inspect_operations offers no reading, and the run ledger reads the engine as offering none.
-    expect(agentReadingsOf("kafka")).toEqual([]);
-    expect(agentReadingsOf("redis")).toEqual(realGrants.GRANTED_AGENT_READINGS.redis);
-    expect(RUN_HEADER_VOCABULARY.hasReading("kafka")).toBe(false);
-    expect(RUN_HEADER_VOCABULARY.hasReading("redis")).toBe(true);
   });
 });

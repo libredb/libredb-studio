@@ -12,8 +12,9 @@ const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 /**
  * `GRANTED_AGENT_EXECUTION_ENGINES` (`src/lib/db/claim-grants.ts`), the engines whose legacy row of the grant
- * register grants `agentExecution`, is Studio's review record of the engines agent and MCP statements run on, and every statement gate reads it at run time: the start of a run,
- * the factory's statement profiles and the core read path refuse an engine it does not list with
+ * register grants `agentExecution`, is Studio's review record of the engines agent and MCP statements run on, and every
+ * statement gate reads that grant at run time, the start of a run as this list and the rest from each engine record:
+ * the start of a run, the factory's statement profiles and the core read path refuse an engine it does not list with
  * `PROFILE_ENGINE_NOT_REVIEWED`, whatever its provider implements. A provider's `queryReadOnly` is a
  * second precondition, required and never enough.
  *

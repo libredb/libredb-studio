@@ -1772,8 +1772,8 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without stating both. The second field is the engine gate, and it is a PROPERTY OF
  * THE PROFILE rather than of the factory: `agent-read-only` sends model-authored
  * statements, so it is served only on an engine Studio's review record lists
- * (`GRANTED_AGENT_EXECUTION_ENGINES`, read through `assertStatementsReviewed` before anything is
- * built, which refuses any other engine with `PROFILE_ENGINE_NOT_REVIEWED`), and only where
+ * (the `agentExecution` grant of its engine record, read through `assertStatementsReviewed` before
+ * anything is built, which refuses any other engine with `PROFILE_ENGINE_NOT_REVIEWED`), and only where
  * the provider can also bound one (in one of the three
  * forms the `queryReadOnly` docblock in `src/lib/db/types.ts` names: the engine's own read-only
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
@@ -1781,7 +1781,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * without `queryReadOnly` is refused for with `PROFILE_UNSUPPORTED_BY_PROVIDER`. The method is
  * required and never enough. The engines of GRANTED_AGENT_EXECUTION_ENGINES implement that: Apache Cassandra, ClickHouse, Couchbase, Db2 LUW, Apache Druid, DuckDB, Elasticsearch, etcd, Firestore, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, Kubernetes, LibreDB, libSQL, Milvus, Modbus, MongoDB, MQTT, SQL Server, MTConnect, MySQL, Neo4j, NETCONF, OPC UA, OpenSearch, Oracle, Oxia, PostgreSQL, Prometheus, Qdrant, RabbitMQ, Redis, S3-compatible object storage, SNMP, Sparkplug B, SQLite, Trino and Weaviate (`src/lib/db/claim-grants.ts`). `agent-operations` sends no statement
  * at all: it calls the curated reporting methods, and agent mode asks only for the
- * readings Studio grants the engine, `GRANTED_AGENT_READINGS`, which is the
+ * readings Studio grants the engine, its engine record's `grants.agentReadings`, which is the
  * grant's decision and not this gate's. Requiring a read-only STATEMENT path of it would
  * refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

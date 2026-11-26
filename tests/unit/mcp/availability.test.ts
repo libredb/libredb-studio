@@ -50,8 +50,10 @@ describe("mcpConnectionUnavailable", () => {
   });
 
   test("answers null wherever the record it is given holds the engine null", () => {
-    const refuses = { ...deniedFileAccessRefusal, sqlite: null };
-    expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]), refuses)).toBeNull();
+    const grantsOf = (type: DatabaseType) => ({
+      deniedFileAccessRefusal: type === "sqlite" ? null : deniedFileAccessRefusal[type],
+    });
+    expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]), grantsOf)).toBeNull();
   });
 
   test("answers null for an admin on a SQLite seed offered to admins alone", () => {

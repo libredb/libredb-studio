@@ -17,8 +17,8 @@ import { legacyRegisterEngines } from "../../helpers/legacy-register";
 const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 
 /**
- * The one core assertion every agent and MCP statement gate reads: an engine Studio's review record
- * (`GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`) does not list is refused by name, whatever its provider
+ * The one core assertion every agent and MCP statement gate reads: an engine whose record does not grant agent
+ * execution (Studio's review record, each engine's row of the grant register) is refused by name, whatever its provider
  * implements. The refused set is computed from the shipped types minus the record, never written here, so an engine
  * added to either side is measured without an edit to this file.
  */

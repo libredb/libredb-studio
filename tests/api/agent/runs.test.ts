@@ -33,6 +33,8 @@ import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
+import { serverCatalogInstalled } from "@/lib/db/server-catalog";
 
 const { SeedConnectionError } = realSeed;
 
@@ -856,6 +858,23 @@ describe("POST /api/agent/runs", () => {
     expect(body.refused).toBe("read-roots-required");
     expect(mockStart).not.toHaveBeenCalled();
     expect(mockAdmitAgentModel).not.toHaveBeenCalled();
+  });
+
+  test("refuses a run that sends statements on a connection without read roots where the engine record requires them", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:sales", name: "Sales", type: "postgres" });
+
+    const res = await withCatalog(craftedCatalog({ postgres: { readRootsRequired: true } }), () =>
+      POST(startRequest({ ...VALID_BODY, workflowType: "investigation" })),
+    );
+    const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
+
+    expect(res.status).toBe(400);
+    expect(body.error).toBe(
+      "This connection declares no read roots: agent mode reads its engine only beneath read roots an operator declares on its seed entry (agentReadRoots). Nothing was sent.",
+    );
+    expect(body.refused).toBe("read-roots-required");
+    expect(mockStart).not.toHaveBeenCalled();
+    expect(serverCatalogInstalled()).toBe(false);
   });
 
   test("the refusal is the registry's engine-neutral sentence: the shared route imports nothing of a provider", () => {

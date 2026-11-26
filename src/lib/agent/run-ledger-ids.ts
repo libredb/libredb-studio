@@ -12,9 +12,9 @@
  *  - the verifier, in agent mode only, because a plan is judged by the planning rule whatever its header names
  *    (`goalFor` in `goal-verifier.ts`);
  *  - the engine, in every mode, because tool selection and the curated readings are read from Studio's grant of its
- *    agent readings, `GRANTED_AGENT_READINGS`; an agent-mode operations run also needs the engine to offer agent mode
- *    at least one reading, since its reading tool would otherwise have nothing to offer, so that pair is refused the
- *    way a workflow with no variant on its language is.
+ *    agent readings, its engine record's `grants.agentReadings`; an agent-mode operations run also needs the engine to
+ *    offer agent mode at least one reading, since its reading tool would otherwise have nothing to offer, so that pair
+ *    is refused the way a workflow with no variant on its language is.
  *
  * An absent id keeps its meaning: an absent language reads as `sql`, an absent workflow as
  * `DEFAULT_AGENT_WORKFLOW_TYPE`, an absent verifier as the variant's, which the variant check makes resolvable, and an
@@ -23,8 +23,8 @@
  *
  * Server-side: the verifier set is read from the goal rules, which are server modules.
  */
-import { GRANTED_AGENT_READINGS } from "@/lib/db/claim-grants";
-import { isDatabaseType, quoteTypeId, typeIdRow } from "@/lib/db/type-id";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
+import { isDatabaseType, quoteTypeId } from "@/lib/db/type-id";
 import { type AgentStatementLanguageId, agentVariant } from "./agent-manifest";
 import { hasGoalRule, RETIRED_GOAL_VERIFIERS } from "./goal-verifier";
 import { isAgentStatementLanguage, RETIRED_STATEMENT_LANGUAGES, statementFamilyOf } from "./languages/client";
@@ -77,7 +77,10 @@ export interface AgentRunHeaderVocabulary {
   readonly isVerifier: (id: string) => boolean;
   readonly retiredVerifiers: ReadonlySet<string>;
   readonly isEngine: (id: string) => boolean;
-  /** Whether the engine offers agent mode at least one curated reading; asked only of an id `isEngine` holds. */
+  /**
+   * Whether the engine offers agent mode at least one curated reading; asked only of an id `isEngine` holds. Read from
+   * the engine record's `grants.agentReadings`, which the lookup cannot refuse for an id `isEngine` holds.
+   */
   readonly hasReading: (engine: string) => boolean;
 }
 
@@ -93,7 +96,7 @@ export const RUN_HEADER_VOCABULARY: AgentRunHeaderVocabulary = Object.freeze({
   isVerifier: hasGoalRule,
   retiredVerifiers: RETIRED_GOAL_VERIFIERS,
   isEngine: isDatabaseType,
-  hasReading: (engine: string) => typeIdRow(GRANTED_AGENT_READINGS, engine).length > 0,
+  hasReading: (engine: string) => servedEngineRecord(engine).grants.agentReadings.length > 0,
 });
 
 /** The noun each field is named by. */

@@ -13,7 +13,7 @@
     "providerDocsInCore": 43,
     "providerIntegrationTestsInCore": 43,
     "inwardImportPairs": 259,
-    "engineKeyedTypePositions": 62,
+    "engineKeyedTypePositions": 56,
     "nonEnginePackages.linesNamingAnEngine": 89,
     "grantRegister.linesNamingAnEngine": 44
   },
