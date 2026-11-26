@@ -15,11 +15,11 @@
  * - `items` and `uniqueItems: true`;
  * - `oneOf`, whose branches hold only `type: "object"` and `required`.
  *
- * Any other keyword, or one of these in another form, is refused by name before a value is read
- * (`schema-keyword-unread`, `schema-value-unread`), and so is a `$ref` chain that returns to where it started without
- * reading into the value (`schema-ref-cycle`), which would otherwise never end. A schema edit can therefore never rely
- * on a keyword this reader passes over in silence; the package's tests hold that ajv and this reader agree on every
- * fixture.
+ * Any other keyword, or one of these in another form (a `pattern` that does not compile among them), is refused by
+ * name before a value is read (`schema-keyword-unread`, `schema-value-unread`), and so is a `$ref` chain that returns
+ * to where it started without reading into the value (`schema-ref-cycle`), which would otherwise never end. A schema
+ * edit can therefore never rely on a keyword this reader passes over in silence; the package's tests hold that ajv and
+ * this reader agree on every fixture.
  *
  * A refusal names its rule and the JSON Pointer of the value, and never a value of the document read beyond a key's
  * name; a refusal of `const` or `enum` names the values the schema allows.
@@ -95,6 +95,17 @@ function isStringList(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+/** Whether `value` is a string that compiles as a regular expression in the Unicode mode a pattern is read in. */
+function compiles(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    new RegExp(value, "u");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function isLength(value: unknown): boolean {
   return Number.isInteger(value) && (value as number) >= 0;
 }
@@ -132,7 +143,9 @@ function schemaProblems(schema: unknown): string[] {
       }
     }
     if (own(node, "enum") && !Array.isArray(node.enum)) badValue(pointer, "enum", "a list");
-    if (own(node, "pattern") && typeof node.pattern !== "string") badValue(pointer, "pattern", "a string");
+    if (own(node, "pattern") && !compiles(node.pattern)) {
+      badValue(pointer, "pattern", "a string that compiles as a Unicode regular expression");
+    }
     for (const keyword of ["minLength", "maxLength"]) {
       if (own(node, keyword) && !isLength(node[keyword])) badValue(pointer, keyword, "a non-negative integer");
     }

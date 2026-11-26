@@ -226,7 +226,10 @@ describe("the schema reader", () => {
         'schema-value-unread at the top level: the keyword "type" is read only as one or a list of object, array, string, boolean, null',
       ],
       [{ enum: "a" }, 'schema-value-unread at the top level: the keyword "enum" is read only as a list'],
-      [{ pattern: 1 }, 'schema-value-unread at the top level: the keyword "pattern" is read only as a string'],
+      [
+        { pattern: 1 },
+        'schema-value-unread at the top level: the keyword "pattern" is read only as a string that compiles as a Unicode regular expression',
+      ],
       [
         { minLength: -1 },
         'schema-value-unread at the top level: the keyword "minLength" is read only as a non-negative integer',
@@ -275,6 +278,22 @@ describe("the schema reader", () => {
     ]);
     expect(schemaProblemLines({ $defs: { self: { type: "object", $ref: "#/$defs/self" } } })).toEqual([
       "schema-ref-cycle at /$defs/self: its $ref chain returns to a schema it left",
+    ]);
+  });
+
+  test("the reader refuses a pattern that does not compile as a Unicode regular expression, before it reads a value", () => {
+    const form = "a string that compiles as a Unicode regular expression";
+
+    // "(" compiles in no mode; "\\-" compiles without the u flag but not with it, which is the mode a pattern is read in.
+    expect(schemaProblemLines({ type: "string", pattern: "(" })).toEqual([
+      `schema-value-unread at the top level: the keyword "pattern" is read only as ${form}`,
+    ]);
+    expect(schemaProblemLines({ type: "string", pattern: "\\-" })).toEqual([
+      `schema-value-unread at the top level: the keyword "pattern" is read only as ${form}`,
+    ]);
+    // The value "x" never reaches the property's pattern, so the refusal comes from the schema, not from a value read.
+    expect(schemaProblemLines({ type: "object", properties: { a: { type: "string", pattern: "[" } } })).toEqual([
+      `schema-value-unread at /properties/a: the keyword "pattern" is read only as ${form}`,
     ]);
   });
 
