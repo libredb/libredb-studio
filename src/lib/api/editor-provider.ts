@@ -5,6 +5,7 @@ import { getOrCreateProvider } from "@/lib/db";
 import { findCachedProvider, getOrCreateEditorSession, getOrCreateMetadataProvider } from "@/lib/db/factory";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { HostDefectError } from "@/lib/provider-host/access";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -44,8 +45,10 @@ export async function editorProvider(
  * own wait for the open (`openWithinBudget` in src/lib/api/editor-query.ts), handed to the factory as it is.
  * `POST /api/db/query` opens every engine through it.
  *
- * @throws {Error} A host defect, when a provider package's session is handed a catalog: the query route refuses a
- *   catalog for an engine whose record offers none before any open.
+ * @throws {HostDefectError} Studio's own defect, when a provider package's session is handed a catalog: the query route
+ *   refuses a catalog for an engine whose record offers none before any open. Its one refusal is the request's
+ *   `catalog` field not honoured, a rule whose author is Studio (`isStudioFailure` in src/lib/api/package-errors.ts), so
+ *   the route answers it as Studio's own internal error, never as the package's.
  */
 export async function editorTarget(
   session: { role: string; idpSubject?: string },
@@ -58,9 +61,7 @@ export async function editorTarget(
   const { opened } = entry;
   if (opened.form === "provider") return { form: "provider", provider: await scopeToCatalog(opened.provider, catalog) };
   if (catalog !== undefined) {
-    throw new Error(
-      "A provider package's session was handed a catalog, which the query route refuses before any open for an engine whose record offers none: a host defect.",
-    );
+    throw new HostDefectError([{ rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" }]);
   }
   return { form: "session", session: opened.session, env: opened.env, entry, queryTimeout: connection.queryTimeout };
 }

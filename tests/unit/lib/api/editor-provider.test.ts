@@ -2,10 +2,14 @@ import { describe, expect, mock, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { callRefusalSentence } from "@libredb/provider-sdk/calls";
+import { isStudioFailure, packageCallError } from "@/lib/api/package-errors";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import type { ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import type { CachedSession } from "@/lib/db/factory";
 import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseProvider } from "@/lib/db/types";
+import { HOST_DEFECT_PREFIX, HostDefectError } from "@/lib/provider-host/access";
 import type { DatabaseConnection } from "@/lib/types";
 
 const opened: { connection: DatabaseConnection; context: unknown; wait: unknown[] }[] = [];
@@ -146,14 +150,29 @@ describe("editorTarget", () => {
     expect(openedEditor[2]?.rest[0]).toBe(wait);
   });
 
-  test("a catalog handed with a provider package's session is a host defect, raised by name before any run", async () => {
+  test("a catalog handed with a provider package's session is Studio's host defect, raised by name before any run", async () => {
     editorEntry = sessionEntry().entry;
     openedEditor.length = 0;
 
-    await expect(editorTarget(session("user"), packageConnection, packageEngine, "shop")).rejects.toThrow(
-      "A provider package's session was handed a catalog, which the query route refuses before any open for an engine whose record offers none: a host defect.",
+    const raised = await editorTarget(session("user"), packageConnection, packageEngine, "shop").catch(
+      (error: unknown) => error,
     );
+    const refusal = { rule: "request-field-not-honoured", pointer: "/catalog", name: "catalog" } as const;
+    expect(raised).toBeInstanceOf(HostDefectError);
+    expect((raised as HostDefectError).refusals).toEqual([refusal]);
+    expect((raised as HostDefectError).message).toBe(`${HOST_DEFECT_PREFIX} ${callRefusalSentence(refusal)}`);
     expect(openedEditor).toHaveLength(1);
+  });
+
+  test("the catalog host defect is Studio's own failure, so the query route's open answers it as itself, never as the package's", async () => {
+    editorEntry = sessionEntry().entry;
+    const raised = await editorTarget(session("user"), packageConnection, packageEngine, "shop").catch(
+      (error: unknown) => error,
+    );
+
+    expect(isStudioFailure(raised)).toBe(true);
+    // Studio's own failure returns before the scrub or the route is read, so neither is a working stand-in here.
+    expect(packageCallError("open", raised, {} as ProviderTextScrub, "/api/db/query")).toBe(raised);
   });
 });
 
