@@ -18,6 +18,8 @@ import {
   toMilvusTableStats,
 } from "@/lib/db/providers/vector/milvus/monitoring";
 import { kv, OK, SYSTEM_INFO, wireIndex } from "../../../helpers/milvus-catalog-client";
+import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
+import { type DatabaseConnection } from "@/lib/types";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -207,5 +209,22 @@ describe("readSystemInfo", () => {
       "Milvus answered GetMetrics with no node list, so Studio reads no memory figure from it.",
     );
     expect(() => readSystemInfo("[1]")).toThrow("no node list");
+  });
+});
+
+const MILVUS: DatabaseConnection = {
+  id: "milvus-doc",
+  name: "Milvus",
+  type: "milvus",
+  host: "milvus.internal",
+  port: 19530,
+  createdAt: new Date(0),
+};
+const labels = new MilvusProvider(MILVUS).getLabels();
+
+describe("the monitoring labels", () => {
+  test("no empty state is set for slow queries or sessions", () => {
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
   });
 });

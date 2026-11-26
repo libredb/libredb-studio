@@ -15,7 +15,7 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { AGENT_EXECUTION_ENGINES, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, MCP_STATEMENT_READ, MCP_EXPOSABLE } from "@/lib/db/compatibility";
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import { MILVUS_METADATA_ONLY } from "@/lib/db/providers/vector/milvus/metadata-read";
@@ -185,5 +185,13 @@ describe("the model's own requests against Milvus", () => {
     await expect(provider.queryReadOnly("POST /v2/vectordb/collections/list", budget)).rejects.toBeInstanceOf(
       RefusedBeforeSendError,
     );
+  });
+});
+
+describe("the machine access records", () => {
+  test("Milvus is exposed over MCP, run by the agent and offers the MCP statement read", () => {
+    expect(MCP_EXPOSABLE.milvus).toBe(true);
+    expect(AGENT_EXECUTION_ENGINES).toContain("milvus");
+    expect(MCP_STATEMENT_READ.milvus).toBe(true);
   });
 });
