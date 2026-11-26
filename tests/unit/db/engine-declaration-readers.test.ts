@@ -159,8 +159,8 @@ const CLAIM_REQUEST_MEMBERS: readonly string[] = ["policy", "mcp", ...CONNECTION
 /**
  * The modules that may read a claim of a declaration, each with the members it reads them in: the claim projection and
  * its generated module, which carry each request as declared, and Studio's grant reader, which grants each against
- * Studio's review record of the claim (docs/providers/CONTRACT.md, clauses M-54 and M-82), so every gate reads a grant
- * and never a request. A closed list: a reader of a claim not listed here fails.
+ * Studio's review of the claim for the engine, which src/lib/db/claim-grants.ts states (docs/providers/CONTRACT.md,
+ * clauses M-54 and M-82), so every gate reads a grant and never a request. A closed list: a reader of a claim not listed here fails.
  */
 const CLAIM_READERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/claim-grants.ts": CLAIM_REQUEST_MEMBERS,
@@ -183,7 +183,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/claim-grants.ts",
     members: CLAIM_REQUEST_MEMBERS,
     reason:
-      "Studio's grant reader: each engine's policy, MCP, connection and agent mode claim requests, read from the claim requests and granted against Studio's review record of each claim",
+      "Studio's grant reader: each engine's policy, MCP, connection and agent mode claim requests, read from the claim requests and granted against Studio's review of each claim for the engine",
   },
   {
     path: "src/lib/db/compatibility.ts",

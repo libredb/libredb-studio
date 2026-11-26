@@ -1,7 +1,8 @@
 /**
  * Studio's grant of each policy, MCP, connection and agent mode claim an engine declaration requests
  * (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): the one module that reads a request,
- * `BUNDLED_CLAIM_REQUESTS`, and Studio's review record of each claim, and the module every gate reads in their place.
+ * `BUNDLED_CLAIM_REQUESTS`, and Studio's review of each claim for each engine, and the module every gate reads in their
+ * place.
  *
  * A claim is a request, never a fact Studio believes as declared (clause M-52). So each claim is granted as the more
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
@@ -48,17 +49,23 @@
  * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine, and
  * every other row is Studio's own typed table, read as it stands.
  *
- * The records stay Studio's hand-written tables in src/lib/db/compatibility.ts, the statement language record among
- * them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this
- * module; tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source reads them, the
- * facet rows' `agentReadings` by member, and tests/unit/db/engine-declaration-readers.test.ts that no other module
- * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its
- * record there.
+ * Studio's review of each policy and MCP claim for an engine the legacy adapter serves is the engine's legacy row of the
+ * grant register, `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id: the register is
+ * read once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and
+ * `legacyGrantRows` refuses by name a served engine the register holds no legacy row for, so no served engine is read at
+ * a restrictive value by omission. A row's review notes say why it holds its value. A register its schema or its code
+ * rules refuse fails this module's load, in the browser as on the server.
+ * Studio's review of every other claim stays a hand-written record, in src/lib/db/compatibility.ts, the statement
+ * language record among them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which
+ * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
+ * source reads those records, the facet rows' `agentReadings` by member, or loads the register, and
+ * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
+ * each request is its review row, so each granted table equals that row there.
  *
  * The tables are computed once, when this module loads, over the bundled declarations; the server catalog's composer
- * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals, the facet rows and
- * generated data only, so the browser's readers, the read-only marker, the connection form and the agent rail, load it
- * as they load the records.
+ * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals,
+ * the facet rows, generated data and the register's rows only, and the register's reader compiles no code, so the
+ * browser's readers, the read-only marker, the connection form and the agent rail, load it as they load the records.
  */
 import type {
   AgentCredentialFormClaim,
@@ -67,30 +74,17 @@ import type {
   PolicyClaims,
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
+import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import type { DatabaseType, HostPathField } from "@/lib/types";
 import {
   AGENT_STATEMENT_LANGUAGE,
   HOST_PATH_FIELDS,
-  MASKING_EXEMPT_COLUMNS,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_METADATA_READ_CHANGES_STATE,
-  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
-  REFUSES_DENIED_FILE_ACCESS,
-  SINGLE_WRITER_FILE,
+  SHIPPED_DATABASE_TYPES,
   SSH_TUNNEL_REFUSAL,
-  WRITE_REACH,
 } from "./compatibility";
-import {
-  AGENT_CREDENTIAL_FORM,
-  SEED_AGENT_CREDENTIAL,
-  SEED_ONLY_FIELDS,
-  type SeedAgentCredential,
-} from "./connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
@@ -159,19 +153,56 @@ export interface ClaimGrants<K extends string> {
   readonly agentReadings: Readonly<Record<K, readonly AgentReading[]>>;
 }
 
+/**
+ * The grants of each engine of `engines` as `register` holds them in its legacy row, keyed by engine in `engines`'
+ * order: the register's own rows, deep-frozen by its reader, in a frozen record.
+ *
+ * @throws {Error} Naming the engine, for an engine of `engines` the register holds no legacy row for: such an engine is
+ * never read at a restrictive value, since the legacy adapter serves it and its review is missing.
+ */
+export function legacyGrantRows(
+  register: GrantRegister,
+  engines: readonly string[],
+): Readonly<Record<string, RegisterGrants>> {
+  return Object.freeze(
+    Object.fromEntries(
+      engines.map((engine) => {
+        const row = register.rowFor({ legacy: LEGACY_KEY, engine });
+        if (row === null) {
+          throw new Error(`the grant register holds no legacy row for ${engine}, an engine the legacy adapter serves`);
+        }
+        return [engine, row.grants];
+      }),
+    ),
+  );
+}
+
+/**
+ * The grant register's legacy rows of every engine Studio ships, read once when this module loads.
+ * `SHIPPED_DATABASE_TYPES` is the legacy adapter's served set: its `LEGACY_ENGINE_IDS` is defined as it.
+ */
+const LEGACY_GRANT_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+
+/** Member `member` of every legacy row, keyed by engine: the review rows `grantClaims` reads for that claim. */
+function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterGrants[M]> {
+  return Object.freeze(
+    Object.fromEntries(Object.entries(LEGACY_GRANT_ROWS).map(([engine, grants]) => [engine, grants[member]])),
+  );
+}
+
 /** Studio's records, as `grantClaims` reads them for the bundled declarations. */
 export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
-  writeReach: WRITE_REACH,
-  readsFileAccessPosture: READS_FILE_ACCESS_POSTURE,
-  deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS,
-  singleWriterFile: SINGLE_WRITER_FILE,
-  readRootsRequired: READ_ROOTS_REQUIRED,
-  agentCredentialForm: AGENT_CREDENTIAL_FORM,
-  maskingExemptColumns: MASKING_EXEMPT_COLUMNS,
-  exposable: MCP_EXPOSABLE,
-  statementRead: MCP_STATEMENT_READ,
-  metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
-  agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+  writeReach: legacyMember("writeReach"),
+  readsFileAccessPosture: legacyMember("readsFileAccessPosture"),
+  deniedFileAccessRefusal: legacyMember("deniedFileAccessRefusal"),
+  singleWriterFile: legacyMember("singleWriterFile"),
+  readRootsRequired: legacyMember("readRootsRequired"),
+  agentCredentialForm: legacyMember("agentCredentialForm"),
+  maskingExemptColumns: legacyMember("maskingExemptColumns"),
+  exposable: legacyMember("exposable"),
+  statementRead: legacyMember("statementRead"),
+  metadataReadChangesState: legacyMember("metadataReadChangesState"),
+  agentCredentialRequired: legacyMember("agentCredentialRequired"),
   opensLocalFile: OPENS_LOCAL_FILE,
   hostPathFields: HOST_PATH_FIELDS,
   serverLevelWithoutDatabase: OPENS_SERVER_LEVEL_WITHOUT_DATABASE,

@@ -776,7 +776,8 @@ export function renderSqlGenerators(forms: SqlGeneratorForms): string {
 
 /**
  * The text of the generated claim requests module for `requests`: a header, type imports only, and one frozen record,
- * read only by src/lib/db/claim-grants.ts, which grants each request against Studio's review record of its claim.
+ * read only by src/lib/db/claim-grants.ts, which grants each request against Studio's review of its claim for the
+ * engine, which src/lib/db/claim-grants.ts states (clause M-54).
  */
 export function renderClaimRequests(requests: ClaimRequests): string {
   return renderedEntryModule(
