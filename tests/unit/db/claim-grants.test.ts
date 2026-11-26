@@ -32,10 +32,7 @@ import {
   GRANTED_MCP_EXPOSABLE,
   GRANTED_MCP_METADATA_READ_CHANGES_STATE,
   GRANTED_MCP_STATEMENT_READ,
-  GRANTED_OPENS_LOCAL_FILE,
-  GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
   GRANTED_READ_ROOTS_REQUIRED,
-  GRANTED_SEED_AGENT_CREDENTIAL,
   GRANTED_SSH_TUNNEL_REFUSAL,
   GRANTED_WRITE_REACH,
   grantEngineClaims,
@@ -377,10 +374,7 @@ describe("Studio's grant of each policy and MCP claim", () => {
       GRANTED_MCP_STATEMENT_READ,
       GRANTED_MCP_METADATA_READ_CHANGES_STATE,
       GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-      GRANTED_OPENS_LOCAL_FILE,
-      GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
       GRANTED_SSH_TUNNEL_REFUSAL,
-      GRANTED_SEED_AGENT_CREDENTIAL,
       GRANTED_AGENT_STATEMENT_LANGUAGE,
       GRANTED_AGENT_READINGS,
     ];
@@ -424,19 +418,19 @@ describe("Studio's grant of each connection claim", () => {
     const differing = (granted: Readonly<Record<string, unknown>>, record: Readonly<Record<string, unknown>>) =>
       SHIPPED_DATABASE_TYPES.filter((type) => JSON.stringify(granted[type]) !== JSON.stringify(record[type]));
     const tables = [
-      [GRANTED_OPENS_LOCAL_FILE, legacyRegisterTable("opensLocalFile")],
+      [legacyGrantTable("opensLocalFile"), legacyRegisterTable("opensLocalFile")],
       [legacyGrantTable("hostPathFields"), legacyRegisterTable("hostPathFields")],
-      [GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION, legacyRegisterTable("serverLevelWithoutDatabase")],
+      [legacyGrantTable("serverLevelAtAdmission"), legacyRegisterTable("serverLevelWithoutDatabase")],
       [legacyGrantTable("serverLevelAtCatalogChoice"), legacyRegisterTable("serverLevelWithoutDatabase")],
       [GRANTED_SSH_TUNNEL_REFUSAL, legacyRegisterTable("sshTunnel")],
-      [GRANTED_SEED_AGENT_CREDENTIAL, legacyAgentCredentialTable()],
+      [legacyGrantTable("agentCredential"), legacyAgentCredentialTable()],
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    // The granted tables are cut from each legacy engine's grants: the seed agent credential is its object.
-    expect(GRANTED_SEED_AGENT_CREDENTIAL.elasticsearch).toBe(legacyEngineGrants("elasticsearch").agentCredential);
+    // Each legacy engine's grants are granted once: the seed agent credential read twice is one object.
+    expect(legacyEngineGrants("elasticsearch").agentCredential).toBe(legacyGrantTable("agentCredential").elasticsearch);
     // Vacuity: each record holds rows that differ from its claim's restrictive value.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_OPENS_LOCAL_FILE[type])).toEqual([
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).opensLocalFile)).toEqual([
       "duckdb",
       "libredb",
       "sqlite",
@@ -448,7 +442,10 @@ describe("Studio's grant of each connection claim", () => {
       "postgres",
     ]);
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SSH_TUNNEL_REFUSAL[type] === null).length).toBe(32);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_SEED_AGENT_CREDENTIAL[type] === null).length).toBe(11);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).agentCredential === null).length).toBe(11);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).serverLevelAtAdmission)).toEqual([
+      "postgres",
+    ]);
     expect(GRANTED_MCP_EXPOSABLE).toEqual(legacyRegisterTable("exposable"));
   });
 

@@ -46,10 +46,7 @@ const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
     "GRANTED_MCP_EXPOSABLE",
     "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
     "GRANTED_MCP_STATEMENT_READ",
-    "GRANTED_OPENS_LOCAL_FILE",
-    "GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION",
     "GRANTED_READ_ROOTS_REQUIRED",
-    "GRANTED_SEED_AGENT_CREDENTIAL",
   ].map((name) => ({ module: CLAIM_GRANTS, name, removedBy: ITEM_3 })),
   { module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION", removedBy: { item: 4 } },
   { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW", removedBy: { item: 4 } },
@@ -173,8 +170,8 @@ describe("the exit of M3", () => {
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
     expect(claimTables).toHaveLength(1);
-    expect(grantedTables).toHaveLength(13);
-    expect(count('{"item":3}')).toBe(9);
+    expect(grantedTables).toHaveLength(10);
+    expect(count('{"item":3}')).toBe(6);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"milestone":"M7"')).toBe(5);
   });

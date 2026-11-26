@@ -832,20 +832,6 @@ export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType
   BUNDLED_GRANTS.agentCredentialRequired;
 
 /**
- * Studio's grant of `connection.opensLocalFile`, which no gate reads: governance row admission, the file admission of
- * the legacy adapter's open (`admittedFileConnection` in ./provider-files) and the VS Code backend read an engine's
- * record's `grants.opensLocalFile`.
- */
-export const GRANTED_OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.opensLocalFile;
-
-/**
- * Studio's grant of `connection.serverLevelWithoutDatabase` at governance admission, restrictive when true, which no
- * gate reads: row admission reads an engine's record's `grants.serverLevelAtAdmission`.
- */
-export const GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Readonly<Record<DatabaseType, boolean>> =
-  BUNDLED_GRANTS.serverLevelAtAdmission;
-
-/**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
  * with, or null where the engine takes one. The connection dialog reads it; core's tunnel decision and the provider's
  * fields read an engine's record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel` (./tunnel-decision) on
@@ -854,15 +840,6 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Readonly<Record<DatabaseTy
  * cannot disagree. No review row's sentence quotes a value of the connection.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
-
-/**
- * Studio's grant of `connection.agentCredential`: which agent credential a seed of each engine may carry. No gate reads
- * it: the seed schema and the seed projection's gate read the engine record's `grants.agentCredential`. Each
- * superseding field of a review row is narrowed to the text fields a connection form draws when this module loads, by
- * `legacyAgentCredentials`.
- */
-export const GRANTED_SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> =
-  BUNDLED_GRANTS.agentCredential;
 
 /**
  * Studio's grant of `agent.statementLanguage`: the language agent mode sends the engine, or null where it sends none.
