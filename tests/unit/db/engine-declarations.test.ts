@@ -540,21 +540,24 @@ const TYPE_FAMILY_KINDS = Object.keys(SCHEMA.$defs.typeFamilies?.properties ?? {
  */
 function schemaFunctionPaths(name: string, at = ""): string[] {
   const definition = SCHEMA.$defs[name] as SchemaMember | undefined;
-  const refsOf = (schemas: readonly SchemaMember[]) =>
-    schemas.flatMap((branch) => (branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")]));
   const members = Object.entries(definition?.properties ?? {}).flatMap(([member, schema]) => {
     const path = at === "" ? member : `${at}.${member}`;
-    const refs = refsOf([schema, ...(schema.oneOf ?? [])]);
+    const refs = schemaRefs([schema, ...(schema.oneOf ?? [])]);
     if (refs.includes("functionName")) return [path];
     return refs.flatMap((ref) => schemaFunctionPaths(ref, path));
   });
   // A definition that is itself a union, such as migrationDdl or createTable, states its members in its branches, at
   // the definition's own path.
-  const variants = refsOf(definition?.oneOf ?? []).flatMap((ref) => schemaFunctionPaths(ref, at));
+  const variants = schemaRefs(definition?.oneOf ?? []).flatMap((ref) => schemaFunctionPaths(ref, at));
   return [...members, ...variants];
 }
 
-/** A schema definition or a member of one, as far as `schemaFunctionPaths` reads it. */
+/** The name of the definition each of these schemas refers to by its `$ref`, in order, a schema with none skipped. */
+function schemaRefs(schemas: readonly SchemaMember[]): string[] {
+  return schemas.flatMap((branch) => (branch.$ref === undefined ? [] : [branch.$ref.replace("#/$defs/", "")]));
+}
+
+/** A schema definition or a member of one, as far as `schemaFunctionPaths` and the census's claim walk read it. */
 interface SchemaMember {
   readonly $ref?: string;
   readonly oneOf?: readonly SchemaMember[];
@@ -3989,26 +3992,39 @@ describe("the census", () => {
     expect(readBack.map(([member]) => member)).toEqual([...SEGMENT_CLAIMS]);
   });
 
-  test("each claim the census reads back is a member of the schema's engine declaration", () => {
-    // A dotted claim is walked member by member from the engine declaration, each member's `$ref` followed into the
-    // definition it names, a nullable definition included, and its last member must be a property of where it ends.
+  test("each claim the census reads back is a member of the schema's engine declaration, following each oneOf branch", () => {
+    // A dotted claim is walked member by member from the engine declaration. A member's schema reaches itself when it
+    // refers to nothing, the definition its `$ref` names, and whatever each of its `oneOf` branches reaches, so a
+    // nullable member and a union of definitions are both followed; each next member must be a property of one of the
+    // schemas the previous one reached.
+    const reached = (schema: SchemaMember): SchemaMember[] => [
+      ...(schema.$ref === undefined ? [schema] : []),
+      ...schemaRefs([schema]).flatMap((name) => reached((SCHEMA.$defs[name] ?? {}) as SchemaMember)),
+      ...(schema.oneOf ?? []).flatMap(reached),
+    ];
     const isMember = (claim: string): boolean => {
-      const members = claim.split(".");
-      let definition = SCHEMA.$defs.engineDeclaration;
-      for (const [index, member] of members.entries()) {
-        const properties = definition?.properties ?? {};
-        if (!Object.hasOwn(properties, member)) return false;
-        if (index === members.length - 1) return true;
-        const reference = (properties[member] as { $ref?: string }).$ref ?? "";
-        definition = SCHEMA.$defs[reference.replace("#/$defs/", "")];
+      let schemas = [SCHEMA.$defs.engineDeclaration as SchemaMember];
+      for (const member of claim.split(".")) {
+        const found = schemas.flatMap(({ properties }) =>
+          properties !== undefined && Object.hasOwn(properties, member) ? [properties[member] as SchemaMember] : [],
+        );
+        if (found.length === 0) return false;
+        schemas = found.flatMap(reached);
       }
-      return false;
+      return true;
     };
 
     expect(Object.keys(SEGMENT_CLAIM_RECORDS).filter((claim) => !isMember(claim))).toEqual([]);
     expect(Object.keys(SEGMENT_CLAIM_RECORDS)).toEqual([...SEGMENT_CLAIMS]);
     expect(isMember("agent.overlay.dialect.catalogRead.unknown")).toBe(false);
     expect(isMember("agent.overlay.dialect.catalogRead")).toBe(true);
+    // A member reached only through a `oneOf` branch, at a property or at the definition it names, is a member too,
+    // and an unknown member under one is not.
+    expect(isMember("agent.overlay.dialect.planEstimate.prefix")).toBe(true);
+    expect(isMember("agent.overlay.dialect.planEstimate.kind")).toBe(true);
+    expect(isMember("agent.overlay.dialect.planEstimate.unknown")).toBe(false);
+    expect(isMember("agent.overlay.grounding")).toBe(true);
+    expect(isMember("agent.overlay.dialect.catalogRead.declaredSchema")).toBe(true);
   });
 
   test("each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open", () => {

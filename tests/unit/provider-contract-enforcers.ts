@@ -625,7 +625,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declarations.test.ts": [
         "every claim of the policy and MCP segments is its member of the engine's legacy row in the grant register",
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
-        "each claim the census reads back is a member of the schema's engine declaration",
+        "each claim the census reads back is a member of the schema's engine declaration, following each oneOf branch",
         "agent mode opens a workflow on exactly the engines the declarations' statement languages and readings and Studio's agent execution record give it",
         "each legacy engine's readOnlyEnforced grant is true exactly where the declaration's write reach is not open",
         "each declaration's policy and MCP segments hold exactly the claims the grant register's legacy rows review",
