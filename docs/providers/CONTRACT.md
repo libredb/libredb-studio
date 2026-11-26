@@ -1197,7 +1197,7 @@ A session of a package's engine has a member exactly for each call it offers aft
 Core never calls a package for a call its session does not offer, nor with a request field it does not honour, bound params or a non-zero offset among them: each is refused before the call, outcome not-sent.
 The host core's execute, cancel on a stop, end of a scope, tree, maintenance, monitoring and health calls run on such a session as on any other.
 
-### C-112 (normative): The client receives no word a package wrote unless a register row grants them
+### C-112 (normative): The client receives no words a package wrote unless a register row grants them
 
 Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
 The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered, a malformed batch or row among them, is logged as the package's defect.
