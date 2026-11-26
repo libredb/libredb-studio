@@ -102,7 +102,7 @@ import {
 } from "@/lib/agent/agent-manifest";
 import type { AgentCatalogKind, AgentPlanEstimate } from "@/lib/agent/composed-sql-primitives";
 import { enginesSupporting, engineClientPack, engineFamily } from "@/lib/agent/languages/engines/client";
-import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
+import { engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import type { AgentEngineServerDialect, SqlServerDialect } from "@/lib/agent/languages/pack";
 import { languageServerPack } from "@/lib/agent/languages/server";
@@ -261,6 +261,7 @@ const readsSqlTextRow = legacyRegisterTable("readsSqlText");
 const confirmExemptFormsRow = legacyRegisterTable("confirmExemptForms");
 const redactionRow = legacyRegisterTable("redaction");
 const grammarSha256Row = legacyRegisterTable("grammarSha256");
+const catalogReadCommandShapedRow = legacyRegisterTable("catalogReadCommandShaped");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -1754,9 +1755,8 @@ interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
   readonly request: (declaration: EngineDeclaration) => unknown;
   /**
-   * Studio's review row for `type`, written in the declaration's form: for a connection claim, the statement language
-   * and the agent readings, that member of the engine's legacy row in the grant register; for every other claim, the
-   * row of Studio's review record.
+   * Studio's review row for `type`, written in the declaration's form: the member of the engine's legacy row in the
+   * grant register that reviews the claim.
    */
   readonly record: (type: DatabaseType) => unknown;
 }
@@ -1764,9 +1764,10 @@ interface SegmentClaimRecord {
 /**
  * Studio's review of each claim of the connection, facets, agent and SQL text segments, by the dotted member that
  * requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the review the grant reader grants each request
- * against and each declaration's request is generated from. The review of a connection claim, the statement language
- * and the agent readings is that member of every engine's legacy row in the grant register, and every other claim's a
- * record Studio still keeps in core. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ * against and each declaration's request is generated from. The review of each claim is its member of every engine's
+ * legacy row in the grant register, the agent overlay's command-shaped catalog read included, though that claim's
+ * request is generated from the engine's server overlay. Written here apart from the generator, as
+ * `POLICY_CLAIM_RECORDS` is.
  */
 const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   "connection.opensLocalFile": {
@@ -1806,10 +1807,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "agent.overlay.dialect.catalogRead.commandShaped": {
     request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,
-    record: (type) => {
-      const catalogRead = engineServerDialect(type).catalogRead;
-      return catalogRead !== "unsupported" && catalogRead.commandShaped === true;
-    },
+    record: (type) => catalogReadCommandShapedRow[type],
   },
 };
 

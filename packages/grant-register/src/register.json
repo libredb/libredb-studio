@@ -30,6 +30,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed",
@@ -74,6 +75,7 @@
         "sessions",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -124,6 +126,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -173,6 +176,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -222,6 +226,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed",
@@ -267,6 +272,7 @@
         "table-stats",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -314,6 +320,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -358,6 +365,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -412,6 +420,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": true,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -428,6 +437,7 @@
       "writeReach": "As Druid: the SQL grammar has no write, and Studio sends whatever the editor holds.",
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL endpoint's grammar, which holds no write, on a server checked at open to be the release line whose write refusals were captured (docs/providers/elasticsearch.md section 5.9). OpenSearch, served by the same provider directory, has a row of its own.",
       "agentCredential": "The transport sends the API key pair in preference to user and password (src/lib/db/providers/sql/search/http-transport.ts), so an agent pair beside it would run under the key.",
+      "catalogReadCommandShaped": "The engine answers its catalog only to SHOW, DESCRIBE and SYS commands, never to a SELECT, and the overlay's composed column read, SYS COLUMNS with at most one quoted table name, is one statement, which the fence admits by identity on the catalog read alone.",
       "agentExecution": "The boundary is the engine's: the grammar of its SQL endpoint, the one route that carries statement text, holds no write or DDL statement, and every one sent raw there is refused, and the open checks the server is the measured 9.1 line."
     }
   },
@@ -459,6 +469,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -503,6 +514,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -550,6 +562,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -597,6 +610,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -643,6 +657,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -690,6 +705,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -736,6 +752,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -788,6 +805,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -835,6 +853,7 @@
         "index-stats",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -882,6 +901,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "Its tree is the connection's register map, so a second session would only dial a device that may serve one client at a time.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -934,6 +954,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -977,6 +998,7 @@
       },
       "statementLanguage": "mqttread",
       "agentReadings": [],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "Its tree reads nothing from the broker, so a second session would only cost one more broker read at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1029,6 +1051,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1068,6 +1091,7 @@
       "agentCredential": null,
       "statementLanguage": "mtconnectread",
       "agentReadings": [],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1121,6 +1145,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1168,6 +1193,7 @@
         "index-stats",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1215,6 +1241,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "It holds one NETCONF session per provider, and a device may admit few sessions, none measured, so a second session could be refused where the editor's answers.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1262,6 +1289,7 @@
       },
       "statementLanguage": "opcuaread",
       "agentReadings": [],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "Its tree lists no node, so a second session would only take one more of the server's sessions at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1312,6 +1340,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": true,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1327,6 +1356,7 @@
     "reasons": {
       "writeReach": "As Elasticsearch, and the server's own DELETE can be switched on in 2.x.",
       "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL plugin's refusal of every write, on a server whose DELETE is proved off and whose release line was checked at open, with a statement check that keeps hidden and dot-led indices from each statement (docs/providers/opensearch.md section 5.9).",
+      "catalogReadCommandShaped": "The engine answers its catalog only to SHOW TABLES and DESCRIBE TABLES, never to a SELECT, and the overlay's composed column read, DESCRIBE TABLES LIKE one quoted table, is one statement, which the fence admits by identity on the catalog read alone.",
       "agentExecution": "The boundary is the engine's: its SQL plugin refuses every write and DDL statement sent raw, and since a cluster setting can turn its DELETE on, the open proves that DELETE off (the setting reads off, and a DELETE on a fresh name is refused) and checks the server is the measured 3.8 line."
     }
   },
@@ -1362,6 +1392,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1404,6 +1435,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1456,6 +1488,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1503,6 +1536,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1550,6 +1584,7 @@
         "index-stats",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1598,6 +1633,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1647,6 +1683,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1692,6 +1729,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1738,6 +1776,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "Its tree is the bundled catalog, so a second session would only probe the agent once more at its open.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1787,6 +1826,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed",
@@ -1840,6 +1880,7 @@
       "agentReadings": [
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed",
@@ -1878,6 +1919,7 @@
       "agentCredential": null,
       "statementLanguage": "sparkplugread",
       "agentReadings": [],
+      "catalogReadCommandShaped": false,
       "servesOneSession": "Its tree is the session's own connect read, so a second session would answer another read's snapshot after a broker read of its own.",
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1926,6 +1968,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -1978,6 +2021,7 @@
         "storage",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",
@@ -2024,6 +2068,7 @@
         "index-stats",
         "health"
       ],
+      "catalogReadCommandShaped": false,
       "servesOneSession": null,
       "agentExecution": true,
       "ownWords": "scrubbed",

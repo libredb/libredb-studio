@@ -158,6 +158,40 @@ describe("the legacy rows' SQL text members", () => {
   });
 });
 
+/**
+ * What is wrong with `row`'s review of the agent overlay's command-shaped catalog read: a row granting it carries a
+ * one-sentence review note, and a row not granting it carries none.
+ */
+function catalogReadCommandProblems(row: RegisterRow): string[] {
+  const { engine, grants, reasons = {} } = row;
+  const note = reasons.catalogReadCommandShaped;
+  if (grants.catalogReadCommandShaped) {
+    return oneSentence(note) ? [] : [`${engine}: catalogReadCommandShaped has no one-sentence review note`];
+  }
+  return note === undefined ? [] : [`${engine}: catalogReadCommandShaped has a note but no grant`];
+}
+
+describe("the legacy rows' agent overlay claim", () => {
+  test("a legacy row grants the command-shaped catalog read only with a review note", () => {
+    const rows = legacyRows();
+
+    expect(rows.flatMap(catalogReadCommandProblems)).toEqual([]);
+    expect(rows.filter((row) => row.grants.catalogReadCommandShaped).map((row) => row.engine)).toEqual([
+      "elasticsearch",
+      "opensearch",
+    ]);
+    // Vacuity: a planted row granting the claim with no note, and one with a note but no grant, fail by name.
+    const elasticsearch = rows.find((row) => row.engine === "elasticsearch") as RegisterRow;
+    expect(catalogReadCommandProblems({ ...elasticsearch, reasons: {} })).toEqual([
+      "elasticsearch: catalogReadCommandShaped has no one-sentence review note",
+    ]);
+    const ungranted = { ...elasticsearch, grants: { ...elasticsearch.grants, catalogReadCommandShaped: false } };
+    expect(catalogReadCommandProblems(ungranted)).toEqual([
+      "elasticsearch: catalogReadCommandShaped has a note but no grant",
+    ]);
+  });
+});
+
 describe("the register's forms", () => {
   const defs = registerSchema.$defs;
 

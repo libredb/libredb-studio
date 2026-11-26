@@ -834,6 +834,7 @@ describe("a package engine's register row", () => {
     agentCredential: { form: "pair", supersededBy: [] },
     statementLanguage: "sql",
     agentReadings: ["health", "storage", "sessions"],
+    catalogReadCommandShaped: true,
     servesOneSession: "The engine serves its object tree from the editor's session in this test.",
     agentExecution: true,
     ownWords: "scrubbed",
