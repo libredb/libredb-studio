@@ -397,7 +397,7 @@ describe("vocabularyDecidesAlone", () => {
     expect(vocabularyDecidesAlone()).toBe(false);
   });
 
-  // The row is the gate's whole answer only where Studio's review record lists its claim (`CONFIRMATION_CLAIM_REVIEW`).
+  // The row is the gate's whole answer only where the engine's register row grants its claim (`legacyEngineGrants`).
   test("is false for a row whose claim the review record does not list", () => {
     const remove = installStandInVocabulary({});
     try {

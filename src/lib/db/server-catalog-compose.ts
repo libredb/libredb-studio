@@ -283,7 +283,8 @@ export function composeServerCatalog(
           tables.seedOnly,
         ),
         // The grammar the query route's confirmation gate and the query event log read the engine's statements under,
-        // compiled once here; the gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
+        // compiled once here; the gate counts only the exempt forms its record grants (docs/providers/CONTRACT.md,
+        // clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),
         offers: PACKAGE_OFFERS,
       }) as EngineRecord,

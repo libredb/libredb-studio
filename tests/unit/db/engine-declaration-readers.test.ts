@@ -108,7 +108,7 @@ const QUERY_EDITOR_MEMBERS = ["editor.dialect", "editor.language"] as const;
 /**
  * The SQL text members the SQL text is projected from, M-78: authored members, M-15, its redaction, a claim, never
  * among them. `readsSqlText` and an exempt form of the grammar are the confirmation gate's claims, which the gate
- * counts only through `CONFIRMATION_CLAIM_REVIEW` (S-8), and every other reader reads as declared.
+ * counts only as Studio grants them from the engine's register row for the grammar that row reviewed (S-8).
  */
 const SQL_TEXT_MEMBERS = [
   "sqlText.readsSqlText",
@@ -353,7 +353,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "sqlText.redaction",
     ],
     reason:
-      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, whose exempt forms the gate never counts (packageStatementAsks)",
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, with only the exempt forms the engine's record grants (packageStatementAsks)",
   },
   {
     path: "src/lib/db/server-catalog.ts",
@@ -624,15 +624,6 @@ const CLAIM_DESTINATION =
   /^engine declaration: [\w.]+, the engine's request, which this table grants as Studio's review record of the claim$/;
 
 /**
- * The confirmation gate's review record (docs/providers/CONTRACT.md, clause M-52): a list keyed by a claim's kind, its
- * engine and an exempt form's words rather than a table over the type ids, so the inventory does not list it, and this
- * guard holds it beside the inventory's claim records.
- */
-const CONFIRMATION_RECORDS: readonly CoreRecord[] = [
-  { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW" },
-];
-
-/**
  * Why each of `records` is not written by hand, read from the module text `files` holds for it: its initializer, seen
  * through parentheses, `as`, `satisfies` and `Object.freeze`, must be a literal, a list or a record of them, or the
  * name of a module-level `const` of its own module written the same way. A call, an imported binding, a function, a
@@ -794,7 +785,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only as its engine's grant, which only the legacy records and the gate's two modules read by id", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -806,9 +797,9 @@ describe("engine declaration readers", () => {
     ]);
     expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toHaveLength(2);
     // The only readers of them: the projection, its generated module and the SQL grammar that composes each row, the
-    // server catalog's composition, which hands an admitted package's grammar to the gate, which counts none of its
-    // exempt forms (packageStatementAsks in src/lib/sql/dangerous-query.ts) and never reads its readsSqlText, and
-    // hands its SQL text request to the grant reader, which grants each claim against the engine's register row.
+    // server catalog's composition, which hands an admitted package's grammar to the gate, which counts only the claims
+    // the engine's record grants (packageStatementAsks in src/lib/sql/dangerous-query.ts), and hands its SQL text
+    // request to the grant reader, which grants each claim against the engine's register row.
     const readers = [
       ...new Set(claimReaders(DECLARATION_READERS, CONFIRMATION_GATE_CLAIMS).map((problem) => problem.split(" ")[0])),
     ];
@@ -819,38 +810,50 @@ describe("engine declaration readers", () => {
       "src/lib/db/server-catalog-compose.ts",
       "src/lib/db/sql-grammar/index.ts",
     ]);
-    // The gate counts each through the review record: the modules that import it are the gate's two, each importing
-    // only isReviewedConfirmationClaim, and the SQL reading asks it about exactly these two kinds of claim.
-    const importers = sourceFiles().flatMap((file) => {
-      const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, false);
-      return source.statements.flatMap((statement) => {
-        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
-        if (statement.moduleSpecifier.text !== "@/lib/db/confirmation-claim-review") return [];
-        const bindings = statement.importClause?.namedBindings;
-        const names =
-          bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements.map((e) => e.name.text) : [];
-        return [{ path: file.path, names }];
+    // The gate counts each as its engine's grant: the browser's gate reads a legacy engine's grants by id
+    // (`legacyEngineGrants`), which only the legacy records and the gate's two modules import, and the server's gate
+    // reads a package engine's from its record. No module imports a review record of the gate's claims.
+    const vscodeFiles = readdirSync(path.join(ROOT, "vscode-extension/src"), { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
+      .map((entry) => path.relative(ROOT, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"))
+      .map((file) => ({ path: file, text: readFileSync(path.join(ROOT, file), "utf8") }));
+    const importsOf = (specifier: string) =>
+      [...sourceFiles(), ...vscodeFiles].flatMap((file) => {
+        const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, false);
+        return source.statements.flatMap((statement) => {
+          if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) return [];
+          if (statement.moduleSpecifier.text !== specifier) return [];
+          const bindings = statement.importClause?.namedBindings;
+          const names =
+            bindings !== undefined && ts.isNamedImports(bindings) ? bindings.elements.map((e) => e.name.text) : [];
+          return [{ path: file.path, names }];
+        });
       });
-    });
-    expect(importers).toEqual([
-      { path: "src/lib/db/destructive-commands.ts", names: ["isReviewedConfirmationClaim"] },
-      { path: "src/lib/sql/dangerous-query.ts", names: ["isReviewedConfirmationClaim"] },
+    expect(
+      [...importsOf("@/lib/db/claim-grants"), ...importsOf("./claim-grants")]
+        .filter((entry) => entry.names.includes("legacyEngineGrants"))
+        .map((entry) => entry.path)
+        .sort(),
+    ).toEqual([
+      "src/lib/db/destructive-commands.ts",
+      "src/lib/provider-host/legacy-adapter/records.ts",
+      "src/lib/sql/dangerous-query.ts",
     ]);
-    const gate = readFileSync(path.join(ROOT, "src/lib/sql/dangerous-query.ts"), "utf8");
-    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "exempt-form", type: databaseType, form })');
-    expect(gate).toContain('isReviewedConfirmationClaim({ kind: "text-not-sql", type: databaseType })');
+    expect(vscodeFiles.length).toBeGreaterThan(0);
+    expect(importsOf("@/lib/db/confirmation-claim-review")).toEqual([]);
   }, 60_000);
 
   test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
     const claimRecords = (inventory: readonly InventoryEntry[]) =>
       inventory.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
     const records = claimRecords(ENGINE_TABLE_INVENTORY);
-    const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
+    const modules = [...new Set(records.map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    // No claim table is left in the inventory: the confirmation gate's review record is the one claim record in core.
+    // No claim table is left in the inventory, and no other claim record is left in core: the confirmation gate's
+    // claims are each engine's register row's.
     expect(records).toEqual([]);
-    expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
+    expect(computedClaimRecords(files, records)).toEqual([]);
     // Vacuity: a claim table planted in the inventory is found by its destination.
     const plantedTable = { module: "src/lib/db/planted-claims.ts", name: "LITERAL", destination: claim("policy") };
     expect(claimRecords([...ENGINE_TABLE_INVENTORY, plantedTable])).toEqual([plantedTable]);

@@ -312,6 +312,8 @@ Each claim has a restrictive value, the answer under which the gates that read i
 - `agent.statementLanguage`: null, so no statement workflow opens in agent mode and MCP serves no statement on the engine;
 - `facets.agentReadings`: empty, so every agent reading is refused before a provider is acquired;
 - `sqlText.redaction`: `none`, so the query event log's redacted capture keeps nothing of the statement's text;
+- `sqlText.readsSqlText`: true, so the confirmation gate reads the statement text as SQL;
+- `sqlText.grammar.confirmExemptForms`: empty, so every shared dangerous keyword asks;
 - `policy.agentCredentialForm`: `none`, so every agent acquisition is refused;
 - `policy.maskingExemptColumns`: null, so every column the masking rules match stays masked;
 - `agent.overlay.dialect.catalogRead.commandShaped`: false, so the statement fence admits no composed catalog command.
@@ -581,8 +583,8 @@ Where no register row reviews the grammar an engine declares, its query events k
 ### S-8 (normative): A claim that loosens the confirmation gate
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
-The gate counts such a claim only where Studio grants it, and grants it to an engine a provider package serves only through its register row (M-84); every other reader reads it as declared.
-Where no register row grants either claim to an engine a provider package serves, the gate reads its statements as SQL under its declared grammar, counts no exempt form, and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
+The gate counts such a claim only where the engine's register row grants it for the grammar that row reviewed (M-54, M-84), the query event log reads `readsSqlText` the same way, and every other reader reads it as declared.
+Where no register row reviews the grammar an engine declares, the gate asks about every statement of the engine; under a reviewed grammar it reads a provider package's statements under that grammar and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
 
 ### S-9 (normative): Update target words and completion quoting
 

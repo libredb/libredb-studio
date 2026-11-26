@@ -8,7 +8,7 @@
  * - every entry of the engine table inventory (tests/unit/db/engine-declarations/inventory.ts) whose destination is a
  *   claim table, `REVIEW_RECORD_PHRASE`, or a granted table, `GRANTED_DESTINATION`;
  * - by name, `UNINVENTORIED_GRANT_RECORDS`, the records the inventory cannot see or classifies otherwise: a list of
- *   engine ids and an array of rows.
+ *   engine ids and a function answering a legacy engine's grants by id.
  * A detected record the list does not name fails by name, and so does an entry whose module no longer exports its name
  * or an M7 reader file that does not exist or does not import the name.
  *
@@ -35,9 +35,9 @@ const UNINVENTORIED_GRANT_RECORDS: readonly (Pick<GrantRecordEntry, "module" | "
     why: "a list of engine ids, not a table keyed by engine",
   },
   {
-    module: "src/lib/db/confirmation-claim-review.ts",
-    name: "CONFIRMATION_CLAIM_REVIEW",
-    why: "an array of reviewed rows, not a table keyed by engine",
+    module: CLAIM_GRANTS,
+    name: "legacyEngineGrants",
+    why: "a function answering a legacy engine's grants by id, which the browser's confirmation gate calls",
   },
 ];
 
@@ -45,17 +45,20 @@ function key(entry: { readonly module: string; readonly name: string }): string 
   return `${entry.module} ${entry.name}`;
 }
 
-/** Whether `module` exports a value declaration named `name`. */
+/** Whether `module` exports a value declaration or a function declaration named `name`. */
 function exportsName(module: string, name: string): boolean {
   const file = path.join(ROOT, module);
   if (!existsSync(file)) return false;
   const text = readFileSync(file, "utf8");
   const source = ts.createSourceFile(module, text, ts.ScriptTarget.Latest, true);
+  const exported = (statement: ts.VariableStatement | ts.FunctionDeclaration) =>
+    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true;
   return source.statements.some(
     (statement) =>
-      ts.isVariableStatement(statement) &&
-      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
-      statement.declarationList.declarations.some((declaration) => declaration.name.getText(source) === name),
+      (ts.isVariableStatement(statement) &&
+        exported(statement) &&
+        statement.declarationList.declarations.some((declaration) => declaration.name.getText(source) === name)) ||
+      (ts.isFunctionDeclaration(statement) && exported(statement) && statement.name?.text === name),
   );
 }
 
@@ -112,13 +115,15 @@ describe("the exit of M3", () => {
 
     expect(claimTables).toHaveLength(0);
     expect(grantedTables).toHaveLength(4);
-    expect(count('{"item":4}')).toBe(1);
-    expect(count('{"milestone":"M7"')).toBe(5);
+    expect(count('{"item":4}')).toBe(0);
+    expect(count('{"milestone":"M7"')).toBe(6);
   });
 
   test("the list's checks fail by name on a stale entry, a module that does not export the name and a reader that does not import it", () => {
     expect(exportsName(COMPATIBILITY, "SHIPPED_DATABASE_TYPES")).toBe(true);
     expect(exportsName(COMPATIBILITY, "NOT_A_RECORD")).toBe(false);
+    expect(exportsName(CLAIM_GRANTS, "legacyEngineGrants")).toBe(true);
+    expect(exportsName(CLAIM_GRANTS, "grantTables")).toBe(false);
     expect(exportsName("src/lib/db/absent-module.ts", "WRITE_REACH")).toBe(false);
     expect(importsName("src/components/read-only-marker.tsx", "GRANTED_WRITE_REACH")).toBe(true);
     expect(importsName("src/components/read-only-marker.tsx", "GRANTED_SSH_TUNNEL_REFUSAL")).toBe(false);

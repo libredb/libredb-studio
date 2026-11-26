@@ -1372,8 +1372,18 @@ describe("the grant reader's engine-keyed exports", () => {
   test("claim-grants exports only the projections the browser reads, each named in the exit list", () => {
     const exported = engineKeyedExports(claimGrants);
     const listed = CORE_GRANT_RECORDS.filter((entry) => entry.module === CLAIM_GRANTS);
+    const exports = claimGrants as Record<string, unknown>;
+    const functions = listed.filter((entry) => typeof exports[entry.name] === "function");
 
-    expect(exported).toEqual(listed.map((entry) => entry.name).sort());
+    // The engine-keyed values are the listed entries that are no function, and each function entry is a function the
+    // module exports: a reader of a legacy engine's grants by id.
+    expect(exported).toEqual(
+      listed
+        .filter((entry) => !functions.includes(entry))
+        .map((entry) => entry.name)
+        .sort(),
+    );
+    expect(functions.map((entry) => entry.name)).toEqual(["legacyEngineGrants"]);
     expect(listed.filter((entry) => !("milestone" in entry.removedBy)).map((entry) => entry.name)).toEqual([]);
     // Vacuity: the shape finds a table and the list, and passes over a vocabulary that holds no engine id.
     expect(exported).toContain("GRANTED_WRITE_REACH");

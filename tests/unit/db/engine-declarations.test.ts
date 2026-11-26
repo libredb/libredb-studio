@@ -148,7 +148,6 @@ import {
   ENGINE_URI_SCHEMES,
 } from "@/lib/db/connection-string";
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
-import { CONFIRMATION_CLAIM_REVIEW, isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
 import { MIGRATION_DDL, MIGRATION_DDL_FUNCTIONS, type MigrationDdlFunctions } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
@@ -4103,31 +4102,6 @@ describe("the census", () => {
     expect(SHIPPED_DATABASE_TYPES.some((type) => statementWorkflows.some((workflow) => opens(type, workflow)))).toBe(
       true,
     );
-  });
-
-  test("the confirmation gate's claims each declaration makes are the entries Studio's review record lists for its engine", () => {
-    // A vocabulary row's `decidesAlone` is no declaration's, so only these two kinds are read back.
-    const made = SHIPPED_DATABASE_TYPES.flatMap((type) => {
-      const { readsSqlText, grammar } = declared(type).sqlText;
-      return [
-        ...(readsSqlText ? [] : [{ label: `${type} text-not-sql`, claim: { kind: "text-not-sql", type } as const }]),
-        ...grammar.confirmExemptForms.map((form) => ({
-          label: `${type} exempt-form ${form.join(" ")}`,
-          claim: { kind: "exempt-form", type, form } as const,
-        })),
-      ];
-    });
-    const listed = CONFIRMATION_CLAIM_REVIEW.flatMap(({ claim }) => {
-      if (claim.kind === "text-not-sql") return [`${claim.type} text-not-sql`];
-      return claim.kind === "exempt-form" ? [`${claim.type} exempt-form ${claim.form.join(" ")}`] : [];
-    });
-
-    expect({
-      unreviewed: made.filter(({ claim }) => !isReviewedConfirmationClaim(claim)).map(({ label }) => label),
-      unmade: listed.filter((label) => !made.some((claim) => claim.label === label)),
-    }).toEqual({ unreviewed: [], unmade: [] });
-    // Vacuity: both kinds are made by some declaration.
-    expect(new Set(made.map(({ claim }) => claim.kind)).size).toBe(2);
   });
 
   test("connection.readsTrustMaterial is the engine's READS_TRUST_MATERIAL row", () => {

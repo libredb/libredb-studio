@@ -18,7 +18,7 @@ import {
   typedConfirmationFor,
 } from "@/lib/editor/statement-analysis";
 import { editorLanguageOf } from "@/lib/editor/tab-language";
-import { hasUnreadableRun, isDangerousQuery } from "@/lib/sql/dangerous-query";
+import { hasUnreadableRun, isDangerousQuery, type PackageGateGrants } from "@/lib/sql/dangerous-query";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { cursorTarget, RunTargetRangeError, selectionTarget } from "@/lib/sql/run-target";
 import { countCodeStatements } from "@/lib/sql/statement-splitter";
@@ -831,38 +831,44 @@ describe("packageConfirmationVerdict", () => {
   const grammar = grammarFromFacts(
     (admittedManifest("acmeverdict").engines[0] as { sqlText: { grammar: GrammarFacts } }).sqlText.grammar,
   );
+  /** The SQL text grants of an engine whose register row reviewed its grammar and grants no loosening claim. */
+  const reviewed: PackageGateGrants = { reviewedGrammar: true, readsSqlText: true, confirmExemptForms: [] };
 
   test("packageConfirmationVerdict answers run, confirm with unreadable, and refuse for a nameless production connection", () => {
-    expect(packageConfirmationVerdict("SELECT 1", grammar, "Keys", undefined)).toStrictEqual({ decision: "run" });
-    expect(packageConfirmationVerdict("DELETE FROM t", grammar, "Keys", "development")).toStrictEqual({
+    expect(packageConfirmationVerdict("SELECT 1", grammar, reviewed, "Keys", undefined)).toStrictEqual({
+      decision: "run",
+    });
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, reviewed, "Keys", "development")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: null,
     });
     // A write in a later statement asks, as the split the multi-statement route runs reads it.
-    expect(packageConfirmationVerdict("SELECT 1; DROP TABLE x", grammar, "Keys", undefined)).toMatchObject({
+    expect(packageConfirmationVerdict("SELECT 1; DROP TABLE x", grammar, reviewed, "Keys", undefined)).toMatchObject({
       decision: "confirm",
       unreadable: false,
     });
-    expect(packageConfirmationVerdict("SELECT 'a", grammar, "Keys", undefined)).toStrictEqual({
+    expect(packageConfirmationVerdict("SELECT 'a", grammar, reviewed, "Keys", undefined)).toStrictEqual({
       decision: "confirm",
       unreadable: true,
       typedConfirmation: null,
     });
-    expect(packageConfirmationVerdict("DELETE FROM t", grammar, "Keys", "production")).toStrictEqual({
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, reviewed, "Keys", "production")).toStrictEqual({
       decision: "confirm",
       unreadable: false,
       typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
     });
-    expect(packageConfirmationVerdict("DELETE FROM t", grammar, undefined, "production")).toStrictEqual({
+    expect(packageConfirmationVerdict("DELETE FROM t", grammar, reviewed, undefined, "production")).toStrictEqual({
       decision: "refuse",
       refusal: TYPED_NAME_MISSING_REFUSAL,
     });
-    // An exempt form the declaration states is not counted: the gate reads it as the shared keyword asks.
+    // An exempt form the declaration states and the row does not grant is not counted: the shared keyword asks.
     const exempting = { ...grammar, confirmExemptForms: [["ALTER", "SESSION", "SET"]] };
-    expect(packageConfirmationVerdict("ALTER SESSION SET x = 1", exempting, "Keys", undefined)).toMatchObject({
-      decision: "confirm",
-    });
+    expect(packageConfirmationVerdict("ALTER SESSION SET x = 1", exempting, reviewed, "Keys", undefined)).toMatchObject(
+      {
+        decision: "confirm",
+      },
+    );
     // The explain claim is read both ways: an analyzed write asks under a declaration of false, a planned write
     // under a declaration of true, and an analyzed read runs under either.
     for (const explainExecutesWithAnalyze of [false, true]) {
@@ -871,12 +877,67 @@ describe("packageConfirmationVerdict", () => {
         expect([
           explainExecutesWithAnalyze,
           sql,
-          packageConfirmationVerdict(sql, explaining, "Keys", undefined),
+          packageConfirmationVerdict(sql, explaining, reviewed, "Keys", undefined),
         ]).toMatchObject([explainExecutesWithAnalyze, sql, { decision: "confirm" }]);
       }
-      expect(packageConfirmationVerdict("EXPLAIN ANALYZE SELECT 1", explaining, "Keys", undefined)).toStrictEqual({
+      expect(
+        packageConfirmationVerdict("EXPLAIN ANALYZE SELECT 1", explaining, reviewed, "Keys", undefined),
+      ).toStrictEqual({
         decision: "run",
       });
+    }
+  });
+
+  test("packageConfirmationVerdict asks about every statement under a grammar no register row reviewed, and reads none of it", () => {
+    const unreviewed: PackageGateGrants = { reviewedGrammar: false, readsSqlText: true, confirmExemptForms: [] };
+    // A read, an empty text and a run that never closes each ask, and none is reported unreadable: nothing is read.
+    for (const sql of ["SELECT 1", "", "SELECT 'a", "DELETE FROM t"]) {
+      expect([sql, packageConfirmationVerdict(sql, grammar, unreviewed, "Keys", undefined)]).toStrictEqual([
+        sql,
+        { decision: "confirm", unreadable: false, typedConfirmation: null },
+      ]);
+    }
+    expect(packageConfirmationVerdict("SELECT 1", grammar, unreviewed, "Keys", "production")).toStrictEqual({
+      decision: "confirm",
+      unreadable: false,
+      typedConfirmation: { type: "connection-name", expected: "Keys", targets: [] },
+    });
+    expect(packageConfirmationVerdict("SELECT 1", grammar, unreviewed, undefined, "production")).toStrictEqual({
+      decision: "refuse",
+      refusal: TYPED_NAME_MISSING_REFUSAL,
+    });
+  });
+
+  test("packageConfirmationVerdict counts a granted text-not-SQL claim and a granted exempt form", () => {
+    const form = ["ALTER", "SESSION", "SET"];
+    const exempting = { ...grammar, confirmExemptForms: [form] };
+    const granted: PackageGateGrants = { reviewedGrammar: true, readsSqlText: false, confirmExemptForms: [form] };
+    // The granted form runs, and the text is neither checked for an unreadable run nor split.
+    for (const sql of ["ALTER SESSION SET x = 1", "SELECT 'a", "SELECT 1; DROP TABLE x"]) {
+      expect([sql, packageConfirmationVerdict(sql, exempting, granted, "Keys", undefined)]).toStrictEqual([
+        sql,
+        { decision: "run" },
+      ]);
+      // The same statements ask where the row grants neither claim.
+      expect([sql, packageConfirmationVerdict(sql, exempting, reviewed, "Keys", undefined)]).toMatchObject([
+        sql,
+        { decision: "confirm" },
+      ]);
+    }
+    // The whole text's own write still asks under both values of the explain claim.
+    for (const explainExecutesWithAnalyze of [false, true]) {
+      const explaining = { ...exempting, explainExecutesWithAnalyze };
+      for (const sql of ["DELETE FROM t", "EXPLAIN ANALYZE DELETE FROM t", "EXPLAIN UPDATE t SET x = 1"]) {
+        expect([
+          explainExecutesWithAnalyze,
+          sql,
+          packageConfirmationVerdict(sql, explaining, granted, "Keys", undefined),
+        ]).toStrictEqual([
+          explainExecutesWithAnalyze,
+          sql,
+          { decision: "confirm", unreadable: false, typedConfirmation: null },
+        ]);
+      }
     }
   });
 });

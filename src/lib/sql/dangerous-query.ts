@@ -1,6 +1,7 @@
 // The editor's confirmation gate, out of `QuerySafetyDialog.tsx` so a caller that bundles no component can ask it:
 // the VS Code extension's child answers `query/target` with its verdict.
-import { isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
+import { type EngineGrants, legacyEngineGrants } from "@/lib/db/claim-grants";
+import { assertDatabaseType } from "@/lib/db/type-id";
 import { isDestructiveNonSqlQuery, vocabularyDecidesAlone } from "@/lib/db/destructive-commands";
 import {
   confirmFormQuery,
@@ -10,7 +11,7 @@ import {
   hasConfirmCodeForm,
   operatingForms,
 } from "@/lib/sql/confirm-forms";
-import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { type SqlGrammar } from "@libredb/provider-sdk/sql";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
 import {
@@ -568,7 +569,7 @@ function cteBodyOpensWithWrite(text: string, afterAs: number, grammar: SqlGramma
  * Exported for the grammar-level tests in `tests/components/QuerySafetyDialog.test.tsx`, which read a row's forms
  * before any shipped row declares them; `isDangerousQuery` is the gate. It reads every form of the grammar it is
  * handed: only the gate resolves a grammar from a connection type, and the gate hands it one whose exempt forms are
- * the ones Studio's review record lists (`gateGrammar`).
+ * the ones the engine's register row grants (`gateGrammar`).
  */
 export function writesUnderGrammar(statement: string, grammar: SqlGrammar): boolean {
   let text = statement;
@@ -643,40 +644,53 @@ export function writesUnderGrammar(statement: string, grammar: SqlGrammar): bool
 }
 
 /**
- * The grammar the gate reads a statement under: the connection type's, with only the exempt forms Studio's review
- * record lists (`CONFIRMATION_CLAIM_REVIEW` in `@/lib/db/confirmation-claim-review`).
+ * The grammar the gate reads a statement under: the connection type's, with only the exempt forms Studio grants the
+ * engine from its register row for the grammar that row reviewed (`legacyEngineGrants` in `@/lib/db/claim-grants`).
  *
- * A form the record does not list is read as if the row had not declared it, so its shared keyword asks. The
- * resolved grammar is returned as it is where every form it declares is listed, which keeps the shipped grammars on
- * their own objects and on the caches keyed by them; otherwise the gate reads a copy, made per call, which is a new key
- * for those caches. Resolution itself is left alone, because every other reader of a grammar reads the row as
- * declared.
+ * A form the grant leaves out is read as if the row had not declared it, so its shared keyword asks. The granted forms
+ * are a deduplicated subset of the declared ones, so a grant as long as the declaration is the same forms, and the
+ * resolved grammar is returned as it is, which keeps the shipped grammars on their own objects and on the caches keyed
+ * by them; otherwise the gate reads a copy, made per call, which is a new key for those caches. No type at all reads
+ * the no-connection grammar, which declares no form. Resolution itself is left alone, because every other reader of a
+ * grammar reads the row as declared. A value that is not a type id is refused by `resolveSqlGrammar` before any grant
+ * is read.
  */
 function gateGrammar(databaseType: DatabaseType | undefined): SqlGrammar {
   const grammar = resolveSqlGrammar(databaseType);
   const declared = grammar.confirmExemptForms;
-  if (declared === undefined) return grammar;
-  const listed = declared.filter((form) =>
-    isReviewedConfirmationClaim({ kind: "exempt-form", type: databaseType, form }),
-  );
-  if (listed.length === declared.length) return grammar;
-  return { ...grammar, confirmExemptForms: listed };
+  if (databaseType === undefined || declared === undefined) return grammar;
+  const granted = legacyEngineGrants(databaseType).confirmExemptForms;
+  if (granted.length === declared.length) return grammar;
+  return { ...grammar, confirmExemptForms: granted };
 }
 
 /**
- * Whether the gate reads this connection type's text as not SQL: its grammar row declares `readsSqlText: false` and
- * Studio's review record lists that claim (`CONFIRMATION_CLAIM_REVIEW` in `@/lib/db/confirmation-claim-review`).
+ * Whether the gate reads this connection type's text as not SQL: Studio grants the engine's `readsSqlText: false`
+ * from its register row for the grammar that row reviewed (`legacyEngineGrants` in `@/lib/db/claim-grants`).
  *
- * A claim the record does not list is read as if the row had not made it, so the text is read as SQL. No type at all
- * reads as SQL, as `readsSqlText` answers. The other readers of `readsSqlText`, which are not the confirmation gate,
- * read the row as declared.
+ * A claim the grant leaves out is read as if the row had not made it, so the text is read as SQL. No type at all reads
+ * as SQL. A value that is not a type id is refused by name before any grant is read.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
  */
 function gateReadsTextAsNotSql(databaseType: DatabaseType | undefined): boolean {
-  return (
-    databaseType !== undefined &&
-    !readsSqlText(databaseType) &&
-    isReviewedConfirmationClaim({ kind: "text-not-sql", type: databaseType })
-  );
+  if (databaseType === undefined) return false;
+  assertDatabaseType(databaseType);
+  return !legacyEngineGrants(databaseType).readsSqlText;
+}
+
+/**
+ * Whether the engine's register row reviewed the grammar its declaration states (`legacyEngineGrants` in
+ * `@/lib/db/claim-grants`): where it did not, the gate asks about every statement and reads none of it. No type at all
+ * reads the no-connection grammar, which is Studio's own. A value that is not a type id is refused by name before any
+ * grant is read.
+ *
+ * @throws {UnknownProviderError} When `databaseType` is defined and is not a type id.
+ */
+function reviewedGrammar(databaseType: DatabaseType | undefined): boolean {
+  if (databaseType === undefined) return true;
+  assertDatabaseType(databaseType);
+  return legacyEngineGrants(databaseType).reviewedGrammar;
 }
 
 /**
@@ -693,9 +707,13 @@ function gateReadsTextAsNotSql(databaseType: DatabaseType | undefined): boolean 
  * that a SQL span reader cannot resolve closes perfectly in the grammar those are written in: a SQL span reader's
  * verdict about text that is not SQL is not evidence of anything, and saying "could not be read" about a Mongo
  * document that reads fine is the false alarm the dialog's notice exists to avoid. No type at all reads as SQL, and
- * neither does a type whose text-not-SQL claim Studio's review record does not list (`gateReadsTextAsNotSql`).
+ * neither does a type whose text-not-SQL claim the engine's register row does not grant (`gateReadsTextAsNotSql`).
+ *
+ * False where the engine's register row reviewed no grammar (`reviewedGrammar`): the gate asks about every statement
+ * there and reads none of it, so nothing is reported as unreadable.
  */
 export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boolean {
+  if (!reviewedGrammar(databaseType)) return false;
   if (gateReadsTextAsNotSql(databaseType)) return false;
   const grammar = resolveSqlGrammar(databaseType);
   return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
@@ -753,13 +771,15 @@ export function hasUnreadableRun(text: string, databaseType?: DatabaseType): boo
  * confirmation at all. Omitting it keeps the dialect-less reading.
  *
  * A row's claim that would spare a statement, that its vocabulary is the whole answer or that a form led by a shared
- * keyword does not ask, or that its text is not SQL, counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW` in
- * `@/lib/db/confirmation-claim-review`, E21-Q1). Any other such claim is read as if the row had not made it: the
- * statement is read as SQL, and the row's own vocabulary is read beside that reading, so the gate asks wherever
- * either asks.
+ * keyword does not ask, or that its text is not SQL, counts only where Studio grants it from the engine's register row
+ * for the grammar that row reviewed (`legacyEngineGrants` in `@/lib/db/claim-grants`). Any other such claim is read as
+ * if the row had not made it: the statement is read as SQL, and the row's own vocabulary is read beside that reading,
+ * so the gate asks wherever either asks. Where the engine's register row reviewed no grammar, every statement asks, a
+ * read and an empty text included.
  */
 export function isDangerousQuery(query: string, databaseType?: DatabaseType): boolean {
   const grammar = gateGrammar(databaseType);
+  if (!reviewedGrammar(databaseType)) return true;
 
   // Asked FIRST because it is the only question here whose answer does not depend
   // on reading the statement: where a run never closes, every keyword test below
@@ -780,13 +800,13 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // section 2); an etcd command names keys, which can be spelled like any SQL keyword, and the
   // etcd provider's guard.ts reads it with the parser the provider runs (#1089, section 5.5).
   // Which types decide alone is a fact of the same table, not a type test here, and the row decides
-  // alone only where Studio's review record lists that claim.
+  // alone only where the engine's register row grants that claim.
   if (vocabularyDecidesAlone(databaseType)) return isDestructiveNonSqlQuery(query, databaseType);
 
   if (writesUnderGrammar(query, grammar)) return true;
 
   // A row that does not decide alone is read beside the SQL reading: MongoDB's and Redis's rows,
-  // and a row whose decides-alone claim the review record does not list. False for every type
+  // and a row whose decides-alone claim the register row does not grant. False for every type
   // with no row, so for every SQL engine this is one table lookup.
   if (isDestructiveNonSqlQuery(query, databaseType)) return true;
 
@@ -812,7 +832,7 @@ export function isDangerousQuery(query: string, databaseType?: DatabaseType): bo
   // no confirmation at all while a `DELETE FROM` on every SQL engine asked (S8). The
   // facts are a table in `@/lib/db/destructive-commands`, not a type test written
   // here: this file already learned that lesson for the span rule above, and the row
-  // was read just above. A text-not-SQL claim the review record does not list is read as
+  // was read just above. A text-not-SQL claim the register row does not grant is read as
   // SQL, so its statements are split and read below.
   if (gateReadsTextAsNotSql(databaseType)) return false;
   return writesInLaterStatements(query, grammar);
@@ -836,43 +856,60 @@ function writesInLaterStatements(query: string, grammar: SqlGrammar): boolean {
 }
 
 /**
- * `grammar` as the gate reads an engine a provider package serves: with no exempt form. Each form is a claim that
- * loosens the gate, counted only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`), and the record
- * holds no row for an engine Studio does not ship (docs/providers/CONTRACT.md, S-8).
+ * The SQL text grants the confirmation gate reads for an engine a provider package serves, from the server catalog's
+ * record of the engine (`EngineRecord.grants`): whether its register row reviewed the grammar it declares, and the
+ * grant of each claim that loosens the gate for that grammar.
  */
-function packageGateGrammar(grammar: SqlGrammar): SqlGrammar {
-  return grammar.confirmExemptForms === undefined ? grammar : { ...grammar, confirmExemptForms: [] };
+export type PackageGateGrants = Pick<EngineGrants, "reviewedGrammar" | "readsSqlText" | "confirmExemptForms">;
+
+/**
+ * `grammar` as the gate reads an engine a provider package serves: with only the exempt forms `grants` grants. Each
+ * form is a claim that loosens the gate, counted only where the engine's register row grants it for the grammar that
+ * row reviewed (docs/providers/CONTRACT.md, S-8).
+ */
+function packageGateGrammar(grammar: SqlGrammar, grants: PackageGateGrants): SqlGrammar {
+  return grammar.confirmExemptForms === undefined
+    ? grammar
+    : { ...grammar, confirmExemptForms: grants.confirmExemptForms };
 }
 
 /**
  * Whether part of `text` could not be read under `grammar`, the grammar an engine a provider package serves declares:
- * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. The text
- * is read as SQL whatever the declaration says of it: its text-not-SQL claim loosens the gate, and Studio's review
- * record holds no row for such an engine (S-8).
+ * a run that never closes, or a line comment that holds a lone carriage return, as `hasUnreadableRun` reads it. False
+ * where no register row reviewed the grammar, which is never read (`packageStatementAsks` asks about every statement
+ * there), and where the row grants the claim that the engine's text is not SQL; otherwise the text is read as SQL
+ * (S-8).
  */
-export function packageUnreadableRun(text: string, grammar: SqlGrammar): boolean {
+export function packageUnreadableRun(text: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
+  if (!grants.reviewedGrammar || !grants.readsSqlText) return false;
   return hasUnterminatedSpan(text, grammar) || hasLoneCarriageReturnInLineComment(text, grammar);
 }
 
 /**
  * Whether the confirmation gate asks about `statement` on an engine a provider package serves, read under `grammar`,
- * the grammar its declaration states, composed into the server catalog's record of the engine
- * (docs/providers/CONTRACT.md, clause S-8). Every claim that would loosen the gate is read at its restrictive value,
- * since Studio's review record holds no row for such an engine: the text is read as SQL, and no exempt form is
- * counted. `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other
- * runs: true asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about
- * `EXPLAIN UPDATE t SET x = 1`, which true reads as a plan. So the statement is read under both values, and asks where
- * either asks. No vocabulary row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks
- * where part of the text cannot be read, where the statement writes, and where a later statement of the split writes:
- * `isDangerousQuery`'s own answer for an engine with no row and no reviewed claim, read from the package's data.
+ * the grammar its declaration states, composed into the server catalog's record of the engine, with `grants`, the SQL
+ * text grants that record holds (docs/providers/CONTRACT.md, clause S-8).
+ *
+ * Where no register row reviewed the grammar, every statement asks and none is read. Otherwise each claim that would
+ * loosen the gate counts only as the row grants it: a granted text-not-SQL claim skips the unreadable check and the
+ * split, and a granted exempt form is read as exempt; every other claim is read at its restrictive value.
+ * `explainExecutesWithAnalyze` has no restrictive value, since each value asks about a statement the other runs: true
+ * asks about `EXPLAIN ANALYZE DELETE`, which false reads as a plan, and false asks about `EXPLAIN UPDATE t SET x = 1`,
+ * which true reads as a plan. So the statement is read under both values, and asks where either asks. No vocabulary
+ * row of Studio's applies, since every one is keyed by an engine Studio ships. So it asks where part of the text
+ * cannot be read, where the statement writes, and, for text read as SQL, where a later statement of the split writes.
  */
-export function packageStatementAsks(statement: string, grammar: SqlGrammar): boolean {
-  const read = packageGateGrammar(grammar);
+export function packageStatementAsks(statement: string, grammar: SqlGrammar, grants: PackageGateGrants): boolean {
+  if (!grants.reviewedGrammar) return true;
+  const read = packageGateGrammar(grammar, grants);
   return (
-    packageUnreadableRun(statement, read) ||
+    packageUnreadableRun(statement, read, grants) ||
     [false, true].some((explainExecutesWithAnalyze) => {
       const explaining = { ...read, explainExecutesWithAnalyze };
-      return writesUnderGrammar(statement, explaining) || writesInLaterStatements(statement, explaining);
+      return (
+        writesUnderGrammar(statement, explaining) ||
+        (grants.readsSqlText && writesInLaterStatements(statement, explaining))
+      );
     })
   );
 }

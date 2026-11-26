@@ -4,12 +4,12 @@
  * Studio's.
  *
  * The rows were written once from Studio's hand-written records and are hand-reviewed data from then on, never a
- * projection of a declaration. Every record but one has left core, so the register is the only copy of every other
- * grant member, the redaction included, and its review notes are the register's own. The one still in core, the
- * confirmation gate's review record (`CONFIRMATION_CLAIM_REVIEW`), is compared with the rows' SQL text members here
- * until it leaves core, and each row's reviewed grammar digest with the SHA-256 of its declaration's grammar, so a
- * changed legacy grammar fails here until its row is reviewed again. It lives in core, not in the package's tests,
- * because a package imports nothing of Studio's.
+ * projection of a declaration. Every record has left core, so the register is the only copy of every grant member, the
+ * redaction and the confirmation gate's claims included, and its review notes are the register's own. Each row's
+ * confirmation claims are compared here with the ones its engine's shipped rows make, its declaration and its
+ * statement vocabulary row, each with its review note, and each row's reviewed grammar digest with the SHA-256 of its
+ * declaration's grammar, so a changed legacy grammar or a new loosening claim fails here until its row is reviewed
+ * again. It lives in core, not in the package's tests, because a package imports nothing of Studio's.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -23,7 +23,7 @@ import {
   SQL_NAME_QUOTES,
   STATEMENT_LANGUAGE_NAMES,
 } from "@/lib/db/claim-grants";
-import { CONFIRMATION_CLAIM_REVIEW } from "@/lib/db/confirmation-claim-review";
+import { NON_SQL_DESTRUCTIVE_VOCABULARY } from "@/lib/db/destructive-commands";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
 import {
   DIGEST_FORM,
@@ -67,37 +67,80 @@ describe("the legacy rows", () => {
   });
 });
 
-describe("the legacy rows' SQL text members", () => {
-  /** The confirmation gate's review record's entries of `kind` for `engine`, in the record's order. */
-  const entries = (engine: string, kind: string) =>
-    CONFIRMATION_CLAIM_REVIEW.filter(({ claim }) => claim.kind === kind && claim.type === engine);
+/** The SQL text members of `engine`'s declaration (src/lib/db/engine-declarations/<engine>.json). */
+function declaredSqlText(engine: string): {
+  readsSqlText: boolean;
+  grammar: { confirmExemptForms?: string[][] } & Record<string, unknown>;
+} {
+  const declaration = JSON.parse(
+    readFileSync(path.join(ROOT, "src/lib/db/engine-declarations", `${engine}.json`), "utf8"),
+  ) as { sqlText: ReturnType<typeof declaredSqlText> };
+  return declaration.sqlText;
+}
 
-  test("each legacy row's SQL text members are Studio's records of them: the text-not-SQL, exempt-form and decides-alone entries with their reasons, a redaction's review note, and the SHA-256 of its declaration's grammar", () => {
+/** Whether `note` is one sentence: a capital first, one full stop, at the end. */
+const oneSentence = (note: string | undefined): boolean =>
+  note !== undefined && /^[A-Z][^\n]*\.$/.test(note) && note.split(/\.\s/).length === 1;
+
+/**
+ * What is wrong with `row`'s confirmation claims: each must be the one its engine's shipped rows make, text-not-SQL
+ * exactly where its declaration states `readsSqlText: false`, its declaration's exempt forms, and decides-alone exactly
+ * where its statement vocabulary row decides alone; and each claim it makes carries a one-sentence review note, which
+ * a member it does not claim lacks.
+ */
+function confirmationClaimProblems(row: RegisterRow): string[] {
+  const { engine, grants, reasons = {} } = row;
+  const declared = declaredSqlText(engine);
+  const vocabulary = (NON_SQL_DESTRUCTIVE_VOCABULARY as Readonly<Record<string, { decidesAlone?: boolean }>>)[engine];
+  const claims = [
+    ["readsSqlText", !grants.readsSqlText, !declared.readsSqlText],
+    ["decidesAlone", grants.decidesAlone, vocabulary?.decidesAlone === true],
+    [
+      "confirmExemptForms",
+      grants.confirmExemptForms.length > 0,
+      JSON.stringify(grants.confirmExemptForms) === JSON.stringify(declared.grammar.confirmExemptForms ?? []),
+    ],
+  ] as const;
+  const problems: string[] = [];
+  for (const [member, claimed, made] of claims) {
+    const note = reasons[member];
+    if (member === "confirmExemptForms" ? !made : claimed !== made) {
+      problems.push(`${engine}: ${member} is not the claim its shipped rows make`);
+    }
+    if (claimed ? !oneSentence(note) : note !== undefined) {
+      problems.push(`${engine}: ${member} ${claimed ? "has no one-sentence review note" : "has a note but no claim"}`);
+    }
+  }
+  return problems;
+}
+
+describe("the legacy rows' SQL text members", () => {
+  test("each legacy row's confirmation claims are the ones its engine's shipped rows make: text-not-SQL exactly where its declaration states readsSqlText false, its declaration's exempt forms, and decides-alone exactly where its statement vocabulary row decides alone, each with a one-sentence review note", () => {
+    const rows = legacyRows();
+
+    expect(rows.flatMap(confirmationClaimProblems)).toEqual([]);
+    expect(rows.filter((row) => !row.grants.readsSqlText)).toHaveLength(22);
+    expect(rows.filter((row) => row.grants.decidesAlone)).toHaveLength(20);
+    expect(rows.flatMap((row) => row.grants.confirmExemptForms)).toHaveLength(2);
+    // Vacuity: a planted row whose claim has no note, or whose claim no shipped row makes, fails by name.
+    const snowflake = rows.find((row) => row.engine === "snowflake") as RegisterRow;
+    const unnoted = { ...snowflake, reasons: {} };
+    expect(confirmationClaimProblems(unnoted)).toEqual([
+      "snowflake: confirmExemptForms has no one-sentence review note",
+    ]);
+    const unmade = { ...snowflake, grants: { ...snowflake.grants, decidesAlone: true } };
+    expect(confirmationClaimProblems(unmade)).toEqual([
+      "snowflake: decidesAlone is not the claim its shipped rows make",
+      "snowflake: decidesAlone has no one-sentence review note",
+    ]);
+  });
+
+  test("each legacy row's redaction carries a review note where it keeps a name quote or reads a command, and its grammar digest is the SHA-256 of its declaration's grammar", () => {
     const rows = legacyRows();
 
     for (const row of rows) {
       const { engine, grants, reasons = {} } = row;
-      const textNotSql = entries(engine, "text-not-sql");
-      const decidesAlone = entries(engine, "decides-alone");
-      const exempt = entries(engine, "exempt-form");
-      const declaration = JSON.parse(
-        readFileSync(path.join(ROOT, "src/lib/db/engine-declarations", `${engine}.json`), "utf8"),
-      ) as { sqlText: { grammar: unknown } };
-      expect({ engine, readsSqlText: grants.readsSqlText, reason: reasons.readsSqlText }).toEqual({
-        engine,
-        readsSqlText: textNotSql.length === 0,
-        reason: textNotSql[0]?.reason,
-      });
-      expect({ engine, decidesAlone: grants.decidesAlone, reason: reasons.decidesAlone }).toEqual({
-        engine,
-        decidesAlone: decidesAlone.length > 0,
-        reason: decidesAlone[0]?.reason,
-      });
-      expect({ engine, forms: grants.confirmExemptForms }).toEqual({
-        engine,
-        forms: exempt.map(({ claim }) => (claim.kind === "exempt-form" ? [...claim.form] : [])),
-      });
-      expect({ engine, noted: reasons.confirmExemptForms !== undefined }).toEqual({ engine, noted: exempt.length > 0 });
+      const declaration = { sqlText: declaredSqlText(engine) };
       // A redaction keeping a name quote or reading a command carries the record's comment as its review note.
       const kept =
         grants.redaction.kind === "command" || (grants.redaction.kind === "sql" && grants.redaction.nameQuote !== null);
@@ -107,11 +150,6 @@ describe("the legacy rows' SQL text members", () => {
         grammarSha256: grammarSha256(declaration.sqlText.grammar),
       });
     }
-    // Every entry of the review record is on a row, and the rows hold each kind of entry.
-    expect(CONFIRMATION_CLAIM_REVIEW.filter(({ claim }) => !LEGACY_ENGINE_IDS.includes(claim.type))).toEqual([]);
-    expect(rows.filter((row) => !row.grants.readsSqlText)).toHaveLength(22);
-    expect(rows.filter((row) => row.grants.decidesAlone)).toHaveLength(20);
-    expect(rows.flatMap((row) => row.grants.confirmExemptForms)).toHaveLength(2);
     // Vacuity: the rows grant every kind of redaction, so the review note check reads both of its answers.
     const kinds = rows.map((row) => row.grants.redaction.kind);
     expect(kinds.filter((kind) => kind === "sql")).toHaveLength(18);

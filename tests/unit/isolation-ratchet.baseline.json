@@ -3,8 +3,8 @@
   "counters": {
     "enginesInPackages": 0,
     "coreHandwritten.distinctEngineIds": 43,
-    "coreHandwritten.filesNamingAnEngine": 102,
-    "coreHandwritten.linesNamingAnEngine": 1270,
+    "coreHandwritten.filesNamingAnEngine": 101,
+    "coreHandwritten.linesNamingAnEngine": 1226,
     "coreGenerated.lines": 11102,
     "legacyProviders.files": 783,
     "agentLanguages.filesInLanguageDirs": 212,

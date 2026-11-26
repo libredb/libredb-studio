@@ -574,8 +574,8 @@ describe("useQueryAdapter", () => {
     expect(params.onQueryExecute).not.toHaveBeenCalled();
   });
 
-  // A row's loosening claim counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`): the
-  // stand-in row decides alone and is not on the record, so its text is still read as SQL under Trino's grammar.
+  // A row's loosening claim counts only where the engine's register row grants it: the stand-in row decides alone and
+  // Trino's register row does not grant that claim, so its text is still read as SQL under Trino's grammar.
   test("asks about a statement a row's unlisted claim would spare", async () => {
     const remove = installStandInVocabulary({});
     try {

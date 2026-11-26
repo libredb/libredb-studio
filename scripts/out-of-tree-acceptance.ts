@@ -25,8 +25,10 @@
  *    `bun run providers:lock -- --dir <tmp>/providers`; assert the lock line of the one package.
  * 5. Start the standalone server with LIBREDB_PROVIDERS_DIR set, sign in through the API, save a connection of the
  *    fixture engine (`POST /api/db/test-connection`, what the connection dialog's Save posts), run each statement of
- *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, and that an explain request is refused by
- *    name, 501.
+ *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, each answer marked unconfirmed, and that an
+ *    explain request is refused by name, 501. No register row reviews the fixture's grammar, so the confirmation gate
+ *    asks about every statement of its engine, and the default advisory mode runs a request that sends no
+ *    confirmation field and marks its answer unconfirmed.
  * 6. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement.
@@ -105,7 +107,7 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
  * Studio's side of the run, every interface the run relies on in one place: the lock command and its file, the
  * manifest file a package carries, the providers directory's variable, the refusal and answer codes, the session
  * cookie, the admin's sign-in and the routes. The predicates beside it (`refusalLines`, `unavailableProblems`,
- * `unsupportedProblems`, `rowsProblems`, `saveProblems`) read the answers.
+ * `unsupportedProblems`, `rowsProblems`, `unconfirmedProblems`, `saveProblems`) read the answers.
  */
 export const STUDIO = Object.freeze({
   lockScript: "providers:lock",
@@ -609,6 +611,18 @@ export function rowsProblems(answer: Answer, expected: Expectation): string[] {
   return isDeepStrictEqual(answer.body.rows, rows)
     ? []
     : [`"${expected.statement}" answered rows ${JSON.stringify(answer.body.rows)}, not ${JSON.stringify(rows)}`];
+}
+
+/**
+ * The problems with a statement's answer on the fixture's engine: it must be marked `confirmation: "unconfirmed"`, the
+ * mark the advisory mode puts on a request the confirmation gate asked about and that sent no confirmation field.
+ */
+export function unconfirmedProblems(answer: Answer, expected: Expectation): string[] {
+  return answer.body.confirmation === "unconfirmed"
+    ? []
+    : [
+        `"${expected.statement}" answered without the mark confirmation: "unconfirmed", so the gate did not ask about it`,
+      ];
 }
 
 /** The problems with a save's answer: it must be 200, a success, and not degraded (the engine's health answered). */
@@ -1344,7 +1358,10 @@ async function queryEngine(ctx: Context): Promise<string> {
       // oxlint-disable-next-line no-await-in-loop -- the statements run one after another on the one connection.
       const answer = await postJson(server, STUDIO.routes.query, { connection, sql: expected.statement }, cookie);
       assertNone(rowsProblems(answer, expected));
-      answered.push(`${expected.statement} -> ${JSON.stringify(answer.body.rows)}`);
+      assertNone(unconfirmedProblems(answer, expected));
+      answered.push(
+        `${expected.statement} -> ${JSON.stringify(answer.body.rows)}, ${String(answer.body.confirmation)}`,
+      );
     }
     // A field the engine's record does not offer is refused by name, read from the record.
     const first = (fixture.acceptance.statements[0] as Expectation).statement;

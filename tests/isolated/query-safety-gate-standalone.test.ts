@@ -162,9 +162,9 @@ describe("useQueryExecution: the real safety gate", () => {
   });
 
   /**
-   * A row's loosening claim counts only where Studio's review record lists it (`CONFIRMATION_CLAIM_REVIEW`). The
-   * stand-in row decides alone and the record does not list it, so its statements are still read as SQL under
-   * Trino's grammar: the editor stops a `DROP` at the dialog and sends nothing.
+   * A row's loosening claim counts only where the engine's register row grants it. The stand-in row decides alone and
+   * Trino's register row does not grant that claim, so its statements are still read as SQL under Trino's grammar:
+   * the editor stops a `DROP` at the dialog and sends nothing.
    */
   test("a row's claim Studio's review record does not list stops the run at the dialog", async () => {
     const remove = installStandInVocabulary({});

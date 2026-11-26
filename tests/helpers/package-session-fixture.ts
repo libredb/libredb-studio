@@ -16,9 +16,10 @@ import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
 import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import { MANIFEST_FILE_NAME } from "@/lib/provider-host/provider-artifact";
 import { bootAdmission, PROVIDER_IMPORT_DEADLINE_MS } from "@/lib/provider-host/boot";
+import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { type EngineRecord, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
-import { type EditableEngine, packageRow, rawManifest } from "./package-catalog";
+import { type EditableEngine, packageRow, rawManifest, VALIDATOR } from "./package-catalog";
 import { FIXTURE_ENTRY, lockEntryOf, writeArtifact, writeLock } from "./provider-artifacts";
 
 /** The calls a package can offer, by their contract names. */
@@ -83,6 +84,18 @@ function manifestOf(pkg: SessionPackage): Record<string, unknown> {
   }
   pkg.edit?.(manifest.engines[0] as EditableEngine);
   return manifest;
+}
+
+/**
+ * The SHA-256 of the grammar `pkg`'s engine declares, read from its manifest as `admitSessionPackages` writes it and
+ * admitted by the SDK's validator: the digest a register row names to review that grammar.
+ *
+ * @throws {Error} Naming the package, for a manifest the validator refuses.
+ */
+export function declaredGrammarSha256(pkg: SessionPackage): string {
+  const verdict = VALIDATOR.validate(manifestOf(pkg));
+  if (!verdict.admitted) throw new Error(`the fixture manifest of ${pkg.name} is refused`);
+  return grammarSha256(verdict.manifest.engines[0]?.sqlText.grammar);
 }
 
 /** The entry of `pkg`: a record whose every function calls its hook, offering exactly the calls `pkg` offers. */

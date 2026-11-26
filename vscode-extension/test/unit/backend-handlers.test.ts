@@ -1936,8 +1936,8 @@ describe("query/target", () => {
   });
 
   it("offers a confirmation for a statement a row's claim would spare when Studio's review record does not list the claim", async () => {
-    // A row that decides alone is the gate's whole answer only where the record lists its claim
-    // (`CONFIRMATION_CLAIM_REVIEW`); this one is planted under trino, whose text is SQL, so the DROP is read as SQL.
+    // A row that decides alone is the gate's whole answer only where the engine's register row grants its claim
+    // (`legacyEngineGrants`); this one is planted under trino, whose text is SQL, so the DROP is read as SQL.
     const table = NON_SQL_DESTRUCTIVE_VOCABULARY as unknown as Record<string, unknown>;
     assert.equal(Object.hasOwn(table, "trino"), false);
     table.trino = { operations: new Set<string>(), read: () => [], decidesAlone: true };

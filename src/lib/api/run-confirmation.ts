@@ -8,8 +8,9 @@
  * offers: for an engine whose record offers Studio's statement vocabulary rows (`EngineOffers.statementVocabulary`),
  * `confirmationVerdict`, the reading the web editor's dialog and `POST /api/db/statement/analyze` take; for any other
  * engine, `packageConfirmationVerdict`, the statement read under the grammar the record holds
- * (`EngineRecord.statementGrammar`, the one a package's declaration states), with every claim that loosens the gate
- * uncounted (docs/providers/CONTRACT.md, clause S-8). It then decides what the request gets, by the request's
+ * (`EngineRecord.statementGrammar`, the one a package's declaration states) with the claims that loosen the gate the
+ * record grants (`EngineRecord.grants`), every statement asked where no register row reviewed that grammar
+ * (docs/providers/CONTRACT.md, clause S-8). It then decides what the request gets, by the request's
  * `confirmation` field and the mode (`LIBREDB_RUN_CONFIRMATION`):
  *
  * | Mode | `confirmation` | Verdict run | Verdict confirm | Verdict refuse |
@@ -185,7 +186,7 @@ export async function gateRun(request: RunGateRequest, clock: () => number = Dat
     const { type } = legacyConnection(engine, connection);
     verdict = () => confirmationVerdict(sql, type, name, environment);
   } else {
-    verdict = () => packageConfirmationVerdict(sql, engine.statementGrammar, name, environment);
+    verdict = () => packageConfirmationVerdict(sql, engine.statementGrammar, engine.grants, name, environment);
   }
   return gate({ ...request, verdict }, clock);
 }

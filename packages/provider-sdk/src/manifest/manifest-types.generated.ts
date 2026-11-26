@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "46cc38d4da46572aab4a2ea62aa95422c006de72a2d02f38fe295f599bf176e9";
+export const MANIFEST_SCHEMA_SHA256 = "31d26afbff122da23e0be62136cd8bd14919e9a41dc8080606ce5dd90d9adbab";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -824,7 +824,7 @@ export type CredentialFlag = string;
 
 /** The engine's SQL text facts: whether its statement text is SQL, the grammar Studio's SQL readers read a statement's structure with, how a statement is redacted before the query event log keeps it, the words the update target reader needs beyond the grammar, and how completion quotes and reads qualified names. */
 export interface SqlText {
-  /** Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it, and every other reader reads it as declared. */
+  /** Whether the engine's statement text is SQL. False is a claim that loosens the confirmation gate, which the gate and the query event log count only where Studio grants it, from the engine's register row for the grammar the row reviewed, and every other reader reads it as declared. */
   readonly readsSqlText: boolean;
   readonly grammar: GrammarFacts;
   readonly redaction: StatementRedaction;
@@ -872,7 +872,7 @@ export interface GrammarFacts {
   readonly confirmCodeForms: readonly CodeForm[];
   /** Keyword sequences that ask only when a code word also appears in the statement's code after them; empty where the engine adds none. */
   readonly confirmFormsWhen: readonly ConditionalForm[];
-  /** Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio's review record lists it; empty where every shared keyword asks. */
+  /** Keyword sequences led by a shared dangerous keyword that do not ask on the engine, each a claim that loosens the confirmation gate, which the gate counts only where Studio grants it, from the engine's register row for the grammar the row reviewed; empty where every shared keyword asks. */
   readonly confirmExemptForms: readonly KeywordSequence[];
   readonly formatterLanguage: FormatterLanguage;
   readonly completionWords: CompletionWords;
