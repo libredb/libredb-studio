@@ -6,12 +6,18 @@
  */
 import { describe, expect, test } from "bun:test";
 import schema from "../src/register.schema.json";
-import type { RegisterAgentReading, RegisterGrants, RegisterRow, RegisterStatementLanguage } from "../src/index";
+import type {
+  RegisterAgentReading,
+  RegisterGrants,
+  RegisterRedaction,
+  RegisterRow,
+  RegisterStatementLanguage,
+} from "../src/index";
 
 /** A grant member's vocabulary in the schema's terms: the keywords that decide its TypeScript type. */
 type Shape =
   | { readonly type: "boolean" | "string" | readonly ["string", "null"] }
-  | { readonly enum: readonly (string | null)[] }
+  | { readonly enum: readonly (string | null | { readonly [key: string]: string | null })[] }
   | { readonly type: "array"; readonly items: Shape }
   | { readonly type: readonly ["object", "null"]; readonly properties: { readonly [key: string]: Shape } };
 
@@ -92,6 +98,20 @@ const GRANT_SHAPES = {
   servesOneSession: { type: ["string", "null"] },
   agentExecution: { type: "boolean" },
   ownWords: { enum: ["scrubbed", "code-only"] },
+  redaction: {
+    enum: [
+      { kind: "none" },
+      { kind: "sql", nameQuote: '"' },
+      { kind: "sql", nameQuote: "`" },
+      { kind: "sql", nameQuote: "[" },
+      { kind: "sql", nameQuote: null },
+      { kind: "command", reader: "redactionReader" },
+    ],
+  },
+  readsSqlText: { type: "boolean" },
+  confirmExemptForms: { type: "array", items: { type: "array", items: TEXT } },
+  decidesAlone: { type: "boolean" },
+  grammarSha256: { type: ["string", "null"] },
 } as const satisfies { readonly [M in keyof RegisterGrants]: Shape };
 
 /** Every grant member whose described type is not its `RegisterGrants` type, never when there is none. */
@@ -140,10 +160,11 @@ describe("the types are the schema's", () => {
       Equal<RegisterStatementLanguage | null, RegisterGrants["statementLanguage"]>,
       Equal<readonly RegisterAgentReading[], RegisterGrants["agentReadings"]>,
       Equal<keyof NonNullable<RegisterRow["reasons"]>, keyof RegisterGrants>,
-    ] = [true, true, true, true, true];
+      Equal<RegisterRedaction, RegisterGrants["redaction"]>,
+    ] = [true, true, true, true, true, true];
     const grants = schema.$defs.grants;
 
-    expect(parity).toEqual([true, true, true, true, true]);
+    expect(parity).toEqual([true, true, true, true, true, true]);
     expect(shapeOf(grants, "/$defs/grants")).toEqual({ type: "object", properties: GRANT_SHAPES });
     expect(Object.keys(grants.properties)).toEqual(Object.keys(GRANT_SHAPES));
     expect(Object.keys(schema.$defs.reasons.properties)).toEqual(Object.keys(GRANT_SHAPES));

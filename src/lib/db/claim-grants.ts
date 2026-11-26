@@ -85,6 +85,7 @@ import type {
   AgentCredentialFormClaim,
   AgentReading,
   McpClaims,
+  NameQuote,
   PolicyClaims,
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
@@ -299,6 +300,12 @@ export const AGENT_READING_NAMES: readonly AgentReading[] = Object.freeze([
   "storage",
   "health",
 ]);
+
+/**
+ * The name quotes a `sql` redaction may name, the schema's `nameQuote` enum, in its order: the vocabulary of a `sql`
+ * redaction's `nameQuote`.
+ */
+export const SQL_NAME_QUOTES: readonly NameQuote[] = Object.freeze(['"', "`", "[", null]);
 
 /** Core's sentence for a connection whose file access is denied, on an engine Studio holds no refusal row for. */
 export const UNGRANTED_DENIED_FILE_ACCESS_SENTENCE =

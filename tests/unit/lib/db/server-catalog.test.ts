@@ -828,6 +828,11 @@ describe("a package engine's register row", () => {
     servesOneSession: "The engine serves its object tree from the editor's session in this test.",
     agentExecution: true,
     ownWords: "scrubbed",
+    redaction: { kind: "sql", nameQuote: '"' },
+    readsSqlText: false,
+    confirmExemptForms: [],
+    decidesAlone: true,
+    grammarSha256: null,
   } as const satisfies RegisterGrants;
 
   test("a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists", () => {

@@ -76,6 +76,11 @@
       "type": "string",
       "minLength": 1
     },
+    "keyword": {
+      "description": "One SQL keyword as the confirmation gate compares it, in the form of the SDK manifest's sqlKeyword: an upper-case letter, then up to 63 upper-case letters, digits or underscores.",
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+    },
     "grants": {
       "description": "What the row grants: one member per claim, each in its claim's vocabulary, and every member required, so no grant is left out by omission.",
       "type": "object",
@@ -226,6 +231,41 @@
         "ownWords": {
           "description": "Whether the client receives the engine's own words through core's scrub, or only Studio's sentence naming their code.",
           "enum": ["scrubbed", "code-only"]
+        },
+        "redaction": {
+          "description": "How the query event log keeps a statement of the engine, granted only for the grammar grammarSha256 names: none keeps nothing of its text, sql keeps it with its literals replaced and the closed names in its name quote, and command has Studio's command reader of the engine answer the text kept, which only a legacy row may grant.",
+          "enum": [
+            { "kind": "none" },
+            { "kind": "sql", "nameQuote": "\"" },
+            { "kind": "sql", "nameQuote": "`" },
+            { "kind": "sql", "nameQuote": "[" },
+            { "kind": "sql", "nameQuote": null },
+            { "kind": "command", "reader": "redactionReader" }
+          ]
+        },
+        "readsSqlText": {
+          "description": "Whether the confirmation gate reads the engine's statement text as SQL, granted false only for the grammar grammarSha256 names.",
+          "type": "boolean"
+        },
+        "confirmExemptForms": {
+          "description": "The keyword sequences, each led by a shared dangerous keyword, that do not ask the confirmation gate on the engine, granted only for the grammar grammarSha256 names.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/keyword"
+            }
+          },
+          "uniqueItems": true
+        },
+        "decidesAlone": {
+          "description": "Whether the engine's statement vocabulary is the confirmation gate's whole answer, granted only for the grammar grammarSha256 names.",
+          "type": "boolean"
+        },
+        "grammarSha256": {
+          "description": "The SHA-256, in lower-case hex, of the canonical text of the grammar LibreDB reviewed the engine's SQL text claims with: the grammar as JSON with no white space, every object's members in ascending code-unit order and every list in its own order. Null where the row reviews no grammar, so every SQL text claim is read at its restrictive value.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{64}$"
         }
       },
       "required": [
@@ -249,7 +289,12 @@
         "agentReadings",
         "servesOneSession",
         "agentExecution",
-        "ownWords"
+        "ownWords",
+        "redaction",
+        "readsSqlText",
+        "confirmExemptForms",
+        "decidesAlone",
+        "grammarSha256"
       ],
       "additionalProperties": false
     },
@@ -277,7 +322,12 @@
         "agentReadings": { "$ref": "#/$defs/text" },
         "servesOneSession": { "$ref": "#/$defs/text" },
         "agentExecution": { "$ref": "#/$defs/text" },
-        "ownWords": { "$ref": "#/$defs/text" }
+        "ownWords": { "$ref": "#/$defs/text" },
+        "redaction": { "$ref": "#/$defs/text" },
+        "readsSqlText": { "$ref": "#/$defs/text" },
+        "confirmExemptForms": { "$ref": "#/$defs/text" },
+        "decidesAlone": { "$ref": "#/$defs/text" },
+        "grammarSha256": { "$ref": "#/$defs/text" }
       },
       "additionalProperties": false
     }
