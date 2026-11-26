@@ -23,6 +23,7 @@ import type { KeyOrder, OrderVerdict } from "@/lib/db/providers/keyvalue/oxia/or
 import { discoverTopNodes, type OxiaSurface } from "@/lib/db/providers/keyvalue/oxia/walks";
 import { createFakeOxiaClient, type FakeOxiaClient } from "../../../helpers/oxia-fake-client";
 import { pulsarKeyset, sortedKeys } from "../../../helpers/oxia-keyset";
+import { OXIA_KEY_SCAN_DEFAULT_COUNT, OXIA_KEY_SCAN_MAX_COUNT } from "@/lib/db/providers/keyvalue/oxia/constants";
 
 const call = (): OxiaCallOptions => ({ signal: new AbortController().signal, deadline: Date.now() + 10_000 });
 
@@ -257,5 +258,12 @@ describe("the pages", () => {
     const pages = await walkAll(surface, { count: 500 });
     for (const each of pages) expect("skipped" in each).toBe(false);
     expect(new Set(pages.flatMap((each) => each.keys))).toEqual(new Set(keys));
+  });
+});
+
+describe("the Keys panel's counts", () => {
+  test("the declared default and largest counts are key-scan.ts's", () => {
+    expect(OXIA_KEY_SCAN.defaultCount).toBe(OXIA_KEY_SCAN_DEFAULT_COUNT);
+    expect(OXIA_KEY_SCAN.maxCount).toBe(OXIA_KEY_SCAN_MAX_COUNT);
   });
 });

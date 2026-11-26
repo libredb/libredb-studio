@@ -20,6 +20,9 @@ import {
   OXIA_HEALTH_DEADLINE_MS,
   OXIA_SNAPSHOT_TTL_MS,
   OXIA_SURFACE_DEADLINE_MS,
+  OXIA_RUN_BYTE_BUDGET,
+  OXIA_RECEIVE_CAP_BYTES,
+  OXIA_LIMITER_OPTIONS,
 } from "@/lib/db/providers/keyvalue/oxia/constants";
 import {
   deadlineSeconds,
@@ -706,5 +709,16 @@ describe("the surfaces, delegated", () => {
     const refusal = provider.runMaintenance();
     await expect(refusal).rejects.toBeInstanceOf(QueryError);
     await expect(refusal).rejects.toThrow(OXIA_LABELS.vacuumGlobalDesc);
+  });
+});
+
+/** A byte size as the sentences write it. */
+const mib = (bytes: number): string => `${bytes / (1024 * 1024)} MiB`;
+
+describe("the memory the run permits may hold", () => {
+  test("every permit's run budget and receive cap add up to 384 MiB", () => {
+    const permits = OXIA_LIMITER_OPTIONS.perEngine;
+    const perPermit = OXIA_RUN_BYTE_BUDGET + OXIA_RECEIVE_CAP_BYTES;
+    expect(mib(permits * perPermit)).toBe("384 MiB");
   });
 });

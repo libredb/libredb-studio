@@ -1676,3 +1676,52 @@ describe("tests/live/oxia-seed-raw.ts, the one writer", () => {
     finds(seederRoutingFindings(unrouted), "does not import shardFor from oxia/routing");
   });
 });
+
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+/**
+ * Prose is one sentence per line, so a sentence that spans lines is compared with its line breaks read as spaces.
+ * A placeholder outside a code span is written `\<n\>`, since a bare `<n>` is an HTML tag a renderer hides, and is
+ * compared as the sentence writes it.
+ */
+const flat = (text: string): string => text.replace(/\s*\n\s*/g, " ").replace(/\\([<>])/g, "$1");
+/** Whether line `at` of `lines` is inside a fenced block. */
+const inFence = (lines: readonly string[], at: number): boolean =>
+  lines.slice(0, at).filter((line) => line.startsWith("```")).length % 2 === 1;
+/** The section under the heading line `heading`, up to the next heading of its level or above. */
+function sectionOf(text: string, heading: string): string {
+  const lines = text.split("\n");
+  const start = lines.indexOf(heading);
+  if (start < 0) throw new Error(`no heading ${heading}`);
+  const level = heading.indexOf(" ");
+  const end = lines.findIndex(
+    (line, at) => at > start && /^#{1,6} /.test(line) && line.indexOf(" ") <= level && !inFence(lines, at),
+  );
+  return lines.slice(start, end < 0 ? lines.length : end).join("\n");
+}
+
+/** The part of `database-compose.yml` the fixtures section is held to. */
+interface ComposeFile {
+  readonly services: Readonly<Record<string, { readonly profiles?: readonly string[] }>>;
+}
+
+describe("the fixtures README and the compose file", () => {
+  test("the fixtures README holds the version note and the digests of its two server versions", () => {
+    const fixtureReadme = read("docker/oxia/README.md");
+    expect(flat(fixtureReadme)).toContain(VERSION_NOTE);
+    const digests = flat(sectionOf(fixtureReadme, "## Server versions")).match(/sha256:[0-9a-f]{64}/g) ?? [];
+    expect(digests).toHaveLength(2);
+  });
+
+  test("the compose file's Oxia services and profiles", () => {
+    const compose = parseYaml(read("database-compose.yml")) as ComposeFile;
+    const oxia = Object.entries(compose.services).filter(([name]) => name.startsWith("oxia"));
+    const plain = oxia.filter(([, service]) => service.profiles === undefined).map(([name]) => name);
+    expect(plain).toEqual(["oxia", "oxia-seed"]);
+    const profiles = [...new Set(oxia.flatMap(([, service]) => service.profiles ?? []))].sort();
+    expect(profiles).toEqual(["oxia-017", "oxia-auth", "oxia-cluster", "oxia-natural"]);
+  });
+
+  test("the fixtures README holds the version note word for word", () => {
+    expect(flat(read("docker/oxia/README.md"))).toContain(VERSION_NOTE);
+  });
+});
