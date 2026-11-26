@@ -95,14 +95,13 @@ function isStringList(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
-/** Whether `value` is a string that compiles as a regular expression in the Unicode mode a pattern is read in. */
-function compiles(value: unknown): boolean {
-  if (typeof value !== "string") return false;
+/** `value` compiled in the Unicode mode a pattern is read in, or null when it is no string or does not compile. */
+function compiled(value: unknown): RegExp | null {
+  if (typeof value !== "string") return null;
   try {
-    new RegExp(value, "u");
-    return true;
+    return new RegExp(value, "u");
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -143,7 +142,7 @@ function schemaProblems(schema: unknown): string[] {
       }
     }
     if (own(node, "enum") && !Array.isArray(node.enum)) badValue(pointer, "enum", "a list");
-    if (own(node, "pattern") && !compiles(node.pattern)) {
+    if (own(node, "pattern") && compiled(node.pattern) === null) {
       badValue(pointer, "pattern", "a string that compiles as a Unicode regular expression");
     }
     for (const keyword of ["minLength", "maxLength"]) {
