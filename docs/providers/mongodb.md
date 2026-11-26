@@ -63,11 +63,11 @@ state/instrumentation helpers (see [Redis doc §2.3](./redis.md) for the shared 
 
 ### Registration
 
-Loaded on demand by the legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mongodb': {
-  const { MongoDBProvider } = await import('@/lib/db/providers/document/mongodb');
+  const { MongoDBProvider } = await import('./providers/document/mongodb');
   return new MongoDBProvider(connection, options, context);
 }
 ```

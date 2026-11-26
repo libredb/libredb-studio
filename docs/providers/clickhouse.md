@@ -149,13 +149,14 @@ so a positional `?` never applies, and `query()` throws rather than send one unb
 
 ### 2.4 Registration & lifecycle
 
-The legacy adapter's open wires ClickHouse in via a dynamic import inside `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
+The factory wires ClickHouse in via a dynamic import inside `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'clickhouse': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
-  const { ClickHouseProvider } = await import('@/lib/db/providers/sql/clickhouse/index');
+  const { ClickHouseProvider } = await import('./providers/sql/clickhouse/index');
   return new ClickHouseProvider(connection, options, context);
 }
 ```

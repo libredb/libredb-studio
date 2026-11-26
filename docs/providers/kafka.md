@@ -94,7 +94,7 @@ Nothing Kafka-specific lives in the base class.
 
 ### 2.4 Registration & lifecycle
 
-The legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), builds it with a dynamic import when `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens a Kafka connection, so no other engine loads this module, and the client library itself loads only when the first Kafka connection connects.
+The factory builds it through `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) with a dynamic import, so no other engine loads this module, and the client library itself loads only when the first Kafka connection connects.
 Its `DB_UI_CONFIG` entry draws it in `text-hue-green`, because Kafka's own mark is black, which is no identity hue, and `SHOWCASE_RANK` places it on the login showcase behind Prometheus and ahead of libSQL.
 The constructor validates nothing and opens nothing, so a provider built only to read its declarations touches no socket.
 `connect()` validates the connection ([§4](#4-connection)) before any client exists, builds the client, and reads the brokers once, forced past the client's cache, which proves a broker answers the protocol at that address with that credential.

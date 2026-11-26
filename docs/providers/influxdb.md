@@ -48,7 +48,7 @@ Documented as untested, and claimed nowhere until a probe measures one: InfluxDB
 `InfluxDBProvider` extends `BaseDatabaseProvider` in the `timeseries` family.
 The directory `src/lib/db/providers/timeseries/influxdb/` serves two type-ids, one per query language: this one, and `influxdb3`, "InfluxDB 3 (SQL)", which reads InfluxDB 3 in Apache DataFusion SQL over `/api/v3/query_sql` and is documented in [influxdb3.md](./influxdb3.md).
 The two classes share the connection layer and nothing else: no `influxql-*` module imports an `sql-*` module, nor the reverse.
-The legacy adapter's open (`src/lib/provider-host/legacy-adapter/open.ts`) imports the directory's `index.ts`, which re-exports the two provider classes and nothing else.
+The factory imports the directory's `index.ts`, which re-exports the two provider classes and nothing else.
 
 ### 2.2 Modules
 
@@ -67,7 +67,7 @@ The legacy adapter's open (`src/lib/provider-host/legacy-adapter/open.ts`) impor
 | `influxql-results.ts`, `influxql-objects.ts` | A `/query` answer as a result, and the object surface |
 | `influxql-provider.ts` | The provider: lifecycle, declarations, the connect sequence and each call's permit, deadline and error context |
 | `sql-*.ts` | The `influxdb3` type's modules ([influxdb3.md](./influxdb3.md)) |
-| `index.ts` | The composition root the legacy adapter's open imports |
+| `index.ts` | The composition root the factory imports |
 
 The lexer, the policy, `influxql-quote.ts` and `influxql-generators.ts` are pure and shipped to the browser, because the editor, the confirmation gate and the tree read them; they import only each other and types.
 The lexer and the policy live in the influxql statement language's core family module, `src/lib/languages/influxql/`, with the confirmation gate's row (`destructive.ts`) and the agent's statement reader (`agent-statement.ts`), because core reads them too ([PROVIDER_IMPORTS.md](../PROVIDER_IMPORTS.md)); the quoter and the generators stay in the provider directory.

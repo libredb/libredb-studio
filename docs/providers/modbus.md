@@ -42,7 +42,7 @@ request lists what a device holds, and no register carries a name, a type or a u
 ### 2.1 Where it sits
 
 `src/lib/db/providers/industrial/modbus/`, reached through `createDatabaseProvider` in
-`src/lib/db/factory.ts` and built by `openLegacyEngine` in `src/lib/provider-host/legacy-adapter/open.ts`. No library: the client is this repository's own over the shared egress
+`src/lib/db/factory.ts`. No library: the client is this repository's own over the shared egress
 rule, as RabbitMQ's AMQP read client is.
 
 ### 2.2 Modules

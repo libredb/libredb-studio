@@ -133,9 +133,9 @@ The driver is imported lazily via `loadSQLiteDriver()`
 ### Registration
 
 ```ts
-// src/lib/provider-host/legacy-adapter/open.ts
+// factory.ts
 case "sqlite": {
-  const { SQLiteProvider } = await import("@/lib/db/providers/sql/sqlite");
+  const { SQLiteProvider } = await import("./providers/sql/sqlite");
   return new SQLiteProvider(connection, options, context);
 }
 ```

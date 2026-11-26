@@ -54,7 +54,7 @@ No `sql-*` module imports an `influxql-*` module, and no `influxql-*` module imp
 | `routes.ts`, `client.ts` | Shared: the closed route tables, and the only client that builds a request from them |
 | `versions.ts`, `errors.ts` | Shared: the version from `/ping` and `/health`, and the one error table of both types |
 | `run-database.ts`, `monitoring.ts`, `labels.ts` | Shared: the session database, the overview and health, the labels of both types |
-| `index.ts` | The two provider classes the legacy adapter's open imports, and nothing else |
+| `index.ts` | The two provider classes the factory imports, and nothing else |
 
 ### 2.3 Registration & lifecycle
 

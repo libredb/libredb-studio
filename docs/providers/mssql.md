@@ -69,11 +69,11 @@ DatabaseProvider (interface) → BaseDatabaseProvider → SQLBaseProvider → MS
 
 ### Registration
 
-Loaded on demand by the legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
+Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'mssql': {
-  const { MSSQLProvider } = await import('@/lib/db/providers/sql/mssql');
+  const { MSSQLProvider } = await import('./providers/sql/mssql');
   return new MSSQLProvider(connection, options, context);
 }
 ```

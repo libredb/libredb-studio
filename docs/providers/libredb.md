@@ -70,7 +70,7 @@ src/lib/db/
 ├── types.ts                  # DatabaseProvider interface + all DTOs
 ├── errors.ts                 # DatabaseError hierarchy
 ├── map-database-error.ts     # mapDatabaseError(): a native driver error onto that hierarchy
-├── factory.ts                # createDatabaseProvider() and the provider cache
+├── factory.ts                # createDatabaseProvider() — dynamic import per type + provider cache
 └── providers/
     ├── sql/                  # postgres, mysql, sqlite, oracle, mssql (extend SQLBaseProvider)
     ├── document/             # mongodb
@@ -110,11 +110,13 @@ out in parallel.
 
 The object tree reads on the editor's one handle, never on a metadata session of its own, because LibreDB keeps one read-write handle per database file and refuses a second open ((docs/providers/CONTRACT.md, clause C-66)).
 
-The legacy adapter's open wires LibreDB in via a dynamic import, so the `@libredb/libredb` driver is only loaded when a LibreDB connection is actually opened by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)), through `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)):
+The factory wires LibreDB in via a dynamic import so the `@libredb/libredb` driver is only loaded
+when a LibreDB connection is actually opened by `createDatabaseProvider()`
+([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'libredb': {
-  const { LibreDBProvider } = await import('@/lib/db/providers/embedded/libredb');
+  const { LibreDBProvider } = await import('./providers/embedded/libredb');
   return new LibreDBProvider(connection, options, context);
 }
 ```

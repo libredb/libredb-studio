@@ -80,7 +80,7 @@ Inside `src/lib/db` nothing branches on the type id: what differs is declared by
 
 ### 2.3 Registration & lifecycle
 
-`openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through, builds `DatabendProvider` for the `databend` type.
+`createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) builds `DatabendProvider` for the `databend` type.
 The constructor validates nothing and opens nothing, so a provider built from any connection answers its capabilities and labels.
 `connect()` builds the connection options, which refuse a bad field before any socket, opens the transport, runs `SELECT version() AS server_version` under the surface deadline, then reads the connect-time cautions of section 4.5 best effort; a failure of the probe closes the transport.
 `disconnect()` aborts every statement, waiting or running, and the transport's close kills each running one under its own 5 seconds.

@@ -1279,7 +1279,7 @@ and the ones that disagreed with it were replaced ([3.3](#33-more-rows-than-node
     Measured on the development host: Node 24.14.0 answered `::1` and nothing happened; Bun 1.4.2
     answered `fe80::18aa:2794:76e0:ef24%15` and the error arrived uncaught. Two things follow, both
     in this provider: `hostname-guard.ts` turns that throw into the error callback the library
-    already handles (it falls back to `os.hostname()`), and the legacy adapter's open imports the library when a
+    already handles (it falls back to `os.hostname()`), and the factory imports the library when a
     session is opened rather than when a provider is built, so nothing that merely constructs a
     connection loads it.
 15. **Agent and MCP reads load the plant server.** One read proves its read roots before it answers,
