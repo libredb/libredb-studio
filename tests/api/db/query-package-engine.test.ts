@@ -743,6 +743,63 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read", async () => {
+    const connection = connectionOf(MAIN);
+    const secret = connection.password as string;
+    let getterRuns = 0;
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      hooksFor(MAIN, {
+        execute: () =>
+          Promise.resolve({
+            results: [source([["alpha", 1]])],
+            warnings: [
+              { message: `deprecated, as ${secret} said`, code: "W01", severity: "WARNING" },
+              { message: "ok", detail: `driver said: ${secret}` },
+              { message: 7, code: secret },
+              { message: "ok", code: true },
+              { message: "ok", severity: 1 },
+              Object.defineProperty({}, "message", {
+                enumerable: true,
+                get: () => {
+                  getterRuns += 1;
+                  return secret;
+                },
+              }),
+              { message: "ok", [Symbol("detail")]: secret },
+              null,
+            ],
+            executionTimeMs: 1,
+            pageApplied: false,
+          }),
+      });
+      const answered = await post({ connection, sql: "SELECT 1" });
+      expect(answered.status).toBe(200);
+      expect(answered.body.warnings).toEqual([
+        { message: "The provider package returned 8 warnings; the server's log holds their words." },
+      ]);
+
+      const lines = warn.mock.calls.filter(([message]) => String(message).startsWith("A provider package's"));
+      expect(lines.map(([message]) => message)).toEqual([
+        "A provider package's execute returned a warning",
+        ...Array.from(
+          { length: 7 },
+          () =>
+            "A provider package's execute returned a warning that is not a message with an optional code and severity; this is its defect.",
+        ),
+      ]);
+      expect(lines[0]?.[1]).toMatchObject({ warning: { code: "W01", severity: "WARNING" } });
+      expect(lines.slice(1).map(([, fields]) => fields)).toEqual(
+        Array.from({ length: 7 }, () => ({ route: "api/db/query" })),
+      );
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(secret);
+      expect(getterRuns).toBe(0);
+    } finally {
+      warn.mockRestore();
+      hooksFor(MAIN);
+    }
+  });
+
   test("the session is opened once per key and reused by the next query", async () => {
     const seen = hooksFor(BARE);
     const connection = connectionOf(BARE);

@@ -2865,6 +2865,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/api/db/query-package-engine.test.ts": [
         "a package's error answers Studio's sentence naming its code, and its words go to the log only",
         "a package's warnings reach the client only as Studio's sentence with their count, each logged once through core's scrub",
+        "a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read",
         "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
         "a package engine whose register row grants its own words answers its warnings through core's scrub",
       ],

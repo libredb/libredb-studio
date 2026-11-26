@@ -10,7 +10,8 @@
  * it is the package's defect too, and its log line names the package as the author (`PACKAGE_DEFECT_PREFIX`), where
  * the accessor's message names Studio; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
  * defect, and is answered as Studio's own internal error. A package's warnings, where no row grants its own words,
- * reach the client only as Studio's sentence naming their count, each logged once through the same scrub.
+ * reach the client only as Studio's sentence naming their count, each logged once through the same scrub, or as the
+ * package's defect where it is not the contract's `Warning` (`packageWarnings`).
  */
 import { type CallRefusalRule, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
@@ -104,19 +105,60 @@ export function logPackageFailure(call: string, error: unknown, scrub: ProviderT
   logPackageError(call, error instanceof HostDefectError ? packageDefect(error) : error, scrub, route);
 }
 
+/** Studio's sentence for a warning a provider package answered that is not the contract's `Warning` (`packageWarning`). */
+export const PACKAGE_WARNING_DEFECT =
+  "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.";
+
+/** The members a warning of the contract's `Warning` has: its message, and its optional code and severity. */
+const WARNING_MEMBERS: ReadonlySet<string> = new Set(["message", "code", "severity"]);
+
+/**
+ * A warning a provider package answered, rebuilt from its own data members, or null where it is not the contract's
+ * `Warning`: not an object, a member outside `WARNING_MEMBERS` or one read through a getter, a message that is not
+ * text, a code that is neither text nor a number, or a severity that is not text. The host core passes a package's
+ * warnings on as the package answered them, so only the members read here can reach the client or the server's log, and
+ * no getter of the package runs while Studio builds its answer or its log line.
+ */
+export function packageWarning(warning: unknown): QueryWarning | null {
+  if (typeof warning !== "object" || warning === null) return null;
+  const read: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(warning)) {
+    const descriptor = Object.getOwnPropertyDescriptor(warning, key);
+    if (typeof key !== "string" || !WARNING_MEMBERS.has(key) || descriptor === undefined || !("value" in descriptor)) {
+      return null;
+    }
+    read[key] = descriptor.value;
+  }
+  const { message, code, severity } = read;
+  if (typeof message !== "string") return null;
+  if (code !== undefined && typeof code !== "string" && typeof code !== "number") return null;
+  if (severity !== undefined && typeof severity !== "string") return null;
+  return { message, ...(code !== undefined && { code }), ...(severity !== undefined && { severity }) };
+}
+
 /**
  * The warnings a client receives for `warnings`, the ones a provider package's `call` answered: none for none, and
- * otherwise Studio's one sentence naming their count, each warning logged once under `route`, its words through core's
- * scrub of the connection.
+ * otherwise Studio's one sentence naming their count. Each warning is logged once under `route`: rebuilt from the
+ * contract's members by `packageWarning` and its words through core's scrub of the connection, or, where it is not the
+ * contract's `Warning`, as the package's defect in Studio's own words, none of its members read.
  */
 export function packageWarnings(
   call: string,
-  warnings: readonly QueryWarning[],
+  warnings: readonly unknown[],
   scrub: ProviderTextScrub,
   route: string,
 ): QueryWarning[] {
   if (warnings.length === 0) return [];
-  for (const warning of scrubProviderWarnings(scrub, warnings)) {
+  for (const answered of warnings) {
+    const rebuilt = packageWarning(answered);
+    if (rebuilt === null) {
+      logger.warn(
+        `A provider package's ${call} returned a warning that is not a message with an optional code and severity; this is its defect.`,
+        { route },
+      );
+      continue;
+    }
+    const [warning] = scrubProviderWarnings(scrub, [rebuilt]);
     logger.warn(`A provider package's ${call} returned a warning`, { route, warning });
   }
   const count = warnings.length === 1 ? "1 warning" : `${warnings.length} warnings`;

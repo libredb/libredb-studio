@@ -133,4 +133,19 @@ describe("packageWarnings", () => {
       ["A provider package's execute returned a warning", { route: ROUTE, warning: { message: words, code: 7 } }],
     ]);
   });
+
+  test("logs a warning outside the contract's members as the package's defect, under the route alone", () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    spies.push(warn);
+    const words = `words the package wrote ${randomUUID()}`;
+    expect(packageWarnings("execute", [{ message: "ok", detail: words }], scrub, ROUTE)).toEqual([
+      { message: "The provider package returned 1 warning; the server's log holds their words." },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        "A provider package's execute returned a warning that is not a message with an optional code and severity; this is its defect.",
+        { route: ROUTE },
+      ],
+    ]);
+  });
 });

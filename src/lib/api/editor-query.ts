@@ -17,7 +17,7 @@ import {
 } from "@libredb/provider-sdk/calls";
 import { encodeValue } from "@libredb/provider-sdk/values";
 import { firstResultSet } from "@/lib/api/first-result-set";
-import { packageWarnings } from "@/lib/api/package-errors";
+import { PACKAGE_WARNING_DEFECT, packageWarning, packageWarnings } from "@/lib/api/package-errors";
 import { pageOfProbe, pageOptionError } from "@/lib/api/page-probe";
 import { connectBudgetFor, openDeadlineSentence } from "@/lib/db/connect-budget";
 import { consoleTextByteLimit, consoleTextOverLimit } from "@/lib/db/destructive-commands";
@@ -618,33 +618,6 @@ function columnDefect(columns: readonly Column[]): string | null {
   return null;
 }
 
-/** The members a warning of the contract's `Warning` has: its message, and its optional code and severity. */
-const WARNING_MEMBERS: ReadonlySet<string> = new Set(["message", "code", "severity"]);
-
-/**
- * A warning a provider package answered, rebuilt from its own data members, or null where it is not the contract's
- * `Warning`: not an object, a member outside `WARNING_MEMBERS` or one read through a getter, a message that is not
- * text, a code that is neither text nor a number, or a severity that is not text. The host core passes a package's
- * warnings on as the package answered them, so only the members read here can reach the client, and no getter of the
- * package runs while Studio builds its answer.
- */
-function packageWarning(warning: unknown): QueryWarning | null {
-  if (typeof warning !== "object" || warning === null) return null;
-  const read: Record<string, unknown> = {};
-  for (const key of Reflect.ownKeys(warning)) {
-    const descriptor = Object.getOwnPropertyDescriptor(warning, key);
-    if (typeof key !== "string" || !WARNING_MEMBERS.has(key) || descriptor === undefined || !("value" in descriptor)) {
-      return null;
-    }
-    read[key] = descriptor.value;
-  }
-  const { message, code, severity } = read;
-  if (typeof message !== "string") return null;
-  if (code !== undefined && typeof code !== "string" && typeof code !== "number") return null;
-  if (severity !== undefined && typeof severity !== "string") return null;
-  return { message, ...(code !== undefined && { code }), ...(severity !== undefined && { severity }) };
-}
-
 /**
  * The warnings a provider package answered, each rebuilt by `packageWarning` and then passed through core's `scrub`.
  *
@@ -655,9 +628,7 @@ function packageOwnWarnings(scrub: ProviderTextScrub, warnings: readonly unknown
   for (const warning of warnings) {
     const rebuilt = packageWarning(warning);
     if (rebuilt === null) {
-      throw new Error(
-        "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.",
-      );
+      throw new Error(PACKAGE_WARNING_DEFECT);
     }
     read.push(rebuilt);
   }
