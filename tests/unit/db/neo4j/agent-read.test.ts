@@ -17,6 +17,9 @@ import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { NEO4J_FIXTURES, neo4jCapture, recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 import { errorKind } from "@/lib/db/error-record";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { NEO4J_BUILT_IN_ROUTINES } from "@/lib/db/providers/graph/neo4j/agent-builtins";
+import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
 
 const BOUNDARY = join(NEO4J_FIXTURES, "agent-boundary");
 const PROOF = Object.values(NEO4J_AGENT_PROOF_STATEMENTS);
@@ -271,5 +274,18 @@ describe("queryReadOnly", () => {
       .catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(TimeoutError);
     expect(statementsOf(recording)).not.toContain(READ);
+  });
+});
+
+describe("the machine access records and the pinned routines", () => {
+  test("Neo4j is run by the agent, exposed over MCP and read through run_cypher_read", () => {
+    expect(AGENT_EXECUTION_ENGINES).toContain("neo4j");
+    expect(MCP_EXPOSABLE.neo4j).toBe(true);
+    expect(MCP_STATEMENT_READ.neo4j).toBe(true);
+    expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
+  });
+
+  test("the built-in routines are pinned to 5.26.31 alone", () => {
+    expect(Object.keys(NEO4J_BUILT_IN_ROUTINES)).toEqual(["5.26.31"]);
   });
 });

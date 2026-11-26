@@ -174,3 +174,62 @@ describe("SSH tunnel", () => {
     expect(tunnelled({ mode: "require" }).uri).toBe("bolt+ssc://127.0.0.1:40000");
   });
 });
+
+/** The panel to the scheme and the CA the endpoint builds, or the refusal it raises. */
+function endpointOf(ssl: Partial<SSLConfig> | undefined, tunnelled = false) {
+  return boltEndpointOf(
+    {
+      host: "graph.internal",
+      port: 7687,
+      ssl: ssl as SSLConfig | undefined,
+      ...(tunnelled ? { [TUNNEL_FAR_END]: { host: "graph.internal", port: 7687 } } : {}),
+    },
+    7687,
+  );
+}
+
+describe("the TLS panel mapped to a scheme, and the endpoint refusals", () => {
+  test.each([
+    ["No TLS panel, or `disable`", [undefined, { mode: "disable" }], "bolt", false],
+    ["`require`", [{ mode: "require" }, { mode: "require", rejectUnauthorized: false }], "bolt+ssc", false],
+    ["`require` with `rejectUnauthorized: true`", [{ mode: "require", rejectUnauthorized: true }], "bolt+s", false],
+    ["`verify-system`, or a panel with no mode", [{ mode: "verify-system" }, {}], "bolt+s", false],
+    [
+      "`verify-ca` or `verify-full` with a pasted CA",
+      [
+        { mode: "verify-ca", caCert: PEM },
+        { mode: "verify-full", caCert: PEM },
+      ],
+      "bolt+s",
+      true,
+    ],
+    ["`verify-ca` or `verify-full` with no CA", [{ mode: "verify-ca" }, { mode: "verify-full" }], "bolt+s", false],
+  ] as const)("%s", (cell, panels, scheme, customCa) => {
+    for (const panel of panels) {
+      const endpoint = endpointOf(panel as Partial<SSLConfig> | undefined);
+      expect(endpoint.uri.startsWith(`${scheme}://`)).toBe(true);
+      expect(endpoint.trustedCertificatePem !== undefined).toBe(customCa);
+    }
+  });
+
+  test.each([
+    ["a client certificate", () => endpointOf({ mode: "verify-full", clientCert: PEM, clientKey: "key" })],
+    ["a verifying mode through an SSH tunnel", () => endpointOf({ mode: "verify-full" }, true)],
+    [
+      "a user name in the host",
+      () => boltEndpointOf({ host: `reader:${crypto.randomUUID()}@graph.internal`, port: 7687 }, 7687),
+    ],
+  ])("%s is refused", (_label, build) => {
+    let sentence: string | undefined;
+    try {
+      build();
+    } catch (error) {
+      sentence = (error as Error).message;
+    }
+    expect(sentence).toBeDefined();
+  });
+
+  test("require without verification through a tunnel is allowed", () => {
+    expect(endpointOf({ mode: "require" }, true).uri).toBe("bolt+ssc://graph.internal:7687");
+  });
+});

@@ -5,12 +5,22 @@
  * gate, the gate skipped for a SHOW form as `GraphBaseProvider` skips it.
  */
 import { describe, expect, test } from "bun:test";
-import { GraphClientError, type GraphRunOptions, type GraphRunResult } from "@/lib/db/graph/bolt/client";
+import {
+  GraphClientError,
+  type GraphRunOptions,
+  type GraphRunResult,
+  type GraphClient,
+} from "@/lib/db/graph/bolt/client";
 import { type CypherReadVerdict, checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import type { GraphPolicyProfile } from "@/lib/db/graph/profile";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { neo4jStatementGate } from "@/lib/db/providers/graph/neo4j/statement-gate";
 import { neo4jCapture, recordedGraphClient } from "../../../helpers/neo4j-fixtures";
+import path from "node:path";
+import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
+import { NEO4J_MONITORING_STATEMENTS } from "@/lib/db/providers/graph/neo4j/monitoring-reads";
+import { type DatabaseConnection } from "@/lib/types";
+import { readFileSync } from "node:fs";
 
 const OPTIONS: GraphRunOptions = { database: "neo4j", timeoutMs: 5000, maxRows: 500, metadata: { app: "test" } };
 
@@ -178,5 +188,79 @@ describe("neo4jStatementGate", () => {
       if (refusal !== undefined) classifiedS.push(`${form.join(" ")} ${refusal.subject}`);
     }
     expect(classifiedS).toEqual(["DATABASES s", "DATABASE * s", "DEFAULT DATABASE s", "HOME DATABASE s"]);
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+/** A client whose every run answers `answer`. */
+function answering(answer: Partial<GraphRunResult>): Pick<GraphClient, "run"> {
+  return {
+    run: async () => ({ fields: [], rows: [], truncated: false, ...answer }),
+  };
+}
+const RUN_OPTIONS = { timeoutMs: 30_000, maxRows: 0 } as const;
+const CONNECTION: DatabaseConnection = {
+  id: "neo4j-doc",
+  name: "Neo4j",
+  type: "neo4j",
+  host: "neo4j.internal",
+  port: 7687,
+  database: "neo4j",
+  createdAt: new Date(0),
+};
+const SERVER_WORDS = "<the server's words>";
+/** A connected provider over a client that answers the version read and fails every other run with SERVER_WORDS. */
+async function connectedProvider(): Promise<Neo4jProvider> {
+  const client: GraphClient = {
+    verify: async () => ({ address: "neo4j.internal:7687", agent: "Neo4j/5.26.31", protocolVersion: "5.5" }),
+    run: async (statement) => {
+      if (statement === NEO4J_MONITORING_STATEMENTS.components) {
+        return {
+          fields: ["name", "versions", "edition"],
+          rows: [{ name: "Neo4j Kernel", versions: ["5.26.31"], edition: "community" }],
+          truncated: false,
+        };
+      }
+      throw new GraphClientError("query", SERVER_WORDS);
+    },
+    close: async () => {},
+  };
+  const provider = new Neo4jProvider(CONNECTION, {}, {}, () => client);
+  await provider.connect();
+  return provider;
+}
+async function providerRefusal(text: string, params?: unknown[]): Promise<string> {
+  const provider = await connectedProvider();
+  try {
+    // The rejection is captured, not caught, so a statement the provider ran fails here and not as a row mismatch.
+    const failure = await provider.query(text, params).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    if (!(failure instanceof Error)) throw new Error(`the provider ran ${text}`);
+    return failure.message;
+  } finally {
+    await provider.disconnect();
+  }
+}
+
+describe("the gate's refusal, an allowlisted procedure and LOAD CSV's classification", () => {
+  test("the gate's check that failed, the server's words after the provider's", async () => {
+    const sentence = await providerRefusal("MATCH (n) RETURN n");
+    expect(sentence.endsWith(SERVER_WORDS)).toBe(true);
+  });
+
+  test("an allowlisted procedure the server classifies s runs", async () => {
+    const verdict = checkCypherRead("CALL dbms.components()", NEO4J_POLICY_PROFILE);
+    if (!verdict.allowed) throw new Error("the policy refused dbms.components");
+    expect(await neo4jStatementGate(answering({ queryType: "s" }), verdict, RUN_OPTIONS)).toBeUndefined();
+  });
+
+  test("the gate alone would pass LOAD CSV: the capture classifies it r", () => {
+    const capture = JSON.parse(read("tests/fixtures/neo4j/5.26.31/explain-load-csv.json")) as {
+      result: GraphRunResult;
+    };
+    expect(capture.result.queryType).toBe("r");
   });
 });

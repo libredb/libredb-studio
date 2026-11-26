@@ -25,6 +25,13 @@ import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { neo4jStatementGate } from "@/lib/db/providers/graph/neo4j/statement-gate";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import { recordedGraphClient } from "../../../helpers/neo4j-fixtures";
+import path from "node:path";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { WRITE_REACH } from "@/lib/db/compatibility";
+import { SeedConfigSchema } from "@/lib/seed/types";
+import { readFileSync } from "node:fs";
+import { parse as parseYAML } from "yaml";
 
 const NEO4J: DatabaseType = "neo4j";
 
@@ -310,5 +317,106 @@ describe("the monitoring reads", () => {
     ];
     const outcomes = await Promise.allSettled(reads);
     expect(outcomes.map((outcome) => outcome.status)).toEqual(Array(reads.length).fill("rejected"));
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const PROVIDERS_README = read("docs/providers/README.md");
+const SEEDS = read("docs/SEED_CONNECTIONS.md");
+/** A heading's words without its `#` marks and its section number: "### 3.2 The read policy" reads "The read policy". */
+const headingWords = (line: string): string => line.replace(/^#+ /, "").replace(/^\d+(?:\.\d+)*\.?\s+/, "");
+/** Whether line `at` sits inside a fenced block, where a `#` line is a comment and never a heading. */
+function inFence(lines: readonly string[], at: number): boolean {
+  return lines.slice(0, at).filter((line) => line.startsWith("```")).length % 2 === 1;
+}
+/** The text of the section headed `heading` (any level, numbered or not), up to the next heading of its level or above. */
+function docSection(text: string, heading: string): string | undefined {
+  const lines = text.split("\n");
+  const start = lines.findIndex(
+    (line, at) => /^#{1,4} /.test(line) && headingWords(line) === headingWords(heading) && !inFence(lines, at),
+  );
+  if (start < 0) return undefined;
+  const level = /^#+/.exec(lines[start])?.[0].length ?? 2;
+  const end = lines.findIndex(
+    (line, at) =>
+      at > start && /^#+ /.test(line) && (/^#+/.exec(line)?.[0].length ?? 9) <= level && !inFence(lines, at),
+  );
+  return lines.slice(start, end < 0 ? undefined : end).join("\n");
+}
+/** The table row of `text` whose first cell is exactly `cell`, or undefined. */
+const rowOf = (text: string, cell: string): string | undefined =>
+  text.split("\n").find((line) => line.startsWith(`| ${cell} |`));
+/** The body of the first ```yaml block of `text`, or undefined. */
+function yamlBlockOf(text: string): string | undefined {
+  return /```yaml\n([\s\S]*?)\n```/.exec(text)?.[1];
+}
+/** A constant a module keeps to itself, read from its source: `const NAME = 60_000;` or `const NAME = "5.26.";`. */
+function privateText(relative: string, name: string): string {
+  const match = new RegExp(`const ${name} = ("[^"]*"|[\\d_]+);`).exec(read(relative));
+  if (match === null) throw new Error(`${relative} declares no ${name}`);
+  return match[1].startsWith('"') ? match[1].slice(1, -1) : match[1];
+}
+const privateConstant = (relative: string, name: string): number =>
+  Number(privateText(relative, name).replaceAll("_", ""));
+/** The Bolt port, as the provider declares it: `NEO4J_DEFAULT_PORT` is file-local to index.ts. */
+const NEO4J_DEFAULT_PORT = privateConstant("src/lib/db/providers/graph/neo4j/index.ts", "NEO4J_DEFAULT_PORT");
+const NEO4J_TESTED_SERIES = privateText("src/lib/db/providers/graph/neo4j/monitoring.ts", "NEO4J_TESTED_SERIES");
+const RECIPE = docSection(SEEDS, "A read-only Neo4j graph") ?? "";
+const DIALOG_CONNECTION: DatabaseConnection = {
+  id: "neo4j-doc",
+  name: "Neo4j",
+  type: "neo4j",
+  host: "neo4j.internal",
+  port: 7687,
+  database: "neo4j",
+  createdAt: new Date(0),
+};
+
+describe("the tested series, the dialog, the write reach and the repository's Neo4j entries", () => {
+  test("the readers find what exists and nothing that does not", () => {
+    // A `#` comment inside a fenced block is no heading.
+    expect(docSection("## A\n```yaml\n# a comment\n```\nafter\n## B", "## A")).toBe(
+      "## A\n```yaml\n# a comment\n```\nafter",
+    );
+    expect(yamlBlockOf("no block")).toBeUndefined();
+    expect(() => privateConstant("src/lib/db/graph/graph-base-provider.ts", "NO_SUCH_CONSTANT")).toThrow();
+  });
+
+  test("the tested series is 5.26", () => {
+    expect(NEO4J_TESTED_SERIES).toBe("5.26.");
+  });
+
+  const neo4j = DB_UI_CONFIG.neo4j;
+  test("the provider's and the dialog's default port is NEO4J_DEFAULT_PORT", () => {
+    expect(new Neo4jProvider(DIALOG_CONNECTION).getCapabilities().defaultPort).toBe(NEO4J_DEFAULT_PORT);
+    expect(neo4j.defaultPort).toBe(String(NEO4J_DEFAULT_PORT));
+  });
+
+  test("the dialog offers no connection string", () => {
+    expect(neo4j.showConnectionStringToggle).toBe(false);
+  });
+
+  test("the read-only label keeps the promise: the provider has no write path, so the dialog draws no box", () => {
+    expect(READ_ONLY_ENFORCED.neo4j).toBe(true);
+    expect(WRITE_REACH.neo4j).toBe("none");
+  });
+
+  test("a label is never a source: the provider writes no readObjectSource", () => {
+    expect("readObjectSource" in Neo4jProvider.prototype).toBe(false);
+  });
+
+  test("the provider index has its row, and the fixture table its connection", () => {
+    expect(rowOf(PROVIDERS_README, "Neo4j")).toContain("[neo4j.md](./neo4j.md)");
+    const fixture = PROVIDERS_README.split("\n").find((line) => line.startsWith("| Neo4j | `neo4j` | localhost |"));
+    expect(fixture).toContain(`| ${NEO4J_DEFAULT_PORT} |`);
+    expect(fixture).toContain("`password123`");
+  });
+
+  test("the seed recipe loads as a seed file, read-only and offered to MCP clients", () => {
+    const parsed = SeedConfigSchema.safeParse(parseYAML(yamlBlockOf(RECIPE) ?? ""));
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.data?.connections).toHaveLength(1);
+    expect(parsed.data?.connections[0]).toMatchObject({ type: "neo4j", readOnly: true, mcp: true, managed: true });
   });
 });

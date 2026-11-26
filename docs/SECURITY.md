@@ -647,7 +647,7 @@ Under a prefix this set does not name, only a single-key write over a stored pro
 
 **3.10.** The read policy is the boundary and reads tokens, so a keyword inside a string, a comment or a backtick name is never read as one; the statement gate and the READ session are defence in depth.
 Neo4j classifies `LOAD CSV` and `TERMINATE TRANSACTIONS` as reads and READ mode does not stop a `LOAD CSV`, which was measured fetching a private address from the server, so `LOAD`, `TERMINATE` and the `apoc.` and `gds.` namespaces are refused by the policy before anything is sent.
-Every list is `NEO4J_POLICY_PROFILE`, and `docs/providers/neo4j.md` section 3.2 states each entry, pinned by `tests/unit/db/neo4j/provider-doc.test.ts`.
+Every list is `NEO4J_POLICY_PROFILE`, and `docs/providers/neo4j.md` section 3.2 states each entry.
 
 **3.11.** Studio refuses every Qdrant inference object (a text, image or object input with a model) except the local BM25 model, in every release.
 A request with such an input makes the Qdrant server call an inference service that the operator configured, passing the input, any request header ending in -api-key and the caller's identity; some hosted models are billed; and a statement could carry a third-party API key into query history.

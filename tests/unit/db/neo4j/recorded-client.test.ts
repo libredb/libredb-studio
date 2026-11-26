@@ -3,10 +3,11 @@
  * capture the same database and statement are refused instead of one silently answering for the other.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { recordedGraphClient } from "../../../helpers/neo4j-fixtures";
+import path from "node:path";
 
 const dirs: string[] = [];
 
@@ -54,5 +55,41 @@ describe("recordedGraphClient", () => {
 
   test("loads the committed 5.26.31 captures, each key once", () => {
     expect(() => recordedGraphClient()).not.toThrow();
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const CAPTURES_README = read("tests/fixtures/neo4j/5.26.31/README.md");
+const COMPOSE = read("database-compose.yml");
+
+describe("the capture README, the compose image and the committed MCP run", () => {
+  test("the cancellation measurement is the capture README's, and the R02 wording is the client's docblock", () => {
+    const rejected = /rejected the run (\S+ ms) later/.exec(CAPTURES_README)?.[1];
+    const left = /left `SHOW TRANSACTIONS` (\S+ ms) after the abort/.exec(CAPTURES_README)?.[1];
+    expect(rejected).toBeDefined();
+    expect(left).toBeDefined();
+    const wording =
+      "`session.close()` returns in 1 to 3 ms and the transaction leaves `SHOW TRANSACTIONS` within 1.5 s";
+    expect(read("src/lib/db/graph/bolt/bolt-client.ts").replaceAll("\n * ", " ")).toContain(wording);
+  });
+
+  test("the compose file pins the image by digest, and the capture README records that digest", () => {
+    const image = /image: (neo4j:[^@\s]+)@(sha256:[0-9a-f]{64})/.exec(COMPOSE);
+    expect(image).not.toBeNull();
+    const [, , digest] = image as RegExpExecArray;
+    expect(CAPTURES_README).toContain(digest);
+  });
+
+  test("the fixture README gives the seed's size", () => {
+    expect(read("docker/neo4j/README.md")).toContain("30 nodes and 40 relationships");
+  });
+
+  test("the MCP timeout and cancel measurements are the committed capture's", () => {
+    const RUN = read("tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt");
+    const timeout = /answered in (\d+) ms, and the server ended the statement (\d+) ms later/.exec(RUN);
+    const close = /a client close: answered in (\d+) ms, and the statement ran on the server (\d+) ms more/.exec(RUN);
+    expect(timeout).not.toBeNull();
+    expect(close).not.toBeNull();
   });
 });
