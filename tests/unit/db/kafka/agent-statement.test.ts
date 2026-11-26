@@ -11,8 +11,10 @@ import {
   KAFKA_AGENT_SENTENCES,
   readKafkaAgentStatement,
 } from "@/lib/languages/kafkaread/agent-statement";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 const refused = (text: string) => {
   const reading = readKafkaAgentStatement(text);
@@ -213,7 +215,7 @@ describe("refusals before anything is sent", () => {
 
 describe("the MCP statement read and the withheld platform topics", () => {
   test("MCP reads Kafka through run_kafka_read, and the platform topics are withheld", () => {
-    expect(MCP_STATEMENT_READ.kafka).toBe(true);
+    expect(statementRead.kafka).toBe(true);
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     for (const topic of ["_schemas", "_confluent-metrics", "connect-configs"]) {
       expect(isWithheldKafkaTopic(topic)).toBe(true);

@@ -24,7 +24,11 @@ import {
 } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { errorKind } from "@/lib/db/error-record";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 const BUDGET = { maxResultRows: 5, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -335,8 +339,8 @@ describe("an editor handle", () => {
 
 describe("the machine access records", () => {
   test("Oxia is run by the agent and is not exposed over MCP", () => {
-    expect(MCP_EXPOSABLE.oxia).toBe(false);
-    expect(MCP_STATEMENT_READ.oxia).toBe(false);
+    expect(exposable.oxia).toBe(false);
+    expect(statementRead.oxia).toBe(false);
     expect(AGENT_EXECUTION_ENGINES).toContain("oxia");
   });
 });

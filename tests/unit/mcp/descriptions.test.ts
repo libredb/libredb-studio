@@ -11,12 +11,7 @@ import path from "node:path";
 import { namedList } from "@/lib/agent/engine-support";
 import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpFacet } from "@/lib/agent/languages/mcp";
 import { getDBConfig } from "@/lib/db-ui-config";
-import {
-  AGENT_EXECUTION_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
-  MCP_EXPOSABLE,
-  MCP_STATEMENT_READ,
-} from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { MQTT_COMPLETENESS } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
@@ -27,6 +22,10 @@ import { RUN_READ_QUERY_DESCRIPTION, RUN_READ_QUERY_ENGINES, RUN_READ_QUERY_TYPE
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { handlerServe, legacyPost, readJsonRpc } from "../../helpers/mcp-harness";
 import { servedEngineSeeds } from "../../helpers/mcp-served-seeds";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 pinMcpTestEnvironment();
 
@@ -133,7 +132,7 @@ describe("the tool descriptions", () => {
   test("an execution engine the records keep out of this tool is neither served nor named", () => {
     const withheld = AGENT_EXECUTION_ENGINES.filter(
       (candidate) =>
-        !MCP_EXPOSABLE[candidate] || !MCP_STATEMENT_READ[candidate] || AGENT_STATEMENT_LANGUAGE[candidate] !== "sql",
+        !exposable[candidate] || !statementRead[candidate] || AGENT_STATEMENT_LANGUAGE[candidate] !== "sql",
     );
     // Not vacuous while any execution engine is kept out; today Kubernetes and MongoDB are.
     expect(withheld.length).toBeGreaterThan(0);

@@ -13,12 +13,7 @@ import { MCP_CONNECTION_UNAVAILABLE_TEXT } from "@/lib/mcp/availability";
 import { MCP_CONNECTIONS_UNREADABLE, type McpCaller, McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_RESULT_CAP_BYTES } from "@/lib/mcp/output";
 import { AGENT_LANGUAGE_MCP_FACETS } from "@/lib/agent/languages/mcp";
-import {
-  AGENT_EXECUTION_ENGINES,
-  AGENT_STATEMENT_LANGUAGE,
-  MCP_EXPOSABLE,
-  MCP_STATEMENT_READ,
-} from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE } from "@/lib/db/compatibility";
 import { LIST_CONNECTIONS_DESCRIPTION } from "@/lib/mcp/tools/list-connections";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import { resetCache } from "@/lib/seed";
@@ -31,6 +26,10 @@ import {
   type SeedEntry,
 } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo, type Negotiation } from "../../helpers/mcp-harness";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 const STAND_IN_AGENT_PASSWORD_MARKER = ["not", "a", "real", "agent", "password", "marker"].join("-");
 
@@ -224,7 +223,7 @@ describe("the answer", () => {
         expect(row.read_tool === null).toBe(!served.has(type));
         const language = AGENT_STATEMENT_LANGUAGE[type];
         const facet = language === null ? null : AGENT_LANGUAGE_MCP_FACETS[language];
-        const open = AGENT_EXECUTION_ENGINES.includes(type) && MCP_EXPOSABLE[type] && MCP_STATEMENT_READ[type];
+        const open = AGENT_EXECUTION_ENGINES.includes(type) && exposable[type] && statementRead[type];
         expect([row.id, row.read_tool]).toEqual([row.id, open && facet !== null ? facet.tool : null]);
       }
       const closed = new Set(["seed:legacy-metrics", "seed:olap", "seed:warehouse"]);
@@ -233,7 +232,7 @@ describe("the answer", () => {
         ["seed:olap", null],
         ["seed:warehouse", null],
       ]);
-      expect([AGENT_EXECUTION_ENGINES.includes("druid"), MCP_EXPOSABLE.druid, MCP_STATEMENT_READ.druid]).toEqual([
+      expect([AGENT_EXECUTION_ENGINES.includes("druid"), exposable.druid, statementRead.druid]).toEqual([
         true,
         true,
         false,

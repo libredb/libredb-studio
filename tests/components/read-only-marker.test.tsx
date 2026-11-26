@@ -1,17 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { showsReadOnlyMarker } from "@/components/read-only-marker";
-import { SHIPPED_DATABASE_TYPES, WRITE_REACH } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { OUTSIDE_THE_UNION, refusalOf, refusalThrownBy } from "../helpers/outside-the-union";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 /**
- * Whether a connection carries the "Read-only" marker (#1089): its own `readOnly`, or its engine's `WRITE_REACH`
+ * Whether a connection carries the "Read-only" marker (#1089): its own `readOnly`, or its engine's granted write reach
  * where that is `none`. The engine's row is read through the type-id check (FND-1), so a type outside the union is
  * refused by name instead of reading `undefined` or an `Object.prototype` member as "has a write path".
  */
 describe("showsReadOnlyMarker", () => {
   test("a connection without readOnly carries it exactly where its engine has no write path", () => {
-    const none = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "none");
+    const none = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "none");
     // Vacuity, by name: both answers occur.
     expect(none.length).toBeGreaterThan(0);
     expect(none).not.toContain("postgres");

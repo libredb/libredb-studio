@@ -56,7 +56,6 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import {
   CHARACTER_REFUSAL,
@@ -86,6 +85,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -5275,9 +5277,9 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     acquired = [];
   });
 
-  test("MCP_STATEMENT_READ opens Elasticsearch and OpenSearch", () => {
-    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
-    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
+  test("the legacy row's `mcp.statementRead` opens Elasticsearch and OpenSearch", () => {
+    expect(statementRead.elasticsearch).toBe(true);
+    expect(statementRead.opensearch).toBe(true);
   });
 
   test("reads rows under the agent profile after the open's version read, and names no next offset", async () => {

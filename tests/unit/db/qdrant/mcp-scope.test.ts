@@ -19,7 +19,11 @@ import { qdrantAgentFailure, shapeQdrantAgentAnswer } from "@/lib/db/providers/v
 import { readQdrantAgentStatement } from "@/lib/db/providers/vector/qdrant/metadata-request";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 const SCOPE = posix.join(
   import.meta.dir.replaceAll("\\", "/"),
@@ -129,9 +133,9 @@ test("every capture records 1.19.1 and the principal's rights, never a key or a 
 
 describe("the machine access and read-only records", () => {
   test("Qdrant is exposed over MCP, enforced read-only, run by the agent and offers the MCP statement read", () => {
-    expect(MCP_EXPOSABLE.qdrant).toBe(true);
+    expect(exposable.qdrant).toBe(true);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("qdrant");
-    expect(MCP_STATEMENT_READ.qdrant).toBe(true);
+    expect(statementRead.qdrant).toBe(true);
   });
 });

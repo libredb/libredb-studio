@@ -34,7 +34,7 @@ export interface SampleSpec {
   readonly name: string;
   /**
    * The roles it is offered to: `admin` exactly when its engine refuses a handle under a denied file-access posture
-   * (`REFUSES_DENIED_FILE_ACCESS`), else every role.
+   * (Studio's grant of `policy.deniedFileAccessRefusal`), else every role.
    */
   readonly roles: readonly string[];
   /** The target's file name in the data directory, when no path override is set. */

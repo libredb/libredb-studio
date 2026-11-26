@@ -10,7 +10,7 @@ import { CENSUS_CONNECTION } from "../../helpers/census-connection";
  *
  * The map is static because its readers decide before any provider exists: `assertReadOnlyHonoured`
  * refuses `readOnly: true` before anything is built or dialled, and the seed schema and the connection
- * form read `WRITE_REACH`, from which the map is derived. So the failure that matters is the map and the
+ * form read the granted write reach, from which the map is derived. So the failure that matters is the map and the
  * provider disagreeing: an engine that enforces the mode and is refused it, or one the map calls
  * enforcing whose provider writes anyway, which would list a connection as read-only and send its
  * writes. This census builds every shipped provider and holds the map to the summary of its

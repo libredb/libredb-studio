@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { REFUSES_DENIED_FILE_ACCESS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
@@ -13,6 +13,9 @@ import type { SeedConnection } from "@/lib/seed/types";
 import type { DatabaseType } from "@/lib/types";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { namedLabels } from "../../helpers/repo-text-scope";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
 
 const ADMIN: McpCaller = { username: "alice", role: "admin" };
 const USER: McpCaller = { username: "bob", role: "user" };
@@ -46,7 +49,7 @@ describe("mcpConnectionUnavailable", () => {
   });
 
   test("answers null wherever the record it is given holds the engine null", () => {
-    const refuses = { ...REFUSES_DENIED_FILE_ACCESS, sqlite: null };
+    const refuses = { ...deniedFileAccessRefusal, sqlite: null };
     expect(mcpConnectionUnavailable(USER, copyFor(USER, "sqlite", ["*"]), refuses)).toBeNull();
   });
 

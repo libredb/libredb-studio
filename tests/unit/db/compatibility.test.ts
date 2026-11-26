@@ -19,17 +19,11 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_STATEMENT_READ,
   HOST_PATH_FIELDS,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
   SERVES_ONE_SESSION,
   SHIPPED_DATABASE_TYPES,
-  SINGLE_WRITER_FILE,
 } from "@/lib/db/compatibility";
 import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -40,6 +34,14 @@ import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 import { parse as parseYaml } from "yaml";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
+const readRootsRequired = legacyRegisterTable("readRootsRequired");
+const readsFileAccessPosture = legacyRegisterTable("readsFileAccessPosture");
+const singleWriterFile = legacyRegisterTable("singleWriterFile");
 
 /**
  * The compose service that reproduces each registry entry.
@@ -408,7 +410,7 @@ describe("wire-compatibility registry", () => {
     // The provider enforces no read-only mode, so `readOnly: true` is refused, and MCP is offered,
     // both as on Oracle.
     expect(READ_ONLY_ENFORCED.db2).toBe(false);
-    expect(MCP_EXPOSABLE.db2).toBe(true);
+    expect(exposable.db2).toBe(true);
   });
 
   test("qdrant ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 6.7, 10.2)", () => {
@@ -418,7 +420,7 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("qdrant")).toBe(true);
     expect(compatibleEnginesFor("qdrant")).toEqual([]);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
-    expect(MCP_EXPOSABLE.qdrant).toBe(true);
+    expect(exposable.qdrant).toBe(true);
   });
 
   test("milvus ships as an external engine that keeps the read-only mode and is offered to MCP (vector-family spec 5.7, 10.2)", () => {
@@ -428,7 +430,7 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("milvus")).toBe(true);
     expect(compatibleEnginesFor("milvus")).toEqual([]);
     expect(READ_ONLY_ENFORCED.milvus).toBe(true);
-    expect(MCP_EXPOSABLE.milvus).toBe(true);
+    expect(exposable.milvus).toBe(true);
   });
 
   test("influxdb and influxdb3 ship as external engines that keep the read-only mode and are offered to MCP (InfluxDB spec I2, I8, I13)", () => {
@@ -439,7 +441,7 @@ describe("wire-compatibility registry", () => {
       expect(isExternalDatabaseType(type)).toBe(true);
       expect(compatibleEnginesFor(type)).toEqual([]);
       expect(READ_ONLY_ENFORCED[type]).toBe(true);
-      expect(MCP_EXPOSABLE[type]).toBe(true);
+      expect(exposable[type]).toBe(true);
     }
   });
 
@@ -449,7 +451,7 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("oxia")).toBe(true);
     expect(compatibleEnginesFor("oxia")).toEqual([]);
     expect(READ_ONLY_ENFORCED.oxia).toBe(true);
-    expect(MCP_EXPOSABLE.oxia).toBe(false);
+    expect(exposable.oxia).toBe(false);
   });
 
   test("databend ships as an external engine, offered to MCP, with no read-only promise and no relatives", () => {
@@ -461,8 +463,8 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("databend")).toBe(true);
     expect(compatibleEnginesFor("databend")).toEqual([]);
     expect(READ_ONLY_ENFORCED.databend).toBe(false);
-    expect(MCP_EXPOSABLE.databend).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.databend).toBe(false);
+    expect(exposable.databend).toBe(true);
+    expect(readsFileAccessPosture.databend).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.databend).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.databend).toBe(false);
     expect(WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name)).not.toContain("Databend");
@@ -475,8 +477,8 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("bigquery")).toBe(true);
     expect(compatibleEnginesFor("bigquery")).toEqual([]);
     expect(READ_ONLY_ENFORCED.bigquery).toBe(false);
-    expect(MCP_EXPOSABLE.bigquery).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.bigquery).toBe(false);
+    expect(exposable.bigquery).toBe(true);
+    expect(readsFileAccessPosture.bigquery).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.bigquery).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.bigquery).toBe(false);
   });
@@ -486,8 +488,8 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("snowflake")).toBe(true);
     expect(compatibleEnginesFor("snowflake")).toEqual([]);
     expect(READ_ONLY_ENFORCED.snowflake).toBe(false);
-    expect(MCP_EXPOSABLE.snowflake).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.snowflake).toBe(false);
+    expect(exposable.snowflake).toBe(true);
+    expect(readsFileAccessPosture.snowflake).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.snowflake).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.snowflake).toBe(false);
   });
@@ -500,10 +502,10 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("s3")).toBe(true);
     expect(compatibleEnginesFor("s3")).toEqual([]);
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
-    expect(MCP_EXPOSABLE.s3).toBe(true);
-    expect(MCP_STATEMENT_READ.s3).toBe(true);
-    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.s3).toBe(false);
+    expect(exposable.s3).toBe(true);
+    expect(statementRead.s3).toBe(true);
+    expect(agentCredentialRequired.s3).toBe(true);
+    expect(readsFileAccessPosture.s3).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.s3).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.s3).toBe(false);
     const relatives = WIRE_COMPATIBLE_ENGINES.map((engine) => engine.name);
@@ -517,8 +519,8 @@ describe("wire-compatibility registry", () => {
     expect(compatibleEnginesFor("kubernetes")).toEqual([]);
     expect(READ_ONLY_ENFORCED.kubernetes).toBe(true);
     // Offered with every answer machine-redacted.
-    expect(MCP_EXPOSABLE.kubernetes).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.kubernetes).toBe(false);
+    expect(exposable.kubernetes).toBe(true);
+    expect(readsFileAccessPosture.kubernetes).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.kubernetes).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.kubernetes).toBe(false);
   });
@@ -537,9 +539,9 @@ describe("wire-compatibility registry", () => {
     expect(EXTERNAL_DATABASE_TYPES).toContain("weaviate");
     // As Qdrant's: every console request is a read and the provider keeps the mode; no file to read.
     expect(READ_ONLY_ENFORCED.weaviate).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.weaviate).toBe(false);
+    expect(readsFileAccessPosture.weaviate).toBe(false);
     // As Milvus's and Qdrant's: list_connections and inspect_schema; run_read_query refuses it (no queryReadOnly).
-    expect(MCP_EXPOSABLE.weaviate).toBe(true);
+    expect(exposable.weaviate).toBe(true);
   });
 
   test("the Apache Spark row of each record (#1736)", () => {
@@ -547,9 +549,9 @@ describe("wire-compatibility registry", () => {
     expect(EXTERNAL_DATABASE_TYPES).toContain("spark");
     // No engine read-only mode and no file-access posture to read (Apache Spark).
     expect(READ_ONLY_ENFORCED.spark).toBe(false);
-    expect(READS_FILE_ACCESS_POSTURE.spark).toBe(false);
+    expect(readsFileAccessPosture.spark).toBe(false);
     // list_connections and inspect_schema; run_read_query refuses it, since the provider has no queryReadOnly.
-    expect(MCP_EXPOSABLE.spark).toBe(true);
+    expect(exposable.spark).toBe(true);
     // A pasted sc:// address is decomposed into fields; a seed gives fields, never a string.
     expect(CONNECTION_FORM_URI_MODE.spark).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.spark).toBe(false);
@@ -562,8 +564,8 @@ describe("wire-compatibility registry", () => {
     expect(isExternalDatabaseType("firestore")).toBe(true);
     expect(compatibleEnginesFor("firestore")).toEqual([]);
     expect(READ_ONLY_ENFORCED.firestore).toBe(true);
-    expect(MCP_EXPOSABLE.firestore).toBe(false);
-    expect(READS_FILE_ACCESS_POSTURE.firestore).toBe(false);
+    expect(exposable.firestore).toBe(false);
+    expect(readsFileAccessPosture.firestore).toBe(false);
     expect(CONNECTION_FORM_URI_MODE.firestore).toBe(false);
     expect(CONNECTION_STRING_ACCEPTED.firestore).toBe(false);
   });
@@ -665,76 +667,43 @@ describe("wire-compatibility registry", () => {
 });
 
 /**
- * `MCP_EXPOSABLE` (#1089): which engines a seed connection may expose to MCP clients. The seed schema
- * reads it before it accepts `mcp: true`, so it answers for every shipped type-id and nothing else,
- * and no reader can change an answer at run time. The refusal it drives is pinned in
- * `tests/unit/seed/types.test.ts`.
+ * `mcp.statementRead`, as the legacy rows of the grant register review it: whether an MCP client may run a statement on
+ * an engine, a second claim beside `mcp.exposable` so that MCP read opens per engine by its own reviewed change, never
+ * as a side effect of the engine joining agent mode. It can only narrow what exposure and agent execution allow.
  */
-describe("MCP_EXPOSABLE (#1089)", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(MCP_EXPOSABLE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can offer or withdraw MCP for an engine at run time", () => {
-    expect(Object.isFrozen(MCP_EXPOSABLE)).toBe(true);
-  });
-});
-
-/**
- * `MCP_STATEMENT_READ`: whether an MCP client may run a statement on an engine, a second
- * record beside `MCP_EXPOSABLE` so that MCP read opens per engine by its own reviewed change, never as a side effect of
- * the engine joining agent mode. It can only narrow what the two records it sits under allow.
- */
-describe("MCP_STATEMENT_READ", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(MCP_STATEMENT_READ).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can open or close MCP read for an engine at run time", () => {
-    expect(Object.isFrozen(MCP_STATEMENT_READ)).toBe(true);
-  });
-
-  test("is false wherever MCP_EXPOSABLE is false", () => {
-    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => !MCP_EXPOSABLE[candidate])) {
-      expect([type, MCP_STATEMENT_READ[type]]).toEqual([type, false]);
+describe("the legacy rows' MCP statement read", () => {
+  test("is false wherever exposure is false", () => {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => !exposable[candidate])) {
+      expect([type, statementRead[type]]).toEqual([type, false]);
     }
   });
 
   test("is true only for an engine agent mode executes statements on", () => {
-    const open = SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type]);
+    const open = SHIPPED_DATABASE_TYPES.filter((type) => statementRead[type]);
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
   });
 });
 
 /**
- * `MCP_AGENT_CREDENTIAL_REQUIRED`: the engines MCP reads only under a seed's own agent credential, never under the
- * connection's login. It can only narrow what MCP already offers, and only on an engine a seed can give an agent
- * credential to, or the seed could never be read at all.
+ * `mcp.agentCredentialRequired`, as the legacy rows of the grant register review it: the engines MCP reads only under a
+ * seed's own agent credential, never under the connection's login. It can only narrow what MCP already offers, and
+ * only on an engine a seed can give an agent credential to, or the seed could never be read at all.
  */
-describe("MCP_AGENT_CREDENTIAL_REQUIRED", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(MCP_AGENT_CREDENTIAL_REQUIRED).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can change what MCP signs in with at run time", () => {
-    expect(Object.isFrozen(MCP_AGENT_CREDENTIAL_REQUIRED)).toBe(true);
-  });
-
-  test("is true only where MCP_EXPOSABLE offers the engine and a seed of it may carry an agent credential", () => {
-    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => MCP_AGENT_CREDENTIAL_REQUIRED[candidate])) {
-      expect([type, MCP_EXPOSABLE[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
+describe("the legacy rows' MCP agent credential requirement", () => {
+  test("is true only where exposure offers the engine and a seed of it may carry an agent credential", () => {
+    for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => agentCredentialRequired[candidate])) {
+      expect([type, exposable[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
     }
   });
 });
 
-describe("READ_ROOTS_REQUIRED", () => {
-  test("is frozen, and true exactly where a seed of the engine may declare read roots", () => {
-    expect(Object.isFrozen(READ_ROOTS_REQUIRED)).toBe(true);
+describe("the legacy rows' read roots requirement", () => {
+  test("is true exactly where a seed of the engine may declare read roots", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
       const declares = SEED_ONLY_FIELDS[type]?.fields.includes("agentReadRoots") ?? false;
-      expect([type, READ_ROOTS_REQUIRED[type]]).toEqual([type, declares]);
+      expect([type, readRootsRequired[type]]).toEqual([type, declares]);
     }
-    expect(READ_ROOTS_REQUIRED.opcua).toBe(true);
+    expect(readRootsRequired.opcua).toBe(true);
   });
 });
 
@@ -864,30 +833,22 @@ describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE", () => {
 });
 
 /**
- * `SINGLE_WRITER_FILE` (per-user providers, docs/GOVERNANCE.md#per-user-providers): the engines whose provider keeps
- * one handle per file in this process. The provider cache key leaves the owner out for them, because a provider per
- * user would be a second handle on one file, and it decides before any provider exists, so it reads this record rather
- * than a type id. Held equal here to what every shipped provider declares, built from the census connection with
- * nothing connecting.
+ * `policy.singleWriterFile`, as the legacy rows of the grant register review it (per-user providers,
+ * docs/GOVERNANCE.md#per-user-providers): the engines whose provider keeps one handle per file in this process. The
+ * provider cache key leaves the owner out for them, because a provider per user would be a second handle on one file,
+ * and it decides before any provider exists, so it reads the grant rather than a type id. Held equal here to what every
+ * shipped provider declares, built from the census connection with nothing connecting.
  */
-describe("SINGLE_WRITER_FILE", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(SINGLE_WRITER_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can change an answer at run time", () => {
-    expect(Object.isFrozen(SINGLE_WRITER_FILE)).toBe(true);
-  });
-
-  test("SINGLE_WRITER_FILE matches the engines whose capabilities declare singleWriterFile", async () => {
+describe("the legacy rows' single-writer file", () => {
+  test("the legacy rows' single-writer engines match the engines whose capabilities declare singleWriterFile", async () => {
     const providers = await Promise.all(
       SHIPPED_DATABASE_TYPES.map((type) => createDatabaseProvider(CENSUS_CONNECTION[type])),
     );
     const measured = SHIPPED_DATABASE_TYPES.filter(
       (_, index) => providers[index].getCapabilities().singleWriterFile === true,
     );
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => SINGLE_WRITER_FILE[type])).toEqual(measured);
-    // Vacuity, by name: a record and a census that both found nothing would agree above.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => singleWriterFile[type])).toEqual(measured);
+    // Vacuity, by name: rows and a census that both found nothing would agree above.
     expect(measured).toEqual(["duckdb", "libredb"]);
   });
 });
@@ -909,10 +870,10 @@ describe("SERVES_ONE_SESSION", () => {
     }
   });
 
-  test("names a reason for every engine SINGLE_WRITER_FILE names", () => {
-    const singleWriter = SHIPPED_DATABASE_TYPES.filter((type) => SINGLE_WRITER_FILE[type]);
+  test("names a reason for every engine whose legacy row grants a single-writer file", () => {
+    const singleWriter = SHIPPED_DATABASE_TYPES.filter((type) => singleWriterFile[type]);
     expect(singleWriter.filter((type) => SERVES_ONE_SESSION[type] === null)).toEqual([]);
-    // Vacuity, by name: an empty single-writer record would pass above.
+    // Vacuity, by name: no single-writer row would pass above.
     expect(singleWriter).toEqual(["duckdb", "libredb"]);
   });
 });

@@ -586,7 +586,7 @@ describe("admitConnectionRows", () => {
     expect(itemsOf(loose)).toEqual([skipItem(ID, "DEFINITION_INVALID", { level: "read", path: "sessionToken" })]);
   });
 
-  test("mcp follows mcp_enabled only where MCP_EXPOSABLE offers the engine", () => {
+  test("mcp follows mcp_enabled only where the grant of mcp.exposable offers the engine", () => {
     const offered = admit([connectionRow({ write: WRITE, columns: { mcp_enabled: true } })]);
     expect(offered.admitted.map((connection) => [connection.read.mcp, connection.write?.mcp])).toEqual([[true, true]]);
 

@@ -19,6 +19,13 @@
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
  * module reads the records through it either.
  *
+ * Studio's review of each policy and MCP claim is the grant register's legacy rows, `@libredb/grant-register`, and no
+ * longer a record of core: no module but the grant reader loads the register, by an import declaration, a side-effect
+ * import, a re-export, an `export *`, a dynamic `import()` or a `require()` of its package name, a subpath of it or a
+ * relative path into packages/grant-register/, while a type-only import or export, which loads nothing, passes. The
+ * grant reader imports none of the records whose rows moved there, `MOVED_TO_REGISTER`, and no module of
+ * `CLAIM_RECORD_MODULES` exports one.
+ *
  * Studio's record of the agent readings is a member of each `ENGINE_FACETS` row, `agentReadings`, beside members other
  * gates read, so it is held by member rather than by name: no module but the grant reader and the claim projection,
  * which reads each declaration's request and never Studio's row, reads a member named `agentReadings`, by a property
@@ -47,21 +54,33 @@ const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
     "HOST_PATH_FIELDS",
     "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
     "SSH_TUNNEL_REFUSAL",
-    "WRITE_REACH",
-    "READS_FILE_ACCESS_POSTURE",
-    "REFUSES_DENIED_FILE_ACCESS",
-    "SINGLE_WRITER_FILE",
-    "READ_ROOTS_REQUIRED",
-    "MASKING_EXEMPT_COLUMNS",
-    "MCP_EXPOSABLE",
-    "MCP_STATEMENT_READ",
-    "MCP_METADATA_READ_CHANGES_STATE",
-    "MCP_AGENT_CREDENTIAL_REQUIRED",
     "AGENT_STATEMENT_LANGUAGE",
   ],
-  "src/lib/db/connection-fields": ["AGENT_CREDENTIAL_FORM", "SEED_AGENT_CREDENTIAL"],
+  "src/lib/db/connection-fields": ["SEED_AGENT_CREDENTIAL"],
   "src/lib/db/claim-grants": ["STUDIO_CLAIM_RECORDS"],
 };
+
+/**
+ * The policy and MCP claim records whose rows are now the grant register's legacy rows: none of them may be imported
+ * by the grant reader or exported by a module of `CLAIM_RECORD_MODULES`.
+ */
+const MOVED_TO_REGISTER: readonly string[] = [
+  "WRITE_REACH",
+  "READS_FILE_ACCESS_POSTURE",
+  "REFUSES_DENIED_FILE_ACCESS",
+  "SINGLE_WRITER_FILE",
+  "READ_ROOTS_REQUIRED",
+  "AGENT_CREDENTIAL_FORM",
+  "MASKING_EXEMPT_COLUMNS",
+  "MCP_EXPOSABLE",
+  "MCP_STATEMENT_READ",
+  "MCP_METADATA_READ_CHANGES_STATE",
+  "MCP_AGENT_CREDENTIAL_REQUIRED",
+];
+
+/** The grant register's package name, and its directory in this repository. */
+const GRANT_REGISTER_PACKAGE = "@libredb/grant-register";
+const GRANT_REGISTER_DIRECTORY = "packages/grant-register";
 
 interface SourceText {
   readonly path: string;
@@ -265,6 +284,96 @@ function recordReaders(files: readonly SourceText[]): string[] {
   return files.filter((file) => file.path !== GRANT_READER).flatMap(recordReferences);
 }
 
+/**
+ * Whether `specifier`, written in `file`, names the grant register: its package name or a subpath of it, or a relative
+ * specifier resolving into its directory.
+ */
+function namesGrantRegister(file: string, specifier: string): boolean {
+  if (specifier === GRANT_REGISTER_PACKAGE || specifier.startsWith(`${GRANT_REGISTER_PACKAGE}/`)) return true;
+  if (!specifier.startsWith(".")) return false;
+  const resolved = path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier));
+  return resolved === GRANT_REGISTER_DIRECTORY || resolved.startsWith(`${GRANT_REGISTER_DIRECTORY}/`);
+}
+
+/**
+ * Whether `file` loads the grant register: an import declaration, a side-effect import among them, a re-export, an
+ * `export *`, or a dynamic `import()` or `require()` of a string naming it. A type-only import or export, `import type`,
+ * an import whose every named binding is `type`, or `export type`, loads nothing and is passed over.
+ */
+function importsGrantRegister(file: SourceText): boolean {
+  const source = ts.createSourceFile(
+    file.path,
+    file.text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  let imports = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.importClause;
+      const bindings = clause?.namedBindings;
+      const typeOnly =
+        clause !== undefined &&
+        (clause.isTypeOnly ||
+          (clause.name === undefined &&
+            bindings !== undefined &&
+            ts.isNamedImports(bindings) &&
+            bindings.elements.length > 0 &&
+            bindings.elements.every((element) => element.isTypeOnly)));
+      if (!typeOnly && namesGrantRegister(file.path, node.moduleSpecifier.text)) imports = true;
+    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+      const clause = node.exportClause;
+      const typeOnly =
+        node.isTypeOnly ||
+        (clause !== undefined &&
+          ts.isNamedExports(clause) &&
+          clause.elements.length > 0 &&
+          clause.elements.every((element) => element.isTypeOnly));
+      if (!typeOnly && namesGrantRegister(file.path, node.moduleSpecifier.text)) imports = true;
+    } else if (ts.isCallExpression(node) && node.arguments.length === 1) {
+      const loads =
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        (ts.isIdentifier(node.expression) && node.expression.text === "require");
+      const argument = node.arguments[0];
+      if (loads && argument !== undefined && ts.isStringLiteralLike(argument)) {
+        if (namesGrantRegister(file.path, argument.text)) imports = true;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return imports;
+}
+
+/** Each module of `files` but the grant reader that loads the grant register, as `<file> imports the grant register`. */
+function grantRegisterImporters(files: readonly SourceText[]): string[] {
+  return files
+    .filter((file) => file.path !== GRANT_READER && importsGrantRegister(file))
+    .map((file) => `${file.path} imports the grant register`);
+}
+
+/** Whether `file` declares an exported variable named `name`, by a TypeScript parse of its statements. */
+function exportsName(file: SourceText, name: string): boolean {
+  const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
+  return source.statements.some(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) === true &&
+      statement.declarationList.declarations.some((declaration) => declaration.name.getText(source) === name),
+  );
+}
+
+/** The names `file`'s import declarations bind by name from any module, a type-only one included. */
+function importedNames(file: SourceText): string[] {
+  const source = ts.createSourceFile(file.path, file.text, ts.ScriptTarget.Latest, true);
+  return source.statements.flatMap((statement) => {
+    const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : undefined;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) return [];
+    return bindings.elements.map((element) => (element.propertyName ?? element.name).text);
+  });
+}
+
 describe("the claim record readers", () => {
   test("every policy, MCP, connection and agent mode claim record is read only by the grant reader", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
@@ -289,17 +398,16 @@ describe("the claim record readers", () => {
   test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import", () => {
     const planted = (file: string, text: string) => recordReaders([{ path: file, text }]);
 
-    expect(planted("src/lib/a.ts", 'import { WRITE_REACH } from "@/lib/db/compatibility";')).toEqual([
-      "src/lib/a.ts reads WRITE_REACH",
+    expect(
+      planted("src/lib/a.ts", 'import { OPENS_SERVER_LEVEL_WITHOUT_DATABASE } from "@/lib/db/compatibility";'),
+    ).toEqual(["src/lib/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
+    expect(planted("src/lib/db/a.ts", 'import { HOST_PATH_FIELDS as fields } from "./compatibility";')).toEqual([
+      "src/lib/db/a.ts reads HOST_PATH_FIELDS",
     ]);
-    expect(planted("src/lib/db/a.ts", 'import { SINGLE_WRITER_FILE as single } from "./compatibility";')).toEqual([
-      "src/lib/db/a.ts reads SINGLE_WRITER_FILE",
-    ]);
-    expect(planted("src/lib/mcp/a.ts", 'export { MCP_EXPOSABLE } from "../db/compatibility.ts";')).toEqual([
-      "src/lib/mcp/a.ts reads MCP_EXPOSABLE",
+    expect(planted("src/lib/mcp/a.ts", 'export { SSH_TUNNEL_REFUSAL } from "../db/compatibility.ts";')).toEqual([
+      "src/lib/mcp/a.ts reads SSH_TUNNEL_REFUSAL",
     ]);
     expect(planted("src/lib/a.ts", 'export * from "@/lib/db/connection-fields";')).toEqual([
-      "src/lib/a.ts reads AGENT_CREDENTIAL_FORM",
       "src/lib/a.ts reads SEED_AGENT_CREDENTIAL",
     ]);
     expect(planted("src/lib/db/a.ts", 'import { SSH_TUNNEL_REFUSAL } from "./compatibility";')).toEqual([
@@ -312,9 +420,9 @@ describe("the claim record readers", () => {
     expect(
       planted(
         "src/lib/a.ts",
-        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst n = (m);\nn.WRITE_REACH;',
+        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst n = (m);\nn.OPENS_LOCAL_FILE;',
       ),
-    ).toEqual(["src/lib/a.ts reads WRITE_REACH"]);
+    ).toEqual(["src/lib/a.ts reads OPENS_LOCAL_FILE"]);
     expect(
       planted(
         "src/lib/a.ts",
@@ -328,39 +436,39 @@ describe("the claim record readers", () => {
       ),
     ).toEqual(["src/lib/a.ts reads HOST_PATH_FIELDS"]);
     expect(
-      planted("src/lib/a.ts", 'import * as records from "@/lib/db/compatibility";\nrecords.READ_ROOTS_REQUIRED.opcua;'),
-    ).toEqual(["src/lib/a.ts reads READ_ROOTS_REQUIRED"]);
-    expect(
-      planted("src/lib/a.tsx", 'import * as records from "@/lib/db/compatibility";\nrecords["MCP_STATEMENT_READ"];'),
-    ).toEqual(["src/lib/a.tsx reads MCP_STATEMENT_READ"]);
-    expect(planted("src/lib/a.ts", 'const reach = (await import("@/lib/db/compatibility")).WRITE_REACH;')).toEqual([
-      "src/lib/a.ts reads WRITE_REACH",
-    ]);
-    expect(
-      planted("src/lib/a.ts", 'const records = await import("@/lib/db/compatibility");\nrecords.WRITE_REACH;'),
-    ).toEqual(["src/lib/a.ts reads WRITE_REACH"]);
-    expect(planted("src/lib/db/a.ts", 'const { MASKING_EXEMPT_COLUMNS: m } = require("./compatibility");')).toEqual([
-      "src/lib/db/a.ts reads MASKING_EXEMPT_COLUMNS",
-    ]);
-    expect(
       planted(
-        "vscode-extension/src/backend/a.ts",
-        'import { MCP_METADATA_READ_CHANGES_STATE } from "@/lib/db/compatibility";',
+        "src/lib/a.ts",
+        'import * as records from "@/lib/db/compatibility";\nrecords.OPENS_SERVER_LEVEL_WITHOUT_DATABASE.opcua;',
       ),
-    ).toEqual(["vscode-extension/src/backend/a.ts reads MCP_METADATA_READ_CHANGES_STATE"]);
+    ).toEqual(["src/lib/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
+    expect(
+      planted("src/lib/a.tsx", 'import * as records from "@/lib/db/compatibility";\nrecords["SSH_TUNNEL_REFUSAL"];'),
+    ).toEqual(["src/lib/a.tsx reads SSH_TUNNEL_REFUSAL"]);
+    expect(planted("src/lib/a.ts", 'const reach = (await import("@/lib/db/compatibility")).OPENS_LOCAL_FILE;')).toEqual(
+      ["src/lib/a.ts reads OPENS_LOCAL_FILE"],
+    );
+    expect(
+      planted("src/lib/a.ts", 'const records = await import("@/lib/db/compatibility");\nrecords.HOST_PATH_FIELDS;'),
+    ).toEqual(["src/lib/a.ts reads HOST_PATH_FIELDS"]);
+    expect(
+      planted("src/lib/db/a.ts", 'const { OPENS_SERVER_LEVEL_WITHOUT_DATABASE: m } = require("./compatibility");'),
+    ).toEqual(["src/lib/db/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
+    expect(
+      planted("vscode-extension/src/backend/a.ts", 'import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";'),
+    ).toEqual(["vscode-extension/src/backend/a.ts reads SSH_TUNNEL_REFUSAL"]);
     expect(planted("src/lib/a.ts", 'import { STUDIO_CLAIM_RECORDS } from "@/lib/db/claim-grants";')).toEqual([
       "src/lib/a.ts reads STUDIO_CLAIM_RECORDS",
     ]);
     expect(
       planted(
         "src/lib/db/compatibility.ts",
-        "export const WRITE_REACH = Object.freeze({});\nexport const OPEN = Object.keys(WRITE_REACH);",
+        "export const OPENS_LOCAL_FILE = Object.freeze({});\nexport const OPEN = Object.keys(OPENS_LOCAL_FILE);",
       ),
-    ).toEqual(["src/lib/db/compatibility.ts reads WRITE_REACH"]);
+    ).toEqual(["src/lib/db/compatibility.ts reads OPENS_LOCAL_FILE"]);
 
     // Not references: the record's own declaration, an error code, an object key, a type member key, a property of
     // another object, a comment, another name of the record module, and the grant reader itself.
-    expect(planted("src/lib/db/compatibility.ts", "export const WRITE_REACH = Object.freeze({});")).toEqual([]);
+    expect(planted("src/lib/db/compatibility.ts", "export const OPENS_LOCAL_FILE = Object.freeze({});")).toEqual([]);
     expect(
       planted(
         "src/lib/db/error-record.ts",
@@ -369,14 +477,14 @@ describe("the claim record readers", () => {
           "const codes = { READ_ROOTS_REQUIRED: true };",
           "type Codes = { READ_ROOTS_REQUIRED: boolean };",
           "codes.READ_ROOTS_REQUIRED;",
-          "// WRITE_REACH, read from compatibility.ts",
+          "// OPENS_LOCAL_FILE, read from compatibility.ts",
           'import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";',
-          "const other = { WRITE_REACH: 1 };\nconst alias = other;\nalias.WRITE_REACH;",
-          'import { WRITE_REACH } from "@/lib/db/write-reach-elsewhere";',
+          "const other = { OPENS_LOCAL_FILE: 1 };\nconst alias = other;\nalias.OPENS_LOCAL_FILE;",
+          'import { OPENS_LOCAL_FILE } from "@/lib/db/local-file-elsewhere";',
         ].join("\n"),
       ),
     ).toEqual([]);
-    expect(planted(GRANT_READER, 'import { WRITE_REACH } from "./compatibility";')).toEqual([]);
+    expect(planted(GRANT_READER, 'import { OPENS_LOCAL_FILE } from "./compatibility";')).toEqual([]);
 
     // A type-only import or re-export carries no value to a gate, so it is passed over in every form.
     const language = "AGENT_STATEMENT_LANGUAGE";
@@ -402,7 +510,7 @@ describe("the claim record readers", () => {
       ),
     ).toEqual([`src/lib/agent/languages/a.ts reads ${language}`]);
     expect(
-      planted("src/lib/a.ts", `import { type WRITE_REACH, ${language} as L } from "@/lib/db/compatibility";`),
+      planted("src/lib/a.ts", `import { type OPENS_LOCAL_FILE, ${language} as L } from "@/lib/db/compatibility";`),
     ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
       planted("src/lib/a.ts", `import * as records from "@/lib/db/compatibility";\nconst m = records;\nm.${language};`),
@@ -414,6 +522,106 @@ describe("the claim record readers", () => {
       `src/lib/a.ts reads ${language}`,
     ]);
     expect(planted("src/lib/a.ts", 'export type * from "@/lib/db/compatibility";')).toEqual([]);
+  });
+
+  test("only the grant reader imports the grant register, and the scan finds each way a module could import it", () => {
+    const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
+
+    expect(grantRegisterImporters(files)).toEqual([]);
+    // Vacuity: the grant reader itself imports the register.
+    const grantReader = files.find((file) => file.path === GRANT_READER);
+    if (grantReader === undefined) throw new Error(`${GRANT_READER} is not in the source read`);
+    expect(importsGrantRegister(grantReader)).toBe(true);
+
+    const planted = (file: string, text: string) => grantRegisterImporters([{ path: file, text }]);
+    const imports = (file: string) => [`${file} imports the grant register`];
+    // An import declaration, a side-effect import, a re-export, an export *, a dynamic import and a require, by the
+    // package's name, a subpath of it or a relative path into its directory.
+    expect(planted("src/lib/a.ts", 'import { readGrantRegister } from "@libredb/grant-register";')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'import register from "@libredb/grant-register";')).toEqual(imports("src/lib/a.ts"));
+    expect(planted("src/lib/a.ts", 'import * as register from "@libredb/grant-register";')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'import "@libredb/grant-register";')).toEqual(imports("src/lib/a.ts"));
+    expect(
+      planted("src/lib/a.ts", 'import { type GrantRegister, LEGACY_KEY } from "@libredb/grant-register";'),
+    ).toEqual(imports("src/lib/a.ts"));
+    expect(planted("src/lib/a.ts", 'import schema from "@libredb/grant-register/register.schema.json";')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'export { LEGACY_KEY } from "@libredb/grant-register";')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'export * from "@libredb/grant-register";')).toEqual(imports("src/lib/a.ts"));
+    expect(planted("src/lib/a.ts", 'export * as register from "@libredb/grant-register";')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'const register = await import("@libredb/grant-register");')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(planted("src/lib/a.ts", 'const register = require("@libredb/grant-register");')).toEqual(
+      imports("src/lib/a.ts"),
+    );
+    expect(
+      planted("src/lib/db/a.ts", 'import rows from "../../../packages/grant-register/src/register.json";'),
+    ).toEqual(imports("src/lib/db/a.ts"));
+    expect(
+      planted("vscode-extension/src/backend/a.ts", 'import { readGrantRegister } from "@libredb/grant-register";'),
+    ).toEqual(imports("vscode-extension/src/backend/a.ts"));
+
+    // Not imports: a type-only import or export in every form, another package whose name begins the same, a relative
+    // path outside the directory, a string that is no specifier, a comment, and the grant reader itself.
+    expect(
+      planted(
+        "src/lib/a.ts",
+        [
+          'import type { GrantRegister } from "@libredb/grant-register";',
+          'import type * as register from "@libredb/grant-register";',
+          'import { type GrantRegister as G, type RegisterGrants } from "@libredb/grant-register";',
+          'export type { GrantRegister } from "@libredb/grant-register";',
+          'export { type RegisterGrants } from "@libredb/grant-register";',
+          'import { readGrantRegisterFake } from "@libredb/grant-register-elsewhere";',
+          'import { other } from "../../packages/grant-register-elsewhere/src/index";',
+          'const name = "@libredb/grant-register";',
+          '// import { readGrantRegister } from "@libredb/grant-register";',
+        ].join("\n"),
+      ),
+    ).toEqual([]);
+    expect(planted(GRANT_READER, 'import { readGrantRegister } from "@libredb/grant-register";')).toEqual([]);
+  }, 60_000);
+
+  test("the grant reader imports no policy or MCP claim record", () => {
+    const grantReader = { path: GRANT_READER, text: readFileSync(path.join(ROOT, GRANT_READER), "utf8") };
+    const imported = importedNames(grantReader);
+
+    expect(imported.filter((name) => MOVED_TO_REGISTER.includes(name))).toEqual([]);
+    const modules = Object.keys(CLAIM_RECORD_MODULES).map((recordModule) => {
+      const file = `${recordModule}.ts`;
+      return { path: file, text: readFileSync(path.join(ROOT, file), "utf8") };
+    });
+    expect(
+      modules.flatMap((file) =>
+        MOVED_TO_REGISTER.filter((name) => exportsName(file, name)).map((name) => `${file.path} exports ${name}`),
+      ),
+    ).toEqual([]);
+    // Vacuity: the parse reads the grant reader's named imports, a record it still imports among them, and each
+    // module's exported records.
+    expect(imported).toContain("SEED_AGENT_CREDENTIAL");
+    expect(
+      importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
+    ).toEqual(["WRITE_REACH"]);
+    for (const file of modules) {
+      const records = CLAIM_RECORD_MODULES[file.path.replace(/\.ts$/, "")] ?? [];
+      expect({ module: file.path, exports: records.filter((name) => exportsName(file, name)) }).toEqual({
+        module: file.path,
+        exports: [...records],
+      });
+    }
+    expect(
+      exportsName({ path: "src/lib/db/a.ts", text: "export const WRITE_REACH = Object.freeze({});" }, "WRITE_REACH"),
+    ).toBe(true);
   });
 
   test("the agent readings of Studio's facet rows are read only by the grant reader, and the scan finds each way a module could read them", () => {

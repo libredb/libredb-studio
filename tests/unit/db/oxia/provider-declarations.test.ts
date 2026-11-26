@@ -12,10 +12,12 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { hostUriSchemes, offersSshTunnel } from "@/lib/db-ui-config";
 import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
-import { WRITE_REACH } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { summarizeWriteReach } from "@/lib/db/write-reach";
 import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const writeReach = legacyRegisterTable("writeReach");
 
 /** A provider whose factory would fail the test if anything asked it for a client. */
 function declaredOnly(): { readonly provider: OxiaProvider; readonly asked: () => number } {
@@ -151,7 +153,7 @@ describe("the capabilities and the write reach", () => {
   });
 
   test("Oxia's write reach is none", () => {
-    expect(WRITE_REACH.oxia).toBe("none");
+    expect(writeReach.oxia).toBe("none");
   });
 
   test("the factory builds the same capabilities, read-only follows the write reach, and an SSH tunnel is offered", async () => {

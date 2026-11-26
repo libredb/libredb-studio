@@ -500,7 +500,7 @@ export class DuckDBProvider extends SQLBaseProvider {
       // This provider reads `ProviderExecutionContext.allowExternalFileAccess` and opens its editor
       // handle under that posture (the non-admin DuckDB file-access change). The cache key and the
       // single-writer borrow split DuckDB handles by posture because of it, through
-      // `READS_FILE_ACCESS_POSTURE`, never a `connection.type` branch.
+      // Studio's grant of `policy.readsFileAccessPosture`, never a `connection.type` branch.
       readsFileAccessPosture: true,
       // Declared explicitly rather than left to the query generators' default: DuckDB
       // has no row of its own in `SQL_ENGINE_GENERATORS`, and the declaration pins its

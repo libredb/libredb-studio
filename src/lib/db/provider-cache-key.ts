@@ -64,8 +64,8 @@ import {
  * - The owner, under governance (docs/GOVERNANCE.md#per-user-providers): `ProviderExecutionContext.owner`, the identity
  *   provider subject of the session the provider is opened for, so every user of a connection gets a provider, a pool
  *   and a database session state of their own. It is appended last, as `owner:<subject>`, and only when an owner is
- *   given, so a key without one stays byte-identical to the key before owners existed. An engine that keeps one handle
- *   per file (`SINGLE_WRITER_FILE`) leaves it out, see {@link providerOwner}.
+ *   given, so a key without one stays byte-identical to the key before owners existed. An engine granted a single-writer
+ *   file, one handle per file, leaves it out, see {@link providerOwner}.
  *
  * WHY THE ID IS SAFE IN THE KEY. Reaching a cached entry now costs the victim's id AND their
  * server AND their credentials. The first is guessable and the second is often public; the third

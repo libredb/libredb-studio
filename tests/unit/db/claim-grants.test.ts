@@ -1,14 +1,16 @@
 /**
  * Studio's grant of each policy, MCP, connection and agent mode claim (docs/providers/CONTRACT.md, clauses M-54, M-82
- * and M-83): the more restrictive
- * of an engine's request and Studio's review record of the claim, the claim's restrictive value where no record row
- * exists, by one rule per claim shape. `grantClaims` is read here with hand-made requests and records, each built from
- * the shipped ones with one engine changed or for an id no shipped engine uses, and the bundled grant tables are read
- * against Studio's records for every shipped engine.
+ * and M-83): the more restrictive of an engine's request and Studio's review of the claim for the engine, which
+ * src/lib/db/claim-grants.ts states, the claim's restrictive value where no review row exists, by one rule per claim
+ * shape. `grantClaims` is read here with hand-made requests and records, each built from the shipped ones with one
+ * engine changed or for an id no shipped engine uses, and the bundled grant tables are read against Studio's records
+ * for every shipped engine. `legacyGrantRows`, which reads the grant register's legacy rows the policy and MCP records
+ * are composed from, is read against a register of two rows of the committed one.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { LEGACY_KEY, parseGrantRegister, readGrantRegister } from "@libredb/grant-register";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_READING_NAMES,
@@ -34,6 +36,7 @@ import {
   GRANTED_WRITE_REACH,
   grantClaims,
   HOST_PATH_FIELD_NAMES,
+  legacyGrantRows,
   READ_ONLY_ENFORCED,
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_CLAIM_RECORDS,
@@ -761,6 +764,34 @@ describe("Studio's grant of each agent mode claim", () => {
     refusedReadings("health", '"health"');
     refusedReadings(null, "null");
     refusedReadings([1], "[1]");
+  });
+});
+
+describe("the register's legacy rows the grant reader reads", () => {
+  /** A register of two rows structured-cloned from the committed register, postgres's and mysql's. */
+  const twoRowRegister = () => {
+    const committed = readGrantRegister(SHIPPED_DATABASE_TYPES);
+    const rows = ["postgres", "mysql"].map((engine) => committed.rowFor({ legacy: LEGACY_KEY, engine }));
+    return parseGrantRegister(structuredClone(rows), ["postgres", "mysql"]);
+  };
+
+  test("legacyGrantRows answers each engine's legacy row of the register in the engines' order, frozen", () => {
+    const register = twoRowRegister();
+    const rows = legacyGrantRows(register, ["mysql", "postgres"]);
+
+    expect(Object.keys(rows)).toEqual(["mysql", "postgres"]);
+    expect(rows.mysql).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "mysql" })?.grants as never);
+    expect(rows.postgres).toBe(register.rowFor({ legacy: LEGACY_KEY, engine: "postgres" })?.grants as never);
+    expect(Object.isFrozen(rows)).toBe(true);
+    expect(Object.isFrozen(rows.postgres)).toBe(true);
+    // Vacuity: the rows read are the committed register's, not empty grants.
+    expect(rows.postgres?.writeReach).toBe(GRANTED_WRITE_REACH.postgres);
+  });
+
+  test("legacyGrantRows refuses an engine the register holds no legacy row for, naming it", () => {
+    expect(() => legacyGrantRows(twoRowRegister(), ["postgres", "mysql", "sqlite"])).toThrow(
+      "the grant register holds no legacy row for sqlite, an engine the legacy adapter serves",
+    );
   });
 });
 

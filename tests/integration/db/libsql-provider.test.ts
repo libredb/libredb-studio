@@ -54,7 +54,6 @@ import type {
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { comparePaths } from "@/lib/db/object-path";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
@@ -68,6 +67,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -3682,8 +3684,8 @@ describe("MCP run_read_query on a libSQL connection", () => {
     await clearProviderCache();
   });
 
-  test("MCP_STATEMENT_READ opens libSQL", () => {
-    expect(MCP_STATEMENT_READ.libsql).toBe(true);
+  test("the legacy row's `mcp.statementRead` opens libSQL", () => {
+    expect(statementRead.libsql).toBe(true);
   });
 
   test("reads rows under the agent profile after the open's proof, paged one row past max_rows", async () => {

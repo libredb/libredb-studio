@@ -474,7 +474,7 @@ interface HeldProvider {
   readonly form: "provider";
   readonly provider: DatabaseProvider;
   /**
-   * The file this entry holds open, when `SINGLE_WRITER_FILE` names the engine as one that
+   * The file this entry holds open, when the engine is granted a single-writer file, one that
    * keeps one handle per file - see `findOpenSingleWriterProvider`.
    * `null` on every other engine.
    */
@@ -773,7 +773,7 @@ function entryName(entry: CachedSession): string {
  * That last case is not a nicety. `path.resolve(":memory:")` is a path in the working
  * directory, so two unrelated in-memory connections came out with ONE identity and the
  * second borrowed the first's open handle - reading a database nobody pointed it at.
- * It fires on the engines `SINGLE_WRITER_FILE` names, which is where the borrow
+ * It fires on the engines granted a single-writer file, which is where the borrow
  * lives: DuckDB accepts `:memory:` (LibreDB does not). An anonymous in-memory database
  * is per-handle by definition - there is no file to share, no lock to work around, and
  * therefore nothing a borrow could buy.
@@ -797,8 +797,8 @@ function fileIdentity(connection: EngineConnection): string | null {
 /**
  * The connected provider that already holds this connection's file, if there is one.
  *
- * Only an engine `SINGLE_WRITER_FILE` names ever registers a file identity here
- * (`getOrCreateProvider` below), read from that record and never from the built
+ * Only an engine granted a single-writer file ever registers a file identity here
+ * (`getOrCreateProvider` below), read from that grant and never from the built
  * provider's own `singleWriterFile` (docs/providers/CONTRACT.md, clause M-57), so a match means the
  * engine admits ONE handle per file and the caller's alternative is not a second,
  * lesser handle - it is no handle at all. Borrowers must NOT disconnect what they get
@@ -1447,7 +1447,7 @@ interface EditorOpenPlan {
  * `plan.cache`, opens the tunnel, builds and connects the provider, and admits it into `plan.cache` itself, so an open no
  * caller waits for any more is still admitted once. An open a removal or a cache close overtook admits nothing
  * (`connectUnlessOvertaken`). On the metadata cache the stale close finds nothing and no entry records a file, by
- * construction: the session capacity class never opens a metadata session for an engine `SINGLE_WRITER_FILE` names.
+ * construction: the session capacity class never opens a metadata session for an engine granted a single-writer file.
  */
 async function openEditorProvider(
   connection: DatabaseConnection,
@@ -1467,12 +1467,12 @@ async function openEditorProvider(
   // two accounts share, or a copied id), and then each request closes the other's handle. On DuckDB a
   // second read-write handle keeps its own copy of the catalog and checkpoints it over the file when it
   // closes, losing the first handle's committed rows on Linux and macOS and corrupting the file after a
-  // bulk write, and Windows refuses the second open; LibreDB, the other engine `SINGLE_WRITER_FILE`
-  // names, refuses it on every platform. So every such stale handle is closed first, as the
+  // bulk write, and Windows refuses the second open; LibreDB, the other engine granted a single-writer
+  // file, refuses it on every platform. So every such stale handle is closed first, as the
   // query-timeout change above closes its own, leaving this open as the file's only handle; the session
   // state on a closed handle (temporary tables, SET values) goes with it. Entries of a DIFFERENT
   // connection id on the same file are the separate, pre-existing D240 case and are left alone here.
-  // An entry's `singleWriterFile` is set only for the engines `SINGLE_WRITER_FILE` names, so this is a no-op
+  // An entry's `singleWriterFile` is set only for the engines granted a single-writer file, so this is a no-op
   // for the rest without a type-id branch.
   const openFileIdentity = fileIdentity(connection);
   if (openFileIdentity !== null) {
@@ -1859,8 +1859,8 @@ export function executionContextFor(
  *   credentials, still on a read-only statement path under a declared
  *   boundary: the engine's own read-only session, or on Kubernetes Studio's
  *   request allowlist with the connection token's RBAC);
- * - only one field present → deny, unless the engine's row of
- *   `AGENT_CREDENTIAL_FORM` is a secret-only form, `"token"` or
+ * - only one field present → deny, unless the engine's granted
+ *   `policy.agentCredentialForm` is a secret-only form, `"token"` or
  *   `"service-account-key"`, and the field is `agentPassword`: that engine
  *   takes the agent's bearer token or service-account key alone, and refuses
  *   an `agentUser` beside it. A half-configured credential must not silently
@@ -2066,7 +2066,7 @@ export async function acquireExecutionProfileProvider(
   /*
     The single-writer exception (B49), and why it is safe HERE and nowhere else.
 
-    On an engine `SINGLE_WRITER_FILE` names the file admits one open handle, so
+    On an engine granted a single-writer file the file admits one open handle, so
     opening a second one for this acquisition does not produce a less privileged
     handle - it throws, and the run continues silently ungrounded (a `ConnectionError`
     becomes an unavailable capture). Every agent grounding read on a LibreDB

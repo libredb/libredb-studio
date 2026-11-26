@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { MCP_EXPOSABLE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { readQueryFormsOf } from "@/lib/sql/read-query-forms";
 import { DB_UI_CONFIG, getDBConfig } from "@/lib/db-ui-config";
 import { namedList } from "@/lib/agent/engine-support";
@@ -17,6 +17,9 @@ import { registeredMcpToolNames } from "../helpers/mcp-tool-names";
 import { namedLabels } from "../helpers/repo-text-scope";
 import { mcpStatementToolFor, servingStatementArms } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
 
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -359,12 +362,12 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toMatch(/^\| MTConnect \| /m);
   });
 
-  test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
+  test("claims only SELECT for every engine, and names the claim that opens MCP read", () => {
     expect(MCP_DOC).toContain(
       "A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
     expect(MCP_DOC).not.toContain("A `SELECT` (a `WITH` is fine) runs on every engine it serves");
-    expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
+    expect(MCP_DOC).toContain("Studio's grant of `mcp.statementRead` opens statement reads on it");
   });
 
   test("names each served engine's statement forms from its READ_QUERY_FORMS row, and no other engine's", () => {
@@ -378,8 +381,8 @@ describe("docs/MCP.md", () => {
     expect(lines.sort()).toEqual(expected.sort());
   });
 
-  test("names the engines MCP is not offered for once, from MCP_EXPOSABLE, and points inspect_schema at that list (#1089 E12)", () => {
-    const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(labelOf);
+  test("names the engines MCP is not offered for once, from the legacy rows' exposure, and points inspect_schema at that list (#1089 E12)", () => {
+    const refused = SHIPPED_DATABASE_TYPES.filter((type) => !exposable[type]).map(labelOf);
     expect(refused).not.toEqual([]);
     const names = namedList(refused);
     expect(MCP_DOC).toContain(`It works for every engine but ${names}, whose connections the seed file cannot opt in.`);
@@ -831,13 +834,13 @@ describe("docs/SEED_CONNECTIONS.md", () => {
   const seed = read("docs/SEED_CONNECTIONS.md");
   /** The seed doc's short name where it differs from the display label; every other closed engine uses its label. */
   const SHORT_NAMES: Partial<Record<DatabaseType, string>> = { s3: "S3" };
-  const closed = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
+  const closed = SHIPPED_DATABASE_TYPES.filter((type) => !exposable[type]).map(
     (type) => SHORT_NAMES[type] ?? labelOf(type),
   );
   const names = closed.length === 1 ? closed[0] : `${closed.slice(0, -1).join(", ")} or ${closed[closed.length - 1]}`;
   const article = /^[AEIOU]/.test(names) ? "An" : "A";
 
-  test("names the engines MCP is not offered for, from MCP_EXPOSABLE, in the mcp field row and its load error", () => {
+  test("names the engines MCP is not offered for, from the legacy rows' exposure, in the mcp field row and its load error", () => {
     expect(closed).not.toEqual([]);
     const row = seed.split("\n").find((line) => line.startsWith("| `connections[].mcp` |"));
     expect(row).toContain(`${article} ${names} connection refuses \`mcp: true\` when the file loads`);

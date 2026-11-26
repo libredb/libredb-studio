@@ -3,14 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import {
-  CONNECTION_STRING_ACCEPTED,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  READ_ROOTS_REQUIRED,
-  SHIPPED_DATABASE_TYPES,
-  WRITE_REACH,
-} from "@/lib/db/compatibility";
+import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
 import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
@@ -24,6 +17,12 @@ import {
   SeedConfigSchema,
   SeedDefaultsSchema,
 } from "@/lib/seed/types";
+import { type LegacyRegisterTable, legacyRegisterTable } from "../../helpers/legacy-register";
+
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
+const exposable = legacyRegisterTable("exposable");
+const readRootsRequired = legacyRegisterTable("readRootsRequired");
+const writeReach = legacyRegisterTable("writeReach");
 
 const STAND_IN_MARKER = ["not", "a", "real", "marker"].join("-");
 
@@ -445,8 +444,8 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
 
 /**
  * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
- * `MCP_EXPOSABLE` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
- * handed a copy of the record that answers false for another shipped type, the way `readOnlyControl`
+ * the grant of `mcp.exposable` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
+ * handed a copy of the legacy rows' exposure that answers false for another shipped type, the way `readOnlyControl`
  * is handed its engine's answer, so no case depends on which engine the record refuses.
  */
 describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
@@ -454,18 +453,18 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
   const notOffered = (type: string) =>
     `mcp is not offered for ${type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`;
   const refusingOnly = (type: "kafka" | "redis") =>
-    SeedConnectionSchema.superRefine(refuseMcpWhereNotOffered({ ...MCP_EXPOSABLE, [type]: false }));
+    SeedConnectionSchema.superRefine(refuseMcpWhereNotOffered({ ...exposable, [type]: false }));
 
   it("accepts mcp: true on every shipped engine the record offers MCP for", () => {
-    const offered = SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type]);
+    const offered = SHIPPED_DATABASE_TYPES.filter((type) => exposable[type]);
     // Vacuity, by name: an empty population would refuse nothing and pass.
     expect(offered).toContain("postgres");
     // An engine MCP reads only under an agent credential is given one, which its own describe block covers.
     const agentKey = (type: (typeof offered)[number]) =>
-      MCP_AGENT_CREDENTIAL_REQUIRED[type] ? { agentUser: "agent", agentPassword: "${AGENT_SECRET}" } : {};
+      agentCredentialRequired[type] ? { agentUser: "agent", agentPassword: "${AGENT_SECRET}" } : {};
     // An engine MCP reads only beneath read roots is given one, which its own describe block covers.
     const roots = (type: (typeof offered)[number]) =>
-      READ_ROOTS_REQUIRED[type] ? { agentReadRoots: ["nsu=urn:plant;s=Line1"] } : {};
+      readRootsRequired[type] ? { agentReadRoots: ["nsu=urn:plant;s=Line1"] } : {};
     const refused = offered.filter(
       (type) =>
         SeedConnectionSchema.safeParse({
@@ -892,7 +891,7 @@ describe("SeedConnectionSchema: OPC UA's read roots", () => {
     ]);
     const loaded = SeedConnectionSchema.safeParse({ ...opcua, mcp: true, agentReadRoots: ["i=2256"] });
     expect(loaded.data?.mcp).toBe(true);
-    const offered = refuseMcpWithoutReadRoots({ ...READ_ROOTS_REQUIRED, opcua: false });
+    const offered = refuseMcpWithoutReadRoots({ ...readRootsRequired, opcua: false });
     const issues: unknown[] = [];
     offered({ id: "plant", type: "opcua", mcp: true }, { addIssue: (issue: unknown) => issues.push(issue) } as never);
     expect(issues).toEqual([]);
@@ -1018,7 +1017,7 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
   });
 
   it("refuses readOnly: true on every engine whose write reach is open, naming the type and the field", () => {
-    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] === "open");
+    const refusing = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] === "open");
     // Vacuity, by name: an empty population would refuse nothing and pass.
     expect(refusing).toContain("postgres");
     for (const type of refusing) {
@@ -1031,7 +1030,7 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
   });
 
   it("accepts readOnly: true on every engine whose write reach is not open, none and guarded alike", () => {
-    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] !== "open");
+    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] !== "open");
     // Vacuity, by name: one engine of each value, so an empty or one-sided population fails.
     expect(keeping).toContain("etcd");
     expect(keeping).toContain("qdrant");
@@ -1046,19 +1045,20 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
   });
 
   /**
-   * The rule is pinned through `refuseReadOnlyWhereOpen` handed a copy of `WRITE_REACH` that answers otherwise for
+   * The rule is pinned through `refuseReadOnlyWhereOpen` handed a copy of the legacy rows' write reach that answers otherwise for
    * one engine each way, so the refusal is read from the record it is handed and from no other answer.
    */
   it("reads the record it is handed: an engine recorded open is refused, and one recorded none is admitted", () => {
-    const schema = (reach: typeof WRITE_REACH) => SeedConnectionSchema.superRefine(refuseReadOnlyWhereOpen(reach));
-    const issuesOf = (reach: typeof WRITE_REACH, type: string) =>
+    const schema = (reach: LegacyRegisterTable<"writeReach">) =>
+      SeedConnectionSchema.superRefine(refuseReadOnlyWhereOpen(reach));
+    const issuesOf = (reach: LegacyRegisterTable<"writeReach">, type: string) =>
       schema(reach)
         .safeParse({ ...validConn, type, password: ["${SEED", "SECRET}"].join("_"), readOnly: true })
         .error?.issues.map((issue) => [issue.path.join("."), issue.message]);
-    expect(issuesOf({ ...WRITE_REACH, qdrant: "open" }, "qdrant")).toEqual([["readOnly", unenforced("qdrant")]]);
-    expect(issuesOf({ ...WRITE_REACH, etcd: "open" }, "etcd")).toEqual([["readOnly", unenforced("etcd")]]);
+    expect(issuesOf({ ...writeReach, qdrant: "open" }, "qdrant")).toEqual([["readOnly", unenforced("qdrant")]]);
+    expect(issuesOf({ ...writeReach, etcd: "open" }, "etcd")).toEqual([["readOnly", unenforced("etcd")]]);
     expect(
-      schema({ ...WRITE_REACH, postgres: "none" }).safeParse({ ...validConn, readOnly: true }).error?.issues.length,
+      schema({ ...writeReach, postgres: "none" }).safeParse({ ...validConn, readOnly: true }).error?.issues.length,
     ).toBe(1);
   });
 
@@ -1069,7 +1069,7 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
    */
   it("keeps the no-secret refusal on every engine whose write reach is none and that declares one", () => {
     const declaring = SHIPPED_DATABASE_TYPES.filter(
-      (type) => WRITE_REACH[type] === "none" && CREDENTIAL_WARNINGS[type]?.some((entry) => entry.kind === "no-secret"),
+      (type) => writeReach[type] === "none" && CREDENTIAL_WARNINGS[type]?.some((entry) => entry.kind === "no-secret"),
     );
     expect(declaring).toContain("qdrant");
     expect(declaring).toContain("weaviate");
@@ -1083,7 +1083,7 @@ describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
   });
 
   it("keeps the managed: false refusal on every engine whose write reach is not open", () => {
-    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => WRITE_REACH[type] !== "open");
+    const keeping = SHIPPED_DATABASE_TYPES.filter((type) => writeReach[type] !== "open");
     expect(keeping).toContain("qdrant");
     for (const type of keeping) {
       const result = SeedConfigSchema.safeParse({
@@ -1839,7 +1839,7 @@ describe("refuseInvalidAgentCredential: a dedicated agent user", () => {
 });
 
 describe("refuseMcpWithoutAgentCredential", () => {
-  const required = { ...MCP_AGENT_CREDENTIAL_REQUIRED, postgres: true };
+  const required = { ...agentCredentialRequired, postgres: true };
   const schema = z
     .object({
       id: z.string(),
@@ -1870,7 +1870,7 @@ describe("refuseMcpWithoutAgentCredential", () => {
   });
 
   it("names S3 alone in the shipped registry, so the shipped seed schema admits an MCP opt-in without one elsewhere", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_AGENT_CREDENTIAL_REQUIRED[type])).toEqual(["s3"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => agentCredentialRequired[type])).toEqual(["s3"]);
     expect(
       SeedConnectionSchema.safeParse({ id: "pg", name: "pg", type: "postgres", roles: ["admin"], mcp: true }).success,
     ).toBe(true);

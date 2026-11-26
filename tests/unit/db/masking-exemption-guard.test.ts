@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { MASKING_EXEMPT_COLUMNS, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_MASKING_CONFIG } from "@/lib/data-masking";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const maskingExemptColumns = legacyRegisterTable("maskingExemptColumns");
 
 /**
  * `maskingExemptColumns` CANNOT BE A HOLE THE SIZE OF THE RULES IT EXEMPTS FROM.
@@ -78,41 +81,34 @@ describe("the exemption guard measures reach rather than spelling", () => {
 });
 
 /**
- * THE RECORD, AND WHAT EACH OF ITS EXEMPTING ROWS IS ALLOWED TO REACH.
+ * THE REVIEW ROWS, AND WHAT EACH OF THE EXEMPTING ONES IS ALLOWED TO REACH.
  *
- * `MASKING_EXEMPT_COLUMNS` in `src/lib/db/compatibility.ts` is the declaring set: Studio's review record of each
- * engine's exemption, the row its producers of client capabilities answer in place of the provider's own, held equal to
- * every provider's declaration below. `REACH` is the reviewed reach: the protected names each exempting row was accepted
+ * The masking exemption of every shipped engine's legacy row in the grant register is the declaring set: Studio's
+ * review of each engine's exemption, which its producers of client capabilities answer, as the engine's grant, in place
+ * of the provider's own, held equal to every provider's declaration below. `REACH` is the reviewed reach: the protected names each exempting row was accepted
  * for, by name. The census fails when a provider starts declaring the field without its row being written down, and
  * `REACH` fails when a row starts touching a different protected name than the one it was accepted for.
  */
 const REACH: Readonly<Record<string, readonly string[]>> = { modbus: ["address"] };
 
-/** The record's rows that exempt something, by type id. */
+/** The legacy rows' exemptions that exempt something, by type id. */
 const exemptingRows = (): [DatabaseType, { readonly column: string; readonly reason: string }][] =>
   SHIPPED_DATABASE_TYPES.flatMap((type) => {
-    const row = MASKING_EXEMPT_COLUMNS[type];
+    const row = maskingExemptColumns[type];
     return row === null ? [] : [[type, row] as [DatabaseType, typeof row]];
   });
 
-describe("MASKING_EXEMPT_COLUMNS against each provider's own declaration, and what each row may reach", () => {
-  test("MASKING_EXEMPT_COLUMNS answers for every shipped type-id and for nothing else, and it and each of its rows are frozen", () => {
-    expect(Object.keys(MASKING_EXEMPT_COLUMNS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(Object.isFrozen(MASKING_EXEMPT_COLUMNS)).toBe(true);
-    for (const [type, row] of exemptingRows())
-      expect({ type, frozen: Object.isFrozen(row) }).toEqual({ type, frozen: true });
-  });
-
+describe("the legacy rows' masking exemption against each provider's own declaration, and what each row may reach", () => {
   test.each([...SHIPPED_DATABASE_TYPES])(
-    "%s: MASKING_EXEMPT_COLUMNS is the exemption its provider declares, null where it declares none",
+    "%s: the legacy row's masking exemption is the one its provider declares, null where it declares none",
     async (type) => {
       const capabilities = (await createDatabaseProvider(CENSUS_CONNECTION[type])).getCapabilities();
-      expect(MASKING_EXEMPT_COLUMNS[type]).toStrictEqual(capabilities.maskingExemptColumns ?? null);
+      expect(maskingExemptColumns[type]).toStrictEqual(capabilities.maskingExemptColumns ?? null);
     },
   );
 
-  test("the record's exempting rows and REACH cannot drift apart", () => {
-    // Written down separately, so this is the only thing keeping them one fact: a row added to the record without
+  test("the legacy rows' exemptions and REACH cannot drift apart", () => {
+    // Written down separately, so this is the only thing keeping them one fact: a row added to the register without
     // naming what it reaches fails here, and so does a REACH entry left behind by a row set back to null.
     const exempting: string[] = exemptingRows().map(([type]) => type);
     expect(exempting.sort()).toEqual(Object.keys(REACH).sort());

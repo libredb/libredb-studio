@@ -7,9 +7,13 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { MCP_EXPOSABLE, MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { SEED_AGENT_CREDENTIAL } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 const DOC = readFileSync(path.resolve(import.meta.dir, "../../../docs/SEED_CONNECTIONS.md"), "utf8");
 const SECTION = DOC.split("### An agent credential\n")[1]?.split(/^### /m)[0] ?? "";
@@ -46,9 +50,9 @@ describe("docs/SEED_CONNECTIONS.md: an agent credential", () => {
         .map((match) => match[1])
         .filter((name) => name !== "inspect_schema")
         .sort();
-    expect(named(runsOnly)).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type] !== null && !MCP_EXPOSABLE[type]));
+    expect(named(runsOnly)).toEqual(where((type) => SEED_AGENT_CREDENTIAL[type] !== null && !exposable[type]));
     expect(named(inspectToo)).toEqual(
-      where((type) => SEED_AGENT_CREDENTIAL[type] !== null && MCP_EXPOSABLE[type] && !MCP_STATEMENT_READ[type]),
+      where((type) => SEED_AGENT_CREDENTIAL[type] !== null && exposable[type] && !statementRead[type]),
     );
   });
 });

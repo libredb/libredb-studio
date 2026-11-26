@@ -30,7 +30,6 @@ const { GET: listManaged } = await import("@/app/api/connections/managed/route")
 const route = await import("@/app/api/mcp/route");
 const { getServerAuditBuffer } = await import("@/lib/audit");
 const { clearRateLimitState } = await import("@/lib/api/rate-limit");
-const { MCP_AGENT_CREDENTIAL_REQUIRED } = await import("@/lib/db/compatibility");
 const { acquireExecutionProfileProvider } = await import("@/lib/db/factory");
 const { PostgresProvider } = await import("@/lib/db/providers/sql/postgres");
 const { logger } = await import("@/lib/logger");
@@ -42,6 +41,9 @@ const { SeedConfigSchema } = await import("@/lib/seed/types");
 const { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } = await import("../helpers/mcp-fixtures");
 const { connectClient, routeServe } = await import("../helpers/mcp-harness");
 const { mintTestToken, useMcpChannel } = await import("../helpers/mcp-token");
+const { legacyRegisterTable } = await import("../helpers/legacy-register");
+
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 
 pinMcpTestEnvironment();
 
@@ -212,7 +214,7 @@ describe("a seed's agent secret", () => {
     await refusalOf(() =>
       assertAgentCredentialWhereRequired(
         { ...projected, agentUser: undefined, agentPassword: undefined, password: MARKER },
-        { ...MCP_AGENT_CREDENTIAL_REQUIRED, postgres: true },
+        { ...agentCredentialRequired, postgres: true },
       ),
     );
     await refusalOf(() => acquireExecutionProfileProvider({ ...projected, agentUser: undefined }, "agent-read-only"));

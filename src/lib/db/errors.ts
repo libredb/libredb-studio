@@ -600,14 +600,14 @@ export type ExecutionProfileDenyCode =
    */
   | "CONNECTION_SECRET_UNRESOLVABLE"
   /**
-   * The engine is one MCP reads only under an agent credential of the seed's own (`MCP_AGENT_CREDENTIAL_REQUIRED` in
-   * src/lib/db/compatibility.ts), and the connection carries none, so it is not read under its own login. Raised by
+   * The engine is one MCP reads only under an agent credential of the seed's own (Studio's grant of
+   * `mcp.agentCredentialRequired`, src/lib/db/claim-grants.ts), and the connection carries none, so it is not read under its own login. Raised by
    * MCP's acquisition, and its own code so both MCP tools answer it in Studio's words.
    */
   | "AGENT_CREDENTIAL_REQUIRED"
   /**
-   * The engine is one agent mode and MCP read only beneath read roots the seed declares (`READ_ROOTS_REQUIRED` in
-   * src/lib/db/compatibility.ts), and the connection declares none, so nothing is read. Raised by the provider when a
+   * The engine is one agent mode and MCP read only beneath read roots the seed declares (Studio's grant of
+   * `policy.readRootsRequired`, src/lib/db/claim-grants.ts), and the connection declares none, so nothing is read. Raised by the provider when a
    * statement-sending agent profile opens, and by MCP's acquisition, its own code so both answer it in Studio's words.
    */
   | "READ_ROOTS_REQUIRED";

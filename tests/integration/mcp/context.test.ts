@@ -31,7 +31,6 @@ import {
   McpConnectionContext,
   mcpCaller,
 } from "@/lib/mcp/context";
-import { MCP_AGENT_CREDENTIAL_REQUIRED } from "@/lib/db/compatibility";
 import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseType } from "@/lib/types";
@@ -48,6 +47,9 @@ import {
   writeSeedFile,
 } from "../../helpers/mcp-fixtures";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 
 const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
 const STAND_IN_AGENT_PASSWORD = ["not", "a", "real", "agent", "password"].join("-");
@@ -747,7 +749,7 @@ describe("an engine MCP reads only under an agent credential", () => {
     seedId: "store",
     ...fields,
   });
-  const required = { ...MCP_AGENT_CREDENTIAL_REQUIRED, postgres: true };
+  const required = { ...agentCredentialRequired, postgres: true };
 
   test("refuses a connection with no agent credential in Studio's words, naming the connection", () => {
     let refusal: unknown;

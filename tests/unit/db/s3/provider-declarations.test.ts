@@ -13,13 +13,13 @@ import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { s3Connection } from "../../../helpers/s3-connection";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
-import {
-  AGENT_EXECUTION_ENGINES,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_STATEMENT_READ,
-} from "@/lib/db/compatibility";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";
 import { type DatabaseConnection } from "@/lib/types";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
+const exposable = legacyRegisterTable("exposable");
+const statementRead = legacyRegisterTable("statementRead");
 
 /** A provider whose transport factory would fail the test if anything asked it for a transport. */
 function declaredOnly(): { readonly provider: S3Provider; readonly asked: () => number } {
@@ -132,9 +132,9 @@ const provider = new S3Provider(
 describe("the records, the Keys panel, the labels and the maintenance refusal", () => {
   test("S3 is enforced read-only, exposed over MCP under an agent key, and run by the agent", () => {
     expect(READ_ONLY_ENFORCED.s3).toBe(true);
-    expect(MCP_EXPOSABLE.s3).toBe(true);
-    expect(MCP_STATEMENT_READ.s3).toBe(true);
-    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
+    expect(exposable.s3).toBe(true);
+    expect(statementRead.s3).toBe(true);
+    expect(agentCredentialRequired.s3).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("s3");
   });
 

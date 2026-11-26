@@ -34,7 +34,6 @@ import {
   kindHasColumns,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
@@ -48,6 +47,9 @@ import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { errorKind } from "@/lib/db/error-record";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -3048,8 +3050,8 @@ describe("CouchbaseProvider agent read-only profile", () => {
       acquired = [];
     });
 
-    test("MCP_STATEMENT_READ opens Couchbase", () => {
-      expect(MCP_STATEMENT_READ.couchbase).toBe(true);
+    test("the legacy row's `mcp.statementRead` opens Couchbase", () => {
+      expect(statementRead.couchbase).toBe(true);
     });
 
     test("reads rows under the agent profile, the user checked at the open and again before the statement", async () => {

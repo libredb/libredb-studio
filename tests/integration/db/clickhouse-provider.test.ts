@@ -49,7 +49,6 @@ import {
 import { errorKind } from "@/lib/db/error-record";
 import { comparePaths } from "@/lib/db/object-path";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
-import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { databaseContentNotice, MCP_ENGINE_ERROR_PREFIX, providerTextNotice } from "@/lib/mcp/output";
 import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -60,6 +59,9 @@ import { fakeTextScrub } from "../../helpers/mcp-fixtures";
 import { providerAuthor } from "@/lib/db/operations/provider-text";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const statementRead = legacyRegisterTable("statementRead");
 
 beforeAll(() => installHostCore(createHostCore(), "test"));
 afterAll(forgetHostCore);
@@ -4632,8 +4634,8 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
     acquired = [];
   });
 
-  test("MCP_STATEMENT_READ opens ClickHouse", () => {
-    expect(MCP_STATEMENT_READ.clickhouse).toBe(true);
+  test("the legacy row's `mcp.statementRead` opens ClickHouse", () => {
+    expect(statementRead.clickhouse).toBe(true);
   });
 
   test("reads rows under the agent profile, every request under readonly = 1, paged one row past max_rows", async () => {

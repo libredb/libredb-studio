@@ -20,8 +20,10 @@ import * as realRunStore from "@/lib/agent/run-store";
 import * as realResolve from "@/lib/seed/resolve-connection";
 import { forgetStorageLocation } from "@/lib/data-dir";
 import { DatabaseConfigError } from "@/lib/db/errors";
-import { REFUSES_DENIED_FILE_ACCESS } from "@/lib/db/compatibility";
 import type { DatabaseConnection } from "@/lib/types";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const deniedFileAccessRefusal = legacyRegisterTable("deniedFileAccessRefusal");
 
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "agent-runtime-file-posture-"));
 const previousStoragePath = process.env.STORAGE_SQLITE_PATH;
@@ -93,7 +95,7 @@ for (const mode of ["agent", "planning"] as const) {
     );
 
     expect(refused).toBeInstanceOf(DatabaseConfigError);
-    expect((refused as Error).message).toBe(REFUSES_DENIED_FILE_ACCESS.sqlite as string);
+    expect((refused as Error).message).toBe(deniedFileAccessRefusal.sqlite as string);
     expect(investigated).toEqual([]);
     const status = await (await getAgentRunService()).status(runId);
     expect((status?.record as unknown as { status?: unknown } | undefined)?.status).toBe("failed");

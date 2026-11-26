@@ -246,13 +246,14 @@
       "sshTunnel": "DuckDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
       "agentCredential": null,
       "statementLanguage": "sql",
-      "servesOneSession": "It keeps one read-write handle per database file, as SINGLE_WRITER_FILE records, so a second session would be a second handle on the file.",
+      "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed"
     },
     "reasons": {
       "readsFileAccessPosture": "The engine whose editor handle opens under the posture: external access off for every role but admin, and for every role on a seed a non-admin role can use. SQLite refuses a denied handle instead.",
       "deniedFileAccessRefusal": "It reads the posture too, and confines a denied handle instead of refusing it.",
+      "singleWriterFile": "This engine keeps its own copy of the catalog in a second read-write handle and checkpoints it over the file when it closes, so every user of a connection is served the one open handle.",
       "opensLocalFile": "A database file (or `:memory:`) opened by the native DuckDB addon in Studio's own process."
     }
   },
@@ -388,7 +389,7 @@
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: on 1.x and 2.x the InfluxQL lexer policy (`src/lib/languages/influxql/policy.ts`) is the only boundary between a Studio user and `DROP DATABASE`, so it refuses every statement that is not one `SELECT`, `SHOW` or `EXPLAIN` before any request; the route table reaches no write endpoint.",
-      "exposable": "Both offered for the metadata tools, which list database, measurement and column names and types only. Both providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by MCP_STATEMENT_READ, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (backlog B94).",
+      "exposable": "Both offered for the metadata tools, which list database, measurement and column names and types only. Both providers implement `queryReadOnly` for agent mode; `run_read_query` serves InfluxDB 3's SQL, opened by its `mcp.statementRead` grant, and no MCP statement tool reads InfluxQL, so `influxdb` stays closed there (backlog B94).",
       "statementRead": "Agent mode executes InfluxQL on InfluxDB, and MCP read stays closed on it: on 1.x a catalog SHOW's database scope rests on the agent's statement reader alone, and no layer that reads the answer can hold it (backlog B94)."
     }
   },
@@ -514,12 +515,13 @@
       "sshTunnel": "LibreDB opens a file on the Studio server, so there is no address for an SSH tunnel to forward to. Turn the tunnel off: edit the connection and save it again.",
       "agentCredential": null,
       "statementLanguage": "libredbkv",
-      "servesOneSession": "It keeps one read-write handle per database file, as SINGLE_WRITER_FILE records, so a second session would be a second handle on the file.",
+      "servesOneSession": "It keeps one read-write handle per database file, as its single-writer file grant records, so a second session would be a second handle on the file.",
       "agentExecution": true,
       "ownWords": "scrubbed"
     },
     "reasons": {
       "writeReach": "Studio's own store: the editor sends `put` and `delete`, and no gate refuses them on a connection.",
+      "singleWriterFile": "This engine refuses a second open of its file outright, so every user of a connection is served the one open handle.",
       "agentCredentialForm": "An embedded store has no principal to sign an agent in as.",
       "statementRead": "Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved internal namespace is left out of every answer (docs/providers/libredb.md section 15).",
       "metadataReadChangesState": "The operations open holds the file's exclusive lock until the handle has been idle for 30 minutes.",
@@ -589,7 +591,7 @@
     },
     "reasons": {
       "writeReach": "Its provider refuses Load and Release before any request while the mode holds, and every v1 console request is a read (vector-family E8).",
-      "exposable": "Offered for the metadata tools (vector-family E17), and for `run_milvus_read`, which MCP_STATEMENT_READ opens on it.",
+      "exposable": "Offered for the metadata tools (vector-family E17), and for `run_milvus_read`, which its `mcp.statementRead` grant opens on it.",
       "statementRead": "Opened on its own: run_milvus_read runs under the boundary agent mode uses, the provider's closed RPC table and a user the server proves read-only before every request, every call naming a collection sent only when the user's own collection list holds it, every answer projected to names, counts and flags (docs/providers/milvus.md, section Agent mode)."
     }
   },
@@ -809,7 +811,7 @@
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: this version of the provider refuses every write before it is sent, offers no object edit and no maintenance operation, so a connection marked read-only keeps the promise.",
-      "exposable": "Offered for the metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for `run_cypher_read`, which MCP_STATEMENT_READ opens on it.",
+      "exposable": "Offered for the metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for `run_cypher_read`, which its `mcp.statementRead` grant opens on it.",
       "statementRead": "Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the server's own classification of every statement (docs/providers/neo4j.md section 15)."
     }
   },
@@ -880,7 +882,7 @@
     },
     "reasons": {
       "writeReach": "Structural rather than a mode: the client seam names eight read services and none of them writes, so there is no write to enforce against (`src/lib/db/providers/industrial/opcua/client.ts`).",
-      "exposable": "Offered only beneath the read roots its seed declares, which READ_ROOTS_REQUIRED holds MCP to: an OPC UA server declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers every node outside the roots exactly as a missing one.",
+      "exposable": "Offered only beneath the read roots its seed declares, which its `policy.readRootsRequired` grant holds MCP to: an OPC UA server declares no relation kind, so `inspect_schema` refuses an OPC UA connection by name, and `run_opcua_read` answers every node outside the roots exactly as a missing one.",
       "statementRead": "Opened on its own: run_opcua_read runs under the boundary agent mode uses, the provider's read-only client over a session opened per read, reading only beneath the seed's read roots, proved by a walk down from them on that session, with every other node id answered as a missing one and nothing sent for it (docs/providers/opcua.md section 15).",
       "hostPathFields": "The client certificate and private key a seed connection names, read by the OPC UA library from the host."
     }
@@ -1077,7 +1079,7 @@
     "reasons": {
       "writeReach": "Every v1 console request is a read and the provider has no maintenance operation, and while the mode holds it refuses every route that is not a read before any request (vector-family spec 4.4).",
       "agentCredentialForm": "The agent's API key or JWT, sent instead of the connection's own.",
-      "exposable": "Offered for the metadata tools, carrying names and types only (vector-family spec 4.4), and for `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.",
+      "exposable": "Offered for the metadata tools, carrying names and types only (vector-family spec 4.4), and for `run_qdrant_read`, which its `mcp.statementRead` grant opens on it.",
       "statementRead": "Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists, before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section Agent mode)."
     }
   },
@@ -1178,7 +1180,7 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the console's closed command table reaches no write, and the provider sends only GET and HEAD.",
       "agentCredentialForm": "An access key ID and secret of its own: an agent key ID equal to the connection's names the same key.",
-      "exposable": "Offered with every answer metadata only, as agent mode reads it, and only under the seed's agent read key, which MCP_AGENT_CREDENTIAL_REQUIRED requires: object keys are withheld, so `inspect_schema` refuses an S3 connection by name, since a bucket declares no relation kind, and `run_s3_read` answers bucket names, counts and flags under that key's grants.",
+      "exposable": "Offered with every answer metadata only, as agent mode reads it, and only under the seed's agent read key, which its `mcp.agentCredentialRequired` grant requires: object keys are withheld, so `inspect_schema` refuses an S3 connection by name, since a bucket declares no relation kind, and `run_s3_read` answers bucket names, counts and flags under that key's grants.",
       "statementRead": "Opened on its own: run_s3_read runs under the boundary agent mode uses, the provider's closed table of six metadata reads over a transport that sends GET and HEAD only, with every answer projected to names, counts and flags, never an object key or value, signed with the seed's agent read key alone, whose grants hold the bucket scope (docs/providers/s3.md section 15.7).",
       "agentCredentialRequired": "The agent read key's grants are the only layer that holds the buckets an MCP client reaches: the connection's own key may read every bucket, and S3 has no read-only principal Studio can prove.",
       "agentCredential": "An access key ID and secret of its own: an agent key ID equal to the connection's names the same key."
@@ -1239,6 +1241,9 @@
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
+    },
+    "reasons": {
+      "metadataReadChangesState": "Not marked though its provider declares `resumesBilledCompute`: this engine lists its catalog with `SHOW` statements that need no running warehouse."
     }
   },
   {

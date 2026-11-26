@@ -71,8 +71,8 @@
  * and a seed agent credential as its form and the fields that supersede it, or null, and its two agent mode claims,
  * `facets.agentReadings` and `agent.statementLanguage`, the curated readings it asks agent mode to offer and the
  * statement language it asks agent mode to send, or null. Every member is a claim: a request, which only Studio's
- * grant reader, src/lib/db/claim-grants.ts, reads, granting each against Studio's review record of the claim (clauses
- * M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the evidence the write reach
+ * grant reader, src/lib/db/claim-grants.ts, reads, granting each against Studio's review of the claim for the engine,
+ * which src/lib/db/claim-grants.ts states (clauses M-54 and M-83), so no gate reads a request as declared. The `safeguards` segment, the evidence the write reach
  * request summarizes, is authored with them and never projected: no gate reads it.
  *
  * Every member a projection reads is one a declaration authors (scripts/generate-engine-catalog.ts,

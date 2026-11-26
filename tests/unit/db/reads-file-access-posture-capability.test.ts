@@ -1,32 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import { READS_FILE_ACCESS_POSTURE, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
+
+const readsFileAccessPosture = legacyRegisterTable("readsFileAccessPosture");
 
 /**
- * `READS_FILE_ACCESS_POSTURE` against what each provider declares (the non-admin DuckDB file-access
- * change).
+ * The file-access posture of every shipped engine's legacy row in the grant register, Studio's review of
+ * `policy.readsFileAccessPosture`, against what each provider declares (the non-admin DuckDB file-access change).
  *
- * The map is static because its readers decide before any provider exists: `providerCacheKey` carries
+ * The grant is static because its readers decide before any provider exists: `providerCacheKey` carries
  * the deny posture as a key segment so a denied and a full-reach handle of one connection never share
  * an entry, and `findOpenSingleWriterProvider` lends a handle only to a caller of its own posture.
  * Both run while computing the key to find or open a provider, so neither can ask one, and reading
  * `connection.type` at those call sites is forbidden by `CLAUDE.md`. So the failure that matters is
- * the map and the provider disagreeing: an engine whose provider opens under the posture that the map
+ * the grant and the provider disagreeing: an engine whose provider opens under the posture that the grant
  * leaves out would share one handle across postures, handing a denied caller a full-reach handle.
  * This census builds every shipped provider and holds the two equal.
  *
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor,
  * the reading `CENSUS_CONNECTION` documents.
  */
-describe("READS_FILE_ACCESS_POSTURE against each provider's own declaration", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(READS_FILE_ACCESS_POSTURE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
+describe("the legacy rows' file-access posture against each provider's own declaration", () => {
   test.each([...SHIPPED_DATABASE_TYPES])("%s: the map answers what its provider declares", async (type) => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION[type]);
-    expect(READS_FILE_ACCESS_POSTURE[type]).toBe(provider.getCapabilities().readsFileAccessPosture === true);
+    expect(readsFileAccessPosture[type]).toBe(provider.getCapabilities().readsFileAccessPosture === true);
   });
 
   test.each([...SHIPPED_DATABASE_TYPES])("%s declares the flag as the literal true or not at all", async (type) => {
@@ -37,9 +36,9 @@ describe("READS_FILE_ACCESS_POSTURE against each provider's own declaration", ()
   });
 
   test("SQLite and DuckDB read the file-access posture", () => {
-    expect(READS_FILE_ACCESS_POSTURE.duckdb).toBe(true);
-    expect(READS_FILE_ACCESS_POSTURE.sqlite).toBe(true);
+    expect(readsFileAccessPosture.duckdb).toBe(true);
+    expect(readsFileAccessPosture.sqlite).toBe(true);
     const others = [...SHIPPED_DATABASE_TYPES].filter((type) => type !== "duckdb" && type !== "sqlite");
-    expect(others.every((type) => READS_FILE_ACCESS_POSTURE[type] === false)).toBe(true);
+    expect(others.every((type) => readsFileAccessPosture[type] === false)).toBe(true);
   });
 });

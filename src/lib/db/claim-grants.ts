@@ -1,7 +1,8 @@
 /**
  * Studio's grant of each policy, MCP, connection and agent mode claim an engine declaration requests
  * (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): the one module that reads a request,
- * `BUNDLED_CLAIM_REQUESTS`, and Studio's review record of each claim, and the module every gate reads in their place.
+ * `BUNDLED_CLAIM_REQUESTS`, and Studio's review of each claim for each engine, and the module every gate reads in their
+ * place.
  *
  * A claim is a request, never a fact Studio believes as declared (clause M-52). So each claim is granted as the more
  * restrictive of the engine's request and the row of Studio's record, and at the claim's restrictive value (clause
@@ -48,17 +49,23 @@
  * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine, and
  * every other row is Studio's own typed table, read as it stands.
  *
- * The records stay Studio's hand-written tables in src/lib/db/compatibility.ts, the statement language record among
- * them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this
- * module; tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source reads them, the
- * facet rows' `agentReadings` by member, and tests/unit/db/engine-declaration-readers.test.ts that no other module
- * reads a request. For every engine Studio ships each request is its record's row, so each granted table equals its
- * record there.
+ * Studio's review of each policy and MCP claim for an engine the legacy adapter serves is the engine's legacy row of the
+ * grant register, `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id: the register is
+ * read once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and
+ * `legacyGrantRows` refuses by name a served engine the register holds no legacy row for, so no served engine is read at
+ * a restrictive value by omission. A row's review notes say why it holds its value. A register its schema or its code
+ * rules refuse fails this module's load, in the browser as on the server.
+ * Studio's review of every other claim stays a hand-written record, in src/lib/db/compatibility.ts, the statement
+ * language record among them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which
+ * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
+ * source reads those records, the facet rows' `agentReadings` by member, or loads the register, and
+ * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
+ * each request is its review row, so each granted table equals that row there.
  *
  * The tables are computed once, when this module loads, over the bundled declarations; the server catalog's composer
- * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals, the facet rows and
- * generated data only, so the browser's readers, the read-only marker, the connection form and the agent rail, load it
- * as they load the records.
+ * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals,
+ * the facet rows, generated data and the register's rows only, and the register's reader compiles no code, so the
+ * browser's readers, the read-only marker, the connection form and the agent rail, load it as they load the records.
  */
 import type {
   AgentCredentialFormClaim,
@@ -67,30 +74,17 @@ import type {
   PolicyClaims,
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
+import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import type { DatabaseType, HostPathField } from "@/lib/types";
 import {
   AGENT_STATEMENT_LANGUAGE,
   HOST_PATH_FIELDS,
-  MASKING_EXEMPT_COLUMNS,
-  MCP_AGENT_CREDENTIAL_REQUIRED,
-  MCP_EXPOSABLE,
-  MCP_METADATA_READ_CHANGES_STATE,
-  MCP_STATEMENT_READ,
   OPENS_LOCAL_FILE,
   OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  READ_ROOTS_REQUIRED,
-  READS_FILE_ACCESS_POSTURE,
-  REFUSES_DENIED_FILE_ACCESS,
-  SINGLE_WRITER_FILE,
+  SHIPPED_DATABASE_TYPES,
   SSH_TUNNEL_REFUSAL,
-  WRITE_REACH,
 } from "./compatibility";
-import {
-  AGENT_CREDENTIAL_FORM,
-  SEED_AGENT_CREDENTIAL,
-  SEED_ONLY_FIELDS,
-  type SeedAgentCredential,
-} from "./connection-fields";
+import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
@@ -159,19 +153,56 @@ export interface ClaimGrants<K extends string> {
   readonly agentReadings: Readonly<Record<K, readonly AgentReading[]>>;
 }
 
+/**
+ * The grants of each engine of `engines` as `register` holds them in its legacy row, keyed by engine in `engines`'
+ * order: the register's own rows, deep-frozen by its reader, in a frozen record.
+ *
+ * @throws {Error} Naming the engine, for an engine of `engines` the register holds no legacy row for: such an engine is
+ * never read at a restrictive value, since the legacy adapter serves it and its review is missing.
+ */
+export function legacyGrantRows(
+  register: GrantRegister,
+  engines: readonly string[],
+): Readonly<Record<string, RegisterGrants>> {
+  return Object.freeze(
+    Object.fromEntries(
+      engines.map((engine) => {
+        const row = register.rowFor({ legacy: LEGACY_KEY, engine });
+        if (row === null) {
+          throw new Error(`the grant register holds no legacy row for ${engine}, an engine the legacy adapter serves`);
+        }
+        return [engine, row.grants];
+      }),
+    ),
+  );
+}
+
+/**
+ * The grant register's legacy rows of every engine Studio ships, read once when this module loads.
+ * `SHIPPED_DATABASE_TYPES` is the legacy adapter's served set: its `LEGACY_ENGINE_IDS` is defined as it.
+ */
+const LEGACY_GRANT_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+
+/** Member `member` of every legacy row, keyed by engine: the review rows `grantClaims` reads for that claim. */
+function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterGrants[M]> {
+  return Object.freeze(
+    Object.fromEntries(Object.entries(LEGACY_GRANT_ROWS).map(([engine, grants]) => [engine, grants[member]])),
+  );
+}
+
 /** Studio's records, as `grantClaims` reads them for the bundled declarations. */
 export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
-  writeReach: WRITE_REACH,
-  readsFileAccessPosture: READS_FILE_ACCESS_POSTURE,
-  deniedFileAccessRefusal: REFUSES_DENIED_FILE_ACCESS,
-  singleWriterFile: SINGLE_WRITER_FILE,
-  readRootsRequired: READ_ROOTS_REQUIRED,
-  agentCredentialForm: AGENT_CREDENTIAL_FORM,
-  maskingExemptColumns: MASKING_EXEMPT_COLUMNS,
-  exposable: MCP_EXPOSABLE,
-  statementRead: MCP_STATEMENT_READ,
-  metadataReadChangesState: MCP_METADATA_READ_CHANGES_STATE,
-  agentCredentialRequired: MCP_AGENT_CREDENTIAL_REQUIRED,
+  writeReach: legacyMember("writeReach"),
+  readsFileAccessPosture: legacyMember("readsFileAccessPosture"),
+  deniedFileAccessRefusal: legacyMember("deniedFileAccessRefusal"),
+  singleWriterFile: legacyMember("singleWriterFile"),
+  readRootsRequired: legacyMember("readRootsRequired"),
+  agentCredentialForm: legacyMember("agentCredentialForm"),
+  maskingExemptColumns: legacyMember("maskingExemptColumns"),
+  exposable: legacyMember("exposable"),
+  statementRead: legacyMember("statementRead"),
+  metadataReadChangesState: legacyMember("metadataReadChangesState"),
+  agentCredentialRequired: legacyMember("agentCredentialRequired"),
   opensLocalFile: OPENS_LOCAL_FILE,
   hostPathFields: HOST_PATH_FIELDS,
   serverLevelWithoutDatabase: OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
@@ -629,54 +660,96 @@ export function bundledEngineGrants(id: DatabaseType): EngineGrants {
   return engineGrantsOf(BUNDLED_GRANTS, id);
 }
 
-/** Studio's grant of `policy.writeReach`, which the seed schema and the connection form read. */
+/**
+ * Studio's grant of `policy.writeReach`, which the seed schema and the connection form read, each before a provider
+ * exists. It is no MCP criterion and no MCP code reads it (tests/unit/mcp/no-write-reach.test.ts): whether a machine
+ * client may read an engine is the grant of `mcp.exposable`, whatever the engine's write reach.
+ */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 
 /**
  * Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key reads; the factory's borrow reads a
- * legacy engine's row as its record's `grants.readsFileAccessPosture`.
+ * legacy engine's row as its record's `grants.readsFileAccessPosture`. Static because both decide while finding or
+ * opening a provider, before one exists: the key carries the deny posture as a segment, so a denied and a full-reach
+ * handle of one connection never share an entry, and the borrow lends a handle only to a caller of its own posture.
  */
 export const GRANTED_READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.readsFileAccessPosture;
 
 /**
  * Studio's grant of `policy.deniedFileAccessRefusal`, which MCP availability reads; the open check reads a legacy
- * engine's row as its record's `grants.deniedFileAccessRefusal`.
+ * engine's row as its record's `grants.deniedFileAccessRefusal`. A connection whose execution context denies file
+ * access is refused with the sentence before Studio reads the path it names, and the provider raises it again at
+ * `connect()`. Static because `list_connections` and `inspect_schema` decide before any provider exists.
  */
 export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
 /**
  * Studio's grant of `policy.singleWriterFile`, which the provider cache key reads; the factory's borrow reads a legacy
- * engine's row as its record's `grants.singleWriterFile`.
+ * engine's row as its record's `grants.singleWriterFile`. Static because the key decides before a provider exists:
+ * under governance every user of a connection gets a provider of their own, and the key frames the user as its owner,
+ * except on an engine granted a single-writer file, where a provider per user would be a second handle on one file.
+ * The built provider's own `singleWriterFile` reaches no gate (clause M-57).
  */
 export const GRANTED_SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.singleWriterFile;
 
-/** Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read. */
+/**
+ * Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read: the runs
+ * route refuses an agent-mode Start whose workflow sends statements on a connection without read roots, the seed schema
+ * refuses `mcp: true` without them, the MCP context refuses such a connection at open with `READ_ROOTS_REQUIRED`, and a
+ * governed record, which carries no roots, is never opted in to MCP.
+ */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
 /**
- * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary: every agent acquisition reads a legacy
- * engine's row as its record's `grants.agentCredentialForm`.
+ * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary, null for the user-and-password pair: every
+ * agent acquisition reads a legacy engine's row as its record's `grants.agentCredentialForm`, before the provider it
+ * built connects. It is not the seed agent credential, which is coarser: its `secret` covers both secret-only forms,
+ * and its null covers both `none` and an engine that takes the pair at open but no agent credential on a seed.
  */
 export const GRANTED_AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> =
   BUNDLED_GRANTS.agentCredentialForm;
 
-/** Studio's grant of `policy.maskingExemptColumns`, which the producers of client capabilities answer. */
+/**
+ * Studio's grant of `policy.maskingExemptColumns`, which the producers of client capabilities answer in place of the
+ * provider's own (`clientCapabilities` in ./client-capabilities), so a provider that declares a wider pattern than its
+ * grant exempts nothing more. The embedded workspace and the published grid take the exemption from the embedder, and
+ * this grant does not reach them.
+ */
 export const GRANTED_MASKING_EXEMPT_COLUMNS: Readonly<Record<DatabaseType, MaskingExemption>> =
   BUNDLED_GRANTS.maskingExemptColumns;
 
-/** Studio's grant of `mcp.exposable`, which the seed schema, governance and the MCP tools read. */
+/**
+ * Studio's grant of `mcp.exposable`, which the seed schema, governance and the MCP tools read: the seed schema refuses
+ * `mcp: true` at load on an engine it does not grant, naming the engine, since the seed file is validated before any
+ * provider exists.
+ */
 export const GRANTED_MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.exposable;
 
-/** Studio's grant of `mcp.statementRead`, which the MCP statement tools read. */
+/**
+ * Studio's grant of `mcp.statementRead`, which the MCP statement tools read: a second claim beside exposure, which also
+ * opens `list_connections` and `inspect_schema`. A statement tool serves an engine only where agent mode executes
+ * statements on it, it is exposed and this grant is true (src/lib/mcp/tools/served-engines.ts), so an engine that joins
+ * agent mode does not open to MCP as a side effect.
+ */
 export const GRANTED_MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.statementRead;
 
-/** Studio's grant of `mcp.metadataReadChangesState`, which the MCP tool annotations read. */
+/**
+ * Studio's grant of `mcp.metadataReadChangesState`, which the MCP tool annotations read: true for an engine whose
+ * metadata read changes state the engine keeps though it writes no data, so a token whose `tools/list` reaches one is
+ * told `readOnlyHint: false` and `destructiveHint: false` on `inspect_schema` (`metadataReadAnnotations`). A grant per
+ * engine rather than the provider's `resumesBilledCompute`, which `tools/list` cannot read before any provider exists.
+ */
 export const GRANTED_MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.metadataReadChangesState;
 
-/** Studio's grant of `mcp.agentCredentialRequired`, which the seed schema, MCP and governance read. */
+/**
+ * Studio's grant of `mcp.agentCredentialRequired`, which the seed schema, MCP and governance read: an engine MCP reads
+ * only under the seed's own agent credential, whose grants bound what an MCP client reads, so the seed schema refuses
+ * `mcp: true` without one at load and the MCP context refuses such a connection at open with
+ * `AGENT_CREDENTIAL_REQUIRED`.
+ */
 export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.agentCredentialRequired;
 

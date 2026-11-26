@@ -8,7 +8,7 @@
  * names, counts and flags, never an object key it was not given, a body, user metadata, a tag, an ETag, a version id or
  * the endpoint.
  *
- * MCP reads S3 only under the seed's agent read key (`MCP_AGENT_CREDENTIAL_REQUIRED`), never under the connection's
+ * MCP reads S3 only under the seed's agent read key (the grant of `mcp.agentCredentialRequired`), never under the connection's
  * own key, so the buckets a call reaches are that key's grants, enforced by the server: the bucket listing names only
  * the listed buckets the server answers that key a HEAD for, counting the rest in a note, and a bucket or key it may not
  * read answers as a missing one. The answer carries the provider's warnings as its notes, since each is Studio's own
