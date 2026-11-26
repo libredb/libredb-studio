@@ -172,12 +172,6 @@ export interface EngineOffers {
    * `statementGrammar`, with every claim that loosens the gate uncounted (`packageConfirmationVerdict`).
    */
   readonly statementVocabulary: boolean;
-  /**
-   * A query event that keeps the statement's and the error's text, read under Studio's redaction rows by the engine's
-   * id: the query event builder reads it (`buildQueryEvent` in src/lib/query-events/build.ts). An engine without it
-   * keeps no statement and no error text in any capture mode, and its statement is read as `OTHER`.
-   */
-  readonly queryEventText: boolean;
   /** An SSH tunnel core opens for the connection. */
   readonly sshTunnel: boolean;
   /** Host files: the host path fields and the local file core admits for the connection. */
@@ -201,7 +195,8 @@ export interface EngineRecord {
    * The grammar the engine's statements are confirmed under: for a package, the grammar its declaration states
    * (`sqlText.grammar`), composed once by `grammarFromFacts` (./sql-grammar), which the confirmation gate reads with
    * every claim that loosens it uncounted (`packageStatementAsks` in src/lib/sql/dangerous-query.ts); for a legacy
-   * engine, its row of Studio's grammar table (`sqlGrammarFor`).
+   * engine, its row of Studio's grammar table (`sqlGrammarFor`). The query event builder reads a statement and its
+   * error text under it too (`buildQueryEvent` in src/lib/query-events/build.ts).
    */
   readonly statementGrammar: SqlGrammar;
   readonly offers: EngineOffers;

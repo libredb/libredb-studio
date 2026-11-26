@@ -1,8 +1,8 @@
 /**
  * Only the modules `DECLARATION_READERS` lists read an engine declaration or a projection of the declarations, only the
  * modules `CLAIM_READERS` lists read a claim, the only authored claims are the policy, MCP, connection and agent mode
- * claims and the confirmation gate's two, and every claim record Studio keeps in core is written by hand
- * (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75, M-77, M-82 and M-83).
+ * claims, the SQL text's redaction and the confirmation gate's two, and every claim record Studio keeps in core is
+ * written by hand (docs/providers/CONTRACT.md, clauses M-52, M-54, M-70, M-71, M-72, M-74, M-75, M-77, M-82 and M-83).
  *
  * A declaration's `policy` and `mcp` members, and the members of its other segments M-53 names, are claims: requests
  * Studio grants only as far as its review of each claim for the engine allows. A module that read a claim from a declaration
@@ -30,7 +30,7 @@ import path from "node:path";
 import ts from "typescript";
 import { AUTHORED_MEMBERS } from "../../../scripts/generate-engine-declarations";
 import { CONFIRMATION_GATE_CLAIMS, SEGMENT_CLAIMS } from "./engine-declarations/claims";
-import { ENGINE_TABLE_INVENTORY } from "./engine-declarations/inventory";
+import { claim, ENGINE_TABLE_INVENTORY, type InventoryEntry } from "./engine-declarations/inventory";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCHEMA_FILE = path.join(ROOT, "packages/provider-sdk/src/manifest/manifest.schema.json");
@@ -365,7 +365,7 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
     path: "src/lib/db/sql-grammar/index.ts",
     members: SQL_TEXT_MEMBERS,
     reason:
-      "each engine's SQL grammar row, composed from the generated SQL text, Studio's hand-written redaction record and Studio's grammar function table, which binds each named function",
+      "each engine's SQL grammar row, composed from the generated SQL text and Studio's grammar function table, which binds each named function",
   },
   {
     path: "src/lib/db/sql-writing/index.ts",
@@ -602,11 +602,11 @@ function authoredClaims(authored: readonly string[], claims: readonly string[]):
 }
 
 /**
- * The problems `authoredClaims` names, in `AUTHORED_MEMBERS` order, for the authored connection and agent mode claims
- * and the authored `policy` and `mcp` segments holding the claims `requested`.
+ * The problems `authoredClaims` names, in `AUTHORED_MEMBERS` order, for the authored connection and agent mode claims,
+ * the authored SQL text redaction and the authored `policy` and `mcp` segments holding the claims `requested`.
  */
 function authoredRequests(requested: readonly string[]): string[] {
-  return [...CONNECTION_CLAIMS, ...AGENT_MODE_CLAIMS, "policy", "mcp"].flatMap((member) =>
+  return [...CONNECTION_CLAIMS, ...AGENT_MODE_CLAIMS, "sqlText.redaction", "policy", "mcp"].flatMap((member) =>
     requested
       .filter((claim) => claim === member || claim.startsWith(`${member}.`))
       .map((claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`),
@@ -770,12 +770,13 @@ describe("engine declaration readers", () => {
     expect(claimReaders(widened, claims)).toEqual([
       `src/lib/db/engine-catalog/projection.ts reads sqlText.redaction, which holds the claim sqlText.redaction, ${CLAIM_READ_RULE}`,
     ]);
-    // The authored claims are exactly the policy, MCP, connection and agent mode claims, and a SQL text claim authored
-    // still fails.
-    expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual(authoredRequests(requested));
-    expect(authoredClaims([...AUTHORED_MEMBERS, "sqlText.redaction"], claims)).toEqual([
-      ...authoredRequests(requested),
-      `sqlText.redaction is authored, and it holds the claim sqlText.redaction, ${AUTHORED_CLAIM_RULE}`,
+    // The authored claims are exactly the policy, MCP, connection and agent mode claims and the SQL text's redaction,
+    // which no projection reads: the server catalog's composition hands an admitted declaration's to the grant reader,
+    // and a legacy engine's request is its register row's. Any other claim authored still fails.
+    expect(authoredClaims(AUTHORED_MEMBERS, claims)).toEqual(authoredRequests([...requested, "sqlText.redaction"]));
+    expect(authoredClaims([...AUTHORED_MEMBERS, "agent.overlay"], claims)).toEqual([
+      ...authoredRequests([...requested, "sqlText.redaction"]),
+      `agent.overlay is authored, and it holds the claim agent.overlay.dialect.catalogRead.commandShaped, ${AUTHORED_CLAIM_RULE}`,
     ]);
     expect(claims).toContain("policy.writeReach");
     expect(claims).toContain("mcp.exposable");
@@ -841,15 +842,18 @@ describe("engine declaration readers", () => {
   }, 60_000);
 
   test("every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one", () => {
-    const records = ENGINE_TABLE_INVENTORY.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
+    const claimRecords = (inventory: readonly InventoryEntry[]) =>
+      inventory.filter((entry) => CLAIM_DESTINATION.test(entry.destination));
+    const records = claimRecords(ENGINE_TABLE_INVENTORY);
     const modules = [...new Set([...records, ...CONFIRMATION_RECORDS].map((record) => record.module))];
     const files = modules.map((module) => ({ path: module, text: readFileSync(path.join(ROOT, module), "utf8") }));
 
-    expect(records.length).toBe(1);
-    expect(records).toContainEqual(
-      expect.objectContaining({ module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION" }),
-    );
+    // No claim table is left in the inventory: the confirmation gate's review record is the one claim record in core.
+    expect(records).toEqual([]);
     expect(computedClaimRecords(files, [...records, ...CONFIRMATION_RECORDS])).toEqual([]);
+    // Vacuity: a claim table planted in the inventory is found by its destination.
+    const plantedTable = { module: "src/lib/db/planted-claims.ts", name: "LITERAL", destination: claim("policy") };
+    expect(claimRecords([...ENGINE_TABLE_INVENTORY, plantedTable])).toEqual([plantedTable]);
 
     const planted: SourceText = {
       path: "src/lib/db/planted-claims.ts",

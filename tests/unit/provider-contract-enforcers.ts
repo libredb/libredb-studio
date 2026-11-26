@@ -274,8 +274,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "every function the connection form holds is named by its engine's declaration, and the resolver names nothing else",
         "every function a connection string row holds is, through the census's own resolver, the very slot its declaration names",
         "every function a connection string row holds is named by its engine's declaration",
-        "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names",
-        "every function a grammar row holds is named by its engine's declaration",
+        "every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names",
+        "every function a grammar row or a statement redaction holds is named by its engine's declaration",
         "every name an SQL writing declaration states is its member's slot, and Studio's SQL writing function table binds it there to the function the engine's row runs",
         "every function an SQL writing row holds is named at its slot by its engine's declaration, and no slot the row leaves empty is named",
         "every name a migration DDL declaration states is its member's slot, and Studio's migration DDL function table binds it there to the function the engine's row runs",
@@ -733,9 +733,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null",
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
         "an admitted package with no grant record reads every claim at its restrictive value",
+        "a SQL text claim is granted from the engine's register row only for the grammar that row reviewed, and at its restrictive value otherwise",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
+        "a package record's SQL text grants are its register row's for the grammar the row reviewed, and restrictive without a row or for another grammar",
       ],
       "tests/unit/lib/db/record-grant-readers.test.ts": [
         "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
@@ -765,8 +767,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declaration-readers.test.ts": [
         "every claim record Studio keeps in core is written by hand, so no projection of the declarations can feed one",
       ],
-      "tests/unit/db/sql-grammar/compose.test.ts": [
-        "the redaction is the record's row, a command reader bound through the function table, never the entry's",
+      "tests/unit/db/sql-grammar/statement-redaction.test.ts": [
+        "every legacy record's statement redaction is its granted redaction, a command reader bound through the grammar function table",
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "every claim of the connection, facets, agent and SQL text segments is the row of Studio's review record of it",
@@ -1257,14 +1259,26 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.redaction is the row's redaction, a command reader named by its slot",
-        "every function a grammar row holds is, through the census's own resolver, the very slot its declaration names",
+        "every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names",
       ],
       "tests/unit/lib/query-events/redact.test.ts": [
         "the vectors hold every literal form for postgres, mysql, mssql and oracle, and MongoDB and Redis commands",
       ],
       "tests/unit/lib/query-events/build.test.ts": [
         "an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER",
-        "what an event keeps of its text is read from its engine's record: the queryEventText offer, a legacy engine's id included",
+        "a query event keeps the statement under the record's granted redaction, for a legacy engine and for a package engine its row grants sql",
+        "a package engine whose row reviews its grammar and grants none keeps ? when redacted and the masked text in full, as a legacy none engine does",
+        "what an event keeps of its text is read from its engine's record's grants, a legacy engine's id included",
+      ],
+      "tests/unit/db/sql-grammar/statement-redaction.test.ts": [
+        "every legacy record's statement redaction is its granted redaction, a command reader bound through the grammar function table",
+        "a command redaction granted to an engine no legacy provider serves is refused as a host defect",
+      ],
+      "packages/grant-register/tests/reader.test.ts": [
+        "a package row granting a command redaction is refused by name, and a legacy row's is admitted",
+      ],
+      "tests/unit/db/claim-grants.test.ts": [
+        "a package row may grant redaction sql or none, and a command reader requested by a package is read as none",
       ],
     },
     schema: ["/$defs/statementRedaction", "/$defs/nameQuote"],
@@ -1301,7 +1315,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/db/engine-declarations.test.ts": [
         "sqlText.updateTarget is the row's, each word set in its order",
         "sqlText.completion names a segment formatter and a quoted qualifier reader exactly where the row has one",
-        "every function a grammar row holds is named by its engine's declaration",
+        "every function a grammar row or a statement redaction holds is named by its engine's declaration",
       ],
     },
     schema: ["/$defs/updateTargetWords", "/$defs/completionReaders"],

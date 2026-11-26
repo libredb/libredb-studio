@@ -392,7 +392,8 @@ export function analyzeQuery(sql: string, type?: DatabaseType): ParsedQueryInfo 
   return analyzeUnderGrammar(sql, resolveSqlGrammar(type));
 }
 
-function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo {
+/** What `analyzeQuery` answers, read under `grammar` itself, for a reader holding an engine record's grammar. */
+export function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo {
   // The statement's own text, with its trailing trivia and terminator removed.
   // Every end-anchored probe below reads THIS rather than the raw input: the
   // anchor is what keeps them off a statement that merely mentions a bound, and

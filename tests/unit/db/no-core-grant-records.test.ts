@@ -110,9 +110,9 @@ describe("the exit of M3", () => {
     const count = (removedBy: string) =>
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
-    expect(claimTables).toHaveLength(1);
+    expect(claimTables).toHaveLength(0);
     expect(grantedTables).toHaveLength(4);
-    expect(count('{"item":4}')).toBe(2);
+    expect(count('{"item":4}')).toBe(1);
     expect(count('{"milestone":"M7"')).toBe(5);
   });
 

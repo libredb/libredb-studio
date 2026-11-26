@@ -57,7 +57,12 @@ import type { DatabaseType } from "@/lib/types";
 import { CLAIM_GRANTS, CORE_GRANT_RECORDS } from "../../helpers/core-grant-records";
 import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 import { admittedFor, admittedManifest, withLoosestClaims } from "../../helpers/package-catalog";
-import { ENGINE_TABLE_INVENTORY, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
+import {
+  claim,
+  ENGINE_TABLE_INVENTORY,
+  type InventoryEntry,
+  REVIEW_RECORD_PHRASE,
+} from "./engine-declarations/inventory";
 
 /** An id no shipped engine uses, for a request no register row covers. */
 const UNRECORDED = "acmefoo";
@@ -1290,9 +1295,12 @@ describe("the grant reader's inputs", () => {
     return inputs.map(({ input }) => input).filter((input) => !Object.hasOwn(GRANT_READER_INPUTS, input));
   }
 
-  /** Each input from a module holding a claim table of the engine table inventory, with the table's name. */
-  function claimTableInputs(inputs: readonly Input[]): readonly string[] {
-    const tables = ENGINE_TABLE_INVENTORY.filter((entry) => entry.destination.includes(REVIEW_RECORD_PHRASE));
+  /** Each input from a module holding a claim table of `inventory`, the engine table inventory, with the table's name. */
+  function claimTableInputs(
+    inputs: readonly Input[],
+    inventory: readonly InventoryEntry[] = ENGINE_TABLE_INVENTORY,
+  ): readonly string[] {
+    const tables = inventory.filter((entry) => entry.destination.includes(REVIEW_RECORD_PHRASE));
     return inputs.flatMap(({ input, module }) =>
       tables.filter((table) => moduleOf(table.module) === module).map((table) => `${input}: ${table.name}`),
     );
@@ -1310,17 +1318,21 @@ describe("the grant reader's inputs", () => {
 
   test("the inputs scan finds a value import, a re-export and a dynamic import by name, and passes over a type-only import", () => {
     const planted = (line: string) => valueInputs(GRANT_READER, `${line}\n${readerText()}`);
-    const redaction = "SQL_TEXT_REDACTION from ./sql-grammar/redaction";
+    // No claim table is left in the inventory, so the scan reads one planted in an inventory of its own.
+    const table = { module: "src/lib/db/planted-claims.ts", name: "PLANTED_REDACTION", destination: claim("policy") };
+    const inventory = [...ENGINE_TABLE_INVENTORY, table];
+    const input = "PLANTED_REDACTION from ./planted-claims";
 
-    const imported = planted('import { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
-    expect(unlisted(imported)).toEqual([redaction]);
-    expect(claimTableInputs(imported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`]);
+    const imported = planted('import { PLANTED_REDACTION } from "./planted-claims";');
+    expect(unlisted(imported)).toEqual([input]);
+    expect(claimTableInputs(imported, inventory)).toEqual([`${input}: PLANTED_REDACTION`]);
+    expect(claimTableInputs(imported)).toEqual([]);
 
-    const reexported = planted('export { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
-    expect(unlisted(reexported)).toEqual([redaction]);
-    expect(claimTableInputs(reexported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`]);
+    const reexported = planted('export { PLANTED_REDACTION } from "./planted-claims";');
+    expect(unlisted(reexported)).toEqual([input]);
+    expect(claimTableInputs(reexported, inventory)).toEqual([`${input}: PLANTED_REDACTION`]);
 
-    expect(unlisted(planted('import type { SqlTextRedaction } from "./sql-grammar/redaction";'))).toEqual([]);
+    expect(unlisted(planted('import type { PlantedRedaction } from "./planted-claims";'))).toEqual([]);
     expect(unlisted(planted('const r = await import("./confirmation-claim-review");'))).toEqual([
       'import("./confirmation-claim-review")',
     ]);

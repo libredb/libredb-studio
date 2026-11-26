@@ -160,9 +160,9 @@ import { MONITORING_PANELS } from "@/lib/db/engine-facets/types";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { assertOpenable } from "@/lib/db/open-check";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import type { EngineRecord } from "@/lib/db/server-catalog";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
+import { composeStatementRedaction } from "@/lib/db/sql-grammar/statement-redaction";
 import type { CompletionQuoting, SqlGrammarSpec, SqlRedaction, UpdateTargetGrammar } from "@/lib/db/sql-grammar/types";
 import { EDITOR_LANGUAGES, type EditorLanguage } from "@/lib/db/editor-language";
 import type { EditorLanguageContribution } from "@/lib/db/editor-language/types";
@@ -337,7 +337,7 @@ function sameValue(a: unknown, b: unknown): boolean {
 /** Every member a redaction of any kind may hold. */
 type RedactionMember = "kind" | "nameQuote" | "read";
 
-/** A row's redaction as a declaration writes it: a command reader named by its slot. */
+/** An engine's statement redaction as a declaration writes it: a command reader named by its slot. */
 function declaredRedaction(row: SqlRedaction): object {
   if (row.kind === "sql") return { kind: "sql", nameQuote: row.nameQuote };
   return row.kind === "command" ? { kind: "command", reader: "redactionReader" } : { kind: "none" };
@@ -346,6 +346,16 @@ function declaredRedaction(row: SqlRedaction): object {
 /** The reader of a command redaction, or undefined where the redaction is of another kind. */
 function commandReader(redaction: SqlRedaction): unknown {
   return redaction.kind === "command" ? redaction.read : undefined;
+}
+
+/** The statement redaction the query event log reads for a shipped engine: its record's grant, composed. */
+function statementRedaction(type: DatabaseType): SqlRedaction {
+  return composeStatementRedaction(servedEngineRecord(type));
+}
+
+/** A shipped engine's grammar row with its statement redaction beside it, for `functionPaths`. */
+function statementFunctions(type: DatabaseType): object {
+  return { ...SQL_GRAMMAR[type], redaction: statementRedaction(type) };
 }
 
 /**
@@ -440,7 +450,10 @@ function connectionStringNames(d: EngineDeclaration): string[] {
   ];
 }
 
-/** The slots of a SQL grammar row whose function the declaration names, as `functionPaths` spells them. */
+/**
+ * The slots of a SQL grammar row and of its engine's statement redaction whose function the declaration names, as
+ * `functionPaths` spells them over `statementFunctions`.
+ */
 function sqlTextSlotPaths(d: EngineDeclaration): string[] {
   const { redaction, completion } = d.sqlText;
   return [
@@ -966,7 +979,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1008,6 +1021,7 @@ describe("the committed declarations", () => {
       "editor.language",
       "sqlText.readsSqlText",
       "sqlText.grammar",
+      "sqlText.redaction",
       "sqlText.updateTarget",
       "sqlText.completion",
       "sqlWriting",
@@ -1063,6 +1077,7 @@ describe("the committed declarations", () => {
       sqlText: {
         readsSqlText: true,
         grammar: bigquery.sqlText.grammar,
+        redaction: { kind: "sql", nameQuote: null },
         updateTarget: bigquery.sqlText.updateTarget,
         completion: { formatSegment: null, readQuotedQualifier: null },
       },
@@ -1112,8 +1127,15 @@ describe("the committed declarations", () => {
     expect(authored("mqtt").facets.agentReadings).toEqual([]);
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
-    // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
-    expect(Object.keys(authored("mongodb").sqlText)).toEqual(["readsSqlText", "grammar", "updateTarget", "completion"]);
+    // The redaction is a claim, authored as the engine's request: only Studio's grant of it reaches the query event log.
+    expect(Object.keys(authored("mongodb").sqlText)).toEqual([
+      "readsSqlText",
+      "grammar",
+      "redaction",
+      "updateTarget",
+      "completion",
+    ]);
+    expect(authored("mongodb").sqlText.redaction).toEqual({ kind: "command", reader: "redactionReader" });
     expect(authored("postgres").sqlText.completion).toEqual({
       formatSegment: "formatSegment",
       readQuotedQualifier: "readQuotedQualifier",
@@ -1236,8 +1258,8 @@ describe("the committed declarations", () => {
     };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    // The SQL text's authored members are kept, and its redaction, a claim, is rewritten from Studio's record; the SQL
-    // writing segment and the policy, MCP and safeguards segments are kept as edited.
+    // The SQL text's authored members are kept, its redaction, a claim requested, included; the SQL writing segment and
+    // the policy, MCP and safeguards segments are kept as edited.
     expect(built).toEqual({
       ...committed,
       displayName: "Edited by hand",
@@ -1246,7 +1268,7 @@ describe("the committed declarations", () => {
       facets,
       agent,
       editor,
-      sqlText,
+      sqlText: { ...sqlText, redaction: { kind: "none" } },
       sqlWriting,
       policy,
       mcp,
@@ -1332,7 +1354,7 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member editor.commitKeyword",
     );
-    for (const member of ["readsSqlText", "grammar", "updateTarget", "completion"] as const) {
+    for (const member of ["readsSqlText", "grammar", "redaction", "updateTarget", "completion"] as const) {
       expect(() =>
         authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member sqlText.${member}`);
@@ -1356,10 +1378,6 @@ describe("the committed declarations", () => {
     }
     // A segment stated as null is stated: an engine that writes the shared forms authors null.
     expect(authoredMembersOf(declared("postgres"), "postgres.json").sqlGenerators).toBeNull();
-    // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
-    expect(() =>
-      authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, "redaction") }, "bigquery.json"),
-    ).not.toThrow();
     for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
       expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
     }
@@ -1782,7 +1800,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "sqlText.redaction": {
     request: (d) => d.sqlText.redaction,
-    record: (type) => SQL_TEXT_REDACTION[type],
+    record: (type) => redactionRow[type],
   },
   "agent.overlay.dialect.catalogRead.commandShaped": {
     request: (d) => d.agent.overlay?.dialect?.catalogRead?.commandShaped ?? false,
@@ -3108,9 +3126,10 @@ describe("the census", () => {
   });
 
   test("sqlText.redaction is the row's redaction, a command reader named by its slot", () => {
-    expect(
-      differing((type, d) => sameValue(d.sqlText.redaction, declaredRedaction(SQL_GRAMMAR[type].redaction))),
-    ).toEqual([]);
+    // The row is the engine record's grant, composed into the statement redaction the query event log reads.
+    expect(differing((type, d) => sameValue(d.sqlText.redaction, declaredRedaction(statementRedaction(type))))).toEqual(
+      [],
+    );
     // Vacuity: every kind and more than one name quote are declared.
     const redactions = SHIPPED_DATABASE_TYPES.map((type) => declared(type).sqlText.redaction);
     expect(new Set(redactions.map(({ kind }) => kind)).size).toBe(3);
@@ -3162,7 +3181,7 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("every function a grammar row holds is, through the census's own resolver, the very slot its declaration names", () => {
+  test("every function a grammar row or a statement redaction holds is, through the census's own resolver, the very slot its declaration names", () => {
     expect(
       differing((type, d) => {
         const row = SQL_GRAMMAR[type];
@@ -3170,7 +3189,7 @@ describe("the census", () => {
         const same = (name: string | null, held: unknown) =>
           name === null || (typeof held === "function" && resolveNamed(type, name) === held);
         return (
-          (redaction.kind !== "command" || same(redaction.reader, commandReader(row.redaction))) &&
+          (redaction.kind !== "command" || same(redaction.reader, commandReader(statementRedaction(type)))) &&
           same(completion.formatSegment, row.completion.formatSegment) &&
           same(completion.readQuotedQualifier, row.completion.readQuotedQualifier)
         );
@@ -3180,9 +3199,11 @@ describe("the census", () => {
     expect(typeof resolveNamed("postgres", "readQuotedQualifier")).toBe("function");
   });
 
-  test("every function a grammar row holds is named by its engine's declaration", () => {
+  test("every function a grammar row or a statement redaction holds is named by its engine's declaration", () => {
     expect(
-      differing((type, d) => sameValue(sorted(functionPaths(SQL_GRAMMAR[type], "")), sorted(sqlTextSlotPaths(d)))),
+      differing((type, d) =>
+        sameValue(sorted(functionPaths(statementFunctions(type), "")), sorted(sqlTextSlotPaths(d))),
+      ),
     ).toEqual([]);
     expect(
       SHIPPED_DATABASE_TYPES.flatMap((type) => sqlTextSlotPaths(declared(type)).map((slot) => `${type}.${slot}`)),
@@ -3198,7 +3219,6 @@ describe("the census", () => {
     const specDeclaredAt: Readonly<Record<keyof SqlGrammarSpec, string>> = {
       grammar: "grammar",
       readsSqlText: "readsSqlText",
-      redaction: "redaction",
       updateTarget: "updateTarget",
       completion: "completion",
     };
@@ -3264,7 +3284,7 @@ describe("the census", () => {
           ...unplaced(row, specDeclaredAt, ""),
           ...unplaced(row.grammar, grammarDeclaredAt, "grammar."),
           ...unplaced(row.grammar.script, scriptDeclaredAt, "grammar.script."),
-          ...unplaced(row.redaction, redactionDeclaredAt, "redaction."),
+          ...unplaced(statementRedaction(type), redactionDeclaredAt, "redaction."),
           ...unplaced(row.updateTarget, updateTargetDeclaredAt, "updateTarget."),
           ...unplaced(row.completion, completionDeclaredAt, "completion."),
         ].map((member) => `${type}.${member}`);
@@ -3275,7 +3295,7 @@ describe("the census", () => {
         const { sqlText } = d;
         const redaction = Object.entries(redactionDeclaredAt).every(
           ([member, declaredMember]) =>
-            Object.hasOwn(SQL_GRAMMAR[type].redaction, member) === Object.hasOwn(sqlText.redaction, declaredMember),
+            Object.hasOwn(statementRedaction(type), member) === Object.hasOwn(sqlText.redaction, declaredMember),
         );
         return (
           placed(sqlText, specDeclaredAt) &&

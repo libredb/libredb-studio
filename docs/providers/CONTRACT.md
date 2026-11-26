@@ -311,7 +311,7 @@ Each claim has a restrictive value, the answer under which the gates that read i
 - `connection.agentCredential`: null, so a seed's agent credential is refused at load;
 - `agent.statementLanguage`: null, so no statement workflow opens in agent mode and MCP serves no statement on the engine;
 - `facets.agentReadings`: empty, so every agent reading is refused before a provider is acquired;
-- `sqlText.redaction`: `none`, so the query event log keeps nothing of the statement's text;
+- `sqlText.redaction`: `none`, so the query event log's redacted capture keeps nothing of the statement's text;
 - `policy.agentCredentialForm`: `none`, so every agent acquisition is refused;
 - `policy.maskingExemptColumns`: null, so every column the masking rules match stays masked;
 - `agent.overlay.dialect.catalogRead.commandShaped`: false, so the statement fence admits no composed catalog command.
@@ -327,6 +327,7 @@ The claim's form decides what "more restrictive" means:
 - a set a gate admits, refuses or keeps apart, `connection.hostPathFields`, is the union of request and grant, and a set a gate offers, `facets.agentReadings`, their intersection;
 - `connection.serverLevelWithoutDatabase` is granted per gate, as restrictive when true where a gate refuses on true and as restrictive when false where a gate honours only on true;
 - a claim whose values are not ordered, such as a statement language, an agent credential form, a redaction other than `none` or a single-writer file, is its grant where the request equals it and its restrictive value otherwise, and an unequal single-writer request leaves the engine refused by name at every open;
+- a SQL text claim, `sqlText.readsSqlText`, `sqlText.redaction` or an exempt form of `sqlText.grammar.confirmExemptForms`, is granted only for the grammar its register row reviewed, `grammarSha256`, and is read at its restrictive value under any other grammar;
 - a requested refusal, of denied file access or of an SSH tunnel, keeps its own sentence, one offered against a refusing grant takes the grant's sentence, and one offered where no grant exists takes the host's own.
 
 ### M-55 (normative): The rules of an engine's claims
@@ -568,13 +569,14 @@ Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 
 ### S-7 (normative): Redaction
 
-An engine's redaction says what the query event log keeps of a statement:
+An engine's redaction says what the query event log's redacted capture keeps of a statement, while its full capture keeps the statement and its error text with their credentials masked under every redaction:
 
 - `sql`: the statement's literals are replaced, and only a closed name in its `nameQuote` is kept, or none where it is null;
 - `none`: nothing of the text is kept;
 - `command`: a named pure reader answers, from the statement's text, the text the log keeps.
 
-Where no register row grants a redaction to an engine a provider package serves (M-54, M-84), its query events keep no statement and no error text in any capture mode, and read the statement's kind as `OTHER`.
+Studio keeps a statement under the redaction an engine's register row grants for the grammar that row reviewed (M-54, M-84), and a register row grants a provider package's engine `sql` or `none`, never `command`.
+Where no register row reviews the grammar an engine declares, its query events keep no statement and no error text in any capture mode, and read the statement's kind as `OTHER`.
 
 ### S-8 (normative): A claim that loosens the confirmation gate
 

@@ -229,7 +229,6 @@ describe("the legacy adapter's records", () => {
       unboundedPage: true,
       consoleTextBound: true,
       statementVocabulary: true,
-      queryEventText: true,
       sshTunnel: true,
       hostFiles: true,
       testCautions: true,

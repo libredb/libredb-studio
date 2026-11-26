@@ -16,7 +16,7 @@ const MONGODB_NAME_FIELDS: ReadonlySet<string> = new Set(["collection", "operati
  * The document is walked with a stack of its own rather than by recursion: the text is the caller's, and `JSON.parse`
  * reads a document nested far deeper than a recursive walk can follow.
  *
- * MongoDB's command redaction reader, the `redactionReader` Studio's redaction record names for it, bound by Studio's
+ * MongoDB's command redaction reader, the `redactionReader` the engine's granted redaction names, bound by Studio's
  * grammar function table (src/lib/db/sql-grammar/index.ts, `SQL_GRAMMAR_FUNCTIONS`).
  */
 export const MONGODB_REDACTION_READER: CommandRedactionReader = function redactMongoCommand(text: string): string {

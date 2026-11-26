@@ -10,8 +10,8 @@
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `facets` its
  * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage`, of `editor` its `commitKeyword`, `consentDeadline`,
- * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `updateTarget` and
- * `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
+ * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `redaction`, `updateTarget`
+ * and `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
  * written in the declaration itself: this script reads them from the committed file of the engine in
  * src/lib/db/engine-declarations, whatever directory `--out` names, with `authoredMembersOf`
  * (scripts/generate-engine-catalog.ts), which refuses by name a file that lacks one or whose `id` is not its file name,
@@ -50,14 +50,14 @@
  * census resolves each name with a table of its own and holds it, by identity, to the function the connection form or
  * the connection string row holds.
  *
- * The SQL text's `readsSqlText`, `grammar`, `updateTarget` and `completion` are authored, written back as the committed
- * file states them; the catalog generator projects them into src/lib/db/engine-catalog/sql-text.generated.ts, from
- * which Studio composes each engine's grammar row (clause M-78). A grammar fact the SDK's `SqlGrammar` type may leave
- * out is stated at the reading its readers give that absence (clause S-4), each trailing limit clause as its source and
- * flags, which the schema holds to i or iu and the validator to a pattern that compiles, and each completion reader
- * named by its slot, `formatSegment` and `readQuotedQualifier`. The redaction is a claim, written from Studio's record
- * of it, `SQL_TEXT_REDACTION` (src/lib/db/sql-grammar/redaction.ts), a command redaction's reader named
- * `redactionReader`.
+ * The SQL text's `readsSqlText`, `grammar`, `redaction`, `updateTarget` and `completion` are authored, written back as
+ * the committed file states them; the catalog generator projects all but the redaction into
+ * src/lib/db/engine-catalog/sql-text.generated.ts, from which Studio composes each engine's grammar row (clause M-78).
+ * A grammar fact the SDK's `SqlGrammar` type may leave out is stated at the reading its readers give that absence
+ * (clause S-4), each trailing limit clause as its source and flags, which the schema holds to i or iu and the validator
+ * to a pattern that compiles, and each completion reader named by its slot, `formatSegment` and `readQuotedQualifier`.
+ * The redaction is a claim, the engine's request, a command redaction's reader named `redactionReader`: no projection
+ * reads it, and the query event log reads only the grant of it, the engine's register row's.
  *
  * The SQL writing, `sqlWriting`, is authored as a whole and written back as the committed file states it; the catalog
  * generator projects it into src/lib/db/engine-catalog/sql-writing.generated.ts, from which Studio composes each
@@ -96,8 +96,8 @@
  * `readOnlyEnforced` has no member, since Studio derives it from the granted write reach, and
  * `connection.readsTrustMaterial`, which is no claim, is authored too.
  * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of the agent
- * segment is written from Studio's tables. The SQL text claim, the redaction, is written from Studio's record: the row of the
- * review record docs/providers/CONTRACT.md, clause M-53, names for it.
+ * segment is written from Studio's tables. The SQL text claim, the redaction, is authored as the engine's request, which
+ * the engine's register row grants (docs/providers/CONTRACT.md, clause M-54).
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
  * (clause M-67): null where the declaration authors no statement language; otherwise its dialect, null where the
@@ -172,7 +172,6 @@ import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import { SHIPPED_DATABASE_TYPES } from "../src/lib/db/compatibility";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
-import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
 import type { ProviderCapabilities } from "../src/lib/db/types";
 import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
@@ -521,7 +520,7 @@ export function buildEngineDeclaration(
     sqlText: {
       readsSqlText: authored.sqlText.readsSqlText,
       grammar: authored.sqlText.grammar,
-      redaction: SQL_TEXT_REDACTION[type],
+      redaction: authored.sqlText.redaction,
       updateTarget: authored.sqlText.updateTarget,
       completion: authored.sqlText.completion,
     },

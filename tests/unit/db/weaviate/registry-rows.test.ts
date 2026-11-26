@@ -9,6 +9,7 @@ import { CONNECTION_STRING } from "@/lib/db/connection-string";
 import { EXECUTION_UI } from "@/lib/db/execution-ui";
 import { SQL_COMMIT_KEYWORD } from "@/lib/db/execution-ui/shared";
 import { MIGRATION_DDL } from "@/lib/db/migration-ddl";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { SQL_GRAMMAR } from "@/lib/db/sql-grammar";
 import { DEFAULT_SQL_GRAMMAR } from "@libredb/provider-sdk/sql";
 import { SQL_WRITING } from "@/lib/db/sql-writing";
@@ -18,7 +19,7 @@ describe("the rows", () => {
   test("the SQL grammar reads no SQL text and redacts a statement whole", () => {
     expect(SQL_GRAMMAR.weaviate.readsSqlText).toBe(false);
     expect(SQL_GRAMMAR.weaviate.grammar).toEqual(DEFAULT_SQL_GRAMMAR);
-    expect(SQL_GRAMMAR.weaviate.redaction).toEqual({ kind: "none" });
+    expect(servedEngineRecord("weaviate").grants.redaction).toEqual({ kind: "none" });
     expect(SQL_GRAMMAR.weaviate.completion).toEqual({ formatSegment: null, readQuotedQualifier: null });
   });
 

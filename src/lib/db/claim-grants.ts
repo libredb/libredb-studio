@@ -48,9 +48,9 @@
  *   canonical text, ./grammar-digest), is the row's `grammarSha256`, and under any other grammar, or where the row
  *   states none or no row exists, every SQL text claim is read at its restrictive value.
  * - `sqlText.redaction`, unordered: the row's where the grammar is reviewed and the request equals it, kind, name quote
- *   and command reader's name, always a fresh frozen copy, and `none`, under which the query event log keeps nothing
- *   of a statement's text, otherwise. The register refuses a package row granting a `command` redaction, so a
- *   package's `command` request is read as `none`.
+ *   and command reader's name, always a fresh frozen copy, and `none`, under which the query event log's redacted
+ *   capture keeps nothing of a statement's text, otherwise. The register refuses a package row granting a `command`
+ *   redaction, so a package's `command` request is read as `none`.
  * - `sqlText.readsSqlText`, restrictive when true: false only where the grammar is reviewed and the request and the
  *   row both are false.
  * - `sqlText.grammar.confirmExemptForms`, a set the confirmation gate exempts: the requested forms the row lists, each
@@ -712,7 +712,10 @@ export interface SqlTextRequest {
   readonly grammarSha256: string | null;
 }
 
-/** The redaction a SQL text claim is read at where no grant covers it: nothing of a statement's text is kept. */
+/**
+ * The redaction a SQL text claim is read at where no grant covers it: the query event log's redacted capture keeps
+ * nothing of a statement's text.
+ */
 const NO_REDACTION: RegisterRedaction = Object.freeze({ kind: "none" });
 
 /**

@@ -4,7 +4,7 @@
 // scripts/generate-manifest-types.ts. tests/unit/provider-sdk/manifest-types.test.ts fails on drift.
 
 /** The SHA-256 of the schema file's bytes: `compileManifestValidator` refuses a schema with any other. */
-export const MANIFEST_SCHEMA_SHA256 = "f0fa50610ea1e7b811942ea88f544796f2bb2761cf5e01ae2957752d1e7036b1";
+export const MANIFEST_SCHEMA_SHA256 = "46cc38d4da46572aab4a2ea62aa95422c006de72a2d02f38fe295f599bf176e9";
 
 /** A provider package's manifest under provider contract 0.1 (docs/providers/CONTRACT.md). The package's name, version, licence, Node range and entry metadata live in its own package.json, and its publisher is computed from verified provenance, so none of them is declared here. */
 export interface ProviderManifest {
@@ -988,7 +988,7 @@ export interface CommandRedaction {
   readonly reader: FunctionName;
 }
 
-/** Nothing of the statement's text is kept. */
+/** Under the query event log's redacted capture, nothing of the statement's text is kept; its full capture keeps the statement and its error text with their credentials masked. */
 export interface NoRedaction {
   readonly kind: "none";
 }

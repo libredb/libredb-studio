@@ -2411,7 +2411,7 @@ export const MANIFEST_SCHEMA_TEXT = [
   '      "additionalProperties": false',
   "    },",
   '    "noRedaction": {',
-  '      "description": "Nothing of the statement\'s text is kept.",',
+  '      "description": "Under the query event log\'s redacted capture, nothing of the statement\'s text is kept; its full capture keeps the statement and its error text with their credentials masked.",',
   '      "type": "object",',
   '      "properties": {',
   '        "kind": {',

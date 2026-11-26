@@ -4,12 +4,12 @@
  * Studio's.
  *
  * The rows were written once from Studio's hand-written records and are hand-reviewed data from then on, never a
- * projection of a declaration. Every record but two has left core, so the register is the only copy of every other
- * grant member and its review notes are the register's own. The two still in core, the statement redaction record
- * (`SQL_TEXT_REDACTION`) and the confirmation gate's review record (`CONFIRMATION_CLAIM_REVIEW`), are compared with the
- * rows' SQL text members here until they leave core, and each row's reviewed grammar digest with the SHA-256 of its
- * declaration's grammar, so a changed legacy grammar fails here until its row is reviewed again. It lives in core, not
- * in the package's tests, because a package imports nothing of Studio's.
+ * projection of a declaration. Every record but one has left core, so the register is the only copy of every other
+ * grant member, the redaction included, and its review notes are the register's own. The one still in core, the
+ * confirmation gate's review record (`CONFIRMATION_CLAIM_REVIEW`), is compared with the rows' SQL text members here
+ * until it leaves core, and each row's reviewed grammar digest with the SHA-256 of its declaration's grammar, so a
+ * changed legacy grammar fails here until its row is reviewed again. It lives in core, not in the package's tests,
+ * because a package imports nothing of Studio's.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -25,7 +25,6 @@ import {
 } from "@/lib/db/claim-grants";
 import { CONFIRMATION_CLAIM_REVIEW } from "@/lib/db/confirmation-claim-review";
 import { grammarSha256 } from "@/lib/db/grammar-digest";
-import { SQL_TEXT_REDACTION } from "@/lib/db/sql-grammar/redaction";
 import {
   DIGEST_FORM,
   ENGINE_ID_FORM,
@@ -73,9 +72,8 @@ describe("the legacy rows' SQL text members", () => {
   const entries = (engine: string, kind: string) =>
     CONFIRMATION_CLAIM_REVIEW.filter(({ claim }) => claim.kind === kind && claim.type === engine);
 
-  test("each legacy row's SQL text members are Studio's records of them: the redaction row, the text-not-SQL, exempt-form and decides-alone entries with their reasons, and the SHA-256 of its declaration's grammar", () => {
+  test("each legacy row's SQL text members are Studio's records of them: the text-not-SQL, exempt-form and decides-alone entries with their reasons, a redaction's review note, and the SHA-256 of its declaration's grammar", () => {
     const rows = legacyRows();
-    const record = SQL_TEXT_REDACTION as Readonly<Record<string, unknown>>;
 
     for (const row of rows) {
       const { engine, grants, reasons = {} } = row;
@@ -85,7 +83,6 @@ describe("the legacy rows' SQL text members", () => {
       const declaration = JSON.parse(
         readFileSync(path.join(ROOT, "src/lib/db/engine-declarations", `${engine}.json`), "utf8"),
       ) as { sqlText: { grammar: unknown } };
-      expect({ engine, redaction: grants.redaction }).toEqual({ engine, redaction: record[engine] as never });
       expect({ engine, readsSqlText: grants.readsSqlText, reason: reasons.readsSqlText }).toEqual({
         engine,
         readsSqlText: textNotSql.length === 0,
@@ -115,7 +112,11 @@ describe("the legacy rows' SQL text members", () => {
     expect(rows.filter((row) => !row.grants.readsSqlText)).toHaveLength(22);
     expect(rows.filter((row) => row.grants.decidesAlone)).toHaveLength(20);
     expect(rows.flatMap((row) => row.grants.confirmExemptForms)).toHaveLength(2);
-    expect(Object.keys(record).sort()).toEqual([...LEGACY_ENGINE_IDS].sort());
+    // Vacuity: the rows grant every kind of redaction, so the review note check reads both of its answers.
+    const kinds = rows.map((row) => row.grants.redaction.kind);
+    expect(kinds.filter((kind) => kind === "sql")).toHaveLength(18);
+    expect(kinds.filter((kind) => kind === "command")).toHaveLength(2);
+    expect(kinds.filter((kind) => kind === "none")).toHaveLength(23);
   });
 });
 

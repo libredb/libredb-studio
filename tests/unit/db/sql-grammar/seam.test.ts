@@ -5,7 +5,7 @@
  * leaves are listed by name, each importing nothing: the record check MongoDB's command redaction needs and the Redis
  * command-text reader. Every engine's grammar facts are its declaration's, composed by the registry.
  *
- * The fresh-process half loads each engine, and the three readers of the registry, as the first
+ * The fresh-process half loads each engine, the readers of the registry and the statement redaction, as the first
  * import of a new `bun` process. An import cycle through the registry shows up there as a
  * temporal-dead-zone error at load, which a test process that has already loaded the registry
  * through another path never sees.
@@ -26,7 +26,7 @@ const LEAVES: Readonly<Record<string, string>> = {
 const MODULES = engineModules();
 
 describe("the engine modules the registry imports", () => {
-  test("are the function modules of the engines whose declaration or redaction record names a grammar function", () => {
+  test("are the function modules of the engines whose declaration or legacy register row names a grammar function", () => {
     expect(MODULES.map((m) => m.id)).toEqual(["mongodb", "postgres", "redis"]);
     expect(MODULES.map((m) => m.exportNames)).toEqual([
       ["MONGODB_REDACTION_READER"],
@@ -87,12 +87,6 @@ describe("the contract's own modules", () => {
   test("shared.ts imports nothing", () => {
     expect(importsOf(join(REGISTRY_DIR, "shared.ts"))).toEqual([]);
   });
-
-  test("redaction.ts, Studio's record of the redaction claim, has only type-only imports", () => {
-    const imports = importsOf(join(REGISTRY_DIR, "redaction.ts"));
-    expect(imports.length).toBeGreaterThan(0);
-    expect(imports.filter((entry) => !entry.typeOnly)).toEqual([]);
-  });
 });
 
 /** Loads `path` as the first import of a new process; stderr must stay empty, since a load error writes there. */
@@ -119,6 +113,7 @@ describe("each module loads first in a fresh process", () => {
     "src/lib/db/sql-grammar/index.ts",
     "src/lib/sql/grammar.ts",
     "src/lib/sql/spans.ts",
+    "src/lib/db/sql-grammar/statement-redaction.ts",
     "src/lib/query-events/redact.ts",
   ]) {
     test(reader, () => loadsAlone(join(ROOT, reader)));
