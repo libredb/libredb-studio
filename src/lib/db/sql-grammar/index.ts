@@ -170,8 +170,8 @@ export function composeSqlGrammar(
 
 /**
  * Every engine's grammar row, composed when this module loads from `BUNDLED_SQL_TEXT` and Studio's grammar function
- * table, so a committed module naming a function Studio holds none for fails every importer by that sentence. Keyed in the projection's ascending id order, and total over `DatabaseType`, since the generated
- * record is typed over it.
+ * table, so a committed module naming a function Studio holds none for fails every importer by that sentence. Keyed
+ * in the projection's ascending id order, and total over `DatabaseType`, since the generated record is typed over it.
  */
 export const SQL_GRAMMAR: Readonly<Record<DatabaseType, SqlGrammarSpec>> = Object.freeze(
   Object.fromEntries(
