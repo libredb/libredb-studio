@@ -11,7 +11,7 @@ import type { DatabaseType } from "@/lib/types";
 // Helpers
 // ============================================================================
 
-/** The one Databend refusal reason that starts with `opening`, read from the spec's `reasons` as the docs test reads them. */
+/** The one Databend refusal reason that starts with `opening`, read from the spec's `reasons`. */
 function databendReason(opening: string): string {
   const matches = MIGRATION_DDL.databend.reasons.filter((reason) => reason.startsWith(opening));
   if (matches.length !== 1) throw new Error(`${matches.length} Databend reasons start with "${opening}"`);
