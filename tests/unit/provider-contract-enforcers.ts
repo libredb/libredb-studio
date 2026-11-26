@@ -732,6 +732,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a refused tunnel request keeps its own sentence, one offered against a refusing record takes the record's, and one offered where no record exists takes core's own",
         "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null",
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
+        "an admitted package with no grant record reads every claim at its restrictive value",
       ],
       "tests/unit/lib/db/claim-grant-refusal.test.ts": [
         "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none",

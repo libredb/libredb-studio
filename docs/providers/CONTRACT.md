@@ -318,7 +318,7 @@ Each claim has a restrictive value, the answer under which the gates that read i
 
 ### M-54 (normative): How a host grants a claim
 
-A host reads each claim as the more restrictive of the manifest's request and the grant: the row of Studio's review record for the engine, an operator's audited grant for the package, or the claim's restrictive value (M-53) where neither exists.
+A host reads each claim as the more restrictive of the manifest's request and Studio's grant, which for an admitted package's engine is its register row (M-84), or the claim's restrictive value (M-53) where no row exists.
 So a restrictive request is read as made, a looser one only as far as a grant allows, a declared claim alone never loosens a gate, a request outside its claim's vocabulary is refused by name, and a package carries no grant of its own in this contract.
 The claim's form decides what "more restrictive" means:
 
@@ -327,8 +327,7 @@ The claim's form decides what "more restrictive" means:
 - a set a gate admits, refuses or keeps apart, `connection.hostPathFields`, is the union of request and grant, and a set a gate offers, `facets.agentReadings`, their intersection;
 - `connection.serverLevelWithoutDatabase` is granted per gate, as restrictive when true where a gate refuses on true and as restrictive when false where a gate honours only on true;
 - a claim whose values are not ordered, such as a statement language, an agent credential form, a redaction other than `none` or a single-writer file, is its grant where the request equals it and its restrictive value otherwise, and an unequal single-writer request leaves the engine refused by name at every open;
-- a requested refusal, of denied file access or of an SSH tunnel, keeps its own sentence, one offered against a refusing grant takes the grant's sentence, and one offered where no grant exists takes the host's own;
-- an operator's audited grant of a masking exemption names the protected column names it reaches.
+- a requested refusal, of denied file access or of an SSH tunnel, keeps its own sentence, one offered against a refusing grant takes the grant's sentence, and one offered where no grant exists takes the host's own.
 
 ### M-55 (normative): The rules of an engine's claims
 
@@ -436,6 +435,12 @@ A mode outside the vocabulary, a repeated mode and a mode out of order are each 
 
 An engine lists in `facets.agentReadings` a reading served by a monitoring panel only where its `facets.monitoring` offers that panel, since the host refuses a panel the engine does not offer (C-71); `health`, served by the mandatory health call, is admitted whatever the panels.
 Any other such reading is refused as `agent-reading-panel-not-offered` at the reading's own pointer, in a sentence naming the pointer and no value.
+
+### M-84 (informative): The register
+
+A grant to an admitted package's engine is a row of Studio's register, keyed by the package's name, version and digest (C-93) and by the engine, so a new version or digest of a package has no row until LibreDB reviews it.
+A row grants claims as M-54 reads them, and may also grant the engine its own words through core's scrub (C-112), never by default.
+A row is LibreDB's review, kept in Studio's repository until the providers move to repositories of their own, and no manifest member, lock entry or admission step writes one; no admitted package has a row yet, so nothing checks this clause.
 
 ## Values
 
@@ -569,13 +574,13 @@ An engine's redaction says what the query event log keeps of a statement:
 - `none`: nothing of the text is kept;
 - `command`: a named pure reader answers, from the statement's text, the text the log keeps.
 
-An engine a provider package serves has no redaction in Studio's review record, so its query events keep no statement and no error text in any capture mode, and read the statement's kind as `OTHER`.
+Where no register row grants a redaction to an engine a provider package serves (M-54, M-84), its query events keep no statement and no error text in any capture mode, and read the statement's kind as `OTHER`.
 
 ### S-8 (normative): A claim that loosens the confirmation gate
 
 `readsSqlText: false` and an exempt form each loosen the confirmation gate.
-The gate counts such a claim only where Studio's review record lists it, and every other reader reads it as declared.
-The record holds no row for an engine a provider package serves, so the gate reads its statements as SQL under its declared grammar, counts no exempt form, and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
+The gate counts such a claim only where Studio grants it, and grants it to an engine a provider package serves only through its register row (M-84); every other reader reads it as declared.
+Where no register row grants either claim to an engine a provider package serves, the gate reads its statements as SQL under its declared grammar, counts no exempt form, and asks where a statement asks under either value of `explainExecutesWithAnalyze`.
 
 ### S-9 (normative): Update target words and completion quoting
 
@@ -620,7 +625,8 @@ Backtracking is not checked yet, as M-35 says of a field rule's pattern.
 ### S-16 (informative): Where an SQL writing function runs
 
 Studio runs the SQL writing functions in the browser and on its server.
-A package that fills a slot is admitted with its names read for their form only (C-99), and its engine gets no SQL writing; how a package's SQL writing functions are called is decided in a later milestone.
+A package that fills a slot is admitted with its names read for their form only (C-99), and its engine gets SQL writing only where its register row grants it (M-84), which no row does yet.
+How a package's SQL writing functions are called is decided in a later milestone.
 
 ### S-17 (normative): The migration DDL segment
 
@@ -1109,7 +1115,7 @@ No step of the lock's read imports or runs a package's code, and admission impor
 
 A package that passed its lock is admitted in this order, its first refusal ending it: its manifest's bytes, contract, schema and the SDK's rules (C-98); the engine ids it serves (C-100); its entry's module format (C-101); its TypeScript files and import closure (C-102); native addons (C-103); then its import and its record (C-104).
 A package refused before its import runs none of its code, and one refused after it has run its top level but is never registered and serves no engine; the entry module is read by the runtime's loader, not by admission, so the providers directory must be writable only by the operator.
-Admission grants no claim, so every claim of a package's engines is read at its restrictive value whatever the manifest requests (M-54).
+Admission grants no claim, so every claim of a package's engines is read at its restrictive value where no register row grants it, whatever the manifest requests (M-54, M-84).
 
 ### C-98 (normative): The manifest is read as bytes, for Studio's contract, by the SDK's validator
 
@@ -1162,7 +1168,7 @@ Only the packages the catalog's set rules keep (C-106) are registered, each refu
 ### C-106 (normative): The server's engine catalog is Studio's bundled catalog and the admitted packages' engines, composed once
 
 A package never shadows a bundled engine: the server's engine catalog, composed once at boot, answers a bundled engine first, then an admitted package's engine, then an engine only refused packages name, and a process with no boot admission, the published library and the VS Code backend among them, serves the bundled catalog.
-A package's engine gets its catalog entry, its connection tables, its field rules and its grants at the restrictive value (M-53, M-54), and no SQL writing, connection form, connection string, grammar, migration DDL or generator row, so a request that needs one is refused by name, and a field rule naming a check refuses a field holding a value with core's sentence naming the field.
+A package's engine gets its catalog entry, its connection tables, its field rules and its grants, each claim at its restrictive value where no register row grants it (M-53, M-54), and no SQL writing, connection form, connection string, grammar, migration DDL or generator row, so a request that needs one is refused by name, and a field rule naming a check refuses a field holding a value with core's sentence naming the field.
 The set rules over every admitted package, engine id, fence alias, query dialect, tab type and editor language, refuse every claimant as `PROVIDER_CATALOG_CONFLICT` whatever the order, Studio's bundled values the reference and an engine id equal to a bundled fence alias included, naming the package and the rule and no value of its declaration.
 
 ### C-107 (normative): A connection of an engine no admitted package serves names why
@@ -1191,10 +1197,10 @@ A session of a package's engine has a member exactly for each call it offers aft
 Core never calls a package for a call its session does not offer, nor with a request field it does not honour, bound params or a non-zero offset among them: each is refused before the call, outcome not-sent.
 The host core's execute, cancel on a stop, end of a scope, tree, maintenance, monitoring and health calls run on such a session as on any other.
 
-### C-112 (normative): The client receives no word a package wrote
+### C-112 (normative): The client receives no word a package wrote unless a register row grants them
 
-A package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
-The package's own words go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered, a malformed batch or row among them, is logged as the package's defect.
+Where no register row grants an engine its own words (M-84), a package's error, from its open, its health read or its execute, reaches the client only as Studio's sentence naming its code, and its warnings only as Studio's sentence naming their count.
+The package's own words then go only to the server's log, each error and each warning logged once through core's scrub of the connection, and a refusal of what the package answered, a malformed batch or row among them, is logged as the package's defect.
 
 ## Not yet in this contract
 
