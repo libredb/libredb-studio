@@ -13,6 +13,7 @@ import {
 import type { SnowflakeByteAnswer } from "@/lib/db/providers/sql/snowflake/transport";
 import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 import { gzipRowsBomb } from "../../../helpers/snowflake-node-transport";
+import { SNOWFLAKE_ROWS_PER_RESULTSET } from "@/lib/db/providers/sql/snowflake/statements";
 
 const COLUMNS = ["ID", "NAME"];
 
@@ -610,5 +611,15 @@ describe("an oversized first answer read as a stream (SF-032)", () => {
 
   test("the read asks for the budget plus the partition slack", () => {
     expect(SNOWFLAKE_OVERSIZED_FIRST_READ_BYTES).toBe(SNOWFLAKE_RESULT_BYTE_BUDGET + SNOWFLAKE_PARTITION_SLACK_BYTES);
+  });
+});
+
+describe("the first partition and the row request", () => {
+  test("an oversized first partition is reread under the budget plus the slack, not refused (SF-032)", () => {
+    expect(SNOWFLAKE_OVERSIZED_FIRST_READ_BYTES).toBe(SNOWFLAKE_RESULT_BYTE_BUDGET + 64 * 1024);
+  });
+
+  test("the byte cut's count is Snowflake's below the row request and 'more than' at it (SF-031)", () => {
+    expect(SNOWFLAKE_ROWS_PER_RESULTSET).toBe(MAX_UNLIMITED_ROWS + 1);
   });
 });

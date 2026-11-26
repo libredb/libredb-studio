@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { INVENTORY_PAIR_LIMIT, INVENTORY_TRUNCATION_REASON } from "@/lib/db/inventory-bounds";
+import { INVENTORY_PAIR_LIMIT, INVENTORY_TRUNCATION_REASON, INVENTORY_LIMIT } from "@/lib/db/inventory-bounds";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import {
   connectCautions,
@@ -23,6 +23,7 @@ import {
 import type { SnowflakeResult } from "@/lib/db/providers/sql/snowflake/statements";
 import { SNOWFLAKE_QUERY_TAGS } from "@/lib/db/providers/sql/snowflake/statements";
 import { fakeRunner, namedRows, type RunnerCall, showResult } from "../../../helpers/snowflake-runner";
+import { SNOWFLAKE_OBJECT_KINDS } from "@/lib/db/providers/sql/snowflake/index";
 
 const SCHEMA = ["SALES", "PUBLIC"] as const;
 const IN_SCHEMA = 'IN SCHEMA "SALES"."PUBLIC"';
@@ -1018,3 +1019,13 @@ function tables(...names: string[]) {
       names.map((name) => [name]),
     );
 }
+
+describe("the tree's kinds and its cut", () => {
+  test("the object kinds are SNOWFLAKE_KIND_IDS, in order", () => {
+    expect(SNOWFLAKE_OBJECT_KINDS.map((kind) => kind.id)).toEqual([...SNOWFLAKE_KIND_IDS]);
+  });
+
+  test("the inventory's bound comes before the tree's page cut", () => {
+    expect(INVENTORY_LIMIT).toBeLessThan(SNOWFLAKE_SHOW_PAGE_ROWS);
+  });
+});

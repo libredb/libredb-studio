@@ -22,7 +22,12 @@ import {
   serverMessage,
   toDatabaseError,
   transportFailureError,
+  administratorStatement,
 } from "@/lib/db/providers/sql/snowflake/errors";
+import { SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
+import { SNOWFLAKE_KEY_SENTENCES, SNOWFLAKE_TOKEN_SENTENCES } from "@/lib/db/providers/sql/snowflake/auth";
+import { SNOWFLAKE_ROWS_SENTENCES } from "@/lib/db/providers/sql/snowflake/rows";
+import { SNOWFLAKE_STATEMENT_SENTENCES } from "@/lib/db/providers/sql/snowflake/statements";
 
 const PAT = "pat-sentinel-0123456789";
 const JWT = "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJYIn0.c2lnbmF0dXJl";
@@ -804,5 +809,133 @@ describe("toDatabaseError", () => {
     expect(error.category).toBe("auth");
     expect(error.fixStatement).toBe("fix");
     expect(Object.hasOwn(new SnowflakeError("auth", "m"), "fixStatement")).toBe(false);
+  });
+});
+
+/** The key-pair refusal with placeholders, so the registration statements are the builder's own. */
+const KEY_PAIR_REFUSED = SNOWFLAKE_ERROR_SENTENCES.keyPairRefused({
+  uuid: "<uuid>",
+  account: "<ACCOUNT>",
+  user: "<USER>",
+  fingerprint: "SHA256:<fp>",
+});
+/** The statement the refusal carries to copy, with placeholders. */
+const KEY_PAIR_FIX = administratorStatement("<fp8>", "<body>");
+
+/** Every sentence of each exported record, each template filled with placeholders. */
+const QUOTED: Readonly<Record<string, { readonly keys: readonly string[]; readonly quotes: readonly string[] }>> = {
+  SNOWFLAKE_STATEMENT_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_STATEMENT_SENTENCES),
+    quotes: [
+      SNOWFLAKE_STATEMENT_SENTENCES.useRefused,
+      SNOWFLAKE_STATEMENT_SENTENCES.settingNotCarried,
+      SNOWFLAKE_STATEMENT_SENTENCES.temporaryNotCarried,
+      SNOWFLAKE_STATEMENT_SENTENCES.noLastQuery,
+      SNOWFLAKE_STATEMENT_SENTENCES.noTransactions,
+      SNOWFLAKE_STATEMENT_SENTENCES.secondaryRoles("<roles>", "<role>"),
+      SNOWFLAKE_STATEMENT_SENTENCES.unresolvedDatabase("<db>", "<role>"),
+      SNOWFLAKE_STATEMENT_SENTENCES.unresolvedSchema("<schema>", "<role>"),
+      SNOWFLAKE_STATEMENT_SENTENCES.unresolvedWarehouse("<wh>", "<role>"),
+      SNOWFLAKE_STATEMENT_SENTENCES.badHandle,
+      SNOWFLAKE_STATEMENT_SENTENCES.foreignLink,
+    ],
+  },
+  SNOWFLAKE_ROWS_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_ROWS_SENTENCES),
+    quotes: [
+      SNOWFLAKE_ROWS_SENTENCES.firstTooLarge,
+      SNOWFLAKE_ROWS_SENTENCES.unreadable,
+      SNOWFLAKE_ROWS_SENTENCES.encoding("<encoding>"),
+      SNOWFLAKE_ROWS_SENTENCES.nonString("<column>"),
+      SNOWFLAKE_ROWS_SENTENCES.byteCut(1234).replace("1,234", "<numRows>"),
+      SNOWFLAKE_ROWS_SENTENCES.firstRowCut,
+      SNOWFLAKE_ROWS_SENTENCES.rowCut,
+      SNOWFLAKE_ROWS_SENTENCES.snowflakeCut,
+    ],
+  },
+  SNOWFLAKE_ERROR_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_ERROR_SENTENCES),
+    quotes: [
+      KEY_PAIR_REFUSED,
+      SNOWFLAKE_ERROR_SENTENCES.keyPairMidRun("<code>"),
+      SNOWFLAKE_ERROR_SENTENCES.keyMissing,
+      SNOWFLAKE_ERROR_SENTENCES.patRefused,
+      SNOWFLAKE_ERROR_SENTENCES.networkPolicyRefused,
+      SNOWFLAKE_ERROR_SENTENCES.networkPolicyRequired,
+      SNOWFLAKE_ERROR_SENTENCES.roleRefused("<role>", "<user>", "<role>", "<user>"),
+      SNOWFLAKE_ERROR_SENTENCES.tokenRoleRefused("<role>", "<user>"),
+      SNOWFLAKE_ERROR_SENTENCES.roleMismatch("<r>", "<role>"),
+      SNOWFLAKE_ERROR_SENTENCES.tokenUserMismatch("<u>", "<user>"),
+      SNOWFLAKE_ERROR_SENTENCES.noWarehouse,
+      SNOWFLAKE_ERROR_SENTENCES.warehouseUnusable("<wh>", "<role>"),
+      SNOWFLAKE_ERROR_SENTENCES.objectMissing("<role>", "'<role>'", ""),
+      SNOWFLAKE_ERROR_SENTENCES.privileges("<role>", ""),
+      SNOWFLAKE_ERROR_SENTENCES.forbidden,
+      SNOWFLAKE_ERROR_SENTENCES.headersTooLarge,
+      SNOWFLAKE_ERROR_SENTENCES.tokenMissing,
+      SNOWFLAKE_ERROR_SENTENCES.noMessage("<n>" as unknown as number, "<code>"),
+      SNOWFLAKE_ERROR_SENTENCES.statementFailed("<message>", "<code>", "<sqlstate>"),
+      SNOWFLAKE_ERROR_SENTENCES.deadline("<n>" as unknown as number),
+      SNOWFLAKE_ERROR_SENTENCES.surfaceDeadline(30),
+      SNOWFLAKE_ERROR_SENTENCES.statementTimeout("<n>" as unknown as number),
+      SNOWFLAKE_ERROR_SENTENCES.surfaceStatementTimeout(30),
+      SNOWFLAKE_ERROR_SENTENCES.unsupportedCommand(""),
+      SNOWFLAKE_ERROR_SENTENCES.rateLimited,
+      SNOWFLAKE_ERROR_SENTENCES.unavailable("<n>" as unknown as number, "<attempts>" as unknown as number),
+      SNOWFLAKE_ERROR_SENTENCES.tlsRefused,
+      SNOWFLAKE_ERROR_SENTENCES.resultGone,
+      SNOWFLAKE_ERROR_SENTENCES.accountNotFound("<host>"),
+      SNOWFLAKE_ERROR_SENTENCES.invalidPayload,
+      SNOWFLAKE_ERROR_SENTENCES.connectDeadline("<host>", "<n>" as unknown as number),
+      SNOWFLAKE_ERROR_SENTENCES.unreachable("<host>"),
+      SNOWFLAKE_ERROR_SENTENCES.certMismatch("<host>"),
+      SNOWFLAKE_ERROR_SENTENCES.slotsBusy("<n>" as unknown as number),
+      SNOWFLAKE_ERROR_SENTENCES.scriptingHint,
+      SNOWFLAKE_ERROR_SENTENCES.cancelled,
+    ],
+  },
+  SNOWFLAKE_KEY_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_KEY_SENTENCES),
+    quotes: [
+      SNOWFLAKE_KEY_SENTENCES.keyEmpty,
+      SNOWFLAKE_KEY_SENTENCES.tooLarge,
+      SNOWFLAKE_KEY_SENTENCES.publicKey,
+      SNOWFLAKE_KEY_SENTENCES.notPem,
+      SNOWFLAKE_KEY_SENTENCES.manyBlocks,
+      SNOWFLAKE_KEY_SENTENCES.truncated,
+      SNOWFLAKE_KEY_SENTENCES.certificate,
+      SNOWFLAKE_KEY_SENTENCES.otherBlock,
+      SNOWFLAKE_KEY_SENTENCES.kdfCost,
+      SNOWFLAKE_KEY_SENTENCES.scheme,
+      SNOWFLAKE_KEY_SENTENCES.needsPassphrase,
+      SNOWFLAKE_KEY_SENTENCES.wrongPassphrase,
+      SNOWFLAKE_KEY_SENTENCES.unreadable,
+      SNOWFLAKE_KEY_SENTENCES.notRsa("ec"),
+      SNOWFLAKE_KEY_SENTENCES.short,
+      SNOWFLAKE_KEY_SENTENCES.long("<bits>" as unknown as number),
+    ],
+  },
+  SNOWFLAKE_TOKEN_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_TOKEN_SENTENCES),
+    quotes: Object.values(SNOWFLAKE_TOKEN_SENTENCES),
+  },
+  SNOWFLAKE_FIELD_SENTENCES: {
+    keys: Object.keys(SNOWFLAKE_FIELD_SENTENCES),
+    quotes: Object.values(SNOWFLAKE_FIELD_SENTENCES),
+  },
+};
+
+describe("the exported sentence records and the key-pair registration", () => {
+  for (const [record, { keys, quotes }] of Object.entries(QUOTED)) {
+    test(`every key of ${record} has a sentence`, () => {
+      expect(quotes.length).toBe(keys.length);
+    });
+  }
+
+  test("the key-pair refusal carries the administrator's statement without the key body, and the self-service form", () => {
+    const admin = /^(ALTER USER <name> ADD KEY PAIR \S+ PUBLIC_KEY = )'<body>'$/.exec(KEY_PAIR_FIX);
+    expect(admin).not.toBeNull();
+    expect(KEY_PAIR_REFUSED).not.toContain("<body>");
+    expect(KEY_PAIR_REFUSED).toContain("ALTER USER <name> ADD KEY PAIR, where <name> is the user's NAME");
   });
 });
