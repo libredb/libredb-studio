@@ -607,7 +607,9 @@ export function renderConnectionFlags(tables: ConnectionTables): string {
 
 /**
  * The text of the generated module `module`, holding one frozen record of projected entries: a header, the type-id
- * union's and `entryType`'s type imports, and the record under `doc` and `declaration`, typed over the union.
+ * union's and `entryType`'s type imports, and the record under `doc` and `declaration`, typed over the union. The record
+ * is annotated with that type, or, where `typing` is `satisfies`, checked against it, so each entry keeps its literal
+ * type.
  */
 function renderedEntryModule(
   module: string,
@@ -615,13 +617,17 @@ function renderedEntryModule(
   doc: string,
   declaration: string,
   record: Readonly<Record<string, unknown>>,
+  typing: "annotation" | "satisfies" = "annotation",
 ): string {
+  const type = `Readonly<Record<DatabaseType, ${entryType}>>`;
   return [
     ...HEADER,
     'import type { DatabaseType } from "@/lib/types";',
     `import type { ${entryType} } from "./projection";`,
     "",
-    ...renderedRecord(module, doc, `${declaration}: Readonly<Record<DatabaseType, ${entryType}>> =`, record),
+    ...(typing === "annotation"
+      ? renderedRecord(module, doc, `${declaration}: ${type} =`, record)
+      : renderedRecord(module, doc, `${declaration} =`, record, ` satisfies ${type}`)),
     "",
   ].join("\n");
 }
@@ -778,6 +784,8 @@ export function renderSqlGenerators(forms: SqlGeneratorForms): string {
  * The text of the generated claim requests module for `requests`: a header, type imports only, and one frozen record,
  * read only by src/lib/db/claim-grants.ts, which grants each request against Studio's review of its claim for the
  * engine, which src/lib/db/claim-grants.ts states (clause M-54).
+ * The record is checked against the entry type with `satisfies` rather than annotated with it, so each request keeps
+ * its literal type, which the agent packs read through claim-grants.ts's `StatementLanguageRequest`.
  */
 export function renderClaimRequests(requests: ClaimRequests): string {
   return renderedEntryModule(
@@ -786,6 +794,7 @@ export function renderClaimRequests(requests: ClaimRequests): string {
     "Each engine's policy, MCP, connection and agent mode claim requests, read only by claim-grants.ts (M-83).",
     "export const BUNDLED_CLAIM_REQUESTS",
     requests,
+    "satisfies",
   );
 }
 

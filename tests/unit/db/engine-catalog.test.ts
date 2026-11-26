@@ -1434,6 +1434,15 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     expect(frozen(BUNDLED_CLAIM_REQUESTS)).toBe(true);
   });
 
+  test("the claim requests module checks its record against the entry type with satisfies, so each request keeps its literal type", () => {
+    const rendered = renderClaimRequests(projectClaimRequests(ADMITTED));
+
+    expect(rendered).toContain("export const BUNDLED_CLAIM_REQUESTS = Object.freeze({\n");
+    expect(rendered.endsWith("\n}) satisfies Readonly<Record<DatabaseType, ClaimRequestEntry>>;\n")).toBe(true);
+    // An annotation would widen every request to the entry type, so no reader could read its literal type.
+    expect(rendered).not.toContain("BUNDLED_CLAIM_REQUESTS:");
+  });
+
   test("the renderer writes a line feed as its escape and refuses every other character it does not quote", () => {
     const writings = projectSqlWriting(ADMITTED);
     const cassandra = writings.cassandra as NonNullable<(typeof writings)["cassandra"]>;

@@ -86,6 +86,15 @@ import { ENGINE_FACETS } from "./engine-facets";
 import type { AgentCredentialForm, ProviderCapabilities } from "./types";
 import type { WriteReach } from "./write-reach";
 
+/**
+ * The statement language bundled engine `T` requests, `agent.statementLanguage` of its generated claim request, as its
+ * literal type. It carries no value to any gate: the agent packs' engine types read it. For every bundled engine the
+ * request equals the engine's legacy row in the grant register (tests/unit/db/engine-declarations.test.ts), so the
+ * type is the engine's granted statement language.
+ */
+export type StatementLanguageRequest<T extends DatabaseType> =
+  (typeof BUNDLED_CLAIM_REQUESTS)[T]["agent"]["statementLanguage"];
+
 /** A masking exemption as Studio's record holds it: a column pattern and a reason, or null. */
 type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]> | null;
 
