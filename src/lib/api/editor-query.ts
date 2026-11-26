@@ -49,7 +49,7 @@ import type { OpenWait } from "@/lib/provider-host/core/open-once";
 import { hostCore } from "@/lib/provider-host/instance";
 import { type AnsweredRun, bridgedConsole } from "@/lib/provider-host/legacy-bridge";
 import type { OpenedPackageSession } from "@/lib/provider-host/open-engine";
-import type { DatabaseType, QueryPagination, QueryResult } from "@/lib/types";
+import type { DatabaseType, QueryPagination, QueryResult, QueryWarning } from "@/lib/types";
 
 /*
  * THE EDITOR QUERY'S PROVIDER-FACING STEPS, WITH NO NEXT IN THEM.
@@ -618,13 +618,60 @@ function columnDefect(columns: readonly Column[]): string | null {
   return null;
 }
 
+/** The members a warning of the contract's `Warning` has: its message, and its optional code and severity. */
+const WARNING_MEMBERS: ReadonlySet<string> = new Set(["message", "code", "severity"]);
+
+/**
+ * A warning a provider package answered, rebuilt from its own data members, or null where it is not the contract's
+ * `Warning`: not an object, a member outside `WARNING_MEMBERS` or one read through a getter, a message that is not
+ * text, a code that is neither text nor a number, or a severity that is not text. The host core passes a package's
+ * warnings on as the package answered them, so only the members read here can reach the client, and no getter of the
+ * package runs while Studio builds its answer.
+ */
+function packageWarning(warning: unknown): QueryWarning | null {
+  if (typeof warning !== "object" || warning === null) return null;
+  const read: Record<string, unknown> = {};
+  for (const key of Reflect.ownKeys(warning)) {
+    const descriptor = Object.getOwnPropertyDescriptor(warning, key);
+    if (typeof key !== "string" || !WARNING_MEMBERS.has(key) || descriptor === undefined || !("value" in descriptor)) {
+      return null;
+    }
+    read[key] = descriptor.value;
+  }
+  const { message, code, severity } = read;
+  if (typeof message !== "string") return null;
+  if (code !== undefined && typeof code !== "string" && typeof code !== "number") return null;
+  if (severity !== undefined && typeof severity !== "string") return null;
+  return { message, ...(code !== undefined && { code }), ...(severity !== undefined && { severity }) };
+}
+
+/**
+ * The warnings a provider package answered, each rebuilt by `packageWarning` and then passed through core's `scrub`.
+ *
+ * @throws {Error} Naming the package's defect, for a warning that is not the contract's `Warning`.
+ */
+function packageOwnWarnings(scrub: ProviderTextScrub, warnings: readonly unknown[]): QueryWarning[] {
+  const read: QueryWarning[] = [];
+  for (const warning of warnings) {
+    const rebuilt = packageWarning(warning);
+    if (rebuilt === null) {
+      throw new Error(
+        "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.",
+      );
+    }
+    read.push(rebuilt);
+  }
+  return scrubProviderWarnings(scrub, read);
+}
+
 /**
  * The answer body of the page `record` holds, under `columns`, the first result's columns the package answered, and
- * `page`; its warnings by how the engine's record grants its own words, `ownWords`: through core's `scrub` where they
- * are `"scrubbed"` (`scrubProviderWarnings`), and as `packageWarnings` answers them under `route` where they are
- * `"code-only"`. The record is released once, in a `finally`, whether or not the body was built.
+ * `page`; its warnings by how the engine's record grants its own words, `ownWords`: each rebuilt from the contract's
+ * members and through core's `scrub` where they are `"scrubbed"` (`packageOwnWarnings`), and as `packageWarnings`
+ * answers them under `route` where they are `"code-only"`. The record is released once, in a `finally`, whether or not the body was built.
  *
- * @throws {Error} Naming the package's defect, for columns whose names cannot key a row.
+ * @throws {Error} Naming the package's defect, for columns whose names cannot key a row, or for a warning outside the
+ *   contract's `Warning` where its own words are granted.
  */
 function packagePageBody(
   record: PageRecord,
@@ -652,7 +699,7 @@ function packagePageBody(
     const typed = columns.filter((column) => typeof column.type === "string");
     const warnings =
       ownWords === "scrubbed"
-        ? scrubProviderWarnings(scrub, record.warnings)
+        ? packageOwnWarnings(scrub, record.warnings)
         : packageWarnings("execute", record.warnings, scrub, route);
     return {
       body: {

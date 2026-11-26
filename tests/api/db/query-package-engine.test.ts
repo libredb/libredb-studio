@@ -600,6 +600,41 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("a package engine whose register row grants its own words has a warning outside the contract's shape refused as the package's defect, its members never answered", async () => {
+    const connection = connectionOf(WORDS);
+    const secret = connection.password as string;
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const warning of [
+        { message: "ok", detail: `driver said: ${secret}` },
+        { message: 7, code: secret },
+        { message: "ok", code: true },
+        { message: "ok", severity: 1 },
+        Object.defineProperty({}, "message", { enumerable: true, get: () => secret }),
+        null,
+      ]) {
+        hooksFor(WORDS, {
+          execute: () =>
+            Promise.resolve({
+              results: [source([["alpha", 1]])],
+              warnings: [warning],
+              executionTimeMs: 1,
+              pageApplied: false,
+            }),
+        });
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect([answered.status, answered.body.code]).toEqual([500, "INTERNAL_ERROR"]);
+        expect(answered.body.error).toBe(
+          "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.",
+        );
+        expect(JSON.stringify(answered.body)).not.toContain(secret);
+      }
+    } finally {
+      error.mockRestore();
+      hooksFor(WORDS);
+    }
+  });
+
   test("the query route records one editor event per run, naming the engine by its id and the text submitted, and the engine's record decides what the event keeps", async () => {
     const connection = connectionOf(MAIN);
     const secret = connection.password as string;
