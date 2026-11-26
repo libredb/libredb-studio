@@ -27,6 +27,8 @@ import {
   filesNaming,
   installedSdkProblems,
   lockOutputProblems,
+  NAMING_SCAN_ROOTS,
+  namingScanFiles,
   packedTarballs,
   parseArguments,
   platformProblem,
@@ -343,10 +345,11 @@ describe("the out-of-tree fixture", () => {
     forced("mcp", "agentCredentialRequired", "agent-credential-form-missing", "/engines/0/mcp/agentCredentialRequired");
   });
 
-  test("its engine id is named in no file under src, bin, scripts or vscode-extension/src", () => {
+  test("its engine id is named in no file under src, bin, scripts, vscode-extension/src or packages", () => {
     const ids = fixture.engines.map((engine) => engine.id);
     expect(ids.length).toBeGreaterThan(0);
-    const files = STUDIO.coreRoots.flatMap((root) => regularFiles(path.join(ROOT, root)));
+    expect(NAMING_SCAN_ROOTS).toEqual([...STUDIO.coreRoots, "packages"]);
+    const files = namingScanFiles(ROOT);
     expect(files.length).toBeGreaterThan(1000);
     expect(filesNaming(files, ids, readText)).toEqual([]);
   });
@@ -582,6 +585,37 @@ describe("the out-of-tree acceptance's checks over captured output", () => {
     const read = (file: string) => texts[file] as string;
     expect(filesNaming(Object.keys(texts), ["fixtureEngine"], read)).toEqual(["/a.ts", "/c.md"]);
     expect(filesNaming(Object.keys(texts), ["absent"], read)).toEqual([]);
+  });
+
+  // Plain writes, reads and a directory walk: both sides are built with path.join and no realpath is taken, so the
+  // Windows separator and the macOS /var to /private/var link change nothing, and no mode or line ending is read.
+  test("step 7's scan reports a fixture engine id named in a file under packages/", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "out-of-tree-naming-"));
+    try {
+      const write = (parts: readonly string[], text: string): string => {
+        const file = path.join(root, ...parts);
+        mkdirSync(path.dirname(file), { recursive: true });
+        writeFileSync(file, text);
+        return file;
+      };
+      const clean = [
+        write(["src", "a.ts"], "export {};\n"),
+        write(["bin", "a.mjs"], "export {};\n"),
+        write(["scripts", "a.ts"], "export {};\n"),
+        write(["vscode-extension", "src", "a.ts"], "export {};\n"),
+        write(["packages", "README.md"], "The packages.\n"),
+      ];
+      const planted = write(
+        ["packages", "provider-sdk", "src", "enums.ts"],
+        `export type Engine = "${engineId.toUpperCase()}";\n`,
+      );
+      const ids = fixture.engines.map((engine) => engine.id);
+
+      expect(namingScanFiles(root).sort()).toEqual([...clean, planted].sort());
+      expect(filesNaming(namingScanFiles(root), ids, readText)).toEqual([planted]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("the build scan finds a file equal to a fixture file or holding a needle across a chunk boundary, and a scan of no file fails", () => {
