@@ -19,6 +19,14 @@ import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import { buildQueryEvent, contractConnectionId, queryEventPolicy, queryEventStart } from "@/lib/query-events/build";
 import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
+import { UnknownProviderError } from "@/lib/db/errors";
+import {
+  type EngineOffers,
+  type EngineRecord,
+  forgetServerCatalog,
+  installServerCatalog,
+} from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type {
   QueryEventConnection,
   QueryEventInput,
@@ -27,6 +35,7 @@ import type {
   StatementCapture,
 } from "@/lib/query-events/types";
 import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
+import { admittedFor, admittedManifest } from "../../../helpers/package-catalog";
 
 interface ManifestColumn {
   readonly name: string;
@@ -156,6 +165,20 @@ const utf8Bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 /** A high surrogate without its low half, or a low one without its high half: a code point cut in two. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/**
+ * Installs the catalog composed of the legacy records and one admitted package serving `acmeevents`, each record's
+ * offers changed by the edit named for its engine: what the builder reads an event's engine from.
+ */
+function installEngines(edits: Readonly<Record<string, Partial<EngineOffers>>> = {}): void {
+  const composed = composeServerCatalog([admittedFor("acmeevents-package", admittedManifest("acmeevents"))], []);
+  const engines = new Map(composed.engines);
+  for (const [id, edit] of Object.entries(edits)) {
+    const engine = engines.get(id) as EngineRecord;
+    engines.set(id, { ...engine, offers: { ...engine.offers, ...edit } });
+  }
+  installServerCatalog({ engines, unavailable: composed.unavailable });
+}
+
 let savedSource: string | undefined;
 
 beforeEach(() => {
@@ -164,6 +187,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  forgetServerCatalog();
   resetGovernanceState();
   if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
   else process.env.GOVERNANCE_SOURCE = savedSource;
@@ -219,8 +243,10 @@ describe("buildQueryEvent", () => {
   });
 
   test("an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER", () => {
-    // An engine only a provider package serves: Studio's review record holds no redaction row for it (S-7), so the
-    // restrictive reading keeps nothing of its text, whatever the capture mode.
+    // An engine only a provider package serves: its record does not offer query event text, since Studio's review
+    // record holds no redaction row for it (S-7), so the restrictive reading keeps nothing of its text, whatever the
+    // capture mode.
+    installEngines();
     const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
     for (const capture of [NONE, REDACTED, FULL]) {
       const row = build(
@@ -243,6 +269,60 @@ describe("buildQueryEvent", () => {
         error_message: null,
       });
     }
+  });
+
+  test("what an event keeps of its text is read from its engine's record: the queryEventText offer, a legacy engine's id included", () => {
+    // A crafted catalog whose postgres record does not offer query event text, its legacy provider still offered: the
+    // builder reads the record's offer, never whether the id is one Studio ships.
+    installEngines({ postgres: { queryEventText: false } });
+    const statement = "DELETE FROM orders WHERE id = 7 AND note = 'PASSWORD hunter'";
+    const errorMessage = "permission denied for postgres://alice:hunter@db/orders";
+    const mysql = { ...ORDERS, id: "seed:shop", engine: "mysql" } as const;
+    for (const capture of [NONE, REDACTED, FULL]) {
+      const event = { statement, status: "error", errorCode: "42501", errorMessage } as const;
+      expect(build(input(event), capture)).toMatchObject({
+        engine: "postgres",
+        statement_type: "OTHER",
+        statement: null,
+        statement_truncated: false,
+        statement_fingerprint: null,
+        error_message: null,
+      });
+
+      const kept = build(input({ ...event, connection: mysql }), capture);
+      const redacted = redactStatement(statement, "mysql");
+      expect(kept.statement_type).toBe(analyzeQuery(statement, "mysql").type);
+      if (capture === NONE) {
+        expect(kept).toMatchObject({ statement: null, statement_fingerprint: null, error_message: null });
+      } else if (capture === REDACTED) {
+        expect(kept).toMatchObject({
+          statement: redacted.statement,
+          statement_fingerprint: redacted.statement_fingerprint,
+          error_message: null,
+        });
+      } else {
+        expect(kept).toMatchObject({
+          statement: maskCredentials(statement, "mysql"),
+          statement_fingerprint: null,
+          error_message: maskCredentials(errorMessage, "mysql"),
+        });
+      }
+    }
+  });
+
+  test("a record that offers query event text and no legacy provider is a host defect: no row is made of its event", () => {
+    installEngines({ acmeevents: { queryEventText: true } });
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+
+    expect(() => buildQueryEvent(input({ connection: kv }), FULL, CONTEXT)).toThrow(
+      "The engine \"acmeevents\" offers query event text, which only Studio's redaction rows read by a legacy engine's id hold, and its record offers no legacy provider: a host defect.",
+    );
+  });
+
+  test("an event naming an engine the server serves no record of is the caller's defect, and no row is made", () => {
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+
+    expect(() => buildQueryEvent(input({ connection: kv }), FULL, CONTEXT)).toThrow(UnknownProviderError);
   });
 
   test("a statement type the route gives is kept whatever the text reads as, and the text is still captured", () => {

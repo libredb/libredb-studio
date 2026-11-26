@@ -1216,6 +1216,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/query-events/build.test.ts": [
         "an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER",
+        "what an event keeps of its text is read from its engine's record: the queryEventText offer, a legacy engine's id included",
       ],
     },
     schema: ["/$defs/statementRedaction", "/$defs/nameQuote"],
