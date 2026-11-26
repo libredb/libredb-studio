@@ -6,6 +6,7 @@ import { redactUriCredentials } from "@/lib/audit";
 import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
 import type { DatabaseType } from "@/lib/types";
 import { refusalOf, refusalThrownBy } from "../../../helpers/outside-the-union";
+import { craftedCatalog, withCatalog } from "../../../helpers/package-catalog";
 
 /**
  * What a query event keeps of a statement (docs/GOVERNANCE.md#query-events): `redacted` capture stores
@@ -94,6 +95,21 @@ describe("redactStatement", () => {
     const refusal = refusalThrownBy(() => redactStatement(`SELECT '${literal}'`, "constructor" as DatabaseType));
     expect(refusal).toEqual(refusalOf("constructor"));
     expect(JSON.stringify(refusal)).not.toContain(literal);
+  });
+
+  // The query event builder keeps no text of an engine whose grammar no register row reviewed and never hands it here,
+  // so a caller that does is a host defect, refused by name rather than read at a default.
+  test("redactStatement and maskCredentials refuse, as a host defect naming the engine, an engine whose grammar no register row reviewed", async () => {
+    const literal = crypto.randomUUID();
+    const text = `SELECT '${literal}'`;
+    const refusal =
+      'The engine "postgres" holds no register row\'s review of its grammar, so the query event log keeps none of its text, and a caller handed its text to the redactor: a host defect.';
+    await withCatalog(craftedCatalog({ postgres: { reviewedGrammar: false } }), () => {
+      expect(() => redactStatement(text, "postgres")).toThrow(refusal);
+      expect(() => maskCredentials(text, "postgres")).toThrow(refusal);
+      // The control: an engine whose grammar its row reviewed is read.
+      expect(redactStatement(text, "mysql").statement).toBe("SELECT ?");
+    });
   });
 
   test("a number ends where the span reader opens a literal, so no text of the literal is kept", () => {

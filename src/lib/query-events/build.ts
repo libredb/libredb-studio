@@ -14,11 +14,13 @@
  *
  * A stored statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, with
  * `statement_truncated` set. A refused request whose connection did not resolve keeps no statement and no error text
- * in any mode, because the engine that would read them is unknown. Nor does a unit of an engine whose record in the
- * server's catalog does not offer query event text (`EngineOffers.queryEventText` in src/lib/db/server-catalog.ts): an
- * engine only a provider package serves offers none, since Studio's review record holds no redaction for it
- * (docs/providers/CONTRACT.md, S-7), so the restrictive reading keeps none of its text, and its statement is read as
- * `OTHER`. An event naming an engine the server serves no record of is the caller's defect and throws.
+ * in any mode, because the engine that would read them is unknown. Every other unit is read from its engine's record in
+ * the server's catalog (src/lib/db/server-catalog.ts), a legacy engine's and a provider package's alike: its text under
+ * the record's grammar, `statementGrammar`, and the redaction and `readsSqlText` its register row grants for that
+ * grammar (`EngineGrants` in src/lib/db/claim-grants.ts; docs/providers/CONTRACT.md, S-7). A unit of an engine whose
+ * grammar no register row reviewed, `grants.reviewedGrammar` false, keeps no statement and no error text in any mode,
+ * and its statement is read as `OTHER`. An event naming an engine the server serves no record of is the caller's
+ * defect and throws.
  *
  * Every row has exactly the columns of the manifest and keeps their rules, so the governance source never refuses a
  * row for its shape: a bounded text column is cut to its limit by character, the unit PostgreSQL's `char_length`
@@ -27,13 +29,10 @@
  * measured across two clocks, is the caller's defect and throws.
  */
 import { isIP } from "node:net";
-import { analyzeQuery } from "@/lib/db/utils/query-limiter";
+import { analyzeQuery, analyzeUnderGrammar } from "@/lib/db/utils/query-limiter";
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
-import { readsSqlText } from "@/lib/sql/grammar";
-import { legacyProviderType, servedEngineRecord } from "@/lib/db/server-catalog";
-import { quoteTypeId } from "@/lib/db/type-id";
-import type { DatabaseType } from "@/lib/types";
+import { type EngineRecord, servedEngineRecord } from "@/lib/db/server-catalog";
 import { maskCredentials, redactStatement } from "./redact";
 import type {
   QueryEventContext,
@@ -187,67 +186,59 @@ function clientIp(address: string | undefined): string | null {
 }
 
 /**
- * The engine a row's statement and error text are read under, read from the record of `engine` in the server's
- * catalog: the engine's own id where its record offers query event text (`EngineOffers.queryEventText`), null for a
- * request whose connection did not resolve, and `undefined` for an engine whose record does not offer it, such as one
- * only a provider package serves, whose text Studio holds no reading row for, so none of it is kept.
+ * The record a row's statement and error text are read under, read from the record of `engine` in the server's
+ * catalog: the record where a register row reviewed the engine's grammar (`grants.reviewedGrammar`), null for a request
+ * whose connection did not resolve, and `undefined` for an engine whose grammar no row reviewed, such as one only a
+ * provider package with no register row serves, whose text no grant covers, so none of it is kept.
  *
  * @throws {UnknownProviderError} When `engine` names no engine the server serves: the caller's defect.
  * @throws {ProviderUnavailableError} When every package naming `engine` was refused at boot: the caller's defect.
- * @throws {Error} A host defect: when the record offers query event text and no legacy provider, since Studio's
- * redaction rows are read by a legacy engine's id.
  */
-function readingEngine(engine: string | null): DatabaseType | null | undefined {
+function readingEngine(engine: string | null): EngineRecord | null | undefined {
   if (engine === null) return null;
   const record = servedEngineRecord(engine);
-  if (!record.offers.queryEventText) return undefined;
-  const type = legacyProviderType(record);
-  if (type === undefined) {
-    throw new Error(
-      `The engine ${quoteTypeId(engine)} offers query event text, which only Studio's redaction rows read by a legacy engine's id hold, and its record offers no legacy provider: a host defect.`,
-    );
-  }
-  return type;
+  return record.grants.reviewedGrammar ? record : undefined;
 }
 
 /**
- * What the statement is as `analyzeQuery()` reads it under the engine's grammar, and OTHER for a unit without text, for
- * an engine whose statements are not SQL and for an engine whose record does not offer query event text. A refused
+ * What the statement is as `analyzeQuery()` reads it under the record's grammar, and OTHER for a unit without text, for
+ * an engine whose granted `readsSqlText` is false and for an engine whose grammar no register row reviewed. A refused
  * request whose connection did not resolve is read under the compatibility grammar, because its engine is unknown.
  */
-function statementType(text: string | null, engine: DatabaseType | null | undefined): StatementType {
-  if (text === null || engine === undefined || (engine !== null && !readsSqlText(engine))) return "OTHER";
-  return analyzeQuery(text, engine ?? undefined).type;
+function statementType(text: string | null, engine: EngineRecord | null | undefined): StatementType {
+  if (text === null || engine === undefined) return "OTHER";
+  if (engine === null) return analyzeQuery(text).type;
+  return engine.grants.readsSqlText ? analyzeUnderGrammar(text, engine.statementGrammar).type : "OTHER";
 }
 
-/** What the capture mode keeps of the statement, read the way `engine` reads it. */
+/** What the capture mode keeps of the statement, read the way `engine`'s record reads it. */
 function captureStatement(
   text: string | null,
-  engine: DatabaseType | null | undefined,
+  engine: EngineRecord | null | undefined,
   policy: QueryEventPolicy,
 ): CapturedStatement {
   if (policy.statementCapture === "none" || text === null || engine === null || engine === undefined) {
     return NOTHING_CAPTURED;
   }
   if (policy.statementCapture === "redacted") {
-    const redacted = redactStatement(text, engine);
+    const redacted = redactStatement(text, engine.id);
     const cut = cutToBytes(redacted.statement, policy.maxStatementBytes);
     return { statement: cut.text, truncated: cut.truncated, fingerprint: redacted.statement_fingerprint };
   }
-  const cut = cutToBytes(maskCredentials(text, engine), policy.maxStatementBytes);
+  const cut = cutToBytes(maskCredentials(text, engine.id), policy.maxStatementBytes);
   return { statement: cut.text, truncated: cut.truncated, fingerprint: null };
 }
 
 /** The error text, which only capture `full` keeps: masked as the statement is, then cut to its column's limit. */
 function captureErrorMessage(
   message: string | undefined,
-  engine: DatabaseType | null | undefined,
+  engine: EngineRecord | null | undefined,
   policy: QueryEventPolicy,
 ): string | null {
   if (policy.statementCapture !== "full" || message === undefined || engine === null || engine === undefined) {
     return null;
   }
-  return clampCharacters(maskCredentials(storable(message), engine), LIMITS.error_message);
+  return clampCharacters(maskCredentials(storable(message), engine.id), LIMITS.error_message);
 }
 
 /**

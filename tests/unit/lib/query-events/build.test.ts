@@ -8,7 +8,7 @@
  * the builder makes is a row the governance source accepts.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import path from "node:path";
@@ -19,15 +19,13 @@ import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import { buildQueryEvent, contractConnectionId, queryEventPolicy, queryEventStart } from "@/lib/query-events/build";
 import { maskCredentials, redactStatement } from "@/lib/query-events/redact";
+import { parseGrantRegister, type RegisterGrants } from "@libredb/grant-register";
 import { UnknownProviderError } from "@/lib/db/errors";
-import {
-  type EngineOffers,
-  type EngineRecord,
-  forgetServerCatalog,
-  installServerCatalog,
-} from "@/lib/db/server-catalog";
-import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { type EngineRecord, forgetServerCatalog, installServerCatalog } from "@/lib/db/server-catalog";
+import { type EngineGrants, STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { grammarSha256 } from "@/lib/db/grammar-digest";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { LEGACY_ENGINE_IDS } from "@/lib/provider-host/legacy-adapter/identity";
 import type {
   QueryEventConnection,
   QueryEventInput,
@@ -36,7 +34,7 @@ import type {
   StatementCapture,
 } from "@/lib/query-events/types";
 import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
-import { admittedFor, admittedManifest } from "../../../helpers/package-catalog";
+import { admittedFor, admittedManifest, type EditableEngine, packageRow } from "../../../helpers/package-catalog";
 
 interface ManifestColumn {
   readonly name: string;
@@ -166,23 +164,52 @@ const utf8Bytes = (text: string): number => Buffer.byteLength(text, "utf8");
 /** A high surrogate without its low half, or a low one without its high half: a code point cut in two. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
 
+/** What a case installs: the package engine's declaration, its register row, and each record's grants. */
+interface EnginesCase {
+  /** Changes the declaration of `acmeevents`, the engine the one admitted package serves. */
+  readonly declare?: (engine: EditableEngine) => void;
+  /**
+   * The package's register row for `acmeevents`: these grants, `grammarSha256` the digest of the grammar the engine
+   * declares unless they name another, every other member at its restrictive value. No row where it is absent.
+   */
+  readonly row?: Partial<RegisterGrants>;
+  /** Each record's grants, changed by the edit named for its engine after the composition. */
+  readonly grants?: Readonly<Record<string, Partial<EngineGrants>>>;
+}
+
 /**
- * Installs the catalog composed of the legacy records and one admitted package serving `acmeevents`, each record's
- * offers changed by the edit named for its engine: what the builder reads an event's engine from.
+ * Installs the catalog composed of the legacy records and one admitted package serving `acmeevents`, against a register
+ * holding the package's row where the case gives one, each record's grants then changed by the case's edit: what the
+ * builder reads an event's engine from.
  */
-function installEngines(edits: Readonly<Record<string, Partial<EngineOffers>>> = {}): void {
-  const composed = composeServerCatalog(
-    [admittedFor("acmeevents-package", admittedManifest("acmeevents"))],
-    [],
-    STUDIO_GRANT_REGISTER,
-  );
+function installEngines({ declare, row, grants = {} }: EnginesCase = {}): void {
+  const manifest = admittedManifest("acmeevents", declare);
+  const pkg = admittedFor("acmeevents-package", manifest);
+  const declared = (manifest.engines[0] as { sqlText: { grammar: unknown } }).sqlText.grammar;
+  const register =
+    row === undefined
+      ? STUDIO_GRANT_REGISTER
+      : parseGrantRegister(
+          [packageRow(pkg, "acmeevents", { grammarSha256: grammarSha256(declared), ...row })],
+          LEGACY_ENGINE_IDS,
+        );
+  const composed = composeServerCatalog([pkg], [], register);
   const engines = new Map(composed.engines);
-  for (const [id, edit] of Object.entries(edits)) {
+  for (const [id, edit] of Object.entries(grants)) {
     const engine = engines.get(id) as EngineRecord;
-    engines.set(id, { ...engine, offers: { ...engine.offers, ...edit } });
+    engines.set(id, { ...engine, grants: { ...engine.grants, ...edit } });
   }
   installServerCatalog({ engines, unavailable: composed.unavailable });
 }
+
+/** A package engine's declaration that requests redaction `sql` with `"` and reads nested block comments. */
+function declaresQuotedSql(engine: EditableEngine): void {
+  engine.sqlText.redaction = { kind: "sql", nameQuote: '"' };
+  (engine.sqlText.grammar as Record<string, unknown>).blockComment = "nesting";
+}
+
+/** A statement whose nested comment holds a literal: read flat, the literal and the comment's tail are code. */
+const NESTED_STATEMENT = `SELECT "Users".id /* a /* b */ 'gift' */ FROM "Users" WHERE id = 7`;
 
 let savedSource: string | undefined;
 
@@ -248,38 +275,128 @@ describe("buildQueryEvent", () => {
   });
 
   test("an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER", () => {
-    // An engine only a provider package serves: its record does not offer query event text, since Studio's review
-    // record holds no redaction row for it (S-7), so the restrictive reading keeps nothing of its text, whatever the
-    // capture mode.
-    installEngines();
+    // An engine only a provider package serves, with no register row, a row for another grammar, or a row that reviews
+    // none: no grant covers its text (S-7), so the restrictive reading keeps nothing of it, whatever the capture mode.
+    const cases: readonly EnginesCase[] = [
+      {},
+      { row: { redaction: { kind: "none" }, grammarSha256: grammarSha256({ planted: randomUUID() }) } },
+      { row: { redaction: { kind: "none" }, grammarSha256: null } },
+    ];
     const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
-    for (const capture of [NONE, REDACTED, FULL]) {
-      const row = build(
-        input({
-          connection: kv,
-          statement: "DELETE FROM orders WHERE id = 7",
-          status: "error",
-          errorCode: "INTERNAL_ERROR",
-          errorMessage: "the package's own words",
-        }),
-        capture,
-      );
-      expect(row).toMatchObject({
-        engine: "acmeevents",
-        statement_type: "OTHER",
-        statement: null,
-        statement_truncated: false,
-        statement_fingerprint: null,
-        error_code: "INTERNAL_ERROR",
-        error_message: null,
-      });
+    for (const engines of cases) {
+      installEngines(engines);
+      for (const capture of [NONE, REDACTED, FULL]) {
+        const row = build(
+          input({
+            connection: kv,
+            statement: "DELETE FROM orders WHERE id = 7",
+            status: "error",
+            errorCode: "INTERNAL_ERROR",
+            errorMessage: "the package's own words",
+          }),
+          capture,
+        );
+        expect(row).toMatchObject({
+          engine: "acmeevents",
+          statement_type: "OTHER",
+          statement: null,
+          statement_truncated: false,
+          statement_fingerprint: null,
+          error_code: "INTERNAL_ERROR",
+          error_message: null,
+        });
+      }
+      forgetServerCatalog();
     }
   });
 
-  test("what an event keeps of its text is read from its engine's record: the queryEventText offer, a legacy engine's id included", () => {
-    // A crafted catalog whose postgres record does not offer query event text, its legacy provider still offered: the
-    // builder reads the record's offer, never whether the id is one Studio ships.
-    installEngines({ postgres: { queryEventText: false } });
+  test("a query event keeps the statement under the record's granted redaction, for a legacy engine and for a package engine its row grants sql", () => {
+    const password = randomUUID();
+    const errorMessage = `connection to postgres://alice:${password}@db/orders failed`;
+    const event = { statement: NESTED_STATEMENT, status: "error", errorCode: "42501", errorMessage } as const;
+
+    // A crafted postgres record granted redaction sql with no name quote: the quoted name postgres's row keeps goes.
+    installEngines({ grants: { postgres: { redaction: { kind: "sql", nameQuote: null } } } });
+    expect(build(input({ statement: `SELECT "Users".id FROM "Users" WHERE id = 7` }), REDACTED).statement).toBe(
+      "SELECT ?.id FROM ? WHERE id = ?",
+    );
+    forgetServerCatalog();
+    // The control: Studio's own postgres record keeps it.
+    expect(build(input({ statement: `SELECT "Users".id FROM "Users" WHERE id = 7` }), REDACTED).statement).toBe(
+      `SELECT "Users".id FROM "Users" WHERE id = ?`,
+    );
+
+    // A package engine whose row reviews its grammar and grants the sql redaction it requests: its statement is kept
+    // under that redaction and its own grammar, which closes the nested comment where a flat reading would not.
+    installEngines({ declare: declaresQuotedSql, row: { redaction: { kind: "sql", nameQuote: '"' } } });
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+    const redacted = build(input({ ...event, connection: kv }), REDACTED);
+    expect(redacted).toMatchObject({
+      engine: "acmeevents",
+      statement: `SELECT "Users".id ? FROM "Users" WHERE id = ?`,
+      statement_fingerprint: sha256(`SELECT "Users".id ? FROM "Users" WHERE id = ?`),
+      error_message: null,
+    });
+    const full = build(input({ ...event, connection: kv }), FULL);
+    expect(full).toMatchObject({
+      statement: maskCredentials(NESTED_STATEMENT, "acmeevents"),
+      statement_fingerprint: null,
+      error_message: maskCredentials(errorMessage, "acmeevents"),
+    });
+    expect(full.statement).toBe(NESTED_STATEMENT);
+    expect(full.error_message).not.toContain(password);
+  });
+
+  test("a package engine whose row reviews its grammar and grants none keeps ? when redacted and the masked text in full, as a legacy none engine does", () => {
+    const password = randomUUID();
+    const statement = `GET orders WHERE note = 'redis://bob:${password}@cache'`;
+    const errorMessage = `connection to postgres://alice:${password}@db/orders failed`;
+    const event = { statement, status: "error", errorCode: "42501", errorMessage } as const;
+    const couchbase = { ...ORDERS, id: "seed:docs", engine: "couchbase" } as const;
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+    installEngines({ row: { redaction: { kind: "none" } } });
+
+    const legacy = build(input({ ...event, connection: couchbase }), REDACTED);
+    const redacted = build(input({ ...event, connection: kv }), REDACTED);
+    expect(legacy).toMatchObject({ statement: "?", statement_fingerprint: sha256("?") });
+    expect(redacted).toMatchObject({ statement: "?", statement_fingerprint: sha256("?"), error_message: null });
+
+    const full = build(input({ ...event, connection: kv }), FULL);
+    expect(full).toMatchObject({
+      statement: maskCredentials(statement, "acmeevents"),
+      statement_fingerprint: null,
+      error_message: maskCredentials(errorMessage, "acmeevents"),
+    });
+    for (const text of [full.statement, full.error_message]) {
+      expect(text).toContain("[REDACTED]");
+      expect(text).not.toContain(password);
+    }
+  });
+
+  test("a package engine's statement type is read under its own grammar where its granted readsSqlText is true, and is OTHER where it is false", () => {
+    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
+    const statement = "/* a /* b */ DELETE FROM orders */ SELECT 1";
+    // The control: read flat, under the compatibility grammar, the statement is a DELETE.
+    expect(analyzeQuery(statement).type).toBe("DELETE");
+
+    installEngines({ declare: declaresQuotedSql, row: { redaction: { kind: "sql", nameQuote: '"' } } });
+    expect(build(input({ connection: kv, statement })).statement_type).toBe("SELECT");
+    forgetServerCatalog();
+
+    installEngines({
+      declare: (engine) => {
+        declaresQuotedSql(engine);
+        engine.sqlText.readsSqlText = false;
+      },
+      row: { redaction: { kind: "sql", nameQuote: '"' }, readsSqlText: false },
+    });
+    expect(build(input({ connection: kv, statement })).statement_type).toBe("OTHER");
+  });
+
+  test("what an event keeps of its text is read from its engine's record's grants, a legacy engine's id included", () => {
+    // A crafted catalog whose postgres record's grammar no register row reviewed: the builder reads the record's
+    // grants, never whether the id is one Studio ships.
+    installEngines({ grants: { postgres: { reviewedGrammar: false } } });
     const statement = "DELETE FROM orders WHERE id = 7 AND note = 'PASSWORD hunter'";
     const errorMessage = "permission denied for postgres://alice:hunter@db/orders";
     const mysql = { ...ORDERS, id: "seed:shop", engine: "mysql" } as const;
@@ -313,15 +430,14 @@ describe("buildQueryEvent", () => {
         });
       }
     }
-  });
+    forgetServerCatalog();
 
-  test("a record that offers query event text and no legacy provider is a host defect: no row is made of its event", () => {
-    installEngines({ acmeevents: { queryEventText: true } });
-    const kv = { ...ORDERS, id: "seed:kv", engine: "acmeevents" } as const;
-
-    expect(() => buildQueryEvent(input({ connection: kv }), FULL, CONTEXT)).toThrow(
-      "The engine \"acmeevents\" offers query event text, which only Studio's redaction rows read by a legacy engine's id hold, and its record offers no legacy provider: a host defect.",
-    );
+    // A crafted postgres record granted readsSqlText false: its statement reads as OTHER, and its text is masked as
+    // text that is not SQL, so a password written as a literal is kept.
+    const altered = `ALTER USER bob PASSWORD '${randomUUID()}'`;
+    expect(build(input({ statement: altered }), FULL).statement).toBe("ALTER USER bob PASSWORD [REDACTED]");
+    installEngines({ grants: { postgres: { readsSqlText: false } } });
+    expect(build(input({ statement: altered }), FULL)).toMatchObject({ statement_type: "OTHER", statement: altered });
   });
 
   test("an event naming an engine the server serves no record of is the caller's defect, and no row is made", () => {

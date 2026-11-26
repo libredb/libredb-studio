@@ -62,7 +62,6 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   unboundedPage: false,
   consoleTextBound: false,
   statementVocabulary: false,
-  queryEventText: false,
   sshTunnel: false,
   hostFiles: false,
   testCautions: false,
@@ -283,8 +282,8 @@ export function composeServerCatalog(
           register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: id }),
           tables.seedOnly,
         ),
-        // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
-        // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
+        // The grammar the query route's confirmation gate and the query event log read the engine's statements under,
+        // compiled once here; the gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),
         offers: PACKAGE_OFFERS,
       }) as EngineRecord,

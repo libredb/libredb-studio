@@ -5,7 +5,7 @@
  * leaves are listed by name, each importing nothing: the record check MongoDB's command redaction needs and the Redis
  * command-text reader. Every engine's grammar facts are its declaration's, composed by the registry.
  *
- * The fresh-process half loads each engine, and the three readers of the registry, as the first
+ * The fresh-process half loads each engine, the readers of the registry and the statement redaction, as the first
  * import of a new `bun` process. An import cycle through the registry shows up there as a
  * temporal-dead-zone error at load, which a test process that has already loaded the registry
  * through another path never sees.
@@ -119,6 +119,7 @@ describe("each module loads first in a fresh process", () => {
     "src/lib/db/sql-grammar/index.ts",
     "src/lib/sql/grammar.ts",
     "src/lib/sql/spans.ts",
+    "src/lib/db/sql-grammar/statement-redaction.ts",
     "src/lib/query-events/redact.ts",
   ]) {
     test(reader, () => loadsAlone(join(ROOT, reader)));

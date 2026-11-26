@@ -733,9 +733,11 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a seed agent credential request equal to the record's row is granted as that row, and any other, or one with no record, is read as null",
         "a value outside its vocabulary in Studio's record is refused naming the record, the claim and the engine, never as the engine's request",
         "an admitted package with no grant record reads every claim at its restrictive value",
+        "a SQL text claim is granted from the engine's register row only for the grammar that row reviewed, and at its restrictive value otherwise",
       ],
       "tests/unit/lib/db/server-catalog.test.ts": [
         "a package record's grants are its register row for its name, version, digest and engine, and the restrictive value of every claim where no row exists",
+        "a package record's SQL text grants are its register row's for the grammar the row reviewed, and restrictive without a row or for another grammar",
       ],
       "tests/unit/lib/db/record-grant-readers.test.ts": [
         "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
@@ -1264,7 +1266,19 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       ],
       "tests/unit/lib/query-events/build.test.ts": [
         "an event of a package engine keeps no statement and no error text in any capture mode, and reads its statement as OTHER",
-        "what an event keeps of its text is read from its engine's record: the queryEventText offer, a legacy engine's id included",
+        "a query event keeps the statement under the record's granted redaction, for a legacy engine and for a package engine its row grants sql",
+        "a package engine whose row reviews its grammar and grants none keeps ? when redacted and the masked text in full, as a legacy none engine does",
+        "what an event keeps of its text is read from its engine's record's grants, a legacy engine's id included",
+      ],
+      "tests/unit/db/sql-grammar/statement-redaction.test.ts": [
+        "every legacy record's statement redaction is its granted redaction, a command reader bound through the grammar function table",
+        "a command redaction granted to an engine no legacy provider serves is refused as a host defect",
+      ],
+      "packages/grant-register/tests/reader.test.ts": [
+        "a package row granting a command redaction is refused by name, and a legacy row's is admitted",
+      ],
+      "tests/unit/db/claim-grants.test.ts": [
+        "a package row may grant redaction sql or none, and a command reader requested by a package is read as none",
       ],
     },
     schema: ["/$defs/statementRedaction", "/$defs/nameQuote"],
