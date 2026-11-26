@@ -1,6 +1,6 @@
 /**
- * `decideTunnel`, the one decision core takes about a connection's SSH tunnel (FND-2 slice 5), and the
- * `SSH_TUNNEL_REFUSAL` row it reads.
+ * `decideTunnel`, the one decision core takes about a connection's SSH tunnel (FND-2 slice 5), and the engine record's
+ * `grants.sshTunnel` it reads, which for a shipped engine is its `SSH_TUNNEL_REFUSAL` row.
  *
  * Every expected sentence and every refused engine below is written out by hand, never derived from the module under
  * test, so a change to what core refuses, or to the words it refuses with, fails here by name.

@@ -632,21 +632,33 @@ export function bundledEngineGrants(id: DatabaseType): EngineGrants {
 /** Studio's grant of `policy.writeReach`, which the seed schema and the connection form read. */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 
-/** Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key and the borrow read. */
+/**
+ * Studio's grant of `policy.readsFileAccessPosture`, which the provider cache key reads; the factory's borrow reads a
+ * legacy engine's row as its record's `grants.readsFileAccessPosture`.
+ */
 export const GRANTED_READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.readsFileAccessPosture;
 
-/** Studio's grant of `policy.deniedFileAccessRefusal`, which the factory and MCP availability read. */
+/**
+ * Studio's grant of `policy.deniedFileAccessRefusal`, which MCP availability reads; the open check reads a legacy
+ * engine's row as its record's `grants.deniedFileAccessRefusal`.
+ */
 export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, string | null>> =
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
-/** Studio's grant of `policy.singleWriterFile`, which the factory's borrow and the provider cache key read. */
+/**
+ * Studio's grant of `policy.singleWriterFile`, which the provider cache key reads; the factory's borrow reads a legacy
+ * engine's row as its record's `grants.singleWriterFile`.
+ */
 export const GRANTED_SINGLE_WRITER_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.singleWriterFile;
 
 /** Studio's grant of `policy.readRootsRequired`, which the seed schema, MCP, governance and agent runs read. */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
-/** Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary, which every agent acquisition reads. */
+/**
+ * Studio's grant of `policy.agentCredentialForm`, in the record's vocabulary: every agent acquisition reads a legacy
+ * engine's row as its record's `grants.agentCredentialForm`.
+ */
 export const GRANTED_AGENT_CREDENTIAL_FORM: Readonly<Record<DatabaseType, AgentCredentialForm | null>> =
   BUNDLED_GRANTS.agentCredentialForm;
 
@@ -709,8 +721,8 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<Datab
 
 /**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
- * with, or null where the engine takes one. Core's tunnel decision, the provider's fields and the connection dialog
- * read it.
+ * with, or null where the engine takes one. The provider's fields and the connection dialog read it; core's tunnel
+ * decision reads a legacy engine's row as its record's `grants.sshTunnel`.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 

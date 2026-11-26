@@ -387,7 +387,7 @@ active database as `catalog`, the route requires it there, and the run records i
 its hand-over read that database alone and its connection identity names it.
 
 **Each engine declares the form of the agent's own credential** (`ProviderCapabilities.agentCredential`, the `AgentCredentialForm` forms in `src/lib/db/types.ts`), and `acquireExecutionProfileProvider` refuses a credential in a shape its form does not take before the provider connects, with `AGENT_CREDENTIAL_UNRESOLVABLE`.
-Studio reads the form from `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, its grant of the row of `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, never from the built provider, and a census holds that record equal to every provider's declaration.
+Studio reads the form from the engine record's `grants.agentCredentialForm`, for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, its grant of the row of `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, never from the built provider, and a census holds that record equal to every provider's declaration.
 Absent, the form takes `agentUser` and `agentPassword` together.
 `"token"` takes `agentPassword` alone as a bearer token: Kubernetes, Qdrant, Weaviate, libSQL and InfluxDB 3.
 `"service-account-key"` takes `agentPassword` alone holding a service-account key JSON, and refuses an access token or a user's own credential, whose scope Studio cannot read: BigQuery.

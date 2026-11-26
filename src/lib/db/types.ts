@@ -936,10 +936,10 @@ export interface KindRowAction {
 
 /**
  * The shapes an engine takes the agent's own credential in, `ProviderCapabilities.agentCredential`, read from
- * `agentUser` and `agentPassword`. The factory reads each engine's form from `GRANTED_AGENT_CREDENTIAL_FORM` in
- * `src/lib/db/claim-grants.ts`, Studio's grant of `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, where
- * null is the absent form. An agent credential beside a connection string is
- * refused in every form, because the connection string's own credential would win.
+ * `agentUser` and `agentPassword`. The factory reads each engine's form from its record's `grants.agentCredentialForm`,
+ * for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, Studio's grant of
+ * `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, where null is the absent form. An agent credential
+ * beside a connection string is refused in every form, because the connection string's own credential would win.
  *
  * - absent: `agentUser` and `agentPassword`, both required.
  * - `"token"`: `agentPassword` alone, as the bearer token the agent's acquisitions send instead of the connection's
@@ -1417,13 +1417,14 @@ export interface ProviderCapabilities {
    * is already open, keyed by the RESOLVED FILE PATH rather than the connection id: the
    * second opener is usually a different connection record pointing at the same file.
    *
-   * Studio never reads this declaration where it decides: the provider cache key and the
-   * single-writer borrow read `GRANTED_SINGLE_WRITER_FILE` in `src/lib/db/claim-grants.ts`,
-   * Studio's grant of the claim against its review record, `SINGLE_WRITER_FILE` in
+   * Studio never reads this declaration where it decides: the provider cache key reads
+   * `GRANTED_SINGLE_WRITER_FILE` in `src/lib/db/claim-grants.ts`, and the single-writer borrow
+   * reads the engine record's `grants.singleWriterFile`, built from that table's row. The table
+   * is Studio's grant of the claim against its review record, `SINGLE_WRITER_FILE` in
    * `src/lib/db/compatibility.ts`, which `tests/unit/db/compatibility.test.ts` holds equal to
    * this declaration for every shipped type-id (docs/providers/CONTRACT.md, clauses M-54 and
-   * M-57). Absent reads as "this engine serves as many handles as we open", the
-   * ordinary case, and the one every client-server engine is in.
+   * M-57). Absent reads as "this engine serves as many handles as we open", the ordinary case,
+   * and the one every client-server engine is in.
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`
    * (`src/exports/types.ts`): a required field added after the fact stops every
@@ -1459,10 +1460,11 @@ export interface ProviderCapabilities {
   /**
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
    * user-and-password form. Studio never reads this declaration where it decides: every agent acquisition
-   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine's row of
-   * `GRANTED_AGENT_CREDENTIAL_FORM` in `src/lib/db/claim-grants.ts`, Studio's grant of the claim against its review
-   * record, `AGENT_CREDENTIAL_FORM` in `src/lib/db/connection-fields.ts`, and refuses a credential in a shape the form
-   * does not take before the provider connects (docs/providers/CONTRACT.md, clauses M-54 and M-57).
+   * (`acquireExecutionProfileProvider` in `src/lib/db/factory.ts`) reads the engine record's
+   * `grants.agentCredentialForm`, for a legacy engine its row of `GRANTED_AGENT_CREDENTIAL_FORM` in
+   * `src/lib/db/claim-grants.ts`, Studio's grant of the claim against its review record, `AGENT_CREDENTIAL_FORM` in
+   * `src/lib/db/connection-fields.ts`, and refuses a credential in a shape the form does not take before the provider
+   * connects (docs/providers/CONTRACT.md, clauses M-54 and M-57).
    * `tests/unit/db/agent-credential-capability.test.ts` holds that record equal to this declaration for every shipped
    * type-id. An engine declaration requests it at `policy.agentCredentialForm`, each shipped engine's request the
    * record's row, `pair` for the user-and-password form (clause M-58).
