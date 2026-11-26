@@ -408,7 +408,7 @@ function escapeRegExp(text: string): string {
 }
 
 /** The naming pattern over `ids`: group 2 holds an id in a quoted literal, group 3 an id as an object key. */
-function namingPattern(ids: readonly string[]): RegExp {
+export function namingPattern(ids: readonly string[]): RegExp {
   const alternatives = [...ids]
     .sort((a, b) => b.length - a.length || a.localeCompare(b))
     .map(escapeRegExp)
