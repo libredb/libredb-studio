@@ -192,7 +192,7 @@ function assertHostFilesOffered(engine: EngineRecord, connection: EngineConnecti
 export type OpenPurpose = "connect" | "declarations";
 
 /** The steps of `assertOpenable`, in the order of the module's docblock. */
-function checkOpenable(
+function runOpenChecks(
   engine: EngineRecord,
   connection: EngineConnection,
   execution: ProviderExecutionContext,
@@ -230,7 +230,7 @@ export function assertOpenable(
   purpose: OpenPurpose,
 ): void {
   try {
-    checkOpenable(engine, connection, execution, purpose);
+    runOpenChecks(engine, connection, execution, purpose);
   } catch (error) {
     markNotSent(error);
     throw error;
