@@ -1,10 +1,11 @@
 /**
  * `POST /api/db/query` on an engine an admitted provider package serves (src/lib/api/package-editor-query.ts),
- * through the real `resolveConnection`, the provider factory's real editor cache, the real confirmation gate and the
- * real host core: the statement is read under the grammar the package declares, with every claim that loosens the gate
- * uncounted; the session opens once per key through the package; the run answers the package's rows keyed by column
- * name; a request field the package does not honour, and one the route does not serve for such an engine, is refused
- * before any call; a caller that leaves sends the package's cancel; and a package's own words never reach the client.
+ * through the real `resolveServedConnection`, the provider factory's real editor cache, the real confirmation gate and
+ * the real host core: the statement is read under the grammar the package declares, with every claim that loosens the
+ * gate uncounted; the session opens once per key through the package; the run answers the package's rows keyed by
+ * column name; a request field the package does not honour, and one the route does not serve for such an engine, is
+ * refused before any call; a caller that leaves sends the package's cancel; and a package's own words never reach the
+ * client.
  *
  * The packages are written into a scratch providers directory and admitted by Studio's boot admission
  * (tests/helpers/package-session-fixture.ts); each function calls the hook a case sets. Only `@/lib/auth` is mocked.

@@ -757,13 +757,29 @@ describe("one gate for every engine, reading the record's confirmation reader", 
     for (const engine of [...legacy, loose, packageEngine("acmeplain")]) {
       for (const sql of statements) {
         const { name, environment } = connectionOf(engine.id);
-        const expected = engine.offers.legacyProvider
+        const expected = engine.offers.statementVocabulary
           ? outcomeOf(() => confirmationVerdict(sql, engine.id as DatabaseConnection["type"], name, environment))
           : outcomeOf(() => packageConfirmationVerdict(sql, engine.statementGrammar, name, environment));
         // oxlint-disable-next-line no-await-in-loop -- each gate call runs after the one before.
         expect([engine.id, sql, await run(engine, sql)]).toEqual([engine.id, sql, expected]);
       }
     }
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  test("a record that offers a legacy provider and not Studio's statement vocabulary is read under its declared grammar, never by its id", async () => {
+    const crafted = packageEngine("acmegate");
+    const declared = { ...crafted, offers: { ...crafted.offers, legacyProvider: true, statementVocabulary: false } };
+    const run = (sql: string) =>
+      gateRun(
+        request({ connection: connectionOf("acmegate"), engine: declared, sql, confirmation: "ask" }),
+        clock,
+      ).then(outcome);
+
+    // The declared grammar reads FLUSHALL as a read and DELETE as a write; a gate that read the id "acmegate" through
+    // Studio's statement vocabulary rows instead would ask about FLUSHALL.
+    expect(await run("FLUSHALL")).toBe("run");
+    expect(await run("DELETE FROM t")).toBe("428");
     expect(error).not.toHaveBeenCalled();
   });
 
