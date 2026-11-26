@@ -122,7 +122,9 @@ function recordNotes(): Map<string, Partial<Record<Member, string>>> {
   for (const [member, [name, module]] of Object.entries(KEYED) as [Member, readonly [string, string, unknown]][]) {
     byModule.set(module, [...(byModule.get(module) ?? []), [name, member]]);
   }
-  byModule.get("src/lib/db/compatibility.ts")?.push(["AGENT_EXECUTION_ENGINES", "agentExecution"]);
+  const compatibility = byModule.get("src/lib/db/compatibility.ts");
+  if (compatibility === undefined) throw new Error("no keyed record is read from src/lib/db/compatibility.ts");
+  compatibility.push(["AGENT_EXECUTION_ENGINES", "agentExecution"]);
   for (const [module, records] of byModule) {
     const text = readFileSync(path.join(ROOT, module), "utf8");
     const source = ts.createSourceFile(module, text, ts.ScriptTarget.Latest, true);
