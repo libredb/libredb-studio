@@ -6,9 +6,9 @@
  * Core's tunnel decision reads no grant table: it reads the engine record's `grants.sshTunnel`, so this file proves
  * only that the decision follows the record's grant, on a record whose grant is planted. The fields a provider
  * receives, the provider factory's file and host path admissions and the choice of database read the grants of the
- * connection's installed engine record too, which tests/unit/lib/db/record-grant-readers.test.ts holds without a mock. That each legacy record's
- * grants are the grant reader's rows is held by the test "each legacy record's grants equal the grant reader's rows for
- * its id" in tests/unit/lib/provider-host/legacy-adapter.test.ts (#2536).
+ * connection's installed engine record too, which tests/unit/lib/db/record-grant-readers.test.ts holds without a mock.
+ * That each legacy record's grants are the grant reader's rows is held by the test "each legacy record's grants equal
+ * the grant reader's rows for its id" in tests/unit/lib/provider-host/legacy-adapter.test.ts (#2536).
  *
  * Under tests/isolated because it replaces `@/lib/db/claim-grants` with `mock.module()` before it imports any gate,
  * which holds only while this file is the first in its bun process to evaluate them. The grant module is the real one

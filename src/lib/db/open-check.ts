@@ -100,8 +100,8 @@ export function assertProviderEnabled(engine: EngineRecord): void {
  * the value.
  *
  * It reads the record rather than `getCapabilities()` because it runs before a provider exists, and
- * `tests/unit/db/read-only-enforced-capability.test.ts` holds the map equal to the summary of every provider's
- * `writeReach`.
+ * `tests/unit/db/read-only-enforced-capability.test.ts` holds each legacy engine's grant equal to the summary of its
+ * provider's `writeReach`.
  *
  * WHERE IT RUNS. In `assertOpenable`, and in the factory's entry points right after the type check, ahead of their
  * cache lookup and of `createSSHTunnel`: those open the tunnel before they build, so a refusal raised only inside the

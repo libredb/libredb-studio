@@ -1445,7 +1445,8 @@ export interface ProviderCapabilities {
    * `grants.readOnlyEnforced`, and by the seed schema and the connection form, which read `GRANTED_WRITE_REACH`, each
    * before a provider exists; both are derived in `src/lib/db/claim-grants.ts` from Studio's grant of the engine's write
    * reach.
-   * `tests/unit/db/read-only-enforced-capability.test.ts` holds that map equal to this declaration as well.
+   * `tests/unit/db/read-only-enforced-capability.test.ts` holds each legacy engine's `readOnlyEnforced` grant equal to
+   * this declaration's summary as well.
    *
    * Absent means open on every path; every provider whose reach is not open declares all four paths. Optional for the
    * same published-interface reason as `supportsInlineRowEdit` (`src/exports/types.ts`): a required field added after
@@ -1512,12 +1513,12 @@ export interface ProviderCapabilities {
    *
    * It is what tells `src/lib/db` that an editor handle of this engine must be split by posture: the
    * writable cache key carries the deny posture as a segment, and the single-writer borrow lends a
-   * handle only to a caller of its own posture. Both read Studio's grant of `policy.readsFileAccessPosture` in
-   * `src/lib/db/claim-grants.ts` rather than this field, because each decides before a provider
-   * exists (the cache key is computed to find or open one), and
-   * `tests/unit/db/reads-file-access-posture-capability.test.ts` holds that map equal to this
-   * declaration for every shipped type-id, so the two cannot drift and no `connection.type` branch is
-   * needed in `src/lib/db` (forbidden by `CLAUDE.md`).
+   * handle only to a caller of its own posture. Both read the engine record's `grants.readsFileAccessPosture`,
+   * Studio's grant of `policy.readsFileAccessPosture` (the cache key through `servedEngineRecord`),
+   * rather than this field, because each decides before a provider exists (the cache key is computed
+   * to find or open one), and `tests/unit/db/reads-file-access-posture-capability.test.ts` holds each
+   * shipped engine's legacy register row equal to this declaration, so the two cannot drift and no
+   * `connection.type` branch is needed in `src/lib/db` (forbidden by `CLAUDE.md`).
    *
    * Optional for the same published-interface reason as `supportsInlineRowEdit`: a required field added
    * after the fact stops every external implementer compiling. Only the literal `true` is declared, so

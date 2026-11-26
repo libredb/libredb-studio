@@ -171,8 +171,10 @@ describe("the db and open readers of a grant", () => {
       sessionCapacity: () => sessionCapacity(gone),
     };
     await withCatalog(catalog, async () => {
-      for (const [reader, read] of Object.entries(reads)) {
-        const error = await thrownBy(read);
+      const errors = await Promise.all(
+        Object.entries(reads).map(async ([reader, read]) => [reader, await thrownBy(read)] as const),
+      );
+      for (const [reader, error] of errors) {
         expect([reader, error instanceof ProviderUnavailableError]).toEqual([reader, true]);
         expect((error as ProviderUnavailableError).codes).toEqual(["PROVIDER_LOAD_FAILED"]);
       }

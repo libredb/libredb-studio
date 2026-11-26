@@ -123,6 +123,9 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   agentExecution: legacyRegisterTable("agentExecution"),
 };
 
+/** The grant members the grant reader builds as a new value rather than handing on its row's own. */
+const COPIED_GRANT_MEMBERS: ReadonlySet<string> = new Set(["maskingExemptColumns", "hostPathFields"]);
+
 /**
  * The plain objects and arrays `value` holds, itself included, that are not frozen, by their path. A compiled pattern
  * (`RegExp`) and a bound function are leaves: they are Studio's shared objects, which the record holds by reference.
@@ -179,8 +182,11 @@ describe("the legacy adapter's records", () => {
       const engine = legacyRecord(id);
       expect(Object.keys(engine.grants).sort()).toEqual(Object.keys(GRANT_TABLES).sort());
       for (const [member, table] of Object.entries(GRANT_TABLES)) {
-        // Equal rather than identical: the grant reader copies a row's object value, such as a masking exemption.
-        expect([member, engine.grants[member as keyof EngineRecord["grants"]]]).toEqual([member, table[id] as never]);
+        const granted = engine.grants[member as keyof EngineRecord["grants"]];
+        // Equal rather than identical only where the grant reader builds a new value: a masking exemption, and a host
+        // path field list the request adds to.
+        if (COPIED_GRANT_MEMBERS.has(member)) expect([member, granted]).toEqual([member, table[id] as never]);
+        else expect(granted).toBe(table[id] as never);
       }
     }
   });
