@@ -19,10 +19,10 @@
  * (src/lib/provider-host/legacy-adapter/records.ts), every one by identity, and adds one record per admitted engine
  * (`EngineRecord` in ./server-catalog): it projects the admitted declarations with the same projections Studio's
  * generator projects its own declarations with (./engine-catalog/projection), composes each engine's field rules
- * (`packageFieldRules` in ./connection-form), grants each claim through Studio's grant reader against Studio's record
- * (`grantPackageClaims` in ./claim-grants), which holds no row for an engine Studio does not ship, so each claim is
- * granted at its restrictive value, and gives each the package's source, with the session its declaration states, and
- * the offers of an engine served through the provider contract (`PACKAGE_OFFERS`). It maps each engine a refused
+ * (`packageFieldRules` in ./connection-form), grants each engine's claims through Studio's grant reader with no
+ * register row (`grantEngineClaims` in ./claim-grants), so each claim is granted at its restrictive value, and gives
+ * each the package's source, with the session its declaration states, and the offers of an engine served through the
+ * provider contract (`PACKAGE_OFFERS`). It maps each engine a refused
  * package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is
  * transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is
  * read by a client's value.
@@ -30,7 +30,7 @@
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import { engineGrantsOf, grantPackageClaims } from "./claim-grants";
+import { grantEngineClaims } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
 import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
@@ -210,7 +210,7 @@ export function composeServerCatalog(
   const catalog = projectCatalog(declarations);
   const tables = projectConnectionTables(declarations);
   const forms = projectConnectionForms(declarations);
-  const grants = grantPackageClaims(projectClaimRequests(declarations), tables.seedOnly);
+  const requests = projectClaimRequests(declarations);
   const engines = new Map<string, EngineRecord>(LEGACY_ENGINES);
   for (const { pkg, engine } of claims) {
     const { id } = engine;
@@ -253,7 +253,7 @@ export function composeServerCatalog(
           dialogOffersUri: tables.dialogOffersUri[id],
         }),
         fieldRules: packageFieldRules(id, forms[id], fields),
-        grants: engineGrantsOf(grants, id),
+        grants: grantEngineClaims(id, requests[id], null, tables.seedOnly),
         // The grammar the query route's confirmation gate reads the engine's statements under, compiled once here; the
         // gate counts none of its exempt forms (docs/providers/CONTRACT.md, clause S-8).
         statementGrammar: grammarFromFacts(engine.sqlText.grammar),

@@ -1,31 +1,17 @@
 /**
- * Every policy, MCP, connection and agent mode claim record Studio keeps in core is read only by Studio's grant reader,
+ * Studio's review of each policy, MCP, connection and agent mode claim is read only by Studio's grant reader,
  * `src/lib/db/claim-grants.ts` (docs/providers/CONTRACT.md, clauses M-54, M-82 and M-83): every gate reads the grant,
- * the more restrictive of the engine's request and the record, so a gate that read a record again would read a claim no
- * grant covers once a loader admits a package's declaration.
- *
- * The scan parses every `.ts` and `.tsx` file under Studio's `src/` and the VS Code extension's `src/` with the
- * TypeScript compiler (a `.tsx` file as TSX) and finds each reference to a record: an import or re-export specifier
- * naming it from its module, an `export *` of its module, a property access or a string-literal element access naming
- * it on a namespace import of its module, on a dynamic import or require of it, or on a `const` alias of either, a
- * destructuring of such an import, require or alias, and, inside the record's own module, any use of its name but the
- * declaration. A module specifier names a record module when it resolves to it, written relative to the importing file
- * or through the `@/` alias for `src/`. A type-only import or export, `import type`, `import { type X }`,
- * `export type { X } from` or `import type * as ns`, is passed over: it carries no value to any gate, as the agent
- * packs' type-only import of the grant reader's `StatementLanguageRequest` carries none (`AgentEngineType` in
- * src/lib/agent/languages/pack.ts). A value import stays a reference wherever the name is then used, a `typeof` in a
- * type position included.
- * An object literal key, a type member key, a property of another object and a string such as an error code are not
- * references, and a comment is trivia the parser attaches to no node, so the record's name in either is passed over.
- * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
- * module reads the records through it either.
+ * the more restrictive of the engine's request and the review, so a gate that read the review again would read a claim
+ * no grant covers once a loader admits a package's declaration.
  *
  * Studio's review of each policy, MCP and connection claim and of the statement language claim, and the two host review
- * records, is the grant register's legacy rows, `@libredb/grant-register`, and no longer a record of core: no module but the grant reader
- * loads the register, by an import declaration, a side-effect import, a re-export, an `export *`, a dynamic `import()`
- * or a `require()` of its package name, a subpath of it or a relative path into packages/grant-register/, while a
- * type-only import or export, which loads nothing, passes. The grant reader imports none of the records whose rows
- * moved there, `MOVED_TO_REGISTER`, and no module of `MOVED_FROM_MODULES` exports one.
+ * records, is the grant register, `@libredb/grant-register`, and no longer a record of core: no module but the grant
+ * reader loads the register, by an import declaration, a side-effect import, a re-export, an `export *`, a dynamic
+ * `import()` or a `require()` of its package name, a subpath of it or a relative path into packages/grant-register/,
+ * while a type-only import or export, which loads nothing, passes. The grant reader imports none of the records whose
+ * rows moved there, `MOVED_TO_REGISTER`, and no module of `MOVED_FROM_MODULES` exports one; `STUDIO_CLAIM_RECORDS`, the
+ * table form the grant reader once composed from the register's legacy rows, is among them, since every engine is now
+ * granted against its own row by one call.
  *
  * Studio's review of the agent readings is the register's legacy rows' `agentReadings`, which only the grant reader
  * loads. The member is still held by member rather than by name, a request's or a grant table's alike: no module but
@@ -43,22 +29,15 @@ import ts from "typescript";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
-/** The grant reader: the one module that may read a claim record. */
+/** The grant reader: the one module that may read Studio's review of a claim. */
 const GRANT_READER = "src/lib/db/claim-grants.ts";
 
 /**
- * Each module holding a policy, MCP, connection or agent mode claim record, without its extension, and the records it
- * holds.
- */
-const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
-  "src/lib/db/claim-grants": ["STUDIO_CLAIM_RECORDS"],
-};
-
-/**
- * The claim records whose rows are now the grant register's legacy rows: none of them may be imported by the grant
- * reader or exported by a module of `MOVED_FROM_MODULES`.
+ * The claim records whose rows are now the grant register's rows, and the table form the grant reader once composed
+ * from them: none of them may be imported by the grant reader or exported by a module of `MOVED_FROM_MODULES`.
  */
 const MOVED_TO_REGISTER: readonly string[] = [
+  "STUDIO_CLAIM_RECORDS",
   "WRITE_REACH",
   "READS_FILE_ACCESS_POSTURE",
   "REFUSES_DENIED_FILE_ACCESS",
@@ -82,8 +61,7 @@ const MOVED_TO_REGISTER: readonly string[] = [
 
 /**
  * The modules, without their extension, a record of `MOVED_TO_REGISTER` was or could be exported from: the two that
- * held them and the grant reader. A closed list rather than `CLAIM_RECORD_MODULES`, which names only the modules that
- * still hold a record, so a moved record exported again from a module that holds none is still refused by name.
+ * held them and the grant reader. A closed list, so a moved record exported again from one of them is refused by name.
  */
 const MOVED_FROM_MODULES: readonly string[] = [
   "src/lib/db/compatibility",
@@ -98,145 +76,6 @@ const GRANT_REGISTER_DIRECTORY = "packages/grant-register";
 interface SourceText {
   readonly path: string;
   readonly text: string;
-}
-
-/** The repository path, without extension, that `specifier` written in `file` resolves to, or null for a package. */
-function resolvedModule(file: string, specifier: string): string | null {
-  const written = specifier.replace(/\.(c|m)?(t|j)sx?$/, "");
-  if (written.startsWith("@/")) return `src/${written.slice(2)}`;
-  if (written.startsWith(".")) return path.posix.normalize(path.posix.join(path.posix.dirname(file), written));
-  return null;
-}
-
-/** The records the module `module` (a repository path without extension) holds, or none. */
-function recordsOf(module: string | null): readonly string[] {
-  return module !== null && Object.hasOwn(CLAIM_RECORD_MODULES, module) ? (CLAIM_RECORD_MODULES[module] ?? []) : [];
-}
-
-/** `node` seen through parentheses, `await`, `as` and non-null assertions. */
-function unwrapped(node: ts.Expression): ts.Expression {
-  let current = node;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAwaitExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isNonNullExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
-}
-
-/** The records of the module a dynamic `import()` or `require()` call loads, or none for any other expression. */
-function loadedRecords(file: string, node: ts.Expression): readonly string[] {
-  const call = unwrapped(node);
-  if (!ts.isCallExpression(call) || call.arguments.length !== 1) return [];
-  const loads =
-    call.expression.kind === ts.SyntaxKind.ImportKeyword ||
-    (ts.isIdentifier(call.expression) && call.expression.text === "require");
-  const argument = call.arguments[0];
-  if (!loads || argument === undefined || !ts.isStringLiteralLike(argument)) return [];
-  return recordsOf(resolvedModule(file, argument.text));
-}
-
-/** Whether `node`, an identifier, is a key or a member name rather than a reference to a binding. */
-function isKeyOrMemberName(node: ts.Identifier): boolean {
-  const parent = node.parent;
-  return (
-    ((ts.isPropertyAssignment(parent) ||
-      ts.isPropertySignature(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isMethodSignature(parent) ||
-      ts.isEnumMember(parent)) &&
-      parent.name === node) ||
-    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-    (ts.isBindingElement(parent) && parent.propertyName === node)
-  );
-}
-
-/** Each reference `file` makes to a claim record, as `<file> reads <record>`. */
-function recordReferences(file: SourceText): string[] {
-  const source = ts.createSourceFile(
-    file.path,
-    file.text,
-    ts.ScriptTarget.Latest,
-    true,
-    file.path.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-  );
-  const own = recordsOf(file.path.replace(/\.tsx?$/, ""));
-  const namespaces = new Map<string, readonly string[]>();
-  const found = new Set<string>();
-  const read = (record: string) => found.add(`${file.path} reads ${record}`);
-  const readNamed = (records: readonly string[], name: string) => {
-    if (records.includes(name)) read(name);
-  };
-
-  /**
-   * The records of the module `initializer` binds: a dynamic import or require of a record module, or an identifier
-   * naming a namespace or loaded module already bound, so an alias of one is followed.
-   */
-  const boundRecords = (initializer: ts.Expression): readonly string[] => {
-    const target = unwrapped(initializer);
-    if (ts.isIdentifier(target)) return namespaces.get(target.text) ?? [];
-    return loadedRecords(file.path, target);
-  };
-
-  const collect = (node: ts.Node): void => {
-    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
-      const records = recordsOf(resolvedModule(file.path, node.moduleSpecifier.text));
-      const clause = node.importClause;
-      const bindings = clause?.namedBindings;
-      // A type-only import carries no value, so it reads no record.
-      if (records.length > 0 && bindings !== undefined && clause?.isTypeOnly !== true) {
-        if (ts.isNamespaceImport(bindings)) namespaces.set(bindings.name.text, records);
-        else
-          for (const element of bindings.elements)
-            if (!element.isTypeOnly) readNamed(records, (element.propertyName ?? element.name).text);
-      }
-    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
-      const records = recordsOf(resolvedModule(file.path, node.moduleSpecifier.text));
-      if (node.isTypeOnly) {
-        // A type-only re-export carries no value, so it reads no record.
-      } else if (node.exportClause === undefined) for (const record of records) read(record);
-      else if (ts.isNamespaceExport(node.exportClause)) for (const record of records) read(record);
-      else
-        for (const element of node.exportClause.elements)
-          if (!element.isTypeOnly) readNamed(records, (element.propertyName ?? element.name).text);
-    } else if (ts.isVariableDeclaration(node) && node.initializer !== undefined) {
-      const records = boundRecords(node.initializer);
-      if (records.length > 0 && ts.isIdentifier(node.name)) namespaces.set(node.name.text, records);
-      if (records.length > 0 && ts.isObjectBindingPattern(node.name)) {
-        for (const element of node.name.elements) {
-          const key = element.propertyName ?? element.name;
-          if (ts.isIdentifier(key) || ts.isStringLiteral(key)) readNamed(records, key.text);
-        }
-      }
-    }
-    ts.forEachChild(node, collect);
-  };
-  collect(source);
-
-  /** The records of the namespace or loaded module `expression` names, or none. */
-  const namespaceRecords = (expression: ts.Expression): readonly string[] => {
-    const target = unwrapped(expression);
-    if (ts.isIdentifier(target)) return namespaces.get(target.text) ?? [];
-    return loadedRecords(file.path, target);
-  };
-
-  const visit = (node: ts.Node): void => {
-    if (ts.isPropertyAccessExpression(node)) {
-      readNamed(namespaceRecords(node.expression), node.name.text);
-    } else if (ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression)) {
-      readNamed(namespaceRecords(node.expression), node.argumentExpression.text);
-    } else if (ts.isIdentifier(node) && own.includes(node.text) && !isKeyOrMemberName(node)) {
-      const declared = ts.isVariableDeclaration(node.parent) && node.parent.name === node;
-      if (!declared) read(node.text);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(source);
-  return [...found];
 }
 
 /** Every `.ts` and `.tsx` file under `directory`, a repository path, read as text. */
@@ -290,11 +129,6 @@ function agentReadingsReads(file: SourceText): string[] {
 /** Each read of a member named `agentReadings` in `files` that no module of `AGENT_READINGS_READERS` makes. */
 function agentReadingsReaders(files: readonly SourceText[]): string[] {
   return files.filter((file) => !Object.hasOwn(AGENT_READINGS_READERS, file.path)).flatMap(agentReadingsReads);
-}
-
-/** Each reference to a claim record in `files` that the grant reader does not make. */
-function recordReaders(files: readonly SourceText[]): string[] {
-  return files.filter((file) => file.path !== GRANT_READER).flatMap(recordReferences);
 }
 
 /**
@@ -388,136 +222,6 @@ function importedNames(file: SourceText): string[] {
 }
 
 describe("the claim record readers", () => {
-  test("every policy, MCP, connection and agent mode claim record is read only by the grant reader", () => {
-    const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
-
-    expect(recordReaders(files)).toEqual([]);
-    // Vacuity: the scan reads both trees, and finds the grant reader's own read of the one record it still holds,
-    // STUDIO_CLAIM_RECORDS.
-    expect(files.some((file) => file.path.startsWith("vscode-extension/src/"))).toBe(true);
-    const grantReader = files.find((file) => file.path === GRANT_READER);
-    if (grantReader === undefined) throw new Error(`${GRANT_READER} is not in the source read`);
-    expect(recordReferences(grantReader)).toEqual([`${GRANT_READER} reads STUDIO_CLAIM_RECORDS`]);
-  }, 60_000);
-
-  test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import", () => {
-    const planted = (file: string, text: string) => recordReaders([{ path: file, text }]);
-    // The grant reader is passed over by `recordReaders`, so a use inside the record's own module is read through
-    // `recordReferences`.
-    const plantedInModule = (text: string) => recordReferences({ path: GRANT_READER, text });
-    const record = "STUDIO_CLAIM_RECORDS";
-
-    expect(planted("src/lib/a.ts", `import { ${record} } from "@/lib/db/claim-grants";`)).toEqual([
-      `src/lib/a.ts reads ${record}`,
-    ]);
-    expect(planted("src/lib/db/a.ts", `import { ${record} as records } from "./claim-grants";`)).toEqual([
-      `src/lib/db/a.ts reads ${record}`,
-    ]);
-    expect(planted("src/lib/mcp/a.ts", `export { ${record} } from "../db/claim-grants.ts";`)).toEqual([
-      `src/lib/mcp/a.ts reads ${record}`,
-    ]);
-    expect(planted("src/lib/a.ts", 'export * from "@/lib/db/claim-grants";')).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(planted("src/lib/db/a.ts", `import { ${record} } from "./claim-grants";`)).toEqual([
-      `src/lib/db/a.ts reads ${record}`,
-    ]);
-    expect(planted("vscode-extension/src/backend/a.ts", `import { ${record} } from "@/lib/db/claim-grants";`)).toEqual([
-      `vscode-extension/src/backend/a.ts reads ${record}`,
-    ]);
-    // An alias of a namespace or loaded module binding is followed, however many times it is renamed.
-    expect(
-      planted(
-        "src/lib/a.ts",
-        `import * as records from "@/lib/db/claim-grants";\nconst m = records;\nconst n = (m);\nn.${record};`,
-      ),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(
-      planted(
-        "src/lib/a.ts",
-        `const loaded = await import("@/lib/db/claim-grants");\nconst m = loaded;\nm["${record}"];`,
-      ),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(
-      planted(
-        "src/lib/a.ts",
-        `import * as records from "@/lib/db/claim-grants";\nconst m = records;\nconst { ${record}: r } = m;`,
-      ),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(
-      planted("src/lib/a.ts", `import * as records from "@/lib/db/claim-grants";\nrecords.${record}.writeReach;`),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(
-      planted("src/lib/a.tsx", `import * as records from "@/lib/db/claim-grants";\nrecords["${record}"];`),
-    ).toEqual([`src/lib/a.tsx reads ${record}`]);
-    expect(planted("src/lib/a.ts", `const reach = (await import("@/lib/db/claim-grants")).${record};`)).toEqual([
-      `src/lib/a.ts reads ${record}`,
-    ]);
-    expect(
-      planted("src/lib/a.ts", `const records = await import("@/lib/db/claim-grants");\nrecords.${record};`),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(planted("src/lib/db/a.ts", `const { ${record}: r } = require("./claim-grants");`)).toEqual([
-      `src/lib/db/a.ts reads ${record}`,
-    ]);
-    expect(
-      plantedInModule(`export const ${record} = Object.freeze({});\nexport const MEMBERS = Object.keys(${record});`),
-    ).toEqual([`${GRANT_READER} reads ${record}`]);
-
-    // Not references: the record's own declaration, an error code, an object key, a type member key, a property of
-    // another object, a comment, another name of the record module, and the grant reader itself.
-    expect(plantedInModule(`export const ${record} = Object.freeze({});`)).toEqual([]);
-    expect(
-      planted(
-        "src/lib/db/error-record.ts",
-        [
-          'throw new ExecutionProfileError(sentence, "READ_ROOTS_REQUIRED");',
-          "const codes = { READ_ROOTS_REQUIRED: true };",
-          "type Codes = { READ_ROOTS_REQUIRED: boolean };",
-          "codes.READ_ROOTS_REQUIRED;",
-          `// ${record}, read from claim-grants.ts`,
-          'import { GRANTED_WRITE_REACH } from "@/lib/db/claim-grants";',
-          `const other = { ${record}: 1 };\nconst alias = other;\nalias.${record};`,
-          `import { ${record} } from "@/lib/db/claim-records-elsewhere";`,
-        ].join("\n"),
-      ),
-    ).toEqual([]);
-    expect(planted(GRANT_READER, `export const ${record} = Object.freeze({});\nObject.keys(${record});`)).toEqual([]);
-
-    // A type-only import or re-export carries no value to a gate, so it is passed over in every form.
-    expect(
-      planted(
-        "src/lib/agent/languages/a.ts",
-        [
-          `import type { ${record} } from "@/lib/db/claim-grants";`,
-          `import { type ${record} as R } from "@/lib/db/claim-grants";`,
-          `export type { ${record} } from "@/lib/db/claim-grants";`,
-          'import type * as records from "@/lib/db/claim-grants";',
-          `type T = typeof ${record};`,
-          `type U = (typeof records)["${record}"];`,
-        ].join("\n"),
-      ),
-    ).toEqual([]);
-    // A value import is a reference however the name is used: in a type position, renamed, through a namespace or an
-    // alias of one, loaded dynamically, or re-exported.
-    expect(
-      planted(
-        "src/lib/agent/languages/a.ts",
-        `import { ${record} } from "@/lib/db/claim-grants";\ntype T = typeof ${record};`,
-      ),
-    ).toEqual([`src/lib/agent/languages/a.ts reads ${record}`]);
-    expect(
-      planted("src/lib/a.ts", `import { type ${record} as T, ${record} as R } from "@/lib/db/claim-grants";`),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(
-      planted("src/lib/a.ts", `import * as records from "@/lib/db/claim-grants";\nconst m = records;\nm.${record};`),
-    ).toEqual([`src/lib/a.ts reads ${record}`]);
-    expect(planted("src/lib/a.ts", `const { ${record}: r } = await import("@/lib/db/claim-grants");`)).toEqual([
-      `src/lib/a.ts reads ${record}`,
-    ]);
-    expect(planted("src/lib/a.ts", `export { ${record} } from "@/lib/db/claim-grants";`)).toEqual([
-      `src/lib/a.ts reads ${record}`,
-    ]);
-    expect(planted("src/lib/a.ts", 'export type * from "@/lib/db/claim-grants";')).toEqual([]);
-  });
-
   test("only the grant reader imports the grant register, and the scan finds each way a module could import it", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
 
@@ -601,18 +305,14 @@ describe("the claim record readers", () => {
       ),
     ).toEqual([]);
     // Vacuity: the parse reads the grant reader's named imports, the generated claim requests among them, and each
-    // module's exported records.
+    // module's exported names, the grant reader's own projections among them.
     expect(imported).toContain("BUNDLED_CLAIM_REQUESTS");
+    const grantReaderModule = modules.find((file) => file.path === GRANT_READER);
+    if (grantReaderModule === undefined) throw new Error(`${GRANT_READER} is not among the modules read`);
+    expect(exportsName(grantReaderModule, "GRANTED_WRITE_REACH")).toBe(true);
     expect(
       importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
     ).toEqual(["WRITE_REACH"]);
-    for (const file of modules) {
-      const records = CLAIM_RECORD_MODULES[file.path.replace(/\.ts$/, "")] ?? [];
-      expect({ module: file.path, exports: records.filter((name) => exportsName(file, name)) }).toEqual({
-        module: file.path,
-        exports: [...records],
-      });
-    }
     expect(
       exportsName({ path: "src/lib/db/a.ts", text: "export const WRITE_REACH = Object.freeze({});" }, "WRITE_REACH"),
     ).toBe(true);

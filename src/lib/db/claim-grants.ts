@@ -29,7 +29,7 @@
  * - `connection.hostPathFields`, a set a gate admits: the union of the request and the row, the row's fields first and
  *   the request's others after them in its order, the row itself where the request adds nothing; where no row exists,
  *   the union of the request and every host path field among the engine's seed-only fields, the claim's restrictive
- *   value, which `grantClaims` reads from the seed-only rows it is handed.
+ *   value, which `grantEngineClaims` reads from the seed-only rows it is handed.
  * - `connection.serverLevelWithoutDatabase`, read per gate, since its two gates refuse at opposite values: at
  *   governance admission, which never grants a definition with no database of such an engine, restrictive when true,
  *   true where the request or the row is or no row exists; at the choice of database, which honours a caller's choice
@@ -45,29 +45,31 @@
  *   always a fresh frozen list, and the empty list where no row exists.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
- * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine; an
+ * or host path fields value of a register row outside it is refused naming Studio's record, the claim and the engine; an
  * agent credential row naming a superseding field that is not a text field a connection form draws is refused by
- * `legacyAgentCredentials` when this module loads, naming the engine and the field; and every other row is Studio's own
- * typed table, read as it stands.
+ * `legacyAgentCredentials` when the row is read, naming the engine and the field; and every other value is the
+ * register's own, validated against its schema when it was read.
  *
  * Studio's review of each policy, MCP and connection claim and of the agent mode claims `agent.statementLanguage` and
- * `facets.agentReadings` for an engine the legacy adapter serves is the engine's legacy row of the grant register,
- * `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id: the register is read once, when
- * this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by
- * name a served engine the register holds no legacy row for, so no served engine is read at a restrictive value by
- * omission. A row's review notes say why it holds its value. The rows are hand-reviewed data, never a projection of the
- * declarations (clauses M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load,
- * in the browser as on the server. Studio's review of the two host facts no declaration requests, whether an engine's
- * connections serve one session and whether agent mode executes statements on it, is the same legacy rows'
- * `servesOneSession` and `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and
- * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
- * that no other module of Studio's source reads `STUDIO_CLAIM_RECORDS` or loads the register, and that none but the
- * claim projection reads a member named `agentReadings`, and tests/unit/db/engine-declaration-readers.test.ts that no
- * other module reads a request. For every engine Studio ships each request is its review row, so each granted table
- * equals that row there.
+ * `facets.agentReadings` for an engine is the engine's row of the grant register, `@libredb/grant-register` (clause
+ * M-54): one call, `grantEngineClaims`, grants every claim of one engine against its row, or at each claim's
+ * restrictive value where no row exists, for a legacy engine and a package's alike. A legacy engine's row is its legacy
+ * row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads, with
+ * `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine the
+ * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
+ * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
+ * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
+ * the server. Studio's review of the two host facts no declaration requests, whether an engine's connections serve one
+ * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
+ * `agentExecution`, answered as two lists, `GRANTED_ONE_SESSION_ENGINES` and `GRANTED_AGENT_EXECUTION_ENGINES`; no
+ * claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source
+ * loads the register, and that none but the claim projection reads a member named `agentReadings`, and
+ * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
+ * each request is its review row, so each granted table equals that row there.
  *
- * The tables are computed once, when this module loads, over the bundled declarations; the server catalog's composer
- * grants an admitted provider package's claims the same way, through `grantPackageClaims`. The module holds literals,
+ * Each legacy engine's grants are granted once, when this module loads, from its bundled request and its legacy row,
+ * and read through `legacyEngineGrants`; the tables below are cut from them. The server catalog's composer grants an
+ * admitted provider package's engine through the same `grantEngineClaims`. The module holds literals,
  * generated data and the register's rows only, and the register's reader compiles no code, so the browser's readers,
  * the read-only marker, the connection form and the agent rail, load it as they load the records.
  */
@@ -78,7 +80,13 @@ import type {
   PolicyClaims,
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
-import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
+import {
+  type GrantRegister,
+  LEGACY_KEY,
+  type RegisterGrants,
+  type RegisterRow,
+  readGrantRegister,
+} from "@libredb/grant-register";
 import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
 import { SHIPPED_DATABASE_TYPES } from "./compatibility";
 import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
@@ -102,8 +110,11 @@ type MaskingExemption = NonNullable<ProviderCapabilities["maskingExemptColumns"]
 /** One record of Studio's, keyed by engine id; an id it holds no row for is read at the claim's restrictive value. */
 type Rows<T> = Readonly<Record<string, T>>;
 
-/** Studio's review record of each policy, MCP, connection and agent mode claim, keyed by the member requesting it. */
-export interface ClaimRecords {
+/**
+ * Studio's review of each policy, MCP, connection and agent mode claim for one engine, keyed by the member requesting
+ * it, each a record of that engine's row alone, or of none: the shape the rules below read.
+ */
+interface ClaimRecords {
   readonly writeReach: Rows<WriteReach>;
   readonly readsFileAccessPosture: Rows<boolean>;
   readonly deniedFileAccessRefusal: Rows<string | null>;
@@ -125,11 +136,11 @@ export interface ClaimRecords {
   readonly agentReadings: Rows<readonly AgentReading[]>;
 }
 
-/** An engine's seed-only fields as `grantClaims` reads them, or null where it has none. */
+/** An engine's seed-only fields as `grantEngineClaims` reads them, or null where it has none. */
 type SeedOnlyRow = { readonly fields: readonly string[] } | null;
 
-/** Studio's grant of each claim for every engine of a set of requests, each table keyed as the requests are. */
-export interface ClaimGrants<K extends string> {
+/** Studio's grant of each claim for every engine of a set, each table keyed by the set's engines. */
+interface ClaimGrants<K extends string> {
   readonly writeReach: Readonly<Record<K, WriteReach>>;
   readonly readsFileAccessPosture: Readonly<Record<K, boolean>>;
   readonly deniedFileAccessRefusal: Readonly<Record<K, string | null>>;
@@ -158,8 +169,8 @@ export interface ClaimGrants<K extends string> {
 }
 
 /**
- * The grants of each engine of `engines` as `register` holds them in its legacy row, keyed by engine in `engines`'
- * order: the register's own rows, deep-frozen by its reader, in a frozen record.
+ * The legacy row of each engine of `engines` in `register`, keyed by engine in `engines`' order: the register's own
+ * rows, deep-frozen by its reader, in a frozen record.
  *
  * @throws {Error} Naming the engine, for an engine of `engines` the register holds no legacy row for: such an engine is
  * never read at a restrictive value, since the legacy adapter serves it and its review is missing.
@@ -167,7 +178,7 @@ export interface ClaimGrants<K extends string> {
 export function legacyGrantRows(
   register: GrantRegister,
   engines: readonly string[],
-): Readonly<Record<string, RegisterGrants>> {
+): Readonly<Record<string, RegisterRow>> {
   return Object.freeze(
     Object.fromEntries(
       engines.map((engine) => {
@@ -175,32 +186,28 @@ export function legacyGrantRows(
         if (row === null) {
           throw new Error(`the grant register holds no legacy row for ${engine}, an engine the legacy adapter serves`);
         }
-        return [engine, row.grants];
+        return [engine, row];
       }),
     ),
   );
 }
 
 /**
- * The grant register's legacy rows of every engine Studio ships, read once when this module loads.
- * `SHIPPED_DATABASE_TYPES` is the legacy adapter's served set: its `LEGACY_ENGINE_IDS` is defined as it.
+ * The grant register Studio reads, once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's
+ * served set: its `LEGACY_ENGINE_IDS` is defined as it.
  */
-const LEGACY_GRANT_ROWS = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+const STUDIO_GRANT_REGISTER: GrantRegister = readGrantRegister(SHIPPED_DATABASE_TYPES);
 
-/** Member `member` of every legacy row, keyed by engine: the review rows `grantClaims` reads for that claim. */
-function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterGrants[M]> {
-  return Object.freeze(
-    Object.fromEntries(Object.entries(LEGACY_GRANT_ROWS).map(([engine, grants]) => [engine, grants[member]])),
-  );
-}
+/** The grant register's legacy rows of every engine Studio ships. */
+const LEGACY_GRANT_ROWS = legacyGrantRows(STUDIO_GRANT_REGISTER, SHIPPED_DATABASE_TYPES);
 
 /**
- * The agent credential of each engine of `rows`, in `rows`' order, its superseding fields narrowed to `fields`: a null
- * grant stays null, and every other is a fresh frozen form and list. The register holds a superseding field as plain
- * text, so each is found by name in `fields` and taken from there, never cast. Studio hands it
- * `BODY_CONNECTION_FIELDS`, the text fields a connection form draws, and never an engine's own row of
- * `CONNECTION_FIELDS`, so this module's load reads no engine's connection row; that each legacy row's superseding
- * fields are among its engine's own connection fields is held by the agent credential census,
+ * The agent credential of each engine of `rows`, the grants of a register row of either key, legacy or package, in
+ * `rows`' order, its superseding fields narrowed to `fields`: a null grant stays null, and every other is a fresh
+ * frozen form and list. The register holds a superseding field as plain text, so each is found by name in `fields` and
+ * taken from there, never cast. Studio hands it `BODY_CONNECTION_FIELDS`, the text fields a connection form draws, and
+ * never an engine's own row of `CONNECTION_FIELDS`, so reading a row reads no engine's connection row; that each legacy
+ * row's superseding fields are among its engine's own connection fields is held by the agent credential census,
  * tests/unit/db/agent-credential-capability.test.ts.
  *
  * @throws {Error} Naming the engine and the field, for a superseding field `fields` does not hold: a misspelt field
@@ -219,7 +226,7 @@ export function legacyAgentCredentials(
           const field = fields.find((candidate) => candidate === name);
           if (field === undefined) {
             throw new Error(
-              `the grant register's legacy row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a text field a connection form draws`,
+              `the grant register's row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a text field a connection form draws`,
             );
           }
           return field;
@@ -229,28 +236,6 @@ export function legacyAgentCredentials(
     ),
   );
 }
-
-/** Studio's records, as `grantClaims` reads them for the bundled declarations. */
-export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
-  writeReach: legacyMember("writeReach"),
-  readsFileAccessPosture: legacyMember("readsFileAccessPosture"),
-  deniedFileAccessRefusal: legacyMember("deniedFileAccessRefusal"),
-  singleWriterFile: legacyMember("singleWriterFile"),
-  readRootsRequired: legacyMember("readRootsRequired"),
-  agentCredentialForm: legacyMember("agentCredentialForm"),
-  maskingExemptColumns: legacyMember("maskingExemptColumns"),
-  exposable: legacyMember("exposable"),
-  statementRead: legacyMember("statementRead"),
-  metadataReadChangesState: legacyMember("metadataReadChangesState"),
-  agentCredentialRequired: legacyMember("agentCredentialRequired"),
-  opensLocalFile: legacyMember("opensLocalFile"),
-  hostPathFields: legacyMember("hostPathFields"),
-  serverLevelWithoutDatabase: legacyMember("serverLevelWithoutDatabase"),
-  sshTunnel: legacyMember("sshTunnel"),
-  agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, BODY_CONNECTION_FIELDS),
-  statementLanguage: legacyMember("statementLanguage"),
-  agentReadings: legacyMember("agentReadings"),
-});
 
 /**
  * The host path fields a declaration may name, the schema's `hostPathField` enum, in its order: the vocabulary of
@@ -395,17 +380,26 @@ function sshTunnelRequest(engine: string, value: unknown): ConnectionClaims["ssh
   return refused(engine, "connection.sshTunnel", value);
 }
 
-/** `value` as a seed agent credential request, a form and the fields that supersede it, or null, or refused by name. */
-function agentCredentialRequest(engine: string, value: unknown): ConnectionClaims["agentCredential"] {
+/** A seed agent credential as a declaration requests it: a form, and the fields that supersede it, read as text. */
+interface AgentCredentialRequest {
+  readonly form: SeedAgentCredential["form"];
+  readonly supersededBy: readonly string[];
+}
+
+/**
+ * `value` as a seed agent credential request, a fresh frozen form and list of superseding fields built from checked
+ * values, or null, or refused by name. A superseding field is read as the text the declaration names, never as a field
+ * of Studio's: the grant is the row's narrowed credential, which a request naming any other field never equals.
+ */
+function agentCredentialRequest(engine: string, value: unknown): AgentCredentialRequest | null {
   if (value === null) return null;
   if (typeof value === "object") {
     const { form, supersededBy } = value as { form?: unknown; supersededBy?: unknown };
-    if (
-      (form === "pair" || form === "dedicated-pair" || form === "secret") &&
-      Array.isArray(supersededBy) &&
-      supersededBy.every((field) => typeof field === "string")
-    ) {
-      return value as NonNullable<ConnectionClaims["agentCredential"]>;
+    if ((form === "pair" || form === "dedicated-pair" || form === "secret") && Array.isArray(supersededBy)) {
+      const fields = supersededBy.map((field: unknown) =>
+        typeof field === "string" ? field : refused(engine, "connection.agentCredential", value),
+      );
+      return Object.freeze({ form, supersededBy: Object.freeze(fields) });
     }
   }
   return refused(engine, "connection.agentCredential", value);
@@ -512,11 +506,8 @@ function grantedHostPathFields(
   return added.length === 0 ? base : Object.freeze([...base, ...added]);
 }
 
-/** Whether two seed agent credentials are the same form with the same superseding fields in the same order. */
-function sameAgentCredential(
-  requested: NonNullable<ConnectionClaims["agentCredential"]>,
-  row: SeedAgentCredential,
-): boolean {
+/** Whether a request and a row are the same form with the same superseding fields, by name, in the same order. */
+function sameAgentCredential(requested: AgentCredentialRequest, row: SeedAgentCredential): boolean {
   return (
     requested.form === row.form &&
     requested.supersededBy.length === row.supersededBy.length &&
@@ -635,23 +626,117 @@ const GRANT_MEMBERS: readonly (keyof ClaimGrants<string>)[] = [
   "agentReadings",
 ];
 
+/** Studio's grant of each claim of one engine: one value per member of `ClaimGrants`. */
+export type EngineGrants = EngineGrant;
+
+/** One engine's records of every claim, each holding no row: every claim is read at its restrictive value. */
+const NO_ROW: ClaimRecords = Object.freeze({
+  writeReach: Object.freeze({}),
+  readsFileAccessPosture: Object.freeze({}),
+  deniedFileAccessRefusal: Object.freeze({}),
+  singleWriterFile: Object.freeze({}),
+  readRootsRequired: Object.freeze({}),
+  agentCredentialForm: Object.freeze({}),
+  maskingExemptColumns: Object.freeze({}),
+  exposable: Object.freeze({}),
+  statementRead: Object.freeze({}),
+  metadataReadChangesState: Object.freeze({}),
+  agentCredentialRequired: Object.freeze({}),
+  opensLocalFile: Object.freeze({}),
+  hostPathFields: Object.freeze({}),
+  serverLevelWithoutDatabase: Object.freeze({}),
+  sshTunnel: Object.freeze({}),
+  agentCredential: Object.freeze({}),
+  statementLanguage: Object.freeze({}),
+  agentReadings: Object.freeze({}),
+});
+
 /**
- * Studio's grant of every policy, MCP, connection and agent mode claim `requests` holds, against `records`, with
- * `seedOnly` the seed-only fields of the same engines, read for the host path fields where no record row exists: one
- * frozen table per claim, and two for the server level, one per gate, keyed by the requests' engines in their order,
- * each row frozen.
- *
- * @throws {Error} Naming the engine, the claim and the value, for a request value outside its claim's vocabulary;
- * naming Studio's record, the claim, the value and the engine, for a record row outside it; naming the engine, for an
- * engine `seedOnly` holds no row for.
+ * Engine `engine`'s records of every claim from `grants`, the grants of its register row: each member a record of that
+ * engine's row alone, the agent credential narrowed by `legacyAgentCredentials` to the text fields a connection form
+ * draws.
  */
-export function grantClaims<K extends string>(
-  requests: Readonly<Record<K, ClaimRequestEntry>>,
-  records: ClaimRecords,
+function rowRecords(engine: string, grants: RegisterGrants): ClaimRecords {
+  const one = <T>(value: T): Rows<T> => Object.freeze({ [engine]: value });
+  return Object.freeze({
+    writeReach: one(grants.writeReach),
+    readsFileAccessPosture: one(grants.readsFileAccessPosture),
+    deniedFileAccessRefusal: one(grants.deniedFileAccessRefusal),
+    singleWriterFile: one(grants.singleWriterFile),
+    readRootsRequired: one(grants.readRootsRequired),
+    agentCredentialForm: one(grants.agentCredentialForm),
+    maskingExemptColumns: one(grants.maskingExemptColumns),
+    exposable: one(grants.exposable),
+    statementRead: one(grants.statementRead),
+    metadataReadChangesState: one(grants.metadataReadChangesState),
+    agentCredentialRequired: one(grants.agentCredentialRequired),
+    opensLocalFile: one(grants.opensLocalFile),
+    hostPathFields: one(grants.hostPathFields),
+    serverLevelWithoutDatabase: one(grants.serverLevelWithoutDatabase),
+    sshTunnel: one(grants.sshTunnel),
+    agentCredential: legacyAgentCredentials({ [engine]: grants }, BODY_CONNECTION_FIELDS),
+    statementLanguage: one(grants.statementLanguage),
+    agentReadings: one(grants.agentReadings),
+  });
+}
+
+/**
+ * Studio's grant of every policy, MCP, connection and agent mode claim `requested` by engine `engine`, against `row`,
+ * the engine's row of the grant register, or null where the register holds none, so every claim is read at its
+ * restrictive value; with `seedOnly` the seed-only fields of every engine, read for the host path fields where no row
+ * exists. The one call that grants an engine's claims, for a legacy engine and a package's alike: a legacy engine is
+ * handed its legacy row, a package's engine its row keyed by the package's name, version and digest. The answer is
+ * frozen, each value the register's own deep-frozen value or a fresh frozen one.
+ *
+ * @throws {Error} Naming both engines, for a row of another engine: a host defect, the row is never read. Naming the
+ * engine, the claim and the value, for a request value outside its claim's vocabulary; naming Studio's record, the
+ * claim, the value and the engine, for a row value outside it; naming the engine and the field, for a row's superseding
+ * field that is not a text field a connection form draws; naming the engine, for an engine `seedOnly` holds no row for.
+ */
+export function grantEngineClaims(
+  engine: string,
+  requested: ClaimRequestEntry,
+  row: RegisterRow | null,
   seedOnly: Rows<SeedOnlyRow>,
-): ClaimGrants<K> {
-  const engines = Object.keys(requests) as K[];
-  const grants = engines.map((engine) => [engine, grantEngine(engine, requests[engine], records, seedOnly)] as const);
+): EngineGrants {
+  if (row !== null && row.engine !== engine) {
+    throw new Error(`grantEngineClaims was handed the register row of ${row.engine} for ${engine}`);
+  }
+  return Object.freeze(
+    grantEngine(engine, requested, row === null ? NO_ROW : rowRecords(engine, row.grants), seedOnly),
+  );
+}
+
+/** Every legacy engine's grants, keyed by its id in `SHIPPED_DATABASE_TYPES`' order, granted once at load. */
+const LEGACY_ENGINE_GRANTS: ReadonlyMap<string, EngineGrants> = new Map(
+  SHIPPED_DATABASE_TYPES.map((id) => [
+    id,
+    grantEngineClaims(id, BUNDLED_CLAIM_REQUESTS[id], LEGACY_GRANT_ROWS[id], SEED_ONLY_FIELDS),
+  ]),
+);
+
+/**
+ * Studio's grant of each claim of legacy engine `id`: `grantEngineClaims` with its bundled request and its legacy row,
+ * which the legacy adapter's record of the engine holds (src/lib/provider-host/legacy-adapter/records.ts).
+ *
+ * @throws {Error} Naming the id, for an id the legacy adapter does not serve: a host defect.
+ */
+export function legacyEngineGrants(id: string): EngineGrants {
+  const grants = LEGACY_ENGINE_GRANTS.get(id);
+  if (grants === undefined) {
+    throw new Error(
+      `the grant reader holds no legacy grants for ${id}: the legacy adapter serves no engine of that id`,
+    );
+  }
+  return grants;
+}
+
+/**
+ * Member by member, the grants of each engine of `engines`, `grantsOf` answering each, transposed into one frozen table
+ * per member keyed by `engines` in their order: the tables below, cut from the legacy engines' grants.
+ */
+function grantTables<K extends string>(engines: readonly K[], grantsOf: (engine: K) => EngineGrants): ClaimGrants<K> {
+  const grants = engines.map((engine) => [engine, grantsOf(engine)] as const);
   return Object.freeze(
     Object.fromEntries(
       GRANT_MEMBERS.map((member) => [
@@ -662,43 +747,8 @@ export function grantClaims<K extends string>(
   ) as unknown as ClaimGrants<K>;
 }
 
-/**
- * Studio's grant of the claims of the engines admitted provider packages serve (docs/providers/CONTRACT.md, clause
- * C-106), against Studio's own records, with `seedOnly` their seed-only fields: `grantClaims` over `requests` and
- * `STUDIO_CLAIM_RECORDS`, the records the bundled grants read. The records hold no row for an engine Studio does not
- * ship, so each claim is granted at its restrictive value, whatever the package requests. The server catalog's
- * composer (src/lib/db/server-catalog-compose.ts) calls it once at boot.
- */
-export function grantPackageClaims<K extends string>(
-  requests: Readonly<Record<K, ClaimRequestEntry>>,
-  seedOnly: Rows<SeedOnlyRow>,
-): ClaimGrants<K> {
-  return grantClaims(requests, STUDIO_CLAIM_RECORDS, seedOnly);
-}
-
-/** Studio's grant of each claim of one engine: one value per member of `ClaimGrants`, the engine's row of each table. */
-export type EngineGrants = { readonly [Member in keyof ClaimGrants<string>]: ClaimGrants<string>[Member][string] };
-
-/**
- * Engine `id`'s row of each table of `grants`, transposed into one frozen record, member by member in the order the
- * tables are built: the shape the server's engine catalog keeps for each engine (src/lib/db/server-catalog.ts).
- */
-export function engineGrantsOf<K extends string>(grants: ClaimGrants<K>, id: K): EngineGrants {
-  return Object.freeze(
-    Object.fromEntries(GRANT_MEMBERS.map((member) => [member, grants[member][id]])),
-  ) as unknown as EngineGrants;
-}
-
-/** Studio's grant of every bundled declaration's claims. */
-const BUNDLED_GRANTS = grantClaims(BUNDLED_CLAIM_REQUESTS, STUDIO_CLAIM_RECORDS, SEED_ONLY_FIELDS);
-
-/**
- * Studio's grant of each claim of bundled engine `id`, its row of every exported table below, which the legacy
- * adapter's record of the engine holds (src/lib/provider-host/legacy-adapter/records.ts).
- */
-export function bundledEngineGrants(id: DatabaseType): EngineGrants {
-  return engineGrantsOf(BUNDLED_GRANTS, id);
-}
+/** Studio's grant of every legacy engine's claims, as one table per member. */
+const BUNDLED_GRANTS = grantTables(SHIPPED_DATABASE_TYPES, legacyEngineGrants);
 
 /**
  * Studio's grant of `policy.writeReach`, which the seed schema and the connection form read, each before a provider
@@ -923,7 +973,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * so no code widens it at run time.
  */
 export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].agentExecution),
+  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].grants.agentExecution),
 );
 
 /**
@@ -941,5 +991,5 @@ export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.f
  * at run time.
  */
 export const GRANTED_ONE_SESSION_ENGINES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].servesOneSession !== null),
+  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].grants.servesOneSession !== null),
 );

@@ -8,7 +8,7 @@
  * - every entry of the engine table inventory (tests/unit/db/engine-declarations/inventory.ts) whose destination is a
  *   claim table, `REVIEW_RECORD_PHRASE`, or a granted table, `GRANTED_DESTINATION`;
  * - by name, `UNINVENTORIED_GRANT_RECORDS`, the records the inventory cannot see or classifies otherwise: a list of
- *   engine ids, an array of rows, and the records as the grant reader hands them over.
+ *   engine ids and an array of rows.
  * A detected record the list does not name fails by name, and so does an entry whose module no longer exports its name
  * or an M7 reader file that does not exist or does not import the name.
  *
@@ -40,7 +40,6 @@ const ITEM_3 = { item: 3 } as const;
 
 /** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
 const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  { module: CLAIM_GRANTS, name: "STUDIO_CLAIM_RECORDS", removedBy: ITEM_3 },
   { module: CLAIM_GRANTS, name: "GRANTED_ONE_SESSION_ENGINES", removedBy: ITEM_3 },
   ...[
     "GRANTED_AGENT_CREDENTIAL_FORM",
@@ -116,7 +115,6 @@ const UNINVENTORIED_GRANT_RECORDS: readonly (Pick<GrantRecordEntry, "module" | "
     name: "CONFIRMATION_CLAIM_REVIEW",
     why: "an array of reviewed rows, not a table keyed by engine",
   },
-  { module: CLAIM_GRANTS, name: "STUDIO_CLAIM_RECORDS", why: "the records as the grant reader hands them over" },
 ];
 
 function key(entry: { readonly module: string; readonly name: string }): string {
@@ -190,7 +188,7 @@ describe("the exit of M3", () => {
 
     expect(claimTables).toHaveLength(1);
     expect(grantedTables).toHaveLength(21);
-    expect(count('{"item":3}')).toBe(19);
+    expect(count('{"item":3}')).toBe(18);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"milestone":"M7"')).toBe(5);
   });

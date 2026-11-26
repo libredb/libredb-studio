@@ -642,7 +642,7 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "an engine agent mode does not execute on is not served, whatever its rows say",
       ],
       "tests/unit/db/claim-record-readers.test.ts": [
-        "every policy, MCP, connection and agent mode claim record is read only by the grant reader",
+        "the grant reader imports no claim record whose rows moved to the grant register",
       ],
       "tests/unit/db/write-reach-capability.test.ts": [
         "READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entries",

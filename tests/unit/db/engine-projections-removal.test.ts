@@ -40,9 +40,10 @@ import {
   renderSqlWriting,
 } from "../../../scripts/generate-engine-catalog";
 import { defaultConnection, savedConnectionNotice, shownConnection } from "@/lib/connection-availability";
+import { readGrantRegister } from "@libredb/grant-register";
 import {
-  grantClaims,
-  STUDIO_CLAIM_RECORDS,
+  grantEngineClaims,
+  legacyGrantRows,
   UNGRANTED_DENIED_FILE_ACCESS_SENTENCE,
   UNGRANTED_SSH_TUNNEL_SENTENCE,
 } from "@/lib/db/claim-grants";
@@ -502,19 +503,24 @@ describe("each projection of the admitted declarations, built with and without a
   });
 
   test("the grants built with the fixture engine read each of its claims at the restrictive value, and with it removed are exactly a fresh build from the remaining set", () => {
-    // Each set's grant reads the seed-only fields its own declarations project, as a loader's would.
-    const grantsOf = (set: readonly EngineDeclaration[]) =>
-      grantClaims(projectClaimRequests(set), STUDIO_CLAIM_RECORDS, projectConnectionTables(set).seedOnly);
+    // Each engine is granted against its legacy row of the grant register, or none for the fixture, and each set's
+    // grant reads the seed-only fields its own declarations project, as a loader's would.
+    const legacyRows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), SHIPPED_DATABASE_TYPES);
+    const grantsOf = (set: readonly EngineDeclaration[]) => {
+      const requests = projectClaimRequests(set);
+      const seedOnly = projectConnectionTables(set).seedOnly;
+      return Object.fromEntries(
+        Object.entries(requests).map(([id, requested]) => [
+          id,
+          grantEngineClaims(id, requested, Object.hasOwn(legacyRows, id) ? legacyRows[id] : null, seedOnly),
+        ]),
+      );
+    };
     const shipped = grantsOf(ADMITTED);
     const withFixture = grantsOf([...ADMITTED, FIXTURE]);
-    const fixtureRow = Object.fromEntries(
-      Object.entries(withFixture).map(([table, rows]) => [
-        table,
-        (rows as Readonly<Record<string, unknown>>)[FIXTURE.id],
-      ]),
-    );
+    const fixtureRow = withFixture[FIXTURE.id];
 
-    // postgres's requests, which Studio's records hold no row of under the fixture's id.
+    // postgres's requests, which the grant register holds no row of under the fixture's id.
     expect(FIXTURE.policy).toEqual(POSTGRES.policy);
     expect(FIXTURE.mcp).toEqual(POSTGRES.mcp);
     expect(FIXTURE.connection.seedOnly).toBeNull();
@@ -548,10 +554,8 @@ describe("each projection of the admitted declarations, built with and without a
 
     const removed = grantsOf([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));
     expect(removed).toEqual(shipped);
-    for (const rows of Object.values(removed)) {
-      expect(Object.hasOwn(rows, FIXTURE.id)).toBe(false);
-      expect(Object.keys(rows)).toEqual([...SHIPPED_DATABASE_TYPES]);
-    }
+    expect(Object.hasOwn(removed, FIXTURE.id)).toBe(false);
+    expect(Object.keys(removed)).toEqual([...SHIPPED_DATABASE_TYPES]);
   });
 
   test("a stored connection of an engine the catalog no longer holds is kept and shown as Unavailable", () => {
