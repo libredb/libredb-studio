@@ -223,6 +223,7 @@ export const AUTHORED_MEMBERS = [
   "editor.language",
   "sqlText.readsSqlText",
   "sqlText.grammar",
+  "sqlText.redaction",
   "sqlText.updateTarget",
   "sqlText.completion",
   "sqlWriting",
@@ -240,9 +241,13 @@ type SqlText = EngineDeclaration["sqlText"];
 
 /**
  * One declaration's authored members, as `authoredMembersOf` reads them, nested as the declaration nests them: the
- * members the projections read, and the whole `facets` segment, which the declaration generator writes back as authored.
+ * members the projections read, the whole `facets` segment, and the SQL text's `redaction`, a claim no projection
+ * reads, both of which the declaration generator writes back as authored.
  */
-export type AuthoredMembers = AuthoredDeclaration & { readonly facets: EngineDeclaration["facets"] };
+export type AuthoredMembers = AuthoredDeclaration & {
+  readonly facets: EngineDeclaration["facets"];
+  readonly sqlText: AuthoredDeclaration["sqlText"] & { readonly redaction: SqlText["redaction"] };
+};
 
 /** Whether `value` is an object, not an array, holding `member` as an own property. */
 function holds(value: unknown, member: string): value is Record<string, unknown> {
@@ -320,6 +325,7 @@ export function authoredMembersOf(value: unknown, file: string): AuthoredMembers
     sqlText: {
       readsSqlText: read("sqlText.readsSqlText") as boolean,
       grammar: read("sqlText.grammar") as SqlText["grammar"],
+      redaction: read("sqlText.redaction") as SqlText["redaction"],
       updateTarget: read("sqlText.updateTarget") as SqlText["updateTarget"],
       completion: read("sqlText.completion") as SqlText["completion"],
     },

@@ -980,7 +980,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -1022,6 +1022,7 @@ describe("the committed declarations", () => {
       "editor.language",
       "sqlText.readsSqlText",
       "sqlText.grammar",
+      "sqlText.redaction",
       "sqlText.updateTarget",
       "sqlText.completion",
       "sqlWriting",
@@ -1077,6 +1078,7 @@ describe("the committed declarations", () => {
       sqlText: {
         readsSqlText: true,
         grammar: bigquery.sqlText.grammar,
+        redaction: { kind: "sql", nameQuote: null },
         updateTarget: bigquery.sqlText.updateTarget,
         completion: { formatSegment: null, readQuotedQualifier: null },
       },
@@ -1126,8 +1128,15 @@ describe("the committed declarations", () => {
     expect(authored("mqtt").facets.agentReadings).toEqual([]);
     // The SQL writing segment holds no claim, so the whole segment is authored.
     expect(authored("cassandra").sqlWriting).toEqual(declared("cassandra").sqlWriting);
-    // The redaction is a claim, so it is no authored member: the generator writes it from Studio's record.
-    expect(Object.keys(authored("mongodb").sqlText)).toEqual(["readsSqlText", "grammar", "updateTarget", "completion"]);
+    // The redaction is a claim, authored as the engine's request: only Studio's grant of it reaches the query event log.
+    expect(Object.keys(authored("mongodb").sqlText)).toEqual([
+      "readsSqlText",
+      "grammar",
+      "redaction",
+      "updateTarget",
+      "completion",
+    ]);
+    expect(authored("mongodb").sqlText.redaction).toEqual({ kind: "command", reader: "redactionReader" });
     expect(authored("postgres").sqlText.completion).toEqual({
       formatSegment: "formatSegment",
       readQuotedQualifier: "readQuotedQualifier",
@@ -1250,8 +1259,8 @@ describe("the committed declarations", () => {
     };
     const built = buildEngineDeclaration("postgres", CAPABILITIES.postgres, authoredMembersOf(edited, "postgres.json"));
 
-    // The SQL text's authored members are kept, and its redaction, a claim, is rewritten from Studio's record; the SQL
-    // writing segment and the policy, MCP and safeguards segments are kept as edited.
+    // The SQL text's authored members are kept, its redaction, a claim requested, included; the SQL writing segment and
+    // the policy, MCP and safeguards segments are kept as edited.
     expect(built).toEqual({
       ...committed,
       displayName: "Edited by hand",
@@ -1260,7 +1269,7 @@ describe("the committed declarations", () => {
       facets,
       agent,
       editor,
-      sqlText,
+      sqlText: { ...sqlText, redaction: { kind: "none" } },
       sqlWriting,
       policy,
       mcp,
@@ -1346,7 +1355,7 @@ describe("the committed declarations", () => {
     expect(() => authoredMembersOf(without(committed, "editor"), "bigquery.json")).toThrow(
       "bigquery.json lacks its authored member editor.commitKeyword",
     );
-    for (const member of ["readsSqlText", "grammar", "updateTarget", "completion"] as const) {
+    for (const member of ["readsSqlText", "grammar", "redaction", "updateTarget", "completion"] as const) {
       expect(() =>
         authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member sqlText.${member}`);
@@ -1370,10 +1379,6 @@ describe("the committed declarations", () => {
     }
     // A segment stated as null is stated: an engine that writes the shared forms authors null.
     expect(authoredMembersOf(declared("postgres"), "postgres.json").sqlGenerators).toBeNull();
-    // A declaration lacking its redaction is no authored member short: the generator writes it from Studio's record.
-    expect(() =>
-      authoredMembersOf({ ...committed, sqlText: without(committed.sqlText, "redaction") }, "bigquery.json"),
-    ).not.toThrow();
     for (const value of [null, [], "bigquery", { ...committed, connection: null }]) {
       expect(() => authoredMembersOf(value, "bigquery.json")).toThrow("bigquery.json lacks its authored member");
     }

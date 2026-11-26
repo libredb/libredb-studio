@@ -765,7 +765,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
     for (const declaration of set) {
       const { readsSqlText, grammar, updateTarget, completion } = declaration.sqlText;
       expect(texts[declaration.id]).toEqual({ readsSqlText, grammar, updateTarget, completion });
-      // Each member in one order, the redaction never among them: it is a claim, kept in Studio's record.
+      // Each member in one order, the redaction never among them: it is a claim, granted from the register row.
       expect(Object.keys(texts[declaration.id] ?? {})).toEqual([
         "readsSqlText",
         "grammar",
@@ -2559,6 +2559,57 @@ describe("the engine catalog, projected from the admitted declarations", () => {
         ENGINE_SQL_WRITING_MODULE,
         ENGINE_MIGRATION_DDL_MODULE,
         ENGINE_SQL_GENERATORS_MODULE,
+      ]) {
+        expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
+          readFileSync(path.join(ROOT, generated), "utf8"),
+        );
+      }
+      // Every other declaration is the committed one, byte for byte.
+      for (const declaration of ADMITTED.filter((d) => d.id !== "mysql")) {
+        const name = `${declaration.id}.json`;
+        expect(readFileSync(path.join(directory, name), "utf8")).toBe(readFileSync(path.join(DIRECTORY, name), "utf8"));
+      }
+    } finally {
+      copy.remove();
+    }
+    // Copying the sources and the three generator runs take a few seconds; well inside ten times that.
+  }, 60000);
+
+  test("bun run engines:generate keeps an authored SQL text redaction change in one run, and no generated module moves", () => {
+    const copy = generatingCopy();
+    try {
+      const directory = path.join(copy.root, ENGINE_DECLARATIONS_DIRECTORY);
+      const file = path.join(directory, "mysql.json");
+      const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
+      expect(committed.sqlText.redaction).toEqual({ kind: "sql", nameQuote: "`" });
+      // mysql's redaction with no name quote: the request its own declaration states, whatever its register row grants.
+      const mysql: EngineDeclaration = {
+        ...committed,
+        sqlText: { ...committed.sqlText, redaction: { kind: "sql", nameQuote: null } },
+      };
+      writeFileSync(file, `${JSON.stringify(mysql, null, 2)}\n`);
+
+      const run = copy.generate();
+      expect(run.stderr).not.toContain("refused");
+      expect(run.exitCode).toBe(0);
+
+      // The declaration generator writes the authored redaction back unchanged.
+      expect(admittedDeclarations(directory).find((d) => d.id === "mysql")).toEqual(mysql);
+      expect(readFileSync(file, "utf8")).toBe(`${JSON.stringify(mysql, null, 2)}\n`);
+      // No projection reads the redaction: every generated module is the committed one.
+      for (const generated of [
+        ENGINE_CATALOG_MODULE,
+        ENGINE_CONNECTION_MODULE,
+        ENGINE_CONNECTION_FLAGS_MODULE,
+        ENGINE_CONNECTION_FORM_MODULE,
+        ENGINE_CONNECTION_STRING_MODULE,
+        ENGINE_EDITOR_MODULE,
+        ENGINE_QUERY_EDITOR_MODULE,
+        ENGINE_SQL_TEXT_MODULE,
+        ENGINE_SQL_WRITING_MODULE,
+        ENGINE_MIGRATION_DDL_MODULE,
+        ENGINE_SQL_GENERATORS_MODULE,
+        ENGINE_CLAIMS_MODULE,
       ]) {
         expect(readFileSync(path.join(copy.root, generated), "utf8")).toBe(
           readFileSync(path.join(ROOT, generated), "utf8"),
