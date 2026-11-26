@@ -30,7 +30,7 @@
  *   tables, its field rules and the grammar its statements are confirmed under, composed for a package from its
  *   declaration with the projections Studio's generator projects its own declarations with, and for a legacy engine
  *   from Studio's committed tables, never from a declaration read at run time;
- * - `grants`: Studio's grant of each claim and of the three host facts no declaration requests, `grantEngineClaims`
+ * - `grants`: Studio's grant of each claim and of the four host facts no declaration requests, `grantEngineClaims`
  *   (./claim-grants) against the engine's row of the grant register: a legacy engine's legacy row, a package engine's
  *   row keyed by its package's name, version and digest, or, where the register holds none, each claim at its
  *   restrictive value; its SQL text claims only for the grammar the row reviewed, and whether it did;

@@ -54,8 +54,9 @@
  * - `sqlText.readsSqlText`, restrictive when true: false only where the grammar is reviewed and the request and the
  *   row both are false.
  * - `sqlText.grammar.confirmExemptForms`, a set the confirmation gate exempts: the requested forms the row lists, each
- *   compared word by word upper-cased as the gate compares a form, in the request's order, always a fresh frozen list
- *   with each form frozen, and the empty list under a grammar the row did not review.
+ *   compared word by word upper-cased as the gate compares a form, in the request's order, a form the request lists
+ *   twice granted once at its first place, always a fresh frozen list with each form frozen, and the empty list under a
+ *   grammar the row did not review.
  * - `decidesAlone`, which no declaration requests, a statement vocabulary row's own flag being its request: the row's
  *   where the grammar is reviewed, and false otherwise.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
@@ -71,18 +72,18 @@
  * row, or at each claim's restrictive value where no row exists, for a legacy engine and a package's alike. A legacy
  * engine's SQL text request is its bundled `readsSqlText` and exempt forms with its row's redaction and grammar digest
  * (`legacySqlTextRequest`); a package engine's is its admitted declaration's, with the digest of its grammar computed
- * on the server by the server catalog's composer, so no module the browser loads hashes a grammar. A legacy engine's row is its legacy
- * row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads, with
- * `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine the
- * register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
+ * on the server by the server catalog's composer, so no module the browser loads hashes a grammar. A legacy engine's
+ * row is its legacy row, keyed by `LEGACY_KEY` and the engine id: the register is read once, when this module loads,
+ * with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and `legacyGrantRows` refuses by name a served engine
+ * the register holds no legacy row for, so no served engine is read at a restrictive value by omission. A row's review
  * notes say why it holds its value. The rows are hand-reviewed data, never a projection of the declarations (clauses
  * M-52, M-53 and M-83). A register its schema or its code rules refuse fails this module's load, in the browser as on
- * the server. Studio's review of the two host facts no declaration requests, whether an engine's connections serve one
- * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
+ * the server. Studio's review of whether an engine's connections serve one session and whether agent mode executes
+ * statements on it, two host facts no declaration requests, is the same legacy rows' `servesOneSession` and
  * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
- * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source
- * loads the register, and that none but the claim projection and the listed readers of an engine record's grant reads
- * a member named `agentReadings`, and
+ * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds
+ * that no other module of Studio's source loads the register, and that none but the claim projection and the listed
+ * readers of an engine record's grant reads a member named `agentReadings`, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
  *
@@ -739,7 +740,11 @@ function grantSqlText(engine: string, sqlText: SqlTextRequest, row: RegisterRow 
     readsSqlText: readsSqlText || granted.readsSqlText,
     confirmExemptForms: Object.freeze(
       forms
-        .filter((form) => granted.confirmExemptForms.some((listed) => sameForm(listed, form)))
+        .filter(
+          (form, index) =>
+            granted.confirmExemptForms.some((listed) => sameForm(listed, form)) &&
+            forms.findIndex((earlier) => sameForm(earlier, form)) === index,
+        )
         .map((form) => Object.freeze([...form])),
     ),
     decidesAlone: granted.decidesAlone,
@@ -748,19 +753,21 @@ function grantSqlText(engine: string, sqlText: SqlTextRequest, row: RegisterRow 
 }
 
 /**
- * Studio's grant of each claim of one engine, one value per member of `ClaimGrants`, and of the three host facts no
+ * Studio's grant of each claim of one engine, one value per member of `ClaimGrants`, with three host facts no
  * declaration requests, read from the engine's register row alone:
  * - `ownWords`: how the engine's own words reach the client, through core's scrub (`"scrubbed"`), or only as Studio's
  *   sentence naming their code (`"code-only"`, src/lib/api/package-errors.ts), which is what an engine with no row reads;
  * - `servesOneSession`: the reason the engine's connections serve their object tree from one session, or null, which is
  *   what an engine with no row reads;
  * - `agentExecution`: whether agent mode executes statements on the engine, false where no row exists;
- * and the grant of each SQL text claim, for the grammar the row reviewed (`grantSqlText`):
+ * the grant of each SQL text claim, for the grammar the row reviewed (`grantSqlText`):
  * - `redaction`: how the query event log keeps a statement of the engine, `none` where no grant covers it;
  * - `readsSqlText`: whether the confirmation gate reads the engine's text as SQL, true where no grant covers it;
  * - `confirmExemptForms`: the forms the confirmation gate exempts, none where no grant covers them;
+ * a fourth host fact no declaration requests, read from the row for the grammar it reviewed:
  * - `decidesAlone`: whether the engine's statement vocabulary may decide the confirmation gate's answer alone, false
- *   where no grant covers it; no declaration requests it, a vocabulary row's own flag is its request;
+ *   where no grant covers it; a vocabulary row's own flag is its request;
+ * and one member that is no grant:
  * - `reviewedGrammar`: whether the row reviewed the grammar the request carries the digest of.
  */
 export type EngineGrants = EngineGrant & {
@@ -890,8 +897,8 @@ const LEGACY_ENGINE_GRANTS: ReadonlyMap<string, EngineGrants> = new Map(
 );
 
 /**
- * Studio's grant of each claim of legacy engine `id`: `grantEngineClaims` with its bundled request, its SQL text request
- * (`legacySqlTextRequest`) and its legacy row, which the legacy adapter's record of the engine holds
+ * Studio's grant of each claim of legacy engine `id`: `grantEngineClaims` with its bundled request, its SQL text
+ * request (`legacySqlTextRequest`) and its legacy row, which the legacy adapter's record of the engine holds
  * (src/lib/provider-host/legacy-adapter/records.ts).
  *
  * @throws {Error} Naming the id, for an id the legacy adapter does not serve: a host defect.

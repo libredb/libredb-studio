@@ -96,10 +96,16 @@ type SeedOnlyRows = Parameters<typeof grantEngineClaims>[4];
 
 /**
  * The SQL text request of `engine` as the grant reader makes a legacy engine's: its bundled readsSqlText and exempt
- * forms, and its legacy row's redaction and grammar digest; postgres's for an id with no legacy row.
+ * forms, and its legacy row's redaction and grammar digest.
+ *
+ * @throws {Error} Naming the id, for an id with no legacy row: a mistyped or removed engine id fails its test rather
+ * than reading another engine's request.
  */
 function legacySqlText(engine: string): SqlTextRequest {
-  const id = (Object.hasOwn(LEGACY_ROWS, engine) ? engine : "postgres") as DatabaseType;
+  if (!Object.hasOwn(LEGACY_ROWS, engine)) {
+    throw new Error(`legacySqlText: ${engine} has no legacy row, so it has no legacy SQL text request`);
+  }
+  const id = engine as DatabaseType;
   const { grants } = legacyRow(id);
   return {
     readsSqlText: BUNDLED_SQL_TEXT[id].readsSqlText,
@@ -107,6 +113,22 @@ function legacySqlText(engine: string): SqlTextRequest {
     redaction: grants.redaction,
     grammarSha256: grants.grammarSha256,
   };
+}
+
+/**
+ * The SQL text request of `UNRECORDED`, which has no bundled SQL text: its claims at their restrictive values and no
+ * grammar digest, so no row grants them.
+ */
+const UNRECORDED_SQL_TEXT: SqlTextRequest = {
+  readsSqlText: true,
+  confirmExemptForms: [],
+  redaction: { kind: "none" },
+  grammarSha256: null,
+};
+
+/** The SQL text request `grantOf` hands for `engine`: `UNRECORDED_SQL_TEXT` for `UNRECORDED`, its legacy one else. */
+function sqlTextOf(engine: string): SqlTextRequest {
+  return engine === UNRECORDED ? UNRECORDED_SQL_TEXT : legacySqlText(engine);
 }
 
 /** The legacy row of `engine`, or null for an id with none. */
@@ -130,7 +152,7 @@ function legacyGrantTable<M extends keyof EngineGrants>(member: M): Readonly<Rec
 
 /**
  * The grants of one engine `engine` requesting `requested` against the register row `row`, its legacy row by default
- * and none for an id with none, with `seedOnly` as its seed-only rows.
+ * and none for an id with none, with `seedOnly` as its seed-only rows and `sqlTextOf(engine)` as its SQL text request.
  */
 function grantOf(
   engine: string,
@@ -138,7 +160,7 @@ function grantOf(
   row: RegisterRow | null = shippedRow(engine),
   seedOnly: SeedOnlyRows = { ...SEED_ONLY_FIELDS, [UNRECORDED]: null },
 ) {
-  return grantEngineClaims(engine, requested, legacySqlText(engine), row, seedOnly);
+  return grantEngineClaims(engine, requested, sqlTextOf(engine), row, seedOnly);
 }
 
 describe("Studio's grant of each policy and MCP claim", () => {
@@ -853,6 +875,15 @@ describe("the register's legacy rows the grant reader reads", () => {
     expect(grantOf("mysql", request(), rowWith("mysql")).writeReach).toBe(legacyRegisterTable("writeReach").mysql);
   });
 
+  test("the test helpers refuse by name an id with no legacy row, never reading another engine's SQL text request", () => {
+    expect(() => legacySqlText("postgress")).toThrow(
+      "legacySqlText: postgress has no legacy row, so it has no legacy SQL text request",
+    );
+    expect(() => grantOf("postgress", request())).toThrow(
+      "legacySqlText: postgress has no legacy row, so it has no legacy SQL text request",
+    );
+  });
+
   test("legacyEngineGrants refuses by name an id the legacy adapter does not serve", () => {
     expect(() => legacyEngineGrants(UNRECORDED)).toThrow(
       `the grant reader holds no legacy grants for ${UNRECORDED}: the legacy adapter serves no engine of that id`,
@@ -1031,6 +1062,29 @@ describe("Studio's grant of each SQL text claim", () => {
     expect(sqlTextGrants(sqlText({ ...all, grammarSha256: null }), unreviewing)).toEqual(RESTRICTIVE);
     expect(sqlTextGrants(all, unreviewing)).toEqual(RESTRICTIVE);
     expect(sqlTextGrants(all, null)).toEqual(RESTRICTIVE);
+  });
+
+  test("an exempt form the request lists twice, in any letter case, is granted once, at its first place in the request", () => {
+    const reviewed = digest();
+    const row = rowWith("postgres", {
+      confirmExemptForms: [
+        ["ALTER", "SESSION", "SET"],
+        ["DROP", "PLANTED"],
+      ],
+      grammarSha256: reviewed,
+    });
+    const forms = [
+      ["DROP", "PLANTED"],
+      ["ALTER", "SESSION", "SET"],
+      ["drop", "planted"],
+      ["DROP", "PLANTED"],
+    ];
+    expect(
+      sqlTextGrants(sqlText({ grammarSha256: reviewed, confirmExemptForms: forms }), row).confirmExemptForms,
+    ).toEqual([
+      ["DROP", "PLANTED"],
+      ["ALTER", "SESSION", "SET"],
+    ]);
   });
 
   test("a package row may grant redaction sql or none, and a command reader requested by a package is read as none", () => {
