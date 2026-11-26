@@ -149,7 +149,6 @@ import {
 import type { ConnectionStringPaste, ConnectionStringSpec } from "@/lib/db/connection-string/types";
 import { CONFIRMATION_CLAIM_REVIEW, isReviewedConfirmationClaim } from "@/lib/db/confirmation-claim-review";
 import { CREDENTIAL_WARNINGS, type CredentialWarning } from "@/lib/db/credential-warnings";
-import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import { MIGRATION_DDL, MIGRATION_DDL_FUNCTIONS, type MigrationDdlFunctions } from "@/lib/db/migration-ddl";
 import type { CreateTableDdl, MigrationDdlSpec, TableDdlRefused, TableDdlWritten } from "@/lib/db/migration-ddl/types";
 import { connectBudgetFor } from "@/lib/db/connect-budget";
@@ -257,6 +256,7 @@ const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDataba
 const sshTunnel = legacyRegisterTable("sshTunnel");
 const agentCredential = legacyAgentCredentialTable();
 const statementLanguage = legacyRegisterTable("statementLanguage");
+const agentReadings = legacyRegisterTable("agentReadings");
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 const SCRIPT = path.join(ROOT, "scripts/generate-engine-declarations.ts");
@@ -961,7 +961,7 @@ describe("the committed declarations", () => {
     expect(stale).toEqual([]);
   });
 
-  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
+  test("the authored members are the catalog's, the data-only connection members and connection claims, the facets' monitoring, maintenance, maintenance specs and agent readings, the agent's statement language, the connection form's, the connection string's, the editor's commit keyword, consent deadline, fence aliases, dialect and language, the SQL text's members but its redaction, the SQL writing, migration DDL and SQL generator segments, and the policy, MCP and safeguards segments", () => {
     expect([...AUTHORED_MEMBERS]).toEqual([
       "id",
       "displayName",
@@ -991,6 +991,9 @@ describe("the committed declarations", () => {
       "connection.opensLocalFile",
       "connection.serverLevelWithoutDatabase",
       "connection.agentCredential",
+      "facets.monitoring",
+      "facets.maintenance",
+      "facets.maintenanceSpecs",
       "facets.agentReadings",
       "agent.statementLanguage",
       "editor.commitKeyword",
@@ -1043,7 +1046,7 @@ describe("the committed declarations", () => {
         import: null,
         connectBudgetMs: 140_000,
       },
-      facets: { agentReadings: ["sessions", "slow-queries", "table-stats", "storage", "health"] },
+      facets: bigquery.facets,
       agent: { statementLanguage: null },
       editor: {
         commitKeyword: "COMMIT",
@@ -1090,9 +1093,16 @@ describe("the committed declarations", () => {
       supersededBy: ["apiKeyId", "apiKeySecret"],
     });
     expect(authored("libredb").connection.agentCredential).toBeNull();
-    // The facets' agent readings and the agent's statement language are requests too: agent mode reads Studio's grant
-    // of each, never the request. The rest of both segments is generated.
-    expect(authored("kafka").facets).toEqual({ agentReadings: ["health"] });
+    // The facets are authored whole: the monitoring panels, the maintenance operations and their specs, and the agent
+    // readings, a request agent mode reads only as Studio's grant of it. The agent's statement language is a request
+    // too, and the rest of that segment is generated.
+    expect(authored("kafka").facets).toEqual(declared("kafka").facets);
+    expect(Object.keys(authored("kafka").facets)).toEqual([
+      "monitoring",
+      "maintenance",
+      "maintenanceSpecs",
+      "agentReadings",
+    ]);
     expect(authored("kafka").agent).toEqual({ statementLanguage: "kafkaread" });
     expect(authored("mqtt").facets.agentReadings).toEqual([]);
     // The SQL writing segment holds no claim, so the whole segment is authored.
@@ -1195,16 +1205,22 @@ describe("the committed declarations", () => {
       ...committed.safeguards,
       writePaths: { editor: absent, objectEdit: absent, maintenance: absent, transaction: absent },
     };
-    // The facets' agent readings and the agent's statement language are authored: a request edited by hand is kept,
-    // and the rest of both segments is rewritten from Studio's tables.
-    const facets = { ...committed.facets, agentReadings: ["health" as const] };
+    // The facets are authored whole, and the agent's statement language too: an edit by hand is kept, whatever the
+    // facet row and the provider's capabilities say, and the rest of the agent segment is rewritten from Studio's tables.
+    const facets = {
+      ...committed.facets,
+      monitoring: { ...committed.facets.monitoring, performance: "not-offered" as const },
+      maintenance: committed.facets.maintenance.filter((operation) => operation !== "kill"),
+      maintenanceSpecs: committed.facets.maintenanceSpecs.filter(({ operation }) => operation !== "kill"),
+      agentReadings: ["health" as const],
+    };
     const agent = { ...committed.agent, statementLanguage: "mongo" as const };
     const edited = {
       ...committed,
       displayName: "Edited by hand",
       location: "embedded",
       connection,
-      facets: { ...facets, maintenance: [] },
+      facets,
       agent: { ...agent, overlay: null },
       editor: { ...editor, explainFormat: null },
       sqlText: { ...sqlText, redaction: { kind: "none" } },
@@ -1298,9 +1314,11 @@ describe("the committed declarations", () => {
         authoredMembersOf({ ...committed, editor: without(committed.editor, member) }, "bigquery.json"),
       ).toThrow(`bigquery.json lacks its authored member editor.${member}`);
     }
-    expect(() =>
-      authoredMembersOf({ ...committed, facets: without(committed.facets, "agentReadings") }, "bigquery.json"),
-    ).toThrow("bigquery.json lacks its authored member facets.agentReadings");
+    for (const member of ["monitoring", "maintenance", "maintenanceSpecs", "agentReadings"] as const) {
+      expect(() =>
+        authoredMembersOf({ ...committed, facets: without(committed.facets, member) }, "bigquery.json"),
+      ).toThrow(`bigquery.json lacks its authored member facets.${member}`);
+    }
     expect(() =>
       authoredMembersOf({ ...committed, agent: without(committed.agent, "statementLanguage") }, "bigquery.json"),
     ).toThrow("bigquery.json lacks its authored member agent.statementLanguage");
@@ -1650,9 +1668,9 @@ const STUDIO_MAINTENANCE_SPEC_MEMBERS: Readonly<Record<keyof MaintenanceOperatio
 
 /**
  * A provider's maintenance specs in the declaration's form (docs/providers/CONTRACT.md, clause M-64): one per operation
- * the provider lists, in its order, each member the provider leaves out written at its absence, null or false. Written
- * here apart from the generator, which reads the order from the engine's `ENGINE_FACETS` row: a listed operation with no
- * spec and a spec for an unlisted operation are each refused by name, as the generator refuses them.
+ * the provider lists, in its order, each member the provider leaves out written at its absence, null or false. The
+ * declaration authors its specs, so this is the census's own read of them back to the provider: a listed operation with
+ * no spec and a spec for an unlisted operation are each refused by name.
  */
 function declaredMaintenanceSpecs(type: DatabaseType, capabilities: ProviderCapabilities): MaintenanceSpec[] {
   const specs = capabilities.maintenanceOperationSpecs ?? {};
@@ -1711,8 +1729,9 @@ interface SegmentClaimRecord {
   /** The claim as the declaration requests it. */
   readonly request: (declaration: EngineDeclaration) => unknown;
   /**
-   * Studio's review row for `type`, written in the declaration's form: for a connection claim, that member of the
-   * engine's legacy row in the grant register; for every other claim, the row of Studio's review record.
+   * Studio's review row for `type`, written in the declaration's form: for a connection claim, the statement language
+   * and the agent readings, that member of the engine's legacy row in the grant register; for every other claim, the
+   * row of Studio's review record.
    */
   readonly record: (type: DatabaseType) => unknown;
 }
@@ -1720,9 +1739,9 @@ interface SegmentClaimRecord {
 /**
  * Studio's review of each claim of the connection, facets, agent and SQL text segments, by the dotted member that
  * requests it (docs/providers/CONTRACT.md, clauses M-52 and M-53): the review the grant reader grants each request
- * against and each declaration's request is generated from. A connection claim's review is that member of every
- * engine's legacy row in the grant register, and every other claim's a record Studio still keeps in core. Written here
- * apart from the generator, as `POLICY_CLAIM_RECORDS` is.
+ * against and each declaration's request is generated from. The review of a connection claim, the statement language
+ * and the agent readings is that member of every engine's legacy row in the grant register, and every other claim's a
+ * record Studio still keeps in core. Written here apart from the generator, as `POLICY_CLAIM_RECORDS` is.
  */
 const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   "connection.opensLocalFile": {
@@ -1754,7 +1773,7 @@ const SEGMENT_CLAIM_RECORDS: Readonly<Record<string, SegmentClaimRecord>> = {
   },
   "facets.agentReadings": {
     request: (d) => d.facets.agentReadings,
-    record: (type) => ENGINE_FACETS[type].agentReadings,
+    record: (type) => agentReadings[type],
   },
   "sqlText.redaction": {
     request: (d) => d.sqlText.redaction,
@@ -1938,20 +1957,6 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("facets are the engine's ENGINE_FACETS row", () => {
-    const matches = (type: DatabaseType, d: EngineDeclaration): boolean => {
-      const row = ENGINE_FACETS[type];
-      return (
-        MONITORING_PANELS.every((panel) => d.facets.monitoring[panel] === row.monitoring[panel]) &&
-        Object.keys(d.facets.monitoring).length === MONITORING_PANELS.length &&
-        sameList(d.facets.maintenance, row.maintenance) &&
-        sameList(d.facets.agentReadings, row.agentReadings)
-      );
-    };
-
-    expect(differing(matches)).toEqual([]);
-  });
-
   test("facets.maintenanceSpecs is its provider's own maintenance specs, one for each operation its facet lists, in the facet's order", () => {
     const stated = (read: (spec: MaintenanceSpec) => boolean) =>
       SHIPPED_DATABASE_TYPES.filter((type) => declared(type).facets.maintenanceSpecs.some(read));
@@ -1973,6 +1978,33 @@ describe("the census", () => {
     expect(stated((spec) => spec.preview).length).toBeGreaterThan(0);
     expect(stated((spec) => spec.kinds !== null).length).toBeGreaterThan(0);
     expect(stated((spec) => !spec.perEntity && !spec.global).length).toBeGreaterThan(0);
+  });
+
+  test("the declaration generator writes the authored facets back unchanged and reads no ENGINE_FACETS row or provider spec", () => {
+    const { kill, ...withoutKill } = CAPABILITIES.postgres.maintenanceOperationSpecs ?? {};
+    const stripped: ProviderCapabilities = {
+      ...CAPABILITIES.postgres,
+      maintenanceOperations: CAPABILITIES.postgres.maintenanceOperations.filter((operation) => operation !== "kill"),
+      maintenanceOperationSpecs: withoutKill,
+    };
+    const bare: ProviderCapabilities = { ...CAPABILITIES.postgres, maintenanceOperationSpecs: undefined };
+    const imports = [
+      ...readFileSync(path.join(ROOT, "scripts/generate-engine-declarations.ts"), "utf8").matchAll(
+        /^import [^;]*? from "([^"]+)";$/gm,
+      ),
+    ].map((match) => match[1]);
+
+    expect(kill).toBeDefined();
+    expect(declared("postgres").facets.maintenanceSpecs.map(({ operation }) => operation)).toContain("kill");
+    expect(buildEngineDeclaration("postgres", stripped, authored("postgres")).facets).toEqual(
+      declared("postgres").facets,
+    );
+    expect(buildEngineDeclaration("postgres", bare, authored("postgres")).facets).toEqual(declared("postgres").facets);
+    // The generator imports no facet row, so a panel the row and the declaration disagree on is the census's to report.
+    expect(imports).toContain("../src/lib/db/compatibility");
+    expect(imports.filter((source) => source.includes("engine-facets"))).toEqual([]);
+    // Every declaration states the seven panels in `MONITORING_PANELS` order, which no generator writes any more.
+    expect(differing((_type, d) => sameList(Object.keys(d.facets.monitoring), [...MONITORING_PANELS]))).toEqual([]);
   });
 
   test("maintenanceControl and declaredEntityOperations answer from each declaration what they answer from its provider, for every operation, placement and kind", () => {
@@ -2021,7 +2053,7 @@ describe("the census", () => {
     ).toEqual([]);
   });
 
-  test("a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name, by the generator and by the census", () => {
+  test("a provider's maintenance spec missing for a listed operation, or given for an unlisted one, is refused by name by the census", () => {
     const { kill, ...withoutKill } = CAPABILITIES.postgres.maintenanceOperationSpecs ?? {};
     const missing = { ...CAPABILITIES.postgres, maintenanceOperationSpecs: withoutKill };
     const extra = {
@@ -2036,9 +2068,7 @@ describe("the census", () => {
       "postgres: the provider declares a maintenance spec for compact, which its engine's maintenance facet does not list";
 
     expect(kill).toBeDefined();
-    expect(() => buildEngineDeclaration("postgres", missing, authored("postgres"))).toThrow(missingRefusal);
     expect(() => declaredMaintenanceSpecs("postgres", missing)).toThrow(missingRefusal);
-    expect(() => buildEngineDeclaration("postgres", extra, authored("postgres"))).toThrow(extraRefusal);
     expect(() => declaredMaintenanceSpecs("postgres", extra)).toThrow(extraRefusal);
   });
 

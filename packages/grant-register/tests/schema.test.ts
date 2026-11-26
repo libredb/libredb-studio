@@ -187,6 +187,7 @@ describe("the reader and ajv", () => {
         "pair",
       ],
       statementLanguage: ["sql", "sparkplugread", "mongo", "SQL", "", 1],
+      agentReadings: [["health"], [], ["sessions", "health"], ["health", "health"], ["locks"], "health", null],
       servesOneSession: ["A sentence.", "", 1],
       agentExecution: [true, null],
       ownWords: ["code-only", "scrubbed ", null],

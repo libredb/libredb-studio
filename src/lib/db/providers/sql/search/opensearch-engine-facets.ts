@@ -10,8 +10,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `indexes`: `getIndexStats` answers `[]` without asking the engine.
  *
  * Maintenance: `opensearch` offers no maintenance operation.
- *
- * Agent readings: `table-stats`, `storage` and `health`.
  */
 export const OPENSEARCH_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -24,5 +22,4 @@ export const OPENSEARCH_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: [],
-  agentReadings: ["table-stats", "storage", "health"],
 };

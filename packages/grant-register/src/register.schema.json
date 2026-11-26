@@ -206,6 +206,14 @@
             null
           ]
         },
+        "agentReadings": {
+          "description": "The curated operational readings agent mode may be offered on the engine, each once, in the order a gate offers them.",
+          "type": "array",
+          "items": {
+            "enum": ["sessions", "slow-queries", "table-stats", "index-stats", "storage", "health"]
+          },
+          "uniqueItems": true
+        },
         "servesOneSession": {
           "description": "Why the engine's connections serve their object tree from one session, the editor's, or null where a tree read may run on a session of its own.",
           "type": ["string", "null"],
@@ -238,6 +246,7 @@
         "sshTunnel",
         "agentCredential",
         "statementLanguage",
+        "agentReadings",
         "servesOneSession",
         "agentExecution",
         "ownWords"
@@ -265,6 +274,7 @@
         "sshTunnel": { "$ref": "#/$defs/text" },
         "agentCredential": { "$ref": "#/$defs/text" },
         "statementLanguage": { "$ref": "#/$defs/text" },
+        "agentReadings": { "$ref": "#/$defs/text" },
         "servesOneSession": { "$ref": "#/$defs/text" },
         "agentExecution": { "$ref": "#/$defs/text" },
         "ownWords": { "$ref": "#/$defs/text" }

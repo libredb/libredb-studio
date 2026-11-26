@@ -137,7 +137,7 @@ describe("the prompt texts", () => {
     expect(planDeliverableOf("sparkplugread", "investigation")).toEqual({ kind: "prose" });
     expect(workflowAvailability("agent", "investigation", "sparkplug").open).toBe(true);
     // The language holds an operations variant, and the workflow still does not open: the engine offers agent mode no
-    // curated reading (its `ENGINE_FACETS` row's `agentReadings` is empty).
+    // curated reading (its legacy row in the grant register lists none).
     expect(workflowAvailability("agent", "operations", "sparkplug").open).toBe(false);
     expect(workflowAvailability("agent", "data-analysis", "sparkplug").open).toBe(false);
   });

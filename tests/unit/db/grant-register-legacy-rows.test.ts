@@ -13,7 +13,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { LEGACY_KEY, type RegisterRow, readGrantRegister } from "@libredb/grant-register";
 import registerSchema from "@libredb/grant-register/register.schema.json";
-import { HOST_PATH_FIELD_NAMES, STATEMENT_LANGUAGE_NAMES } from "@/lib/db/claim-grants";
+import { AGENT_READING_NAMES, HOST_PATH_FIELD_NAMES, STATEMENT_LANGUAGE_NAMES } from "@/lib/db/claim-grants";
 import {
   DIGEST_FORM,
   ENGINE_ID_FORM,
@@ -74,6 +74,7 @@ describe("the register's forms", () => {
   test("the register's vocabularies are the grant reader's", () => {
     expect(defs.grants.properties.statementLanguage.enum).toEqual([...STATEMENT_LANGUAGE_NAMES, null]);
     expect(defs.grants.properties.hostPathFields.items.enum).toEqual([...HOST_PATH_FIELD_NAMES]);
+    expect(defs.grants.properties.agentReadings.items.enum).toEqual([...AGENT_READING_NAMES]);
   });
 
   test("the register package names an engine only on a legacy row's engine line or in a row's review note", () => {

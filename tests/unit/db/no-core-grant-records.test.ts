@@ -25,7 +25,7 @@ import { ENGINE_TABLE_INVENTORY, GRANTED_DESTINATION, REVIEW_RECORD_PHRASE } fro
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
 /** What removes a record: an item of M3, or milestone M7 with the browser modules that read the projection. */
-type RemovedBy = { readonly item: 3 | 4 | 6 } | { readonly milestone: "M7"; readonly readers: readonly string[] };
+type RemovedBy = { readonly item: 3 | 4 } | { readonly milestone: "M7"; readonly readers: readonly string[] };
 
 interface GrantRecordEntry {
   readonly module: string;
@@ -63,7 +63,6 @@ const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
   ].map((name) => ({ module: CLAIM_GRANTS, name, removedBy: ITEM_3 })),
   { module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION", removedBy: { item: 4 } },
   { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW", removedBy: { item: 4 } },
-  { module: "src/lib/db/engine-facets/index.ts", name: "ENGINE_FACETS", removedBy: { item: 6 } },
   {
     module: CLAIM_GRANTS,
     name: "GRANTED_WRITE_REACH",
@@ -189,11 +188,10 @@ describe("the exit of M3", () => {
     const count = (removedBy: string) =>
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
-    expect(claimTables).toHaveLength(2);
+    expect(claimTables).toHaveLength(1);
     expect(grantedTables).toHaveLength(21);
     expect(count('{"item":3}')).toBe(19);
     expect(count('{"item":4}')).toBe(2);
-    expect(count('{"item":6}')).toBe(1);
     expect(count('{"milestone":"M7"')).toBe(5);
   });
 

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   EDIT_CENSUS_TYPES,
   EXPECTED_EDITABLE_KINDS,
@@ -21,11 +22,11 @@ describe("the Phase 3 census expectation", () => {
     // The fleet is EXTERNAL_DATABASE_TYPES.length plus the embedded store, and all but four of
     // those type-ids abstain from editing an object. The abstainers are listed by name in
     // `tests/helpers/object-edit-expectation.ts`, which is where a new engine is written down;
-    // the two numerals here only say how long that list is. SNMP and Sparkplug B abstain with
-    // the rest: an SNMP object is a value at a numbered place, and a Sparkplug metric's shape is
-    // the birth certificate's, which no client here writes.
+    // the numeral here only says how long that list is, and the census holds the catalog's engines.
+    // SNMP and Sparkplug B abstain with the rest: an SNMP object is a value at a numbered place, and
+    // a Sparkplug metric's shape is the birth certificate's, which no client here writes.
     expect(EXPECTED_EDIT_ABSTAINERS.length).toBe(39);
-    expect(EDIT_CENSUS_TYPES.length).toBe(43);
+    expect([...EDIT_CENSUS_TYPES].sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
   });
 
   test("no pair is written twice", () => {

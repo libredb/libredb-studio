@@ -2582,7 +2582,7 @@ describe("the engine catalog, projected from the admitted declarations", () => {
       const file = path.join(directory, "postgres.json");
       const committed = JSON.parse(readFileSync(file, "utf8")) as EngineDeclaration;
       expect(committed.facets.agentReadings).toContain("health");
-      // postgres's readings without health: the request its own declaration states, whatever Studio's facet row holds.
+      // postgres's readings without health: the request its own declaration states, whatever Studio's review row holds.
       const agentReadings = committed.facets.agentReadings.filter((reading) => reading !== "health");
       const postgres: EngineDeclaration = { ...committed, facets: { ...committed.facets, agentReadings } };
       writeFileSync(file, `${JSON.stringify(postgres, null, 2)}\n`);

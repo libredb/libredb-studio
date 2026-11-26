@@ -27,13 +27,14 @@
  * type-only import or export, which loads nothing, passes. The grant reader imports none of the records whose rows
  * moved there, `MOVED_TO_REGISTER`, and no module of `MOVED_FROM_MODULES` exports one.
  *
- * Studio's record of the agent readings is a member of each `ENGINE_FACETS` row, `agentReadings`, beside members other
- * gates read, so it is held by member rather than by name: no module but the grant reader and the claim projection,
- * which reads each declaration's request and never Studio's row, reads a member named `agentReadings`, by a property
- * access, a string element access or a binding pattern key, whatever the object. An object literal key and a type
- * member key of that name are no read, so the rows and their types are passed over. A file whose text does not hold
- * the name is not parsed. The capabilities member of the same name, `ProviderCapabilities.agentReadings`, which no
- * module reads, is refused by the same rule, until the closed list of that claim's readers decides it.
+ * Studio's review of the agent readings is the register's legacy rows' `agentReadings`, which only the grant reader
+ * loads. The member is still held by member rather than by name, a request's or a grant table's alike: no module but
+ * the grant reader and the claim projection, which reads each declaration's request and never Studio's row, reads a
+ * member named `agentReadings`, by a property access, a string element access or a binding pattern key, whatever the
+ * object. An object literal key and a type member key of that name are no read, so the generated requests and their
+ * types are passed over. A file whose text does not hold the name is not parsed. The capabilities member of the same
+ * name, `ProviderCapabilities.agentReadings`, which no module reads, is refused by the same rule, until the closed list
+ * of that claim's readers decides it.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -247,12 +248,12 @@ function sourceFiles(directory: string): SourceText[] {
     .map((file) => ({ path: file, text: readFileSync(path.join(ROOT, file), "utf8") }));
 }
 
-/** The member of each `ENGINE_FACETS` row that is Studio's record of the agent readings. */
+/** The member that requests, reviews and grants the agent readings. */
 const AGENT_READINGS = "agentReadings";
 
 /** The modules that may read a member named `agentReadings`, each with why. */
 const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
-  [GRANT_READER]: "the grant reader, which grants each engine's request against Studio's facet row",
+  [GRANT_READER]: "the grant reader, which grants each engine's request against its legacy row in the grant register",
   "src/lib/db/engine-catalog/projection.ts":
     "the claim projection, which reads each declaration's request and never Studio's row, a CLAIM_READERS entry of tests/unit/db/engine-declaration-readers.test.ts",
 };
@@ -599,9 +600,9 @@ describe("the claim record readers", () => {
         MOVED_TO_REGISTER.filter((name) => exportsName(file, name)).map((name) => `${file.path} exports ${name}`),
       ),
     ).toEqual([]);
-    // Vacuity: the parse reads the grant reader's named imports, the facet rows it still imports among them, and each
+    // Vacuity: the parse reads the grant reader's named imports, the generated claim requests among them, and each
     // module's exported records.
-    expect(imported).toContain("ENGINE_FACETS");
+    expect(imported).toContain("BUNDLED_CLAIM_REQUESTS");
     expect(
       importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
     ).toEqual(["WRITE_REACH"]);
@@ -617,17 +618,21 @@ describe("the claim record readers", () => {
     ).toBe(true);
   });
 
-  test("the agent readings of Studio's facet rows are read only by the grant reader, and the scan finds each way a module could read them", () => {
+  test("the agent readings member is read only by the grant reader and the claim projection, and the scan finds each way a module could read it", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
 
     expect(agentReadingsReaders(files)).toEqual([]);
-    // Vacuity: each listed reader reads the member, and the rows that declare it are in the source read.
+    // Vacuity: each listed reader reads the member, and the generated claim requests module declares it.
     for (const reader of Object.keys(AGENT_READINGS_READERS)) {
       const file = files.find((candidate) => candidate.path === reader);
       if (file === undefined) throw new Error(`${reader} is not in the source read`);
       expect(agentReadingsReads(file)).toEqual([`${reader} reads ${AGENT_READINGS}`]);
     }
-    expect(files.filter((file) => file.text.includes(AGENT_READINGS)).length).toBeGreaterThan(40);
+    expect(
+      files
+        .find((file) => file.path === "src/lib/db/engine-catalog/claims.generated.ts")
+        ?.text.includes(AGENT_READINGS),
+    ).toBe(true);
 
     const planted = (text: string) => agentReadingsReaders([{ path: "src/lib/agent/a.ts", text }]);
     const read = [`src/lib/agent/a.ts reads ${AGENT_READINGS}`];

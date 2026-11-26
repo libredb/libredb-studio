@@ -12,8 +12,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` refuses with `SENTENCES.noStorage` without asking the engine.
  *
  * Maintenance: `netconf` offers no maintenance operation.
- *
- * Agent readings: `health`.
  */
 export const NETCONF_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -26,5 +24,4 @@ export const NETCONF_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["health"],
 };

@@ -9,8 +9,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `activeSessions`: `getActiveSessions` answers `[]` without asking the engine.
  *
  * Maintenance: `libsql` offers `reindex` and `check`, in its provider's declaration order.
- *
- * Agent readings: `table-stats`, `index-stats`, `storage` and `health`.
  */
 export const LIBSQL_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,5 +21,4 @@ export const LIBSQL_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["reindex", "check"],
-  agentReadings: ["table-stats", "index-stats", "storage", "health"],
 };

@@ -229,7 +229,8 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
   {
     module: "src/lib/db/engine-facets/index.ts",
     name: "ENGINE_FACETS",
-    destination: `engine declaration: facets, with facets.agentReadings the engine's request, which this table grants as ${REVIEW_RECORD_PHRASE}`,
+    destination:
+      "engine declaration: facets.monitoring and facets.maintenance, authored in each declaration, and each provider's row held equal to them by tests/unit/db/engine-facets/census.test.ts",
   },
   {
     module: "src/lib/db/execution-ui/index.ts",

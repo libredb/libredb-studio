@@ -9,7 +9,7 @@
  * `urlTls`, `paste` and `seedCheck`, and its `tls`, `readsTrustMaterial`, `dialog`, `hostUriSchemes`,
  * `credentialWarnings`, `fieldRules`, `hostHint`, `hostIdentity`, `import` and `connectBudgetMs`, and its claims
  * `sshTunnel`, `hostPathFields`, `opensLocalFile`, `serverLevelWithoutDatabase` and `agentCredential`, of `facets` its
- * `agentReadings`, of `agent` its `statementLanguage`, of `editor` its `commitKeyword`, `consentDeadline`,
+ * `monitoring`, `maintenance`, `maintenanceSpecs` and `agentReadings`, of `agent` its `statementLanguage`, of `editor` its `commitKeyword`, `consentDeadline`,
  * `fenceAliases`, `dialect` and `language`, of `sqlText` its `readsSqlText`, `grammar`, `updateTarget` and
  * `completion`, and the whole `sqlWriting`, `migrationDdl`, `sqlGenerators`, `policy`, `mcp` and `safeguards`), are
  * written in the declaration itself: this script reads them from the committed file of the engine in
@@ -95,8 +95,8 @@
  * its declaration, or a declaration without its record, fails there by claim and engine. `READ_ONLY_ENFORCED` has no
  * member, since Studio derives it from the granted write reach, and `connection.readsTrustMaterial`, which is no claim,
  * is authored too.
- * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of both segments
- * is written from Studio's tables. The SQL text claim, the redaction, is written from Studio's record: the row of the
+ * The agent mode claims are the facets' `agentReadings` and the agent's `statementLanguage`; the rest of the agent
+ * segment is written from Studio's tables. The SQL text claim, the redaction, is written from Studio's record: the row of the
  * review record docs/providers/CONTRACT.md, clause M-53, names for it.
  *
  * The agent overlay comes from the engine's server overlay in Studio's agent overlay registry, `engineServerOverlay`
@@ -112,11 +112,12 @@
  * overridable members besides grounding among them until the contract states them, a plan form that is neither prefix
  * nor session-mode, a grounding given as a value, and a profile type pattern whose flags are not none, i, u or iu.
  *
- * The facets but the authored agent readings come from the engine's `ENGINE_FACETS` row, except the maintenance specs,
- * which are the provider's own statements and come from its capabilities' `maintenanceOperationSpecs` (clause M-64):
- * one per operation of the row's maintenance list, in that order, a title, description, confirmation or kinds the
- * provider leaves out written null and a preview it leaves out written false. The generator refuses by name a listed
- * operation with no spec and a spec for an operation the list does not name.
+ * The facets are authored, written back as the committed file states them: the monitoring panels, the maintenance
+ * operations, their specs and the agent readings. The generator reads neither the engine's `ENGINE_FACETS` row nor the
+ * provider's maintenance specs. `--check` refuses a listed operation with no spec and a spec for an operation the list
+ * does not name, with the SDK validator's sentences; the census reads each spec back to the provider's capabilities
+ * (clause M-64) and holds each provider's facet row equal to its declaration's monitoring and maintenance
+ * (tests/unit/db/engine-facets/census.test.ts).
  *
  * The safeguards are no claims but the provider's own statements of what its code does, authored with the policy
  * claims, since the write reach request must be their summary (clause M-61), and written back as the committed file
@@ -155,7 +156,6 @@ import type {
   CatalogRead,
   Editor,
   EngineDeclaration,
-  MaintenanceSpec,
   PlanEstimate,
   ProfileComposition,
   ProfileTypePattern,
@@ -170,11 +170,10 @@ import type { AgentCatalogCapture } from "../src/lib/agent/catalog-rows";
 import type { AgentStatisticsReading } from "../src/lib/agent/schema-stats";
 import type { AgentProfileComposition } from "../src/lib/agent/table-profile";
 import { SHIPPED_DATABASE_TYPES } from "../src/lib/db/compatibility";
-import { ENGINE_FACETS } from "../src/lib/db/engine-facets";
 import { composeMigrationDdl, MIGRATION_DDL_FUNCTIONS } from "../src/lib/db/migration-ddl";
 import { composeSqlEngineGenerators, SQL_GENERATOR_FUNCTIONS } from "../src/lib/db/query-generators";
 import { SQL_TEXT_REDACTION } from "../src/lib/db/sql-grammar/redaction";
-import type { MaintenanceOperation, ProviderCapabilities } from "../src/lib/db/types";
+import type { ProviderCapabilities } from "../src/lib/db/types";
 import type { DatabaseType } from "../src/lib/types";
 import { type AuthoredMembers, authoredMembersOf, ENGINE_DECLARATIONS_DIRECTORY } from "./generate-engine-catalog";
 
@@ -473,40 +472,6 @@ export function buildAgentOverlay(
 }
 
 /**
- * One engine's maintenance specs, read from its provider's capabilities: one per operation of the engine's
- * `ENGINE_FACETS` maintenance list, in that order, each member the provider leaves out written at the reading Studio
- * gives that absence, null for a title, a description, a confirmation and the kinds, and false for a preview. A listed
- * operation with no spec and a spec for an operation the list does not name are each refused by name, never dropped or
- * defaulted.
- */
-function buildMaintenanceSpecs(type: DatabaseType, capabilities: ProviderCapabilities): MaintenanceSpec[] {
-  const listed = ENGINE_FACETS[type].maintenance;
-  const specs = capabilities.maintenanceOperationSpecs ?? {};
-  for (const operation of Object.keys(specs) as MaintenanceOperation[]) {
-    if (!listed.includes(operation)) {
-      throw new Error(
-        `${type}: the provider declares a maintenance spec for ${operation}, which its engine's maintenance facet does not list`,
-      );
-    }
-  }
-  return listed.map((operation) => {
-    const spec = specs[operation];
-    if (spec === undefined) throw new Error(`${type}: the provider declares no maintenance spec for ${operation}`);
-    return {
-      operation,
-      label: spec.label,
-      perEntity: spec.perEntity,
-      global: spec.global,
-      title: spec.title ?? null,
-      description: spec.description ?? null,
-      confirmation: spec.confirmation ?? null,
-      preview: spec.preview === true,
-      kinds: spec.kinds === undefined ? null : [...spec.kinds],
-    };
-  });
-}
-
-/**
  * One engine's declaration: its `authored` members as given, and every other member read from every table the contract
  * states for it and from its provider's capabilities.
  *
@@ -520,7 +485,6 @@ export function buildEngineDeclaration(
   if (authored.id !== type) {
     throw new Error(`${type}: the authored members given name the engine id ${JSON.stringify(authored.id)}`);
   }
-  const facets = ENGINE_FACETS[type];
   const bound = boundSegments(type, authored);
   return {
     id: type,
@@ -548,22 +512,7 @@ export function buildEngineDeclaration(
       import: authored.connection.import,
       connectBudgetMs: authored.connection.connectBudgetMs,
     },
-    facets: {
-      // Written out panel by panel, in MONITORING_PANELS order, so every declaration lists them alike and a panel the
-      // schema and the row disagree on fails to compile here.
-      monitoring: {
-        overview: facets.monitoring.overview,
-        performance: facets.monitoring.performance,
-        slowQueries: facets.monitoring.slowQueries,
-        activeSessions: facets.monitoring.activeSessions,
-        tables: facets.monitoring.tables,
-        indexes: facets.monitoring.indexes,
-        storage: facets.monitoring.storage,
-      },
-      maintenance: [...facets.maintenance],
-      maintenanceSpecs: buildMaintenanceSpecs(type, capabilities),
-      agentReadings: authored.facets.agentReadings,
-    },
+    facets: authored.facets,
     agent: {
       statementLanguage: authored.agent.statementLanguage,
       overlay: buildAgentOverlay(type, authored.agent.statementLanguage),

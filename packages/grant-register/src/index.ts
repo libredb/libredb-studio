@@ -64,6 +64,12 @@ export type RegisterStatementLanguage =
   | "sparkplugread";
 
 /**
+ * A curated operational reading agent mode may be offered on an engine: the schema's `agentReadings` item enum, held
+ * equal to it by tests/types.test.ts.
+ */
+export type RegisterAgentReading = "sessions" | "slow-queries" | "table-stats" | "index-stats" | "storage" | "health";
+
+/**
  * What a row grants: the schema's `grants`, one member per claim. tests/types.test.ts holds every member and its
  * vocabulary equal to the schema's, so a member added, removed or retyped on one side only fails the typecheck or that
  * test.
@@ -89,6 +95,7 @@ export interface RegisterGrants {
     readonly supersededBy: readonly string[];
   } | null;
   readonly statementLanguage: RegisterStatementLanguage | null;
+  readonly agentReadings: readonly RegisterAgentReading[];
   readonly servesOneSession: string | null;
   readonly agentExecution: boolean;
   readonly ownWords: "scrubbed" | "code-only";

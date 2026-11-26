@@ -9,8 +9,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `neo4j` offers no maintenance operation.
- *
- * Agent readings: `sessions`, `table-stats`, `index-stats` and `health`.
  */
 export const NEO4J_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,5 +21,4 @@ export const NEO4J_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["sessions", "table-stats", "index-stats", "health"],
 };

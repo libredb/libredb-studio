@@ -12,9 +12,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` refuses with `OPCUA_NO_TABLE_STATISTICS` without asking the engine.
  *
  * Maintenance: `opcua` offers no maintenance operation.
- *
- * Agent readings: none.
- * `health` is withheld: the agent handle's `getHealth` refuses with `OPCUA_AGENT_WITHHELD.health`.
  */
 export const OPCUA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -27,5 +24,4 @@ export const OPCUA_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: [],
 };

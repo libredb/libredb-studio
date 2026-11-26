@@ -60,6 +60,7 @@ import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/d
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "@/lib/db/engine-catalog/projection";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
 import { admittedFor, admittedManifest } from "../../helpers/package-catalog";
 import { ENGINE_TABLE_INVENTORY, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
 
@@ -680,11 +681,10 @@ describe("Studio's grant of each agent mode claim", () => {
     expect(
       SHIPPED_DATABASE_TYPES.filter(
         (type) =>
-          JSON.stringify(GRANTED_AGENT_READINGS[type]) !==
-          JSON.stringify(STUDIO_CLAIM_RECORDS.agentReadings[type]?.agentReadings),
+          JSON.stringify(GRANTED_AGENT_READINGS[type]) !== JSON.stringify(legacyRegisterTable("agentReadings")[type]),
       ),
     ).toEqual([]);
-    // Vacuity: the facet rows hold full, partial and empty readings.
+    // Vacuity: the legacy rows hold full, partial and empty readings.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => GRANTED_AGENT_READINGS[type].length === 0)).toEqual([
       "mqtt",
       "mtconnect",
@@ -716,18 +716,18 @@ describe("Studio's grant of each agent mode claim", () => {
     },
   );
 
-  test("the agent readings granted are the intersection of the request and the record in the record's order, a frozen list, and empty where no record exists", () => {
+  test("the agent readings granted are the intersection of the request and the engine's register row, in the row's order, and empty where no row exists", () => {
     const of = (engine: string, agentReadings: FacetClaims["agentReadings"], against = STUDIO_CLAIM_RECORDS) =>
       grantOf(engine, request({}, {}, {}, { agentReadings }), against).agentReadings;
-    const row = { agentReadings: ["storage", "health"] as const };
+    const row = ["storage", "health"] as const;
     const two = records("postgres", { agentReadings: row });
 
-    // The record's order, whatever the request's.
+    // The row's order, whatever the request's.
     expect(of("postgres", ["health", "storage"], two)).toEqual(["storage", "health"]);
     // A request holding every reading of the row reads a copy of the row, frozen, never the row's own list.
     const all = of("postgres", [...CURATED_OPERATION_KINDS], two);
     expect(all).toEqual(["storage", "health"]);
-    expect(all).not.toBe(row.agentReadings);
+    expect(all).not.toBe(row);
     expect(Object.isFrozen(all)).toBe(true);
     // A reading the row lacks is never gained, and one the request drops is never kept.
     expect(of("postgres", ["sessions", "health"], two)).toEqual(["health"]);
@@ -735,7 +735,7 @@ describe("Studio's grant of each agent mode claim", () => {
     expect(of("postgres", [], two)).toEqual([]);
     expect(of("kafka", [...CURATED_OPERATION_KINDS])).toEqual(["health"]);
     expect(of("mqtt", [...CURATED_OPERATION_KINDS])).toEqual([]);
-    // No record: the empty list, whatever the request.
+    // No row: the empty list, whatever the request.
     expect(of(UNRECORDED, [...CURATED_OPERATION_KINDS])).toEqual([]);
     expect(Object.isFrozen(of(UNRECORDED, ["health"]))).toBe(true);
     // A row on the prototype chain is no row.
@@ -959,9 +959,8 @@ describe("the grant reader's inputs", () => {
 
   /**
    * Every value the grant reader imports, `<name> from <specifier>`, with its role. The request and the register are
-   * its inputs; the served set and the field-name vocabulary name no grant of any engine; and the facet rows, the one
-   * module holding a claim table it still reads, are excepted by name until item 6 of M3 moves Studio's review of
-   * `facets.agentReadings`. A new value import fails until it is listed here with its role.
+   * its inputs, and the served set and the field-name vocabulary name no grant of any engine. A new value import fails
+   * until it is listed here with its role.
    */
   const GRANT_READER_INPUTS: Readonly<Record<string, string>> = {
     "BUNDLED_CLAIM_REQUESTS from ./engine-catalog/claims.generated": "the request: every bundled engine's claims",
@@ -973,12 +972,7 @@ describe("the grant reader's inputs", () => {
       "the legacy adapter's served set: the engines the register's legacy rows are read for",
     "BODY_CONNECTION_FIELDS from ./connection-fields":
       "the field names a row's superseding fields are narrowed to, keyed by no engine",
-    "ENGINE_FACETS from ./engine-facets":
-      "excepted by name until item 6: the facet rows, Studio's agent readings review",
   };
-
-  /** The one input from a module holding a claim table of the engine table inventory, excepted until item 6. */
-  const EXCEPTED_CLAIM_TABLE = "ENGINE_FACETS from ./engine-facets: ENGINE_FACETS";
 
   interface Input {
     /** `<name> from <specifier>`, or the call that loads a module at run time. */
@@ -1079,7 +1073,7 @@ describe("the grant reader's inputs", () => {
 
     expect(unlisted(inputs)).toEqual([]);
     expect(inputs.map(({ input }) => input).sort()).toEqual(Object.keys(GRANT_READER_INPUTS).sort());
-    expect(claimTableInputs(inputs)).toEqual([EXCEPTED_CLAIM_TABLE]);
+    expect(claimTableInputs(inputs)).toEqual([]);
   });
 
   test("the inputs scan finds a value import, a re-export and a dynamic import by name, and passes over a type-only import", () => {
@@ -1088,19 +1082,19 @@ describe("the grant reader's inputs", () => {
 
     const imported = planted('import { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
     expect(unlisted(imported)).toEqual([redaction]);
-    expect(claimTableInputs(imported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`, EXCEPTED_CLAIM_TABLE]);
+    expect(claimTableInputs(imported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`]);
 
     const reexported = planted('export { SQL_TEXT_REDACTION } from "./sql-grammar/redaction";');
     expect(unlisted(reexported)).toEqual([redaction]);
-    expect(claimTableInputs(reexported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`, EXCEPTED_CLAIM_TABLE]);
+    expect(claimTableInputs(reexported)).toEqual([`${redaction}: SQL_TEXT_REDACTION`]);
 
     expect(unlisted(planted('import type { SqlTextRedaction } from "./sql-grammar/redaction";'))).toEqual([]);
     expect(unlisted(planted('const r = await import("./confirmation-claim-review");'))).toEqual([
       'import("./confirmation-claim-review")',
     ]);
-    // Vacuity: the real module's parse holds the excepted input.
+    // Vacuity: the real module's parse holds the request.
     expect(valueInputs(GRANT_READER, readerText()).map(({ input }) => input)).toContain(
-      "ENGINE_FACETS from ./engine-facets",
+      "BUNDLED_CLAIM_REQUESTS from ./engine-catalog/claims.generated",
     );
   });
 });

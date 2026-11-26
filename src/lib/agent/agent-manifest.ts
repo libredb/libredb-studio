@@ -4,10 +4,10 @@
  *
  * Client-safe on purpose, like `engine-support.ts`: besides types it imports only the language packs' and the engines'
  * client facets (`languages/client.ts`, `languages/engines/client.ts`), the leaf `workflow-tool-sets.ts`, the type id
- * check `@/lib/db/type-id.ts` and Studio's grant reader `@/lib/db/claim-grants.ts` (the records, the engine facet rows
- * among them, the generated claim requests and the type id check), which are client-safe themselves, because the rail, the safety strip and the posture read it, and a
- * provider module or `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint, its
- * advice, its admission) is server code and lives in `languages/server.ts`.
+ * check `@/lib/db/type-id.ts` and Studio's grant reader `@/lib/db/claim-grants.ts` (the grant register's rows and the
+ * generated claim requests), which are client-safe themselves, because the rail, the safety strip and the posture read
+ * it, and a provider module or `node:crypto` here would reach a browser bundle. What a language DOES (its fingerprint,
+ * its advice, its admission) is server code and lives in `languages/server.ts`.
  *
  * The statement language each engine speaks is Studio's grant of the claim its declaration requests,
  * `GRANTED_AGENT_STATEMENT_LANGUAGE` (docs/providers/CONTRACT.md, clause M-83), keyed by type-id so no dialect

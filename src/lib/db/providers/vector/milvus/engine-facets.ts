@@ -10,8 +10,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `milvus` offers `load` and `release`, in its provider's declaration order.
- *
- * Agent readings: `table-stats`, `index-stats` and `health`.
  */
 export const MILVUS_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -24,5 +22,4 @@ export const MILVUS_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: ["load", "release"],
-  agentReadings: ["table-stats", "index-stats", "health"],
 };

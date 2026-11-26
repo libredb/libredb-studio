@@ -10,8 +10,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `weaviate` offers no maintenance operation.
- *
- * Agent readings: `table-stats`, `index-stats` and `health`.
  */
 export const WEAVIATE_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -24,5 +22,4 @@ export const WEAVIATE_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["table-stats", "index-stats", "health"],
 };

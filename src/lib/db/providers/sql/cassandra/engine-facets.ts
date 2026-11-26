@@ -10,8 +10,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` refuses with `CASSANDRA_STORAGE_STATS_REFUSAL` without asking the engine.
  *
  * Maintenance: `cassandra` offers no maintenance operation.
- *
- * Agent readings: `sessions` and `health`.
  */
 export const CASSANDRA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -24,5 +22,4 @@ export const CASSANDRA_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["sessions", "health"],
 };

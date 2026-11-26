@@ -12,8 +12,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `storage`: `getStorageStats` answers `[]` without asking the engine.
  *
  * Maintenance: `oxia` offers no maintenance operation.
- *
- * Agent readings: `health`.
  */
 export const OXIA_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -26,5 +24,4 @@ export const OXIA_ENGINE_FACETS: EngineFacets = {
     storage: "not-offered",
   },
   maintenance: [],
-  agentReadings: ["health"],
 };

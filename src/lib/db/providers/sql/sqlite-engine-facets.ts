@@ -9,8 +9,6 @@ import type { EngineFacets } from "@/lib/db/engine-facets/types";
  * - `activeSessions`: `getActiveSessions` answers one synthetic session carrying Studio's own process id without asking the engine.
  *
  * Maintenance: `sqlite` offers `vacuum`, `analyze`, `reindex` and `check`, in its provider's declaration order.
- *
- * Agent readings: `table-stats`, `index-stats`, `storage` and `health`.
  */
 export const SQLITE_ENGINE_FACETS: EngineFacets = {
   monitoring: {
@@ -23,5 +21,4 @@ export const SQLITE_ENGINE_FACETS: EngineFacets = {
     storage: "offered",
   },
   maintenance: ["vacuum", "analyze", "reindex", "check"],
-  agentReadings: ["table-stats", "index-stats", "storage", "health"],
 };
