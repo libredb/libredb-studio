@@ -10,6 +10,7 @@
  * the text fields a connection form draws, against committed rows and rows changed by hand.
  */
 import { describe, expect, test } from "bun:test";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
@@ -20,6 +21,7 @@ import {
   type RegisterRow,
   readGrantRegister,
 } from "@libredb/grant-register";
+import type { StatementRedaction } from "@libredb/provider-sdk/manifest";
 import type { McpClaims, PolicyClaims } from "@libredb/provider-sdk/manifest";
 import {
   AGENT_READING_NAMES,
@@ -34,6 +36,7 @@ import {
   legacyAgentCredentials,
   legacyEngineGrants,
   legacyGrantRows,
+  type SqlTextRequest,
   STATEMENT_LANGUAGE_NAMES,
   STUDIO_GRANT_REGISTER,
   type StatementLanguageRequest,
@@ -45,6 +48,7 @@ import * as claimGrants from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
+import { BUNDLED_SQL_TEXT } from "@/lib/db/engine-catalog/sql-text.generated";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
 import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
@@ -88,7 +92,44 @@ function request(
 }
 
 /** The seed-only fields `grantEngineClaims` reads the restrictive host path fields from: the shipped ones by default. */
-type SeedOnlyRows = Parameters<typeof grantEngineClaims>[3];
+type SeedOnlyRows = Parameters<typeof grantEngineClaims>[4];
+
+/**
+ * The SQL text request of `engine` as the grant reader makes a legacy engine's: its bundled readsSqlText and exempt
+ * forms, and its legacy row's redaction and grammar digest.
+ *
+ * @throws {Error} Naming the id, for an id with no legacy row: a mistyped or removed engine id fails its test rather
+ * than reading another engine's request.
+ */
+function legacySqlText(engine: string): SqlTextRequest {
+  if (!Object.hasOwn(LEGACY_ROWS, engine)) {
+    throw new Error(`legacySqlText: ${engine} has no legacy row, so it has no legacy SQL text request`);
+  }
+  const id = engine as DatabaseType;
+  const { grants } = legacyRow(id);
+  return {
+    readsSqlText: BUNDLED_SQL_TEXT[id].readsSqlText,
+    confirmExemptForms: BUNDLED_SQL_TEXT[id].grammar.confirmExemptForms,
+    redaction: grants.redaction,
+    grammarSha256: grants.grammarSha256,
+  };
+}
+
+/**
+ * The SQL text request of `UNRECORDED`, which has no bundled SQL text: its claims at their restrictive values and no
+ * grammar digest, so no row grants them.
+ */
+const UNRECORDED_SQL_TEXT: SqlTextRequest = {
+  readsSqlText: true,
+  confirmExemptForms: [],
+  redaction: { kind: "none" },
+  grammarSha256: null,
+};
+
+/** The SQL text request `grantOf` hands for `engine`: `UNRECORDED_SQL_TEXT` for `UNRECORDED`, its legacy one else. */
+function sqlTextOf(engine: string): SqlTextRequest {
+  return engine === UNRECORDED ? UNRECORDED_SQL_TEXT : legacySqlText(engine);
+}
 
 /** The legacy row of `engine`, or null for an id with none. */
 function shippedRow(engine: string): RegisterRow | null {
@@ -111,7 +152,7 @@ function legacyGrantTable<M extends keyof EngineGrants>(member: M): Readonly<Rec
 
 /**
  * The grants of one engine `engine` requesting `requested` against the register row `row`, its legacy row by default
- * and none for an id with none, with `seedOnly` as its seed-only rows.
+ * and none for an id with none, with `seedOnly` as its seed-only rows and `sqlTextOf(engine)` as its SQL text request.
  */
 function grantOf(
   engine: string,
@@ -119,7 +160,7 @@ function grantOf(
   row: RegisterRow | null = shippedRow(engine),
   seedOnly: SeedOnlyRows = { ...SEED_ONLY_FIELDS, [UNRECORDED]: null },
 ) {
-  return grantEngineClaims(engine, requested, row, seedOnly);
+  return grantEngineClaims(engine, requested, sqlTextOf(engine), row, seedOnly);
 }
 
 describe("Studio's grant of each policy and MCP claim", () => {
@@ -834,6 +875,15 @@ describe("the register's legacy rows the grant reader reads", () => {
     expect(grantOf("mysql", request(), rowWith("mysql")).writeReach).toBe(legacyRegisterTable("writeReach").mysql);
   });
 
+  test("the test helpers refuse by name an id with no legacy row, never reading another engine's SQL text request", () => {
+    expect(() => legacySqlText("postgress")).toThrow(
+      "legacySqlText: postgress has no legacy row, so it has no legacy SQL text request",
+    );
+    expect(() => grantOf("postgress", request())).toThrow(
+      "legacySqlText: postgress has no legacy row, so it has no legacy SQL text request",
+    );
+  });
+
   test("legacyEngineGrants refuses by name an id the legacy adapter does not serve", () => {
     expect(() => legacyEngineGrants(UNRECORDED)).toThrow(
       `the grant reader holds no legacy grants for ${UNRECORDED}: the legacy adapter serves no engine of that id`,
@@ -917,6 +967,178 @@ describe("the register's legacy rows the grant reader reads", () => {
   });
 });
 
+describe("Studio's grant of each SQL text claim", () => {
+  /** A grammar digest of the form a row states, new on every call. */
+  const digest = () => createHash("sha256").update(randomUUID()).digest("hex");
+  /** A SQL text request: postgres's but for the members `changes` names. */
+  const sqlText = (changes: Partial<SqlTextRequest> = {}): SqlTextRequest => ({
+    ...legacySqlText("postgres"),
+    ...changes,
+  });
+  /** The SQL text grants of postgres requesting `requested` against `row`, its other requests its bundled ones. */
+  const sqlTextGrants = (requested: SqlTextRequest, row: RegisterRow | null) => {
+    const { redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar } = grantEngineClaims(
+      "postgres",
+      BASE,
+      requested,
+      row,
+      SEED_ONLY_FIELDS,
+    );
+    return { redaction, readsSqlText, confirmExemptForms, decidesAlone, reviewedGrammar };
+  };
+  const NAMES: StatementRedaction = { kind: "sql", nameQuote: '"' };
+  const RESTRICTIVE = {
+    redaction: { kind: "none" },
+    readsSqlText: true,
+    confirmExemptForms: [],
+    decidesAlone: false,
+    reviewedGrammar: false,
+  } as const;
+
+  test("a SQL text claim is granted from the engine's register row only for the grammar that row reviewed, and at its restrictive value otherwise", () => {
+    const reviewed = digest();
+    const loose = { readsSqlText: false, redaction: NAMES, grammarSha256: reviewed };
+    const row = rowWith("postgres", {
+      redaction: { kind: "sql", nameQuote: '"' },
+      readsSqlText: false,
+      confirmExemptForms: [
+        ["ALTER", "SESSION", "SET"],
+        ["DROP", "PLANTED"],
+      ],
+      decidesAlone: true,
+      grammarSha256: reviewed,
+    });
+    const forms = [["drop", "planted"], ["ALTER", "SESSION", "UNSET"], ["ALTER", "SESSION", "SET"], ["DROP"]];
+
+    // The grammar the row reviewed: each claim is the more restrictive of the request and the row.
+    const granted = sqlTextGrants(sqlText({ ...loose, confirmExemptForms: forms }), row);
+    expect(granted).toEqual({
+      redaction: NAMES,
+      readsSqlText: false,
+      // The requested forms the row lists, compared word by word upper-cased, in the request's order.
+      confirmExemptForms: [
+        ["drop", "planted"],
+        ["ALTER", "SESSION", "SET"],
+      ],
+      decidesAlone: true,
+      reviewedGrammar: true,
+    });
+    expect(Object.isFrozen(granted.redaction)).toBe(true);
+    expect(Object.isFrozen(granted.confirmExemptForms)).toBe(true);
+    expect(granted.confirmExemptForms.every((form) => Object.isFrozen(form))).toBe(true);
+    expect(granted.confirmExemptForms[0]).not.toBe(forms[0]);
+    // A request more restrictive than the row: the request's.
+    expect(sqlTextGrants(sqlText({ ...loose, readsSqlText: true, confirmExemptForms: [] }), row)).toMatchObject({
+      readsSqlText: true,
+      confirmExemptForms: [],
+    });
+    for (const redaction of [
+      { kind: "sql", nameQuote: null },
+      { kind: "sql", nameQuote: "`" },
+      { kind: "none" },
+      { kind: "command", reader: "redactionReader" },
+    ] as const) {
+      expect(sqlTextGrants(sqlText({ ...loose, redaction }), row).redaction).toEqual({ kind: "none" });
+    }
+    // A row more restrictive than the request: the row's.
+    const tight = rowWith("postgres", {
+      ...row.grants,
+      readsSqlText: true,
+      decidesAlone: false,
+      confirmExemptForms: [],
+    });
+    expect(sqlTextGrants(sqlText({ ...loose, confirmExemptForms: forms }), tight)).toEqual({
+      redaction: NAMES,
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: true,
+    });
+    // Another grammar, a row that reviews none, and no row: every claim at its restrictive value.
+    const all = sqlText({ ...loose, confirmExemptForms: forms });
+    expect(sqlTextGrants(sqlText({ ...all, grammarSha256: digest() }), row)).toEqual(RESTRICTIVE);
+    expect(sqlTextGrants(sqlText({ ...all, grammarSha256: null }), row)).toEqual(RESTRICTIVE);
+    const unreviewing = rowWith("postgres", { ...row.grants, grammarSha256: null });
+    expect(sqlTextGrants(sqlText({ ...all, grammarSha256: null }), unreviewing)).toEqual(RESTRICTIVE);
+    expect(sqlTextGrants(all, unreviewing)).toEqual(RESTRICTIVE);
+    expect(sqlTextGrants(all, null)).toEqual(RESTRICTIVE);
+  });
+
+  test("an exempt form the request lists twice, in any letter case, is granted once, at its first place in the request", () => {
+    const reviewed = digest();
+    const row = rowWith("postgres", {
+      confirmExemptForms: [
+        ["ALTER", "SESSION", "SET"],
+        ["DROP", "PLANTED"],
+      ],
+      grammarSha256: reviewed,
+    });
+    const forms = [
+      ["DROP", "PLANTED"],
+      ["ALTER", "SESSION", "SET"],
+      ["drop", "planted"],
+      ["DROP", "PLANTED"],
+    ];
+    expect(
+      sqlTextGrants(sqlText({ grammarSha256: reviewed, confirmExemptForms: forms }), row).confirmExemptForms,
+    ).toEqual([
+      ["DROP", "PLANTED"],
+      ["ALTER", "SESSION", "SET"],
+    ]);
+  });
+
+  test("a package row may grant redaction sql or none, and a command reader requested by a package is read as none", () => {
+    const reviewed = digest();
+    const pkg = { name: "@acme/provider-acmesql", version: "1.0.0", digest: `sha256:${digest()}` };
+    const packageRow = (redaction: RegisterGrants["redaction"]) => ({
+      package: pkg,
+      engine: UNRECORDED,
+      grants: { ...legacyRow("postgres").grants, redaction, grammarSha256: reviewed },
+    });
+    const rowOf = (redaction: RegisterGrants["redaction"]) =>
+      parseGrantRegister([packageRow(redaction)], SHIPPED_DATABASE_TYPES).rowFor({ package: pkg, engine: UNRECORDED });
+    const redactionOf = (requested: StatementRedaction, row: RegisterRow | null) =>
+      grantEngineClaims(UNRECORDED, BASE, sqlText({ redaction: requested, grammarSha256: reviewed }), row, {
+        ...SEED_ONLY_FIELDS,
+        [UNRECORDED]: null,
+      }).redaction;
+
+    expect(redactionOf(NAMES, rowOf(NAMES))).toEqual(NAMES);
+    expect(redactionOf({ kind: "none" }, rowOf({ kind: "none" }))).toEqual({ kind: "none" });
+    expect(redactionOf(NAMES, rowOf({ kind: "none" }))).toEqual({ kind: "none" });
+    expect(redactionOf({ kind: "command", reader: "redactionReader" }, rowOf(NAMES))).toEqual({ kind: "none" });
+    // The register admits no package row granting a command reader, so no package's command request equals a row.
+    expect(() => rowOf({ kind: "command", reader: "redactionReader" })).toThrow("package-command-redaction");
+  });
+
+  test("a SQL text request value outside its claim's vocabulary is refused by name, naming the claim and the engine", () => {
+    const cases: readonly [Partial<Record<keyof SqlTextRequest, unknown>>, string][] = [
+      [{ redaction: { kind: "sql", nameQuote: "'" } }, 'sqlText.redaction {"kind":"sql","nameQuote":"\'"}'],
+      [{ redaction: { kind: "sql" } }, 'sqlText.redaction {"kind":"sql"}'],
+      [{ redaction: { kind: "command", reader: 1 } }, 'sqlText.redaction {"kind":"command","reader":1}'],
+      [{ redaction: { kind: "masked" } }, 'sqlText.redaction {"kind":"masked"}'],
+      [{ redaction: null }, "sqlText.redaction null"],
+      [{ readsSqlText: "no" }, 'sqlText.readsSqlText "no"'],
+      [{ confirmExemptForms: [["ALTER", 1]] }, 'sqlText.grammar.confirmExemptForms [["ALTER",1]]'],
+      [{ confirmExemptForms: ["ALTER"] }, 'sqlText.grammar.confirmExemptForms ["ALTER"]'],
+      [{ confirmExemptForms: null }, "sqlText.grammar.confirmExemptForms null"],
+      [{ grammarSha256: "ABC" }, 'sqlText.grammarSha256 "ABC"'],
+      [{ grammarSha256: 1 }, "sqlText.grammarSha256 1"],
+    ];
+    for (const [changes, refusal] of cases) {
+      expect(() =>
+        grantEngineClaims(
+          "postgres",
+          BASE,
+          sqlText(changes as Partial<SqlTextRequest>),
+          legacyRow("postgres"),
+          SEED_ONLY_FIELDS,
+        ),
+      ).toThrow(`postgres requests ${refusal}, which is not a value of the claim`);
+    }
+  });
+});
+
 describe("the claims of an admitted provider package's engine", () => {
   test("an admitted package with no grant record reads every claim at its restrictive value", () => {
     const manifest = admittedManifest("acmeloose", withLoosestClaims);
@@ -950,6 +1172,11 @@ describe("the claims of an admitted provider package's engine", () => {
       ownWords: "code-only",
       servesOneSession: null,
       agentExecution: false,
+      redaction: { kind: "none" },
+      readsSqlText: true,
+      confirmExemptForms: [],
+      decidesAlone: false,
+      reviewedGrammar: false,
     });
     expect(Object.isFrozen(answer.engine.grants)).toBe(true);
     forgetServerCatalog();
@@ -967,6 +1194,8 @@ describe("the grant reader's inputs", () => {
    */
   const GRANT_READER_INPUTS: Readonly<Record<string, string>> = {
     "BUNDLED_CLAIM_REQUESTS from ./engine-catalog/claims.generated": "the request: every bundled engine's claims",
+    "BUNDLED_SQL_TEXT from ./engine-catalog/sql-text.generated":
+      "the request: every bundled engine's SQL text, read for its readsSqlText and its exempt forms",
     "SEED_ONLY_FIELDS from ./connection-fields":
       "the request: each declaration's seed-only fields, read where no review row exists",
     "LEGACY_KEY from @libredb/grant-register": "the register: the key of a legacy row",

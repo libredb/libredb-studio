@@ -91,6 +91,11 @@ const NO_UNGRANTED_REFUSAL = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) 
   Record<DatabaseType, null>
 >;
 
+/** Whether each shipped engine's grammar is the one its legacy row reviewed: true for every one, by construction. */
+const EVERY_GRAMMAR_REVIEWED = Object.fromEntries(SHIPPED_DATABASE_TYPES.map((id) => [id, true])) as Readonly<
+  Record<DatabaseType, true>
+>;
+
 /**
  * Each member of an engine's grants, for every shipped engine: the grant reader's exported table where a reader still
  * reads one, the register's legacy rows of the member where the grant is the row, and, for a member the grant reader
@@ -122,6 +127,14 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   ownWords: legacyRegisterTable("ownWords"),
   servesOneSession: legacyRegisterTable("servesOneSession"),
   agentExecution: legacyRegisterTable("agentExecution"),
+  // A legacy engine's SQL text request carries its row's redaction and grammar digest and its declaration's
+  // readsSqlText and exempt forms, which equal its row's (tests/unit/db/engine-declarations.test.ts), so each grant is
+  // the row.
+  redaction: legacyRegisterTable("redaction"),
+  readsSqlText: legacyRegisterTable("readsSqlText"),
+  confirmExemptForms: legacyRegisterTable("confirmExemptForms"),
+  decidesAlone: legacyRegisterTable("decidesAlone"),
+  reviewedGrammar: EVERY_GRAMMAR_REVIEWED,
 };
 
 /** The grant members the grant reader builds as a new value rather than handing on its row's own. */
@@ -129,6 +142,8 @@ const COPIED_GRANT_MEMBERS: ReadonlySet<string> = new Set([
   "maskingExemptColumns",
   "hostPathFields",
   "agentCredential",
+  "redaction",
+  "confirmExemptForms",
 ]);
 
 /**
@@ -191,8 +206,8 @@ describe("the legacy adapter's records", () => {
       for (const [member, table] of Object.entries(GRANT_TABLES)) {
         const granted = engine.grants[member as keyof EngineRecord["grants"]];
         // Equal rather than identical to the oracle only where the grant reader builds a new value: a masking
-        // exemption, a host path field list the request adds to, and an agent credential, whose superseding fields it
-        // narrows.
+        // exemption, a host path field list the request adds to, an agent credential, whose superseding fields it
+        // narrows, a redaction and the exempt forms it keeps.
         if (COPIED_GRANT_MEMBERS.has(member)) expect([member, granted]).toEqual([member, table[id] as never]);
         else expect(granted).toBe(table[id] as never);
       }

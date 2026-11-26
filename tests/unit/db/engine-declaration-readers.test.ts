@@ -167,7 +167,7 @@ const CLAIM_READERS: Readonly<Record<string, readonly string[]>> = {
   "src/lib/db/claim-grants.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/claims.generated.ts": CLAIM_REQUEST_MEMBERS,
   "src/lib/db/engine-catalog/projection.ts": CLAIM_REQUEST_MEMBERS,
-  "src/lib/db/server-catalog-compose.ts": CLAIM_REQUEST_MEMBERS,
+  "src/lib/db/server-catalog-compose.ts": [...CLAIM_REQUEST_MEMBERS, "sqlText.redaction"],
 };
 
 /** The paths `CLAIM_READERS` lists, in its order, written out so a reader added to it is a reviewed change here too. */
@@ -182,9 +182,9 @@ const EXPECTED_CLAIM_READERS = [
 const DECLARATION_READERS: readonly DeclarationReader[] = [
   {
     path: "src/lib/db/claim-grants.ts",
-    members: CLAIM_REQUEST_MEMBERS,
+    members: [...CLAIM_REQUEST_MEMBERS, "sqlText.readsSqlText", "sqlText.grammar"],
     reason:
-      "Studio's grant reader: each engine's policy, MCP, connection and agent mode claim requests, read from the claim requests and granted against Studio's review of each claim for the engine",
+      "Studio's grant reader: each engine's policy, MCP, connection and agent mode claim requests, read from the claim requests, and each legacy engine's readsSqlText and exempt forms, read from the SQL text, each granted against Studio's review of the claim for the engine",
   },
   {
     path: "src/lib/db/compatibility.ts",
@@ -348,10 +348,12 @@ const DECLARATION_READERS: readonly DeclarationReader[] = [
       "facets.maintenance",
       "facets.maintenanceSpecs",
       "facets.monitoring",
+      "sqlText.readsSqlText",
       "sqlText.grammar",
+      "sqlText.redaction",
     ],
     reason:
-      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, whose exempt forms the gate never counts (packageStatementAsks)",
+      "composes the server's engine catalog from the admitted packages' declarations, with the projections Studio's own declarations are projected by, the bundled fence aliases and editor facts its set rules read them against, the claim requests and SQL text requests, the latter with its grammar's digest, it hands unread to Studio's grant reader, which grants each against Studio's review record, the maintenance and monitoring facets the host core checks a package session's calls against, and the statement grammar the query route's gate reads a package engine's statements under, whose exempt forms the gate never counts (packageStatementAsks)",
   },
   {
     path: "src/lib/db/server-catalog.ts",
@@ -763,7 +765,8 @@ describe("engine declaration readers", () => {
     // nothing else.
     const unlisted = claimReaders(DECLARATION_READERS, claims, {});
     expect([...new Set(unlisted.map((problem) => problem.split(" ")[0]))]).toEqual(EXPECTED_CLAIM_READERS);
-    expect(unlisted).toHaveLength(EXPECTED_CLAIM_READERS.length * requested.length);
+    // The composition also reads each admitted declaration's redaction, which it hands to the grant reader.
+    expect(unlisted).toHaveLength(EXPECTED_CLAIM_READERS.length * requested.length + 1);
     expect(claimReaders(widened, claims)).toEqual([
       `src/lib/db/engine-catalog/projection.ts reads sqlText.redaction, which holds the claim sqlText.redaction, ${CLAIM_READ_RULE}`,
     ]);
@@ -790,7 +793,7 @@ describe("engine declaration readers", () => {
     ]);
   });
 
-  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar and the server catalog's composition, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
+  test("the confirmation gate's claims are authored only in the SQL text, read only by its projection, its module, the SQL grammar, the server catalog's composition and the grant reader, and counted by the gate only through CONFIRMATION_CLAIM_REVIEW", () => {
     const gateClaims = (member: string) =>
       CONFIRMATION_GATE_CLAIMS.filter((claim) => overlaps(member, claim)).map(
         (claim) => `${member} is authored, and it holds the claim ${claim}, ${AUTHORED_CLAIM_RULE}`,
@@ -801,13 +804,15 @@ describe("engine declaration readers", () => {
       ...gateClaims("sqlText.grammar"),
     ]);
     expect(authoredClaims(AUTHORED_MEMBERS, CONFIRMATION_GATE_CLAIMS)).toHaveLength(2);
-    // The only readers of them: the projection, its generated module and the SQL grammar that composes each row, and
-    // the server catalog's composition, which hands an admitted package's grammar to the gate, which counts none of its
-    // exempt forms (packageStatementAsks in src/lib/sql/dangerous-query.ts) and never reads its readsSqlText.
+    // The only readers of them: the projection, its generated module and the SQL grammar that composes each row, the
+    // server catalog's composition, which hands an admitted package's grammar to the gate, which counts none of its
+    // exempt forms (packageStatementAsks in src/lib/sql/dangerous-query.ts) and never reads its readsSqlText, and
+    // hands its SQL text request to the grant reader, which grants each claim against the engine's register row.
     const readers = [
       ...new Set(claimReaders(DECLARATION_READERS, CONFIRMATION_GATE_CLAIMS).map((problem) => problem.split(" ")[0])),
     ];
     expect(readers).toEqual([
+      "src/lib/db/claim-grants.ts",
       "src/lib/db/engine-catalog/projection.ts",
       "src/lib/db/engine-catalog/sql-text.generated.ts",
       "src/lib/db/server-catalog-compose.ts",

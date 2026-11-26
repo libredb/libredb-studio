@@ -37,6 +37,11 @@ export function grants(overrides: Record<string, unknown> = {}): Record<string, 
     servesOneSession: null,
     agentExecution: false,
     ownWords: "scrubbed",
+    redaction: { kind: "none" },
+    readsSqlText: true,
+    confirmExemptForms: [],
+    decidesAlone: false,
+    grammarSha256: null,
     ...overrides,
   };
 }

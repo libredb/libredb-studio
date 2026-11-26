@@ -13,14 +13,19 @@
  *
  * A row's `grants` holds one member per claim, each in its claim's vocabulary, and every member is required, so no
  * grant is left out by omission; its optional `reasons` holds LibreDB's review note for a member, by member name. The
- * rows are hand-reviewed data, written once and edited by review, never projected from a declaration.
+ * rows are hand-reviewed data, written once and edited by review, never projected from a declaration. The SQL text
+ * members, `redaction`, `readsSqlText`, `confirmExemptForms` and `decidesAlone`, are reviewed for one grammar, the one
+ * whose digest the row's `grammarSha256` states (the SHA-256 of the grammar's canonical text, which the schema's
+ * description of the member defines), and grant nothing under any other.
  *
  * The reader validates the register against its schema when it reads it (src/schema-subset.ts, which compiles no code,
  * so it runs in the browser and the VS Code webview as on the server), then refuses two code rules:
  * - `duplicate-key`: two rows with one key, two legacy rows of one engine, or two package rows of one name, version,
  *   digest and engine;
  * - `legacy-engine-not-served`: a legacy row of an engine the legacy adapter does not serve. The served set is the
- *   caller's, since this package imports nothing of Studio's.
+ *   caller's, since this package imports nothing of Studio's;
+ * - `package-command-redaction`: a package row granting a `command` redaction, whose reader Studio binds only for an
+ *   engine its legacy adapter serves, through its own grammar function table, so a package row grants `sql` or `none`.
  * Every refusal of one read is reported together in one error, one line each, `<rule> at <JSON Pointer>: <sentence>`,
  * naming no value of the register beyond a key's name. The code rules are read only once the schema admits the
  * register.
@@ -72,6 +77,18 @@ export type RegisterStatementLanguage =
 export type RegisterAgentReading = "sessions" | "slow-queries" | "table-stats" | "index-stats" | "storage" | "health";
 
 /**
+ * A statement redaction a row may grant: the schema's `redaction` enum, held equal to it by tests/types.test.ts. A
+ * `command` redaction names Studio's command reader of the engine, which only a legacy row may grant.
+ */
+export type RegisterRedaction =
+  | { readonly kind: "none" }
+  | { readonly kind: "sql"; readonly nameQuote: '"' }
+  | { readonly kind: "sql"; readonly nameQuote: "`" }
+  | { readonly kind: "sql"; readonly nameQuote: "[" }
+  | { readonly kind: "sql"; readonly nameQuote: null }
+  | { readonly kind: "command"; readonly reader: "redactionReader" };
+
+/**
  * What a row grants: the schema's `grants`, one member per claim. tests/types.test.ts holds every member and its
  * vocabulary equal to the schema's, so a member added, removed or retyped on one side only fails the typecheck or that
  * test.
@@ -101,6 +118,11 @@ export interface RegisterGrants {
   readonly servesOneSession: string | null;
   readonly agentExecution: boolean;
   readonly ownWords: "scrubbed" | "code-only";
+  readonly redaction: RegisterRedaction;
+  readonly readsSqlText: boolean;
+  readonly confirmExemptForms: readonly (readonly string[])[];
+  readonly decidesAlone: boolean;
+  readonly grammarSha256: string | null;
 }
 
 /** A package's key: its name, version and digest, in the providers lock's forms. */
@@ -162,6 +184,11 @@ export function parseGrantRegister(value: unknown, legacyEngines: readonly strin
     else byKey.set(text, index);
     if ("legacy" in row && !legacyEngines.includes(row.engine)) {
       lines.push(`legacy-engine-not-served at /${index}/engine: the legacy adapter serves no engine of this id`);
+    }
+    if ("package" in row && row.grants.redaction.kind === "command") {
+      lines.push(
+        `package-command-redaction at /${index}/grants/redaction: a package row grants no command redaction, since Studio binds a command reader only for an engine its legacy adapter serves`,
+      );
     }
   });
   if (lines.length > 0) throw new Error(["The grant register is refused:", ...lines].join("\n"));

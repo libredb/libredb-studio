@@ -21,20 +21,22 @@
  * generator projects its own declarations with (./engine-catalog/projection), composes each engine's field rules
  * (`packageFieldRules` in ./connection-form), grants each engine's claims through Studio's grant reader
  * (`grantEngineClaims` in ./claim-grants) with its row of `register`, the row keyed by its package's name, version and
- * digest, or with none where the register holds none, so each claim is granted at its restrictive value, and gives
- * each the package's source, its digest and the session its declaration states, and the offers of an engine served
- * through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register, `STUDIO_GRANT_REGISTER`; a test
- * may hand it a register of its own. It maps each engine a refused
- * package's lock entry names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is
- * transposed into each engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is
- * read by a client's value.
+ * digest, or with none where the register holds none, so each claim is granted at its restrictive value, its SQL text
+ * claims with the digest of the grammar it declares (`declaredSqlTextRequest`), so a row grants them only for the
+ * grammar it reviewed, and gives each the package's source, its digest and the session its declaration states, and the
+ * offers of an engine served through the provider contract (`PACKAGE_OFFERS`). The boot hands it Studio's register,
+ * `STUDIO_GRANT_REGISTER`; a test may hand it a register of its own. It maps each engine a refused package's lock entry
+ * names, but a legacy one, to the codes it was refused with. Every table keyed by engine id is transposed into each
+ * engine's own frozen record and the engines are kept in Maps, so no engine-keyed plain object is read by a client's
+ * value.
  */
 import type { GrantRegister } from "@libredb/grant-register";
 import type { EngineDeclaration, ProviderManifest } from "@libredb/provider-sdk/manifest";
 import { CATALOG_CONFLICT_RULES, type CatalogConflictRule } from "@/lib/provider-host/provider-refusals";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
-import { grantEngineClaims } from "./claim-grants";
+import { grantEngineClaims, type SqlTextRequest } from "./claim-grants";
 import { packageFieldRules } from "./connection-form";
+import { grammarSha256 } from "./grammar-digest";
 import { grammarFromFacts } from "./sql-grammar";
 import { BUNDLED_FENCE_ALIASES } from "./engine-catalog/editor.generated";
 import {
@@ -190,6 +192,20 @@ export function catalogConflicts(admitted: readonly AdmittedForCatalog[]): reado
 }
 
 /**
+ * The SQL text request of admitted declaration `engine` as the grant reader reads it: its `readsSqlText`, exempt forms
+ * and redaction as declared, and the digest of the grammar it declares, computed here on the server
+ * (./grammar-digest), so no module the browser loads hashes a grammar.
+ */
+export function declaredSqlTextRequest(engine: EngineDeclaration): SqlTextRequest {
+  return {
+    readsSqlText: engine.sqlText.readsSqlText,
+    confirmExemptForms: engine.sqlText.grammar.confirmExemptForms,
+    redaction: engine.sqlText.redaction,
+    grammarSha256: grammarSha256(engine.sqlText.grammar),
+  };
+}
+
+/**
  * The server's engine catalog of the admitted packages `admitted` and the refused packages `refused`, each admitted
  * engine granted its row of `register`.
  *
@@ -263,6 +279,7 @@ export function composeServerCatalog(
         grants: grantEngineClaims(
           id,
           requests[id],
+          declaredSqlTextRequest(engine),
           register.rowFor({ package: { name: pkg.name, version: pkg.version, digest: pkg.digest }, engine: id }),
           tables.seedOnly,
         ),

@@ -111,6 +111,58 @@ describe("refusals", () => {
     );
   });
 
+  test("a package row granting a command redaction is refused by name, and a legacy row's is admitted", () => {
+    const command = { redaction: { kind: "command", reader: "redactionReader" } } as const;
+
+    expect(
+      refusalLines(() => parseGrantRegister([packageRow(ENGINE_B, {}, { grants: grants(command) })], SERVED)),
+    ).toEqual([
+      "package-command-redaction at /0/grants/redaction: a package row grants no command redaction, since Studio binds a command reader only for an engine its legacy adapter serves",
+    ]);
+    const register = parseGrantRegister([legacyRow(ENGINE_A, { grants: grants(command) })], SERVED);
+    expect(register.rowFor({ legacy: LEGACY_KEY, engine: ENGINE_A })?.grants.redaction).toEqual(command.redaction);
+    // Vacuity: a package row granting a sql redaction is admitted.
+    const sql = { redaction: { kind: "sql", nameQuote: '"' } };
+    expect(() => parseGrantRegister([packageRow(ENGINE_B, {}, { grants: grants(sql) })], SERVED)).not.toThrow();
+  });
+
+  test("a SQL text member outside its vocabulary is refused at its pointer", () => {
+    const rowWith = (overrides: Record<string, unknown>) => [legacyRow(ENGINE_A, { grants: grants(overrides) })];
+
+    expect(
+      refusalLines(() => parseGrantRegister(rowWith({ redaction: { kind: "sql", nameQuote: "'" } }), SERVED)),
+    ).toEqual([
+      `value-not-allowed at /0/grants/redaction: the value is not one the schema allows here, {"kind":"none"}, {"kind":"sql","nameQuote":"\\""}, {"kind":"sql","nameQuote":"\`"}, {"kind":"sql","nameQuote":"["}, {"kind":"sql","nameQuote":null}, {"kind":"command","reader":"redactionReader"}`,
+    ]);
+    expect(
+      refusalLines(() => parseGrantRegister(rowWith({ confirmExemptForms: [["ALTER", "session"]] }), SERVED)),
+    ).toEqual([
+      "pattern-mismatch at /0/grants/confirmExemptForms/0/1: the value does not have the form the schema defines here",
+    ]);
+    expect(
+      refusalLines(() => parseGrantRegister(rowWith({ confirmExemptForms: ["ALTER SESSION SET"] }), SERVED)),
+    ).toEqual([
+      "wrong-type at /0/grants/confirmExemptForms/0: the value is not of the type the schema defines here, array",
+    ]);
+    expect(
+      refusalLines(() => parseGrantRegister(rowWith({ confirmExemptForms: [["ALTER"], ["ALTER"]] }), SERVED)),
+    ).toEqual(["duplicate at /0/grants/confirmExemptForms/1: the item repeats an earlier item of its list"]);
+    expect(refusalLines(() => parseGrantRegister(rowWith({ grammarSha256: "AB" }), SERVED))).toEqual([
+      "pattern-mismatch at /0/grants/grammarSha256: the value does not have the form the schema defines here",
+    ]);
+    expect(
+      refusalLines(() =>
+        parseGrantRegister([legacyRow(ENGINE_A, { grants: omit(grants(), "grammarSha256") })], SERVED),
+      ),
+    ).toEqual(['missing-key at /0/grants: the key "grammarSha256" is missing, which the schema requires here']);
+    // Vacuity: a reviewed grammar's digest and an exempt form of keywords are admitted.
+    const reviewed = {
+      grammarSha256: digest().slice("sha256:".length),
+      confirmExemptForms: [["ALTER", "SESSION", "SET"]],
+    };
+    expect(() => parseGrantRegister(rowWith(reviewed), SERVED)).not.toThrow();
+  });
+
   test("a register that is not a list is refused at the top level", () => {
     expect(refusalLines(() => parseGrantRegister({ rows: [] }, SERVED))).toEqual([
       "wrong-type at the top level: the value is not of the type the schema defines here, array",

@@ -105,9 +105,9 @@ export function admittedFor(
 }
 
 /**
- * Every member of a register row's grants at its claim's restrictive value, and the three host members at the value an
- * engine with no row reads: `serverLevelWithoutDatabase` false, the restrictive value at the choice of database, since
- * its two gates read it at opposite values.
+ * Every member of a register row's grants at its claim's restrictive value, the three host members at the value an
+ * engine with no row reads, and no reviewed grammar, `grammarSha256` null: `serverLevelWithoutDatabase` false, the
+ * restrictive value at the choice of database, since its two gates read it at opposite values.
  */
 const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
   writeReach: "open",
@@ -131,6 +131,11 @@ const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
   servesOneSession: null,
   agentExecution: false,
   ownWords: "code-only",
+  redaction: Object.freeze({ kind: "none" }),
+  readsSqlText: true,
+  confirmExemptForms: Object.freeze([]),
+  decidesAlone: false,
+  grammarSha256: null,
 });
 
 /**
