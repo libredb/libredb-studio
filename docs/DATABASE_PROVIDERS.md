@@ -347,7 +347,7 @@ Each engine takes one of three values:
 A seed and a connection may set `readOnly: true` wherever the value is not `open`, and it is refused on every `open` engine at load and before anything is built or dialled.
 On a `none` engine the flag changes no write, and the connection form shows a fixed Read-only label instead of a checkbox.
 A read-only seed still needs a managed connection and a credential its type does not mark unsafe, on every engine that takes the flag ([SECURITY.md](./SECURITY.md) row 3.8).
-Each provider doc states the same value in its `Write reach` row, and `tests/unit/db/write-reach-docs.test.ts` holds this table and those rows equal to the record and to every gate and proof symbol a provider declares.
+`tests/unit/db/write-reach-docs.test.ts` holds this table equal to the record and to every gate and proof symbol a provider declares.
 
 | Provider | type-id | Write reach | Paths, and the gate or proof |
 |----------|---------|-------------|------------------------------|
