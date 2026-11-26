@@ -135,8 +135,8 @@ export interface EngineSource {
 
 /**
  * What an engine offers the server paths that tell a legacy engine from a package's engine today, one member per
- * difference, each true (and `ownWords` `"scrubbed"`) for a legacy engine, served by a legacy `DatabaseProvider`, and
- * false (and `"code-only"`) for a package's engine, served through the provider contract.
+ * difference, each true for a legacy engine, served by a legacy `DatabaseProvider`, and false for a package's engine,
+ * served through the provider contract.
  */
 export interface EngineOffers {
   /**
@@ -172,11 +172,6 @@ export interface EngineOffers {
   readonly hostFiles: boolean;
   /** Test Connection's connect warnings and test-only cautions. */
   readonly testCautions: boolean;
-  /**
-   * How the engine's own words reach the client: through core's scrub (`"scrubbed"`), or only as Studio's sentence
-   * naming their code (`"code-only"`, src/lib/api/package-errors.ts).
-   */
-  readonly ownWords: "scrubbed" | "code-only";
 }
 
 /**

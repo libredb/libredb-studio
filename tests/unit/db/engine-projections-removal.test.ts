@@ -550,6 +550,9 @@ describe("each projection of the admitted declarations, built with and without a
       agentCredential: null,
       statementLanguage: null,
       agentReadings: [],
+      ownWords: "code-only",
+      servesOneSession: null,
+      agentExecution: false,
     });
 
     const removed = grantsOf([...ADMITTED, FIXTURE].filter((d) => d.id !== FIXTURE.id));

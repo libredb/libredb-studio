@@ -411,11 +411,12 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * How a failure of the editor's `call` on `engine` reaches the client, by how the engine's own words do
- * (`EngineOffers.ownWords`), as Test Connection reads it: a legacy provider's error as it is, answered in its words
- * through the connection's scrub, and a provider package's as Studio's sentence naming its code, logged once with its
- * words through core's `scrub` (`packageCallError` in src/lib/api/package-errors.ts; docs/providers/CONTRACT.md, clause
- * C-112).
+ * How a failure of the editor's `call` on `engine` reaches the client, by how its record grants the engine's own words
+ * (`grants.ownWords`), as Test Connection reads it: where they are `"scrubbed"`, every legacy engine's and a package
+ * engine's whose register row grants them, the error as it is, answered in its words through the connection's scrub;
+ * where they are `"code-only"`, a package engine's with no row granting them, as Studio's sentence naming its code,
+ * logged once with its words through core's `scrub` (`packageCallError` in src/lib/api/package-errors.ts;
+ * docs/providers/CONTRACT.md, clause C-112).
  */
 function answeredFailure(
   engine: EngineRecord,
@@ -423,6 +424,6 @@ function answeredFailure(
   scrub: ProviderTextScrub,
 ): (error: unknown) => never {
   return (error) => {
-    throw engine.offers.ownWords === "code-only" ? packageCallError(call, error, scrub, ROUTE) : error;
+    throw engine.grants.ownWords === "code-only" ? packageCallError(call, error, scrub, ROUTE) : error;
   };
 }

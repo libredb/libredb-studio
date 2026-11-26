@@ -61,7 +61,6 @@ const PACKAGE_OFFERS: EngineOffers = Object.freeze({
   sshTunnel: false,
   hostFiles: false,
   testCautions: false,
-  ownWords: "code-only",
 });
 
 /** An admitted package as boot hands it to the composer. */

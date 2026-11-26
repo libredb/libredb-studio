@@ -626,8 +626,20 @@ const GRANT_MEMBERS: readonly (keyof ClaimGrants<string>)[] = [
   "agentReadings",
 ];
 
-/** Studio's grant of each claim of one engine: one value per member of `ClaimGrants`. */
-export type EngineGrants = EngineGrant;
+/**
+ * Studio's grant of each claim of one engine, one value per member of `ClaimGrants`, and of the three host facts no
+ * declaration requests, read from the engine's register row alone:
+ * - `ownWords`: how the engine's own words reach the client, through core's scrub (`"scrubbed"`), or only as Studio's
+ *   sentence naming their code (`"code-only"`, src/lib/api/package-errors.ts), which is what an engine with no row reads;
+ * - `servesOneSession`: the reason the engine's connections serve their object tree from one session, or null, which is
+ *   what an engine with no row reads;
+ * - `agentExecution`: whether agent mode executes statements on the engine, false where no row exists.
+ */
+export type EngineGrants = EngineGrant & {
+  readonly ownWords: RegisterGrants["ownWords"];
+  readonly servesOneSession: string | null;
+  readonly agentExecution: boolean;
+};
 
 /** One engine's records of every claim, each holding no row: every claim is read at its restrictive value. */
 const NO_ROW: ClaimRecords = Object.freeze({
@@ -702,9 +714,12 @@ export function grantEngineClaims(
   if (row !== null && row.engine !== engine) {
     throw new Error(`grantEngineClaims was handed the register row of ${row.engine} for ${engine}`);
   }
-  return Object.freeze(
-    grantEngine(engine, requested, row === null ? NO_ROW : rowRecords(engine, row.grants), seedOnly),
-  );
+  return Object.freeze({
+    ...grantEngine(engine, requested, row === null ? NO_ROW : rowRecords(engine, row.grants), seedOnly),
+    ownWords: row === null ? "code-only" : row.grants.ownWords,
+    servesOneSession: row === null ? null : row.grants.servesOneSession,
+    agentExecution: row === null ? false : row.grants.agentExecution,
+  });
 }
 
 /** Every legacy engine's grants, keyed by its id in `SHIPPED_DATABASE_TYPES`' order, granted once at load. */
@@ -973,7 +988,7 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * so no code widens it at run time.
  */
 export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].grants.agentExecution),
+  SHIPPED_DATABASE_TYPES.filter((engine) => legacyEngineGrants(engine).agentExecution),
 );
 
 /**
@@ -991,5 +1006,5 @@ export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.f
  * at run time.
  */
 export const GRANTED_ONE_SESSION_ENGINES: readonly DatabaseType[] = Object.freeze(
-  SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].grants.servesOneSession !== null),
+  SHIPPED_DATABASE_TYPES.filter((engine) => legacyEngineGrants(engine).servesOneSession !== null),
 );

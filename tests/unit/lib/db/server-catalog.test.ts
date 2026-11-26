@@ -69,7 +69,6 @@ const OFFER_KEYS = [
   "explain",
   "hostFiles",
   "legacyProvider",
-  "ownWords",
   "queryEventText",
   "sshTunnel",
   "statementVocabulary",

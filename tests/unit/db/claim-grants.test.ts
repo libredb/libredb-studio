@@ -995,6 +995,9 @@ describe("the claims of an admitted provider package's engine", () => {
       agentCredential: null,
       statementLanguage: null,
       agentReadings: [],
+      ownWords: "code-only",
+      servesOneSession: null,
+      agentExecution: false,
     });
     expect(Object.isFrozen(answer.engine.grants)).toBe(true);
     forgetServerCatalog();

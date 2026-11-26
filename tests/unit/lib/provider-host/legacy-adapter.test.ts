@@ -36,6 +36,7 @@ import {
 } from "@/lib/provider-host/legacy-adapter/identity";
 import { LEGACY_ENGINES, LEGACY_OFFERS } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const DECLARATIONS = path.join(ROOT, "src/lib/db/engine-declarations");
@@ -67,7 +68,10 @@ function ruleData(rule: ConnectionFieldRule | undefined) {
   };
 }
 
-/** The grant reader's exported table of each member of an engine's grants. */
+/**
+ * The grant reader's exported table of each member of an engine's grants, and for each member the register holds and
+ * no table projects, the register's legacy rows of it.
+ */
 const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Record<DatabaseType, unknown>>>> = {
   writeReach: grants.GRANTED_WRITE_REACH,
   readsFileAccessPosture: grants.GRANTED_READS_FILE_ACCESS_POSTURE,
@@ -90,6 +94,9 @@ const GRANT_TABLES: Readonly<Record<keyof EngineRecord["grants"], Readonly<Recor
   agentCredential: grants.GRANTED_SEED_AGENT_CREDENTIAL,
   statementLanguage: grants.GRANTED_AGENT_STATEMENT_LANGUAGE,
   agentReadings: grants.GRANTED_AGENT_READINGS,
+  ownWords: legacyRegisterTable("ownWords"),
+  servesOneSession: legacyRegisterTable("servesOneSession"),
+  agentExecution: legacyRegisterTable("agentExecution"),
 };
 
 /**
@@ -172,7 +179,6 @@ describe("the legacy adapter's records", () => {
       sshTunnel: true,
       hostFiles: true,
       testCautions: true,
-      ownWords: "scrubbed",
     });
     const version = (JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { version: string }).version;
     expect([LEGACY_SOURCE_NAME, LEGACY_SOURCE_VERSION]).toEqual(["@libredb/studio", version]);

@@ -21,7 +21,7 @@ import {
   PACKAGE_VERSION_FORM,
 } from "@/lib/provider-host/providers-lock-format";
 import { LEGACY_ENGINE_IDS, LEGACY_SOURCE_NAME } from "@/lib/provider-host/legacy-adapter/identity";
-import { LEGACY_OFFERS } from "@/lib/provider-host/legacy-adapter/records";
+import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import { namingPattern } from "../../../scripts/isolation-ratchet";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
@@ -38,14 +38,19 @@ function legacyRows(): RegisterRow[] {
 }
 
 describe("the legacy rows", () => {
-  test("every engine the legacy adapter serves has a legacy row, and its own words are the legacy adapter's offer", () => {
+  test("every engine the legacy adapter serves has a legacy row, and its record grants its row's own words", () => {
     const rows = legacyRows();
 
     expect(rows.map((row) => row.engine)).toEqual([...LEGACY_ENGINE_IDS]);
     for (const row of rows) {
+      expect({ engine: row.engine, ownWords: LEGACY_ENGINES.get(row.engine)?.grants.ownWords }).toEqual({
+        engine: row.engine,
+        ownWords: row.grants.ownWords,
+      });
+      // Every legacy engine's words reach the client through core's scrub, as they did before the register held them.
       expect({ engine: row.engine, ownWords: row.grants.ownWords }).toEqual({
         engine: row.engine,
-        ownWords: LEGACY_OFFERS.ownWords,
+        ownWords: "scrubbed",
       });
     }
   });
