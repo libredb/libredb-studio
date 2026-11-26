@@ -1,4 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, setSystemTime } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { STUDIO_GRANT_REGISTER } from "@/lib/db/claim-grants";
+import { UnknownProviderError } from "@/lib/db/errors";
+import { forgetServerCatalog, installServerCatalog, serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { composeServerCatalog } from "@/lib/db/server-catalog-compose";
+import { unknownTypeSentence } from "@/lib/db/type-id";
 import {
   filterByRoles,
   filterUnavailableByRoles,
@@ -9,6 +15,8 @@ import {
 } from "@/lib/seed/connection-filter";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { SeedConnection, SeedDefaults, UnavailableSeedEntry } from "@/lib/seed/types";
+import type { DatabaseType } from "@/lib/types";
+import { withEngineRecord } from "../../helpers/package-catalog";
 
 const baseConn: SeedConnection = {
   id: "test",
@@ -414,6 +422,53 @@ describe("filterByRoles: the agent credential", () => {
     );
     expect(projectSeedConnection({ ...elastic, apiKeyId: undefined }, ["admin"]).agentUser).toBe("agent_reader");
   });
+});
+
+/**
+ * The projection's superseding gate reads the agent credential grant of the engine record the connection's type names
+ * (`servedEngineRecord` in src/lib/db/server-catalog.ts). A catalog a case installs is forgotten in `finally`.
+ */
+describe("projectSeedConnection: the agent credential grant it reads", () => {
+  const pair = { agentUser: "agent_reader", agentPassword: "${AGENT_PASSWORD}" };
+
+  it("the projection reads the superseding fields from the engine record its type names", () => {
+    const mysql = { ...baseConn, type: "mysql" as const, password: randomUUID(), ...pair };
+    // Studio's grant, read with nothing installed: mysql's legacy row names no superseding field.
+    expect(projectSeedConnection(mysql, ["admin"]).agentUser).toBe("agent_reader");
+
+    const catalog = withEngineRecord(composeServerCatalog([], [], STUDIO_GRANT_REGISTER), "mysql", (engine) => ({
+      ...engine,
+      grants: Object.freeze({
+        ...engine.grants,
+        agentCredential: Object.freeze({ form: "pair", supersededBy: Object.freeze(["password"] as const) }),
+      }),
+    }));
+    installServerCatalog(catalog);
+    try {
+      expect(() => projectSeedConnection(mysql, ["admin"])).toThrow(
+        'Seed connection "test" carries an agent credential beside password, which the mysql provider signs in with in preference to a user and password.',
+      );
+    } finally {
+      forgetServerCatalog();
+    }
+    expect(serverCatalogInstalled()).toBe(false);
+  });
+
+  it.each(["nope", "constructor"])(
+    "an agent credential on a type that names no engine is refused by the type-id sentence, and the connection without one is projected (%s)",
+    (type) => {
+      const stranger = { ...baseConn, type: type as DatabaseType };
+      let refusal: unknown;
+      try {
+        projectSeedConnection({ ...stranger, ...pair }, ["admin"]);
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal).toBeInstanceOf(UnknownProviderError);
+      expect((refusal as Error).message).toBe(unknownTypeSentence(type));
+      expect(projectSeedConnection(stranger, ["admin"]).type).toBe(type as DatabaseType);
+    },
+  );
 });
 
 describe("the reserved role", () => {

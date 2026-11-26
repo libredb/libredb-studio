@@ -1,23 +1,11 @@
 import { z } from "zod";
-import {
-  GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-  GRANTED_MCP_EXPOSABLE,
-  GRANTED_READ_ROOTS_REQUIRED,
-  GRANTED_SEED_AGENT_CREDENTIAL,
-  GRANTED_WRITE_REACH,
-} from "@/lib/db/claim-grants";
+import type { EngineGrants } from "@/lib/db/claim-grants";
 import { CONNECTION_STRING_ACCEPTED, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { isDatabaseType } from "@/lib/db/type-id";
-import type { WriteReach } from "@/lib/db/write-reach";
 import type { DatabaseConnection, DatabaseType, WithLiteralSeedFile } from "@/lib/types";
 import { publishedDefaultPairWarning, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
-import {
-  CONNECTION_FIELDS,
-  SEED_ONLY_FIELDS,
-  type SeedAgentCredential,
-  type SeedOnlyFields,
-  seedOnlyRefusal,
-} from "@/lib/db/connection-fields";
+import { CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedOnlyFields, seedOnlyRefusal } from "@/lib/db/connection-fields";
 import { isCredentialReference } from "./credential-resolver";
 import { connectionStringFor } from "@/lib/db/connection-string";
 
@@ -78,16 +66,34 @@ function refuseSeedOnlyFields(conn: { readonly type: DatabaseType }, ctx: z.Refi
 }
 
 /**
- * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from the record
- * it is handed, `GRANTED_MCP_EXPOSABLE` in `SeedConnectionSchema`, never a type-id branch, so an engine is
- * admitted by its own entry. Refused rather than stripped, because a stripped opt-in would load a file
- * that asks for something the product will not do. A factory over the record, the way
- * `readOnlyControl` takes its engine's answer, so the refusal is tested before any shipped engine
- * answers false.
+ * A reader of grant `M` of the engine a connection's type names: in `SeedConnectionSchema` `servedGrants`, the grants
+ * of the engine's record; in a test, a reader of the test's choosing.
  */
-export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType, boolean>>) {
+type GrantReader<M extends keyof EngineGrants> = (type: DatabaseType) => Pick<EngineGrants, M>;
+
+/**
+ * The grants of the engine record `type` names, which the server's catalog serves (`servedEngineRecord` in
+ * src/lib/db/server-catalog.ts): the reader `SeedConnectionSchema` hands each refusal below that reads a grant.
+ *
+ * @throws {UnknownProviderError} When `type` names no engine the server knows; `SeedConnectionSchema` never reaches it
+ * so, since its type enum refuses such a value before any refinement runs.
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot, likewise unreachable
+ * through the schema.
+ */
+function servedGrants(type: DatabaseType): EngineGrants {
+  return servedEngineRecord(type).grants;
+}
+
+/**
+ * The load's refusal of an MCP opt-in on an engine MCP is not offered for (#1089). Read from `grantsOf(conn.type)
+ * .exposable`, the reader it is handed (`servedGrants` in `SeedConnectionSchema`), never a type-id branch, so an engine
+ * is admitted by its own grant; what the reader throws propagates. Refused rather than stripped, because a stripped
+ * opt-in would load a file that asks for something the product will not do. A factory over the reader, the way
+ * `readOnlyControl` takes its engine's answer, so the refusal is tested before any shipped engine answers false.
+ */
+export function refuseMcpWhereNotOffered(grantsOf: GrantReader<"exposable">) {
   return (conn: { type: DatabaseType; mcp?: boolean }, ctx: z.RefinementCtx): void => {
-    if (conn.mcp !== true || exposable[conn.type]) return;
+    if (conn.mcp !== true || grantsOf(conn.type).exposable) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `mcp is not offered for ${conn.type}: the product does not expose this engine to MCP clients. Remove mcp from this connection.`,
@@ -100,15 +106,14 @@ export function refuseMcpWhereNotOffered(exposable: Readonly<Record<DatabaseType
  * The load's refusal of `readOnly: true` on an engine whose write reach is `open` (#1089): some path there sends a
  * write no Studio gate refuses, so the seed would be listed as read-only and still write. Accepted wherever the reach
  * is `guarded` or `none`; on a `none` engine the flag changes no write, and a policy that marks every seed read-only
- * still loads. Read from the record it is handed, `GRANTED_WRITE_REACH` in `SeedConnectionSchema`, never a type-id
- * branch,
- * and a factory over it for the reason `refuseMcpWhereNotOffered` gives. The credential refusal and the `managed`
- * refusal below apply on every engine this admits, `none` included, because a read-only seed promises a boundary on
- * the host as well as in Studio's code.
+ * still loads. Read from `grantsOf(conn.type).writeReach`, the reader it is handed (`servedGrants` in
+ * `SeedConnectionSchema`), never a type-id branch; what the reader throws propagates. A factory over the reader for the
+ * reason `refuseMcpWhereNotOffered` gives. The credential refusal and the `managed` refusal below apply on every engine
+ * this admits, `none` included, because a read-only seed promises a boundary on the host as well as in Studio's code.
  */
-export function refuseReadOnlyWhereOpen(reach: Readonly<Record<DatabaseType, WriteReach>>) {
+export function refuseReadOnlyWhereOpen(grantsOf: GrantReader<"writeReach">) {
   return (conn: { type: DatabaseType; readOnly?: boolean }, ctx: z.RefinementCtx): void => {
-    if (conn.readOnly !== true || reach[conn.type] !== "open") return;
+    if (conn.readOnly !== true || grantsOf(conn.type).writeReach !== "open") return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `readOnly is not offered for ${conn.type}: its provider does not enforce a read-only mode, so the connection would be listed as read-only and still write. Remove readOnly from this connection, or connect with a database role that cannot write.`,
@@ -137,13 +142,14 @@ const isSet = (value: string | undefined): value is string => value !== undefine
 const isLiteral = (value: string | undefined): value is string => isSet(value) && !isCredentialReference(value);
 
 /**
- * The load's refusals of an agent credential its engine's row does not take, read from the table it is handed,
- * `GRANTED_SEED_AGENT_CREDENTIAL` in `SeedConnectionSchema`, never a type-id branch. Each names the connection and the
+ * The load's refusals of an agent credential its engine's grant does not take, read from `grantsOf(conn.type)
+ * .agentCredential`, the reader it is handed (`servedGrants` in `SeedConnectionSchema`), never a type-id branch, and
+ * only for a connection that sets an agent field; what the reader throws propagates. Each names the connection and the
  * field, never the value, and a reference is unknown here: load refuses what the file shows, and the factory refuses
- * the rest at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record,
+ * the rest at open, before it connects. A factory over the reader, the way `refuseMcpWhereNotOffered` takes its own,
  * so each form is tested on an engine of the test's choosing.
  */
-export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType, SeedAgentCredential | null>>) {
+export function refuseInvalidAgentCredential(grantsOf: GrantReader<"agentCredential">) {
   return (conn: AgentCredentialFields, ctx: z.RefinementCtx): void => {
     const set = AGENT_FIELDS.filter((field) => isSet(conn[field]));
     const present = AGENT_FIELDS.filter((field) => conn[field] !== undefined);
@@ -151,7 +157,7 @@ export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType
     const refuse = (field: string, message: string): void => {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message, path: [field] });
     };
-    const row = table[conn.type];
+    const row = grantsOf(conn.type).agentCredential;
     if (row === null) {
       for (const field of present) {
         refuse(
@@ -220,14 +226,14 @@ export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType
 
 /**
  * The load's refusal of an MCP opt-in without an agent credential on an engine MCP reads only under one, read from
- * the record it is handed, `GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED` in `SeedConnectionSchema`, never a type-id branch.
- * The MCP
- * context refuses the same connection again at open (`assertAgentCredentialWhereRequired` in src/lib/mcp/context.ts).
- * A factory over the record for the reason `refuseMcpWhereNotOffered` is one: no shipped engine answers true yet.
+ * `grantsOf(conn.type).agentCredentialRequired`, the reader it is handed (`servedGrants` in `SeedConnectionSchema`),
+ * never a type-id branch; what the reader throws propagates. The MCP context refuses the same connection again at open
+ * (`assertAgentCredentialWhereRequired` in src/lib/mcp/context.ts). A factory over the reader for the reason
+ * `refuseMcpWhereNotOffered` is one.
  */
-export function refuseMcpWithoutAgentCredential(required: Readonly<Record<DatabaseType, boolean>>) {
+export function refuseMcpWithoutAgentCredential(grantsOf: GrantReader<"agentCredentialRequired">) {
   return (conn: AgentCredentialFields & { readonly mcp?: boolean }, ctx: z.RefinementCtx): void => {
-    if (conn.mcp !== true || !required[conn.type]) return;
+    if (conn.mcp !== true || !grantsOf(conn.type).agentCredentialRequired) return;
     if (isSet(conn.agentUser) || isSet(conn.agentPassword)) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -239,11 +245,11 @@ export function refuseMcpWithoutAgentCredential(required: Readonly<Record<Databa
 
 /**
  * The load's refusal of an MCP opt-in without read roots on an engine MCP reads only beneath roots its seed declares,
- * read from the record it is handed, `GRANTED_READ_ROOTS_REQUIRED` in `SeedConnectionSchema`, never a type-id branch.
- * The MCP
- * context refuses the same connection again at open (`assertReadRootsWhereRequired` in src/lib/mcp/context.ts).
+ * read from `grantsOf(conn.type).readRootsRequired`, the reader it is handed (`servedGrants` in `SeedConnectionSchema`),
+ * never a type-id branch; what the reader throws propagates. The MCP context refuses the same connection again at open
+ * (`assertReadRootsWhereRequired` in src/lib/mcp/context.ts).
  */
-export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType, boolean>>) {
+export function refuseMcpWithoutReadRoots(grantsOf: GrantReader<"readRootsRequired">) {
   return (
     conn: {
       readonly id: string;
@@ -253,7 +259,7 @@ export function refuseMcpWithoutReadRoots(required: Readonly<Record<DatabaseType
     },
     ctx: z.RefinementCtx,
   ): void => {
-    if (conn.mcp !== true || !required[conn.type] || conn.agentReadRoots !== undefined) return;
+    if (conn.mcp !== true || !grantsOf(conn.type).readRootsRequired || conn.agentReadRoots !== undefined) return;
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `Seed connection "${conn.id}" sets mcp: true on ${conn.type} without agentReadRoots: MCP reads this engine only beneath read roots its seed declares. Add agentReadRoots, or remove mcp from this connection.`,
@@ -456,8 +462,8 @@ export const SeedConnectionSchema = z
     // whole credential (a bearer token, a service-account key JSON). Declared for the reason skipObjectScan is: zod
     // strips an undeclared key silently, and a seed file's agent credential would validate and vanish, leaving its
     // agent and MCP calls under the connection's own login. Strings, because both are resolvable (RESOLVABLE_FIELDS)
-    // and the file is validated before anything is resolved. Which engines take which is Studio's grant,
-    // GRANTED_SEED_AGENT_CREDENTIAL in src/lib/db/claim-grants.ts, read by the refine below; only on a managed seed
+    // and the file is validated before anything is resolved. Which engines take which is the grant of the engine
+    // record the type names, its `grants.agentCredential`, read by the refine below; only on a managed seed
     // (SeedConfigSchema), and never in defaults.
     agentUser: z.string().optional(),
     agentPassword: z.string().optional(),
@@ -490,17 +496,17 @@ export const SeedConnectionSchema = z
       });
     }
   })
-  // An MCP opt-in on an engine MCP is not offered for (#1089), read from Studio's grant, GRANTED_MCP_EXPOSABLE.
-  .superRefine(refuseMcpWhereNotOffered(GRANTED_MCP_EXPOSABLE))
-  // An MCP opt-in without an agent credential on an engine MCP reads only under one, read from
-  // GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED.
-  .superRefine(refuseMcpWithoutAgentCredential(GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED))
-  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from GRANTED_READ_ROOTS_REQUIRED.
-  .superRefine(refuseMcpWithoutReadRoots(GRANTED_READ_ROOTS_REQUIRED))
-  // An agent credential the engine's row does not take, read from Studio's grant, GRANTED_SEED_AGENT_CREDENTIAL.
-  .superRefine(refuseInvalidAgentCredential(GRANTED_SEED_AGENT_CREDENTIAL))
-  // A read-only mode on an engine Studio can write unguarded, read from GRANTED_WRITE_REACH.
-  .superRefine(refuseReadOnlyWhereOpen(GRANTED_WRITE_REACH))
+  // An MCP opt-in on an engine MCP is not offered for (#1089), read from the engine record's grant of exposure.
+  .superRefine(refuseMcpWhereNotOffered(servedGrants))
+  // An MCP opt-in without an agent credential on an engine MCP reads only under one, read from the engine record's
+  // grant.
+  .superRefine(refuseMcpWithoutAgentCredential(servedGrants))
+  // An MCP opt-in without read roots on an engine MCP reads only beneath them, read from the engine record's grant.
+  .superRefine(refuseMcpWithoutReadRoots(servedGrants))
+  // An agent credential the engine's grant does not take, read from the engine record's grant.
+  .superRefine(refuseInvalidAgentCredential(servedGrants))
+  // A read-only mode on an engine Studio can write unguarded, read from the engine record's grant of write reach.
+  .superRefine(refuseReadOnlyWhereOpen(servedGrants))
   // A read-only seed whose credential its type declares unsafe to rely on (src/lib/db/credential-warnings.ts): a
   // published default pair, or no secret where the type accepts none, so the mode would promise a boundary the
   // server does not keep. The file shows only literals, so a pair with a `${ENV}` or `${vault:...}` reference in

@@ -1,7 +1,8 @@
 /**
  * Each connection gate that still reads a granted table answers Studio's grant of its claim, never Studio's review
- * record of it (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer, governance row
- * admission, the seed schema and the seed projection's gate.
+ * record of it (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer and governance row
+ * admission. The seed schema and the seed projection's gate read the grant of the connection's engine record, which
+ * tests/unit/seed/types.test.ts and tests/unit/seed/connection-filter.test.ts hold without a mock.
  *
  * Core's tunnel decision reads no grant table: it reads the engine record's `grants.sshTunnel`, so this file proves
  * only that the decision follows the record's grant, on a record whose grant is planted. The fields a provider
@@ -32,20 +33,13 @@ mock.module("@/lib/db/claim-grants", () => ({
     ...realGrants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
     mysql: true,
   }),
-  GRANTED_SEED_AGENT_CREDENTIAL: Object.freeze({
-    ...realGrants.GRANTED_SEED_AGENT_CREDENTIAL,
-    postgres: null,
-    mysql: Object.freeze({ form: "pair", supersededBy: Object.freeze(["password"] as const) }),
-  }),
 }));
 
-const { legacyAgentCredentialTable, legacyRegisterTable } = await import("../helpers/legacy-register");
+const { legacyRegisterTable } = await import("../helpers/legacy-register");
 const { decideTunnel } = await import("@/lib/db/tunnel-decision");
 const { LEGACY_ENGINES } = await import("@/lib/provider-host/legacy-adapter/records");
 const { offersSshTunnel } = await import("@/lib/db-ui-config");
 const { admitConnectionRows } = await import("@/lib/governance/admission");
-const { SeedConnectionSchema } = await import("@/lib/seed/types");
-const { projectSeedConnection } = await import("@/lib/seed/connection-filter");
 
 /** When every connection below was made. */
 const createdAt = new Date("2026-11-25T00:00:00.000Z");
@@ -55,8 +49,6 @@ describe("the connection gates", () => {
     // The records hold the rows the planted grants differ from.
     expect(legacyRegisterTable("sshTunnel").postgres).toBeNull();
     expect(legacyRegisterTable("serverLevelWithoutDatabase").mysql).toBe(false);
-    expect(legacyAgentCredentialTable().postgres).not.toBeNull();
-    expect(legacyAgentCredentialTable().mysql?.supersededBy).toEqual([]);
 
     // Core's tunnel decision refuses the tunnel with the sentence of the record's grant, and the dialog, which reads
     // the granted table, offers none.
@@ -109,35 +101,5 @@ describe("the connection gates", () => {
         code: "SERVER_LEVEL_NOT_ALLOWED",
       },
     ]);
-
-    // The seed schema refuses a postgres agent credential, and the projection's gate a mysql one beside the password.
-    const agentPassword = randomUUID();
-    const seed = SeedConnectionSchema.safeParse({
-      id: "seed-pg",
-      name: "Seed PG",
-      type: "postgres",
-      host: "localhost",
-      port: 5432,
-      roles: ["admin"],
-      agentUser: "agent",
-      agentPassword,
-    });
-    expect(seed.success).toBe(false);
-    expect(seed.error?.issues.map((issue) => issue.message)).toContain(
-      'Seed connection "seed-pg": agentUser is refused: a postgres seed takes no agent credential, so the agent and MCP could not run under one. Remove agentUser from this connection.',
-    );
-    const mysql = {
-      id: "seed-my",
-      name: "Seed MySQL",
-      type: "mysql" as const,
-      host: "localhost",
-      roles: ["*"],
-      password: randomUUID(),
-      agentUser: "agent",
-      agentPassword,
-    };
-    expect(() => projectSeedConnection(mysql, ["admin"])).toThrow(
-      'Seed connection "seed-my" carries an agent credential beside password, which the mysql provider signs in with in preference to a user and password.',
-    );
   });
 });

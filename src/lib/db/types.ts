@@ -1442,9 +1442,9 @@ export interface ProviderCapabilities {
    * A read-only mode a provider ignores would be a promise nobody keeps: the connection would be listed as read-only
    * and send its writes (#1089). So `readOnly: true` is accepted only where the summary is not `open`, and refused
    * everywhere else: by `assertReadOnlyHonoured` in `src/lib/db/open-check.ts`, which reads the engine record's
-   * `grants.readOnlyEnforced`, and by the seed schema and the connection form, which read `GRANTED_WRITE_REACH`, each
-   * before a provider exists; both are derived in `src/lib/db/claim-grants.ts` from Studio's grant of the engine's write
-   * reach.
+   * `grants.readOnlyEnforced`, by the seed schema, which reads the engine record's `grants.writeReach`, and by the
+   * connection form, which reads `GRANTED_WRITE_REACH`, each before a provider exists; all are derived in
+   * `src/lib/db/claim-grants.ts` from Studio's grant of the engine's write reach.
    * `tests/unit/db/read-only-enforced-capability.test.ts` holds each legacy engine's `readOnlyEnforced` grant equal to
    * this declaration's summary as well.
    *

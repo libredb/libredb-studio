@@ -1,5 +1,5 @@
-import { GRANTED_SEED_AGENT_CREDENTIAL } from "@/lib/db/claim-grants";
 import { SEED_ONLY_FIELDS, seedOnlyProjectionRefusal } from "@/lib/db/connection-fields";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseConnection, DatabaseType, SSLConfig } from "@/lib/types";
 import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import type { SeedConnection, SeedDefaults, ManagedConnection, UnavailableSeedEntry } from "./types";
@@ -65,14 +65,16 @@ function assertAgentCredentialSeedIsManaged(conn: SeedConnection): void {
 
 /**
  * An agent credential beside a field the engine's provider signs in with in preference to a user and password, read
- * from the engine's `GRANTED_SEED_AGENT_CREDENTIAL` row: the agent would run under the connection's own credential. The
- * seed schema refuses it at load; this is the mapper's own gate for a SeedConnection built in memory, and the only
- * check after load, since the factory does not compare the two.
+ * from the agent credential grant of the engine record the connection's type names (`servedEngineRecord` in
+ * src/lib/db/server-catalog.ts), null where the engine takes none: the agent would run under the connection's own
+ * credential. The seed schema refuses it at load; this is the mapper's own gate for a SeedConnection built in memory,
+ * and the only check after load, since the factory does not compare the two. The record is read only for a connection
+ * that carries an agent credential, and what the lookup throws propagates.
  */
 function assertAgentCredentialNotSuperseded(conn: SeedConnection): void {
   if (conn.agentUser === undefined && conn.agentPassword === undefined) return;
   const fields = conn as Readonly<Record<string, unknown>>;
-  const superseding = GRANTED_SEED_AGENT_CREDENTIAL[conn.type]?.supersededBy.find(
+  const superseding = servedEngineRecord(conn.type).grants.agentCredential?.supersededBy.find(
     (field) => fields[field] !== undefined,
   );
   if (superseding === undefined) return;
@@ -94,6 +96,14 @@ export function filterByRoles(connections: SeedConnection[], userRoles: string[]
  * operator's own roles offer the seed to any role but admin, `sharedWithNonAdminRoles`, which those narrowed roles can
  * no longer show: editorExecutionContext (src/lib/api/execution-context.ts) decides the file-access posture from it,
  * so every caller of one seed gets one posture.
+ *
+ * @throws {Error} When the connection sets a field only another engine reads, is read-only and unmanaged, carries an
+ * agent credential and is unmanaged, or carries an agent credential beside a field its engine signs in with in
+ * preference to it: a connection built in memory past the seed schema.
+ * @throws {UnknownProviderError} When the connection carries an agent credential and its type names no engine the
+ * server knows: a connection built in memory past the seed schema.
+ * @throws {ProviderUnavailableError} When the connection carries an agent credential and every package naming its
+ * engine was refused at boot.
  */
 export function projectSeedConnection(conn: SeedConnection, userRoles: string[]): ManagedConnection {
   assertSeedOnlyFieldsBelong(conn);

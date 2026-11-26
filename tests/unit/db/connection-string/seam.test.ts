@@ -9,7 +9,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
 import ts from "typescript";
 import { BUNDLED_CONNECTION_STRINGS } from "@/lib/db/engine-catalog/connection-string.generated";
 
@@ -82,7 +82,10 @@ function importFacts(path: string, source: string): ImportFact[] {
   return found;
 }
 
-/** The repository file a specifier names, or null for a package. */
+/**
+ * The repository file a specifier names, or null for a package. A JSON import names its file with its extension (the
+ * root package.json, which src/lib/provider-host/legacy-adapter/identity.ts reads for its version).
+ */
 function resolveLocal(from: string, specifier: string): string | null {
   const base = specifier.startsWith("@/")
     ? join(ROOT, "src", specifier.slice(2))
@@ -90,6 +93,7 @@ function resolveLocal(from: string, specifier: string): string | null {
       ? join(dirname(from), specifier)
       : null;
   if (base === null) return null;
+  if (extname(base) === ".json" && existsSync(base)) return base;
   for (const candidate of [`${base}.ts`, `${base}.tsx`, join(base, "index.ts"), join(base, "index.tsx")]) {
     if (existsSync(candidate)) return candidate;
   }
@@ -152,7 +156,10 @@ function engineFindings(id: string, path: string, source: string): string[] {
     .map(({ specifier }) => `${id}: ${relative(ROOT, path)} imports ${specifier}`);
 }
 
-/** Every value import the run-time graph of `entry` reaches, followed through repository files, with its importer. */
+/**
+ * Every value import the run-time graph of `entry` reaches, followed through repository files, with its importer. A
+ * JSON file is a leaf: it imports nothing.
+ */
 function reachedImports(entry: string): { from: string; specifier: string; resolved: string | null }[] {
   const seen = new Set<string>();
   const reached: { from: string; specifier: string; resolved: string | null }[] = [];
@@ -165,7 +172,7 @@ function reachedImports(entry: string): { from: string; specifier: string; resol
       if (typeOnly) continue;
       const resolved = resolveLocal(path, specifier);
       reached.push({ from: path, specifier, resolved });
-      if (resolved !== null) queue.push(resolved);
+      if (resolved !== null && extname(resolved) !== ".json") queue.push(resolved);
     }
   }
   return reached;
