@@ -1057,14 +1057,17 @@ describe("query/run", () => {
       pagination: { limit: 2, offset: 0, hasMore: true, totalReturned: 2, wasLimited: true },
     };
     assert.deepEqual(answer, body);
-    const route = await runEditorQuery(fakeProvider(), {
-      statement: "SELECT n FROM t",
-      options: { limit: 2, offset: 0 },
-      queryId: "q-1",
-      signal: new AbortController().signal,
-      route: "test",
-      scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
-    });
+    const route = await runEditorQuery(
+      { form: "provider", provider: fakeProvider() },
+      {
+        statement: "SELECT n FROM t",
+        options: { limit: 2, offset: 0 },
+        queryId: "q-1",
+        signal: new AbortController().signal,
+        route: "test",
+        scrub: providerTextScrub({ ...WIRE, createdAt: new Date(WIRE.createdAt) }, "any"),
+      },
+    );
     assert.deepEqual(route.body, body);
     assert.equal("explainFormat" in answer, false);
     assert.equal("resultSetCount" in answer, false);

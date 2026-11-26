@@ -11,11 +11,11 @@ import { editorExecutionContext } from "@/lib/api/execution-context";
 import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, openWithinBudget, openWithinCall, runEditorQuery } from "@/lib/api/editor-query";
 import { packageCallError } from "@/lib/api/package-errors";
-import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import { getOrCreateEditorSession } from "@/lib/db/factory";
 import type { EngineConnection, EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
+import { openedSession } from "@/lib/provider-host/open-engine";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
 import { getExplainStrategy, type ExplainMode } from "@/lib/explain";
@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
     requestedId = requestedConnectionId(body);
     submitted = typeof sql === "string" ? sql : null;
 
-    // An engine of an admitted provider package is served too (src/lib/api/package-editor-query.ts): its connection
+    // An engine of an admitted provider package is served too (`runEditorQuery` in src/lib/api/editor-query.ts): its connection
     // resolves with every guard of every route, with the server catalog's record of its engine, whose offers decide each
     // step below that differs between engines, and it runs on the package's session below.
     const { connection: named, engine } = await resolveServedConnection(body, guard.session);
@@ -312,7 +312,7 @@ export async function POST(req: NextRequest) {
     stage = "execution";
 
     if (!engine.offers.legacyProvider) {
-      // THE RUN ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the package's session, cached per key, and
+      // THE RUN ON A PACKAGE'S ENGINE (`runEditorQuery` in src/lib/api/editor-query.ts): the package's session, cached per key, and
       // the run through the host core.
       const answered = await runOnPackageSession(req, guard.session, named, engine, {
         statement: sql,
@@ -367,15 +367,18 @@ export async function POST(req: NextRequest) {
     }
 
     // The run itself, the steps the VS Code extension's backend child runs too (`src/lib/api/editor-query.ts`).
-    const { body: answered } = await runEditorQuery(provider, {
-      statement,
-      options,
-      params: bound.params,
-      queryId,
-      signal: req.signal,
-      route: "api/db/query",
-      scrub: providerTextScrub(connection, "any"),
-    });
+    const { body: answered } = await runEditorQuery(
+      { form: "provider", provider },
+      {
+        statement,
+        options,
+        params: bound.params,
+        queryId,
+        signal: req.signal,
+        route: "api/db/query",
+        scrub: providerTextScrub(connection, "any"),
+      },
+    );
     recordExecutedUnit(events, {
       connection,
       statement: submitted,
@@ -410,7 +413,7 @@ export async function POST(req: NextRequest) {
 
 /**
  * Opens the editor's session of `engine` for `connection` within the engine's connect budget and while the request
- * stays, and runs `run` on it through the host core (`runPackageEditorQuery`). A provider package's own error is
+ * stays, and runs `run` on it through the host core (`runEditorQuery`). A provider package's own error is
  * answered with Studio's sentence naming its code and logged once, its words through core's scrub (`packageCallError`).
  */
 async function runOnPackageSession(
@@ -428,14 +431,16 @@ async function runOnPackageSession(
   ).catch((error: unknown) => {
     throw packageCallError("open", error, scrub, route);
   });
-  const { body } = await runPackageEditorQuery(cached, {
-    ...run,
-    signal: req.signal,
-    route,
-    scrub,
+  const target = {
+    form: "session",
+    ...openedSession(cached.opened),
+    entry: cached,
     queryTimeout: connection.queryTimeout,
-  }).catch((error: unknown) => {
-    throw packageCallError("execute", error, scrub, route);
-  });
+  } as const;
+  const { body } = await runEditorQuery(target, { ...run, signal: req.signal, route, scrub }).catch(
+    (error: unknown) => {
+      throw packageCallError("execute", error, scrub, route);
+    },
+  );
   return body;
 }

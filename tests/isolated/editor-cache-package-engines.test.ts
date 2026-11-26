@@ -65,7 +65,7 @@ const { createHostCore } = await import("@/lib/provider-host/core/host-core");
 const { refusalError } = await import("@/lib/provider-host/access");
 const { logger } = await import("@/lib/logger");
 const { installHostCore } = await import("@/lib/provider-host/instance");
-const { runPackageEditorQuery } = await import("@/lib/api/package-editor-query");
+const { runEditorQuery } = await import("@/lib/api/editor-query");
 const { providerTextScrub } = await import("@/lib/db/operations/provider-text");
 const { encodeValue } = await import("@libredb/provider-sdk/values");
 type EngineRecord = import("@/lib/db/server-catalog").EngineRecord;
@@ -298,7 +298,6 @@ describe("the sessions of a provider package's engine", () => {
       signal: new AbortController().signal,
       route: "test",
       scrub,
-      queryTimeout: undefined,
     });
 
     for (const [id, honoursOffset] of [
@@ -317,7 +316,10 @@ describe("the sessions of a provider package's engine", () => {
         },
       });
       const queryId = randomUUID();
-      const { body } = await runPackageEditorQuery(cached, run(queryId));
+      const { body } = await runEditorQuery(
+        { form: "session", ...openedSession(cached.opened), entry: cached, queryTimeout: undefined },
+        run(queryId),
+      );
       expect(body).toEqual({
         rows: [
           { key: "alpha", value: 1 },
@@ -366,9 +368,9 @@ describe("the sessions of a provider package's engine", () => {
       signal: new AbortController().signal,
       route: "test",
       scrub: providerTextScrub(connectionOf(SCOPE) as never, "any"),
-      queryTimeout: 30_000,
     };
-    const { body } = await runPackageEditorQuery(cached, run);
+    const target = { form: "session", ...openedSession(cached.opened), entry: cached, queryTimeout: 30_000 } as const;
+    const { body } = await runEditorQuery(target, run);
     expect(body).toMatchObject({ rows: [], fields: ["key"], openTransaction: "rolled-back" });
     const { scope } = argsOf(hooks, "execute")[1] as { scope: string };
     expect(typeof scope).toBe("string");
@@ -380,7 +382,7 @@ describe("the sessions of a provider package's engine", () => {
       [[{ name: 7 }], "a column with no name"],
     ] as const) {
       columns = [...answered];
-      const failure = await rejection(runPackageEditorQuery(cached, run));
+      const failure = await rejection(runEditorQuery(target, run));
       expect((failure as Error).message).toBe(
         `The provider package answered ${defect}, so Studio cannot key its rows; this is its defect.`,
       );

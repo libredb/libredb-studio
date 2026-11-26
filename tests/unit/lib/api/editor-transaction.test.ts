@@ -368,13 +368,16 @@ describe("the transaction facade's calls", () => {
       { statement: "SELECT n FROM t", params: [value], options: { limit: 100 }, scrub },
       callerOf(),
     );
-    const editor = await runEditorQuery(plain, {
-      statement: "SELECT n FROM t",
-      options: { limit: 100 },
-      signal: new AbortController().signal,
-      route: ROUTE,
-      scrub,
-    });
+    const editor = await runEditorQuery(
+      { form: "provider", provider: plain },
+      {
+        statement: "SELECT n FROM t",
+        options: { limit: 100 },
+        signal: new AbortController().signal,
+        route: ROUTE,
+        scrub,
+      },
+    );
 
     expect(outcome.kind).toBe("answered");
     const answered = outcome as { body: unknown; sessionState: unknown };

@@ -41,7 +41,10 @@ interface BootBundle {
 
 /** What the route bundle exports: the facade, the slot's reader and its own copy of the errors and the record readers. */
 interface RouteBundle {
-  runEditorQuery(provider: DatabaseProvider, run: object): Promise<{ body: { rows: unknown[] } }>;
+  runEditorQuery(
+    target: { form: "provider"; provider: DatabaseProvider },
+    run: object,
+  ): Promise<{ body: { rows: unknown[] } }>;
   cancelEditorRun(provider: DatabaseProvider, queryId: string, caller: AbortSignal, route: string): Promise<object>;
   hostCore(): CoreShape;
   providerTextScrub(connection: DatabaseConnection, reach: "any"): object;
@@ -162,7 +165,7 @@ describe("one host core across two bundles", () => {
       }),
       "test",
     );
-    const answered = await route.runEditorQuery(provider(oneRow), runOf());
+    const answered = await route.runEditorQuery({ form: "provider", provider: provider(oneRow) }, runOf());
     await route.cancelEditorRun(provider(oneRow), randomUUID(), new AbortController().signal, "test");
 
     expect(answered.body.rows).toEqual([{ n: 1 }]);
@@ -175,8 +178,12 @@ describe("one host core across two bundles", () => {
     gone.abort(new DOMException("The request went away.", "AbortError"));
 
     const [pastDeadline, callerGone] = await Promise.all([
-      route.runEditorQuery(provider(oneRow, -70_000), runOf()).catch((error: unknown) => error),
-      route.runEditorQuery(provider(oneRow), runOf(gone.signal)).catch((error: unknown) => error),
+      route
+        .runEditorQuery({ form: "provider", provider: provider(oneRow, -70_000) }, runOf())
+        .catch((error: unknown) => error),
+      route
+        .runEditorQuery({ form: "provider", provider: provider(oneRow) }, runOf(gone.signal))
+        .catch((error: unknown) => error),
     ]);
 
     expect(pastDeadline).toBeInstanceOf(route.StudioTimeoutRefusal);
@@ -193,7 +200,9 @@ describe("one host core across two bundles", () => {
     boot.boot();
     const failure = new route.QueryError(`relation ${randomUUID()} does not exist`);
 
-    const caught = await route.runEditorQuery(provider(failure), runOf()).catch((error: unknown) => error);
+    const caught = await route
+      .runEditorQuery({ form: "provider", provider: provider(failure) }, runOf())
+      .catch((error: unknown) => error);
 
     expect(caught).toBe(failure);
     expect(caught).toBeInstanceOf(route.QueryError);

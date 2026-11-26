@@ -2893,5 +2893,5 @@ export const REMOVED_CLAUSES: Readonly<Record<string, string>> = {
   "C-90": "src/lib/provider-loader/index.cjs",
   "C-108": "src/lib/uncaught-exception.ts",
   "C-110": "src/lib/db/factory.ts",
-  "C-113": "src/lib/api/package-editor-query.ts",
+  "C-113": "src/lib/api/editor-query.ts",
 };

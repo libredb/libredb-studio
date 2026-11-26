@@ -1,5 +1,5 @@
 /**
- * `POST /api/db/query` on an engine an admitted provider package serves (src/lib/api/package-editor-query.ts),
+ * `POST /api/db/query` on an engine an admitted provider package serves (`runEditorQuery` in src/lib/api/editor-query.ts),
  * through the real `resolveServedConnection`, the provider factory's real editor cache, the real confirmation gate and
  * the real host core: the statement is read under the grammar the package declares, with every claim that loosens the
  * gate uncounted; the session opens once per key through the package; the run answers the package's rows keyed by

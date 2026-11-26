@@ -266,13 +266,16 @@ export async function todayText(shape: Shape, rows: Record<string, unknown>[]): 
 
 /** The host's answer body: `runEditorQuery`'s. */
 async function hostBody(shape: Shape, rows: Record<string, unknown>[]): Promise<AnswerBody> {
-  const { body } = await runEditorQuery(legacyProvider(shape, rows), {
-    statement: STATEMENT,
-    options: { ...OPTIONS },
-    signal: new AbortController().signal,
-    route: "bench",
-    scrub: SCRUB,
-  });
+  const { body } = await runEditorQuery(
+    { form: "provider", provider: legacyProvider(shape, rows) },
+    {
+      statement: STATEMENT,
+      options: { ...OPTIONS },
+      signal: new AbortController().signal,
+      route: "bench",
+      scrub: SCRUB,
+    },
+  );
   return body as unknown as AnswerBody;
 }
 
