@@ -923,8 +923,8 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * is a statement.
  *
  * The browser reads it too, the unauthenticated login hero, the agent manifest and the agent posture, so no provider
- * module may enter this module's imports: one would drag a database driver toward the login bundle. Frozen, so no code
- * widens it at run time.
+ * class or database driver may enter this module's imports: one would drag a driver toward the login bundle. Frozen,
+ * so no code widens it at run time.
  */
 export const GRANTED_AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = Object.freeze(
   SHIPPED_DATABASE_TYPES.filter((engine) => LEGACY_GRANT_ROWS[engine].agentExecution),

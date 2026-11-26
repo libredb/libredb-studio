@@ -2680,7 +2680,7 @@ Four levels, one reading per row above: `blocked` covers the four arms that exec
 The level and the pill are the posture module's own, chosen by the arm; a language pack supplies the qualifier, the title and the body of its plan, reads and widened arms and cannot write either ([Language packs](#language-packs)).
 They stay separate arms because "has no read-only statement path" is a claim about an engine, which a panel that has resolved no connection has not seen, and "refused on this connection" is a claim about one connection's user, which says nothing about the engine.
 Not one engine name and not one
-figure is typed in the module — the names come from `GRANTED_AGENT_EXECUTION_ENGINES` through
+figure is typed in the module: the names come from `GRANTED_AGENT_EXECUTION_ENGINES` through
 `getDBConfig().label` and the figures from the policy rows, which is the rule `hero-proof.tsx`
 follows and #425 is the record of what typing them costs. `blocked` also takes no hue of its own
 (`fg-muted`): nothing executes and there is nothing to widen, so it is a dead end rather than a
