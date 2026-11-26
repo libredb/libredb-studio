@@ -1,8 +1,13 @@
 /**
  * Each connection gate answers Studio's grant of its claim, never Studio's review record of it
- * (docs/providers/CONTRACT.md, clause M-83): core's tunnel decision, the connection dialog's tunnel offer, the fields a
- * provider receives, the provider factory's file and host path admissions, governance row admission, the choice of
- * database, the seed schema and the seed projection's gate.
+ * (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer, the fields a provider receives, the
+ * provider factory's file and host path admissions, governance row admission, the choice of database, the seed schema
+ * and the seed projection's gate.
+ *
+ * Core's tunnel decision reads no grant table: it reads the engine record's `grants.sshTunnel`, so this file proves
+ * only that the decision follows the record's grant, on a record whose grant is planted. That each legacy record's
+ * grants are the grant reader's rows is held by the test "each legacy record's grants equal the grant reader's rows for
+ * its id" in tests/unit/lib/provider-host/legacy-adapter.test.ts (#2536).
  *
  * Under tests/isolated because it replaces `@/lib/db/claim-grants` with `mock.module()` before it imports any gate,
  * which holds only while this file is the first in its bun process to evaluate them. The grant module is the real one
@@ -70,7 +75,8 @@ describe("the connection gates", () => {
     expect(STUDIO_CLAIM_RECORDS.agentCredential.postgres).not.toBeNull();
     expect(STUDIO_CLAIM_RECORDS.agentCredential.mysql?.supersededBy).toEqual([]);
 
-    // Core's tunnel decision refuses the tunnel with the granted sentence, and the dialog offers none.
+    // Core's tunnel decision refuses the tunnel with the sentence of the record's grant, and the dialog, which reads
+    // the granted table, offers none.
     const tunnelled: DatabaseConnection = {
       id: "pg",
       name: "pg",
@@ -87,7 +93,7 @@ describe("the connection gates", () => {
         password: randomUUID(),
       },
     };
-    // Core's decision reads the grant from the engine's record, here postgres's with the planted grant.
+    // Core's decision reads the grant from the engine's record, here postgres's with a planted grant, not the table.
     const postgresRecord = LEGACY_ENGINES.get("postgres") as import("@/lib/db/server-catalog").EngineRecord;
     const planted = { ...postgresRecord, grants: { ...postgresRecord.grants, sshTunnel: PLANTED_TUNNEL_REFUSAL } };
     expect(() => decideTunnel(tunnelled, planted)).toThrow(PLANTED_TUNNEL_REFUSAL);
