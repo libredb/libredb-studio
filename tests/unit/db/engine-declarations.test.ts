@@ -467,7 +467,7 @@ const LANGUAGE_ENGINES: readonly (readonly [DatabaseType, AgentStatementLanguage
 
 /**
  * Each engine's agent server overlay as its own module exports it, the module found by the agent leg's triad path
- * (`src/lib/agent/languages/<family>/engines/<type-id>.ts`, the rule tests/unit/lib/agent/engine-docs.test.ts reads) and
+ * (`src/lib/agent/languages/<family>/engines/<type-id>.ts`, the rule tests/helpers/provider-layout.ts checks) and
  * imported by its absolute path, never through the registry the generator reads: every agent overlay slot the census's
  * slot table names is resolved on this overlay. Only the engines that speak a statement language have one.
  */

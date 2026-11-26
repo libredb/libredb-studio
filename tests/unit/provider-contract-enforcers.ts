@@ -1115,9 +1115,6 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a checkout deadline becomes a ConnectionError naming the wait that answers not-sent, the deadline kept as its cause",
         "a TransactionLostError raised before anything was sent answers not-sent, and one raised without beforeSend answers unknown",
       ],
-      "tests/unit/db/statement-outcome-docs.test.ts": [
-        "each provider document has one Failed statement outcome row, checkout-not-sent exactly when its provider runs a checkout through checkoutPhase",
-      ],
       "tests/integration/db/postgres-provider.test.ts": [
         "a pool checkout that fails answers its mapped class with outcome not-sent and sends nothing",
         "a begin whose pool checkout fails answers its mapped class with outcome not-sent, sends nothing and holds no transaction",
