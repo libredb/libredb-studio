@@ -1,8 +1,9 @@
 /**
  * Each connection gate that still reads a granted table answers Studio's grant of its claim, never Studio's review
- * record of it (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer and governance row
- * admission. The seed schema and the seed projection's gate read the grant of the connection's engine record, which
- * tests/unit/seed/types.test.ts and tests/unit/seed/connection-filter.test.ts hold without a mock.
+ * record of it (docs/providers/CONTRACT.md, clause M-83): the connection dialog's tunnel offer. Governance row
+ * admission, the seed schema and the seed projection's gate read the grants of the connection's engine record, which
+ * tests/unit/lib/governance/admission.test.ts, tests/unit/seed/types.test.ts and
+ * tests/unit/seed/connection-filter.test.ts hold without a mock.
  *
  * Core's tunnel decision reads no grant table: it reads the engine record's `grants.sshTunnel`, so this file proves
  * only that the decision follows the record's grant, on a record whose grant is planted. The fields a provider
@@ -29,17 +30,12 @@ mock.module("@/lib/db/claim-grants", () => ({
     ...realGrants.GRANTED_SSH_TUNNEL_REFUSAL,
     postgres: PLANTED_TUNNEL_REFUSAL,
   }),
-  GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Object.freeze({
-    ...realGrants.GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
-    mysql: true,
-  }),
 }));
 
 const { legacyRegisterTable } = await import("../helpers/legacy-register");
 const { decideTunnel } = await import("@/lib/db/tunnel-decision");
 const { LEGACY_ENGINES } = await import("@/lib/provider-host/legacy-adapter/records");
 const { offersSshTunnel } = await import("@/lib/db-ui-config");
-const { admitConnectionRows } = await import("@/lib/governance/admission");
 
 /** When every connection below was made. */
 const createdAt = new Date("2026-11-25T00:00:00.000Z");
@@ -48,7 +44,6 @@ describe("the connection gates", () => {
   test("each connection gate answers Studio's grant of its claim, not the record", () => {
     // The records hold the rows the planted grants differ from.
     expect(legacyRegisterTable("sshTunnel").postgres).toBeNull();
-    expect(legacyRegisterTable("serverLevelWithoutDatabase").mysql).toBe(false);
 
     // Core's tunnel decision refuses the tunnel with the sentence of the record's grant, and the dialog, which reads
     // the granted table, offers none.
@@ -74,32 +69,5 @@ describe("the connection gates", () => {
     expect(() => decideTunnel(tunnelled, planted)).toThrow(PLANTED_TUNNEL_REFUSAL);
     expect(offersSshTunnel("postgres")).toBe(false);
     expect(offersSshTunnel("mysql")).toBe(true);
-
-    // Governance skips a mysql definition with no database, as the grant at admission reads mysql.
-    const admission = admitConnectionRows(
-      [
-        {
-          connection_id: "3f6c2a91-0d4e-4b7a-9e15-c8a2f7d64b03",
-          engine: "mysql",
-          definition: { host: "db.example.internal", port: 3306 },
-          read_secret: "lsb1.never-opened",
-          write_secret: null,
-        } as never,
-      ],
-      {
-        allowedEngines: ["mysql"],
-        openSecret: () => {
-          throw new Error("no envelope is opened for a skipped row");
-        },
-      },
-    );
-    expect(admission.skipped.map((skip) => skip.item)).toEqual([
-      {
-        kind: "connection",
-        id: "3f6c2a91-0d4e-4b7a-9e15-c8a2f7d64b03",
-        path: "database",
-        code: "SERVER_LEVEL_NOT_ALLOWED",
-      },
-    ]);
   });
 });

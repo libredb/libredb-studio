@@ -151,9 +151,9 @@ export async function frameCacheKey(
  *
  * A provider per user on such an engine would be a second handle on one file, which DuckDB lets checkpoint over
  * the first one's committed rows and LibreDB refuses, so the `singleWriterFile` grant of the connection's engine record
- * decides it before any provider exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine that opens a local file
- * (`GRANTED_OPENS_LOCAL_FILE`), so Studio never names an owner here; an embedder of the factory that does gets the one
- * shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
+ * decides it before any provider exists, not a `connection.type` branch (CLAUDE.md). Governance admits no engine whose
+ * record's `grants.opensLocalFile` is true, so Studio never names an owner here; an embedder of the factory that does
+ * gets the one shared handle. The key and the factory both ask this, so the entry the factory records and the key it is cached
  * under always name the same owner. The record is read through `servedEngineRecord`, so a type naming no engine is
  * refused by name rather than read as an engine that keeps the owner, or, for a prototype key, as one that drops it.
  *

@@ -746,6 +746,10 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/seed/connection-filter.test.ts": [
         "the projection reads the superseding fields from the engine record its type names",
       ],
+      "tests/unit/lib/governance/admission.test.ts": [
+        "the gate reads the connection's record's grants: an engine whose record grants exposure keeps the row's MCP opt-in, and one whose record does not leaves it off",
+        "a row is skipped as its engine record's grants say: a local file, and a server-level definition",
+      ],
       "tests/unit/lib/db/claim-grant-refusal.test.ts": [
         "assertClaimsGranted refuses an engine whose claims leave a refusal at open, naming the type, and passes one with none",
       ],

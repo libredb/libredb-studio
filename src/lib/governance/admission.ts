@@ -9,10 +9,11 @@
  * 1. `connection_id` has the published format, and no other row has the same id. Every row of a repeated id is
  *    skipped, because Studio cannot tell which one the control plane meant.
  * 2. The engine names a provider this Studio has (`isDatabaseType`, the one check of a type id), opens no file on
- *    Studio's host (`GRANTED_OPENS_LOCAL_FILE`), and `GOVERNANCE_ALLOWED_ENGINES` names it, skipped in that order as
- *    PROVIDER_UNKNOWN, ENGINE_UNSUPPORTED and ENGINE_NOT_ALLOWED.
- * 3. An engine whose provider reaches the whole server without a database (`GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION`)
- *    has one, because a server-level connection opens a session to every database its credential reaches.
+ *    Studio's host (its engine record's `grants.opensLocalFile`), and `GOVERNANCE_ALLOWED_ENGINES` names it, skipped in
+ *    that order as PROVIDER_UNKNOWN, ENGINE_UNSUPPORTED and ENGINE_NOT_ALLOWED.
+ * 3. An engine whose provider reaches the whole server without a database (its engine record's
+ *    `grants.serverLevelAtAdmission`) has one, because a server-level connection opens a session to every database its
+ *    credential reaches.
  * 4. The definition holds only keys of the contract's allowlist, each with a value in its domain: `DEFINITION_ALLOWLIST`,
  *    which the manifest publishes, so a control plane that builds its connection form from it never writes a row
  *    Studio skips. A credential in the definition is told apart from any other key, because it belongs in an envelope.
@@ -31,13 +32,8 @@
  * the function that opens an envelope, which is `openGovernedSecret` in the snapshot loader.
  */
 import type { z } from "zod";
-import {
-  GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED,
-  GRANTED_MCP_EXPOSABLE,
-  GRANTED_OPENS_LOCAL_FILE,
-  GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION,
-  GRANTED_READ_ROOTS_REQUIRED,
-} from "@/lib/db/claim-grants";
+import type { EngineGrants } from "@/lib/db/claim-grants";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { isDatabaseType } from "@/lib/db/type-id";
 import { filterByRoles } from "@/lib/seed/connection-filter";
 import { type ManagedConnection, SeedConnectionSchema } from "@/lib/seed/types";
@@ -207,11 +203,12 @@ function definitionFault(definition: Readonly<Record<string, unknown>>): Fault |
   return invalid === undefined ? undefined : { path: invalid.segments.join("."), code: "DEFINITION_INVALID" };
 }
 
-/** What admission knows of a row once its id, engine and definition are admitted. */
+/** What admission knows of a row once its id, engine and definition are admitted, with its engine record's grants. */
 interface RowContext {
   readonly row: ConnectionRow;
   readonly id: string;
   readonly engine: DatabaseType;
+  readonly grants: EngineGrants;
   readonly definition: Readonly<Record<string, unknown>>;
 }
 
@@ -223,7 +220,10 @@ const present = (key: string, value: unknown): Readonly<Record<string, unknown>>
  * The record merged from a row and one credential set (docs/GOVERNANCE.md#sealed-credentials-lsb1): the row's columns,
  * the definition and the credential, whose TLS client key and certificate join the definition's `ssl` object.
  */
-function mergedRecord({ row, id, engine, definition }: RowContext, secret: OpenedSecret): Record<string, unknown> {
+function mergedRecord(
+  { row, id, engine, grants, definition }: RowContext,
+  secret: OpenedSecret,
+): Record<string, unknown> {
   const { sslClientKey, sslClientCert, ...credential } = secret;
   const clientTls = { ...present("clientKey", sslClientKey), ...present("clientCert", sslClientCert) };
   const tls = definition.ssl as Readonly<Record<string, unknown>> | undefined;
@@ -239,9 +239,7 @@ function mergedRecord({ row, id, engine, definition }: RowContext, secret: Opene
     // Only where the product offers the engine to MCP clients (#246): elsewhere the seed schema refuses the opt-in.
     // An engine MCP reads only under a seed agent credential, or only beneath read roots a seed declares, is left off
     // too, since a governed record carries neither.
-    ...(GRANTED_MCP_EXPOSABLE[engine] &&
-    !GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED[engine] &&
-    !GRANTED_READ_ROOTS_REQUIRED[engine]
+    ...(grants.exposable && !grants.agentCredentialRequired && !grants.readRootsRequired
       ? { mcp: row.mcp_enabled }
       : {}),
     ...definition,
@@ -315,6 +313,14 @@ interface RowOutcome {
 
 const skipOf = (id: string, fault: Fault): RowOutcome => ({ skip: { item: { kind: "connection", id, ...fault } } });
 
+/**
+ * The outcome of one row, by the rules of the module docblock in order. The engine's record is read once, from the
+ * server's catalog (`servedEngineRecord` in src/lib/db/server-catalog.ts), only after the type id check admits the
+ * engine, so the lookup cannot refuse it: every catalog holds the record of every legacy engine
+ * (`installServerCatalog`), and with none installed the legacy adapter's records answer. An engine of a provider
+ * package is skipped as PROVIDER_UNKNOWN by the type id check, before its record is read, since governance admits no
+ * package engine.
+ */
 function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: AdmissionOptions): RowOutcome {
   const id = row.connection_id;
   if (typeof id !== "string" || !CONNECTION_ID.test(id) || repeated.has(id)) {
@@ -322,18 +328,19 @@ function admitRow(row: ConnectionRow, repeated: ReadonlySet<unknown>, options: A
   }
   const engine = row.engine;
   if (!isDatabaseType(engine)) return skipOf(id, { code: "PROVIDER_UNKNOWN" });
-  if (GRANTED_OPENS_LOCAL_FILE[engine]) return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
+  const grants = servedEngineRecord(engine).grants;
+  if (grants.opensLocalFile) return skipOf(id, { code: "ENGINE_UNSUPPORTED" });
   if (!options.allowedEngines.includes(engine)) return skipOf(id, { code: "ENGINE_NOT_ALLOWED" });
   const definition = row.definition;
   if (!isPlainObject(definition)) return skipOf(id, { path: "definition", code: "DEFINITION_INVALID" });
   // The provider's own rule (`serverLevel` in providers/sql/postgres.ts): an empty or absent database is the server.
-  if (GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION[engine] && !definition.database) {
+  if (grants.serverLevelAtAdmission && !definition.database) {
     return skipOf(id, { path: "database", code: "SERVER_LEVEL_NOT_ALLOWED" });
   }
   const fault = definitionFault(definition);
   if (fault !== undefined) return skipOf(id, fault);
 
-  const context: RowContext = { row, id, engine, definition };
+  const context: RowContext = { row, id, engine, grants, definition };
   const read = levelRecord(context, "read", row.read_secret, options);
   if ("skip" in read) return read;
   const readOnly: AdmittedConnection = { id, read: read.record, envelopes: { read: read.envelope } };

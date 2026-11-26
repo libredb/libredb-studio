@@ -791,17 +791,17 @@ export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, s
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
 /**
- * Studio's grant of `policy.readRootsRequired`, which MCP, governance and agent runs read: the runs route refuses an
- * agent-mode Start whose workflow sends statements on a connection without read roots, the MCP context refuses such a
- * connection at open with `READ_ROOTS_REQUIRED`, and a governed record, which carries no roots, is never opted in to
- * MCP. The seed schema refuses `mcp: true` without them from the engine record's `grants.readRootsRequired`.
+ * Studio's grant of `policy.readRootsRequired`, which MCP and agent runs read: the runs route refuses an agent-mode
+ * Start whose workflow sends statements on a connection without read roots, and the MCP context refuses such a
+ * connection at open with `READ_ROOTS_REQUIRED`. The seed schema refuses `mcp: true` without them, and governance never
+ * opts a governed record, which carries no roots, in to MCP, each from the engine record's `grants.readRootsRequired`.
  */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
 /**
- * Studio's grant of `mcp.exposable`, which governance and the MCP tools read. The seed schema refuses `mcp: true` at load
- * on an engine whose record's `grants.exposable` is false, naming the engine, since the seed file is validated before
- * any provider exists.
+ * Studio's grant of `mcp.exposable`, which the MCP tools read. The seed schema refuses `mcp: true` at load on an engine
+ * whose record's `grants.exposable` is false, naming the engine, since the seed file is validated before any provider
+ * exists, and governance leaves such an engine's opt-in off.
  */
 export const GRANTED_MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.exposable;
 
@@ -823,31 +823,24 @@ export const GRANTED_MCP_METADATA_READ_CHANGES_STATE: Readonly<Record<DatabaseTy
   BUNDLED_GRANTS.metadataReadChangesState;
 
 /**
- * Studio's grant of `mcp.agentCredentialRequired`, which MCP and governance read: an engine MCP reads only under the
- * seed's own agent credential, whose grants bound what an MCP client reads, so the MCP context refuses such a connection
- * at open with `AGENT_CREDENTIAL_REQUIRED`. The seed schema refuses `mcp: true` without one at load from the engine
- * record's `grants.agentCredentialRequired`.
+ * Studio's grant of `mcp.agentCredentialRequired`, which MCP reads: an engine MCP reads only under the seed's own agent
+ * credential, whose grants bound what an MCP client reads, so the MCP context refuses such a connection at open with
+ * `AGENT_CREDENTIAL_REQUIRED`. The seed schema refuses `mcp: true` without one at load, and governance leaves such an
+ * engine's opt-in off, each from the engine record's `grants.agentCredentialRequired`.
  */
 export const GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.agentCredentialRequired;
 
 /**
- * Studio's grant of `connection.opensLocalFile`, which governance reads; the file admission of the legacy adapter's
- * open (`admittedFileConnection` in ./provider-files) and the VS Code backend read an engine's record's
- * `grants.opensLocalFile`. A governance source never grants such an engine
- * (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as ENGINE_UNSUPPORTED whatever
- * `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
- * such a connection names before the provider is built, refusing Studio's own storage files there, and hands the
- * provider the absolute path it admitted.
+ * Studio's grant of `connection.opensLocalFile`, which no gate reads: governance row admission, the file admission of
+ * the legacy adapter's open (`admittedFileConnection` in ./provider-files) and the VS Code backend read an engine's
+ * record's `grants.opensLocalFile`.
  */
 export const GRANTED_OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.opensLocalFile;
 
 /**
- * Studio's grant of `connection.serverLevelWithoutDatabase` as governance admission reads it, restrictive when true:
- * a definition with no database of an engine it holds true for is never granted. Such an engine's provider declares
- * `catalogSessions` and opens a session of its own to each database the caller picks, so one credential reaches every
- * database it can sign in to, while a governance source grants one database per connection: row admission skips such a
- * definition as SERVER_LEVEL_NOT_ALLOWED (docs/GOVERNANCE.md#row-admission-and-skip-codes).
+ * Studio's grant of `connection.serverLevelWithoutDatabase` at governance admission, restrictive when true, which no
+ * gate reads: row admission reads an engine's record's `grants.serverLevelAtAdmission`.
  */
 export const GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.serverLevelAtAdmission;
