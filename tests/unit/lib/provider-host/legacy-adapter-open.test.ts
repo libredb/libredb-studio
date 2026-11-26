@@ -18,7 +18,7 @@ import path from "node:path";
 import ts from "typescript";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { admittedFor, admittedManifest } from "../../../helpers/package-catalog";
-import { isCorePath, isSourcePath, SCANNED_ROOTS } from "../db/provider-imports/scan";
+import { isCorePath, isProviderPath, isSourcePath, resolveSpecifier, SCANNED_ROOTS } from "../db/provider-imports/scan";
 
 const ROOT = path.resolve(import.meta.dir, "..", "..", "..", "..");
 const OPEN_MODULE = "src/lib/provider-host/legacy-adapter/open.ts";
@@ -188,21 +188,26 @@ describe("the legacy adapter's open", () => {
       }
     }
 
-    // No other core module constructs one of the 43 classes.
-    const names = [...CLASS_OF.values()];
-    const named = new RegExp(`\\bnew (${names.join("|")})\\b`);
-    const listed = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
+    const tracked = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], {
       cwd: ROOT,
       encoding: "utf8",
     })
       .split("\0")
-      .filter(
-        (file) =>
-          isSourcePath(file) &&
-          isCorePath(file) &&
-          SCANNED_ROOTS.some((root) => file.startsWith(`${root}/`)) &&
-          existsSync(path.join(ROOT, file)),
-      );
+      .filter((file) => file !== "" && existsSync(path.join(ROOT, file)));
+
+    // Every module a case imports is a file under the provider directory: the mocks above stand in for each specifier
+    // the open module names, so a specifier that resolved to no file would pass every case above unseen.
+    const resolved = [...namesBySpecifier.keys()].map((specifier) =>
+      resolveSpecifier(OPEN_MODULE, specifier, new Set(tracked)),
+    );
+    expect(resolved.filter((resolution) => resolution.kind !== "file" || !isProviderPath(resolution.path))).toEqual([]);
+
+    // No other core module constructs one of the 43 classes.
+    const names = [...CLASS_OF.values()];
+    const named = new RegExp(`\\bnew (${names.join("|")})\\b`);
+    const listed = tracked.filter(
+      (file) => isSourcePath(file) && isCorePath(file) && SCANNED_ROOTS.some((root) => file.startsWith(`${root}/`)),
+    );
     const constructing = new Set<string>();
     for (const file of listed) {
       const text = readFileSync(path.join(ROOT, file), "utf8");
