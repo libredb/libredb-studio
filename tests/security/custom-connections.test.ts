@@ -103,7 +103,7 @@ const PROVIDER_MODULES_IN_LIB: Record<string, string> = {
     "handleObjectRequest resolves through resolveConnection before it builds; every db/objects route and db/keys/scan reach it, and the census sends each of them a caller's connection",
   "mcp/context.ts": "opens only seeds that opted in with mcp: true, read from getManagedConnections",
   "api/test-connection.ts":
-    "testConnection builds for the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveConnection first",
+    "testConnection builds for the connection its caller hands it, and its one caller in src is POST /api/db/test-connection (pinned by the caller test below), which resolved it through resolveServedConnection first",
 };
 
 const PROVIDER_BUILDERS = [

@@ -26,6 +26,7 @@ import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { fieldRuleBase, fieldRuleCorpus } from "../../helpers/field-rule-corpus";
 import { createMockProvider } from "../../helpers/mock-provider";
 import { createMockRequest, parseResponseJSON } from "../../helpers/mock-next";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }));
 
@@ -48,6 +49,10 @@ mock.module("@/lib/seed/resolve-connection", () => {
   }
   return {
     resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+      connection: body.connection,
+      engine: servedEngineRecord(body.connection.type),
+    })),
     SeedConnectionError,
   };
 });

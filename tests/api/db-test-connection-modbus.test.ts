@@ -20,6 +20,7 @@ import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
 import { createServer, type Server } from "node:net";
 import { createMockRequest, parseResponseJSON } from "../helpers/mock-next";
 import { setEgressFlag } from "../helpers/egress-flag";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const mockGetSession = mock(async () => ({ role: "admin", username: "admin" }) as unknown);
 mock.module("@/lib/auth", () => ({
@@ -35,6 +36,10 @@ mock.module("@/lib/auth", () => ({
 }));
 mock.module("@/lib/seed/resolve-connection", () => ({
   resolveConnection: mock(async (body: { connection?: unknown }) => body.connection),
+  resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+    connection: body.connection,
+    engine: servedEngineRecord(body.connection.type),
+  })),
   SeedConnectionError: class extends Error {},
 }));
 

@@ -3,7 +3,7 @@ import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
 import { providerTextScrub } from "@/lib/db/operations/provider-text";
-import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
 import { editorProvider } from "@/lib/api/editor-provider";
@@ -21,7 +21,7 @@ import { runPackageEditorQuery } from "@/lib/api/package-editor-query";
 import { pageOptionError } from "@/lib/api/page-probe";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
 import { getOrCreateEditorSession } from "@/lib/db/factory";
-import { type EngineConnection, type EngineRecord, serverEngine } from "@/lib/db/server-catalog";
+import type { EngineConnection, EngineRecord } from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
 import { containerDepth } from "@/lib/db/object-kinds";
@@ -124,10 +124,9 @@ export async function POST(req: NextRequest) {
     submitted = typeof sql === "string" ? sql : null;
 
     // An engine of an admitted provider package is served too (src/lib/api/package-editor-query.ts): its connection
-    // resolves with every guard of every route, the server catalog's record of its engine is read after the resolve, and
-    // it runs on the package's session below.
-    const named = await resolveConnection(body, guard.session, undefined, "bundled-and-package");
-    const served = serverEngine(named.type);
+    // resolves with every guard of every route, with the server catalog's record of its engine, and it runs on the
+    // package's session below.
+    const { connection: named, engine } = await resolveServedConnection(body, guard.session);
     // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
     // by its type, so a package's connection is read as any other.
     connection = named as DatabaseConnection;
@@ -146,13 +145,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "queryId must be a string" }, { status: 400 });
     }
 
-    if (served.kind === "served" && !served.engine.offers.legacyProvider) {
+    if (!engine.offers.legacyProvider) {
       // THE QUERY ON A PACKAGE'S ENGINE (src/lib/api/package-editor-query.ts): the page bounds and the statement
       // timeout as for any engine, no console text bound (a row of Studio's keyed by engine, which a package has none
       // of); the fields it does not serve refused by name; the gate over the package's declared grammar; then the
       // package's session, cached per key, and the run through the host core.
-      const { engine } = served;
-      const packaged = named as EngineConnection;
+      const packaged = named;
       const bounds = pageOptionError(options) ?? queryTimeoutError(connection.queryTimeout);
       if (bounds !== null) return NextResponse.json({ error: bounds }, { status: 400 });
       const bound = readBoundParams(body.params);
@@ -280,7 +278,7 @@ export async function POST(req: NextRequest) {
       /*
        * APPLIED AFTER THE SEED IS RESOLVED, and gated on the walk being declared.
        *
-       * `resolveConnection` discards a caller's connection fields when the id claims the `seed:`
+       * `resolveServedConnection` discards a caller's connection fields when the id claims the `seed:`
        * namespace (GHSA-3wh2-8x78), which is exactly why the number cannot ride on the connection
        * object: for a managed connection it would be dropped on the way in and the read would run in
        * the SESSION's database while the key tab claims it read another — the defect this field

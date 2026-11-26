@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createErrorResponse } from "@/lib/api/errors";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
-import { resolveConnection } from "@/lib/seed/resolve-connection";
+import { resolveServedConnection } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { testConnection, testPackageConnection } from "@/lib/api/test-connection";
 import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
-import { type EngineConnection, serverEngine } from "@/lib/db/server-catalog";
 import type { DatabaseConnection } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
@@ -29,20 +28,16 @@ export async function POST(req: NextRequest) {
     // an admitted provider package is resolved with every guard of every route, then tested through its package: its
     // field rules and the open checks, then one session opened, its health read and closed (`testPackageConnection` in
     // src/lib/api/test-connection.ts).
-    const resolved = await resolveConnection(
+    const { connection: resolved, engine } = await resolveServedConnection(
       body.connectionId ? body : body.connection ? body : { connection: body },
       guard.session,
-      undefined,
-      "bundled-and-package",
     );
-    const served = serverEngine(resolved.type);
-    if (served.kind === "served" && !served.engine.offers.legacyProvider) {
-      const packaged = resolved as EngineConnection;
+    if (!engine.offers.legacyProvider) {
       return NextResponse.json(
         await testPackageConnection(
-          packaged,
-          served.engine,
-          editorExecutionContext(guard.session, packaged),
+          resolved,
+          engine,
+          editorExecutionContext(guard.session, resolved),
           "api/db/test-connection",
         ),
       );

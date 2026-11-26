@@ -8,6 +8,7 @@ import { withheldErrorMessage } from "@/lib/db/operations/provider-text";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { clearRateLimitState } from "@/lib/api/rate-limit";
 import { logger } from "@/lib/logger";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import type { DatabaseType, QueryWarning } from "@/lib/types";
 
 // ─── Create mock objects ────────────────────────────────────────────────────
@@ -63,11 +64,13 @@ mock.module("@/lib/seed/resolve-connection", () => {
     }
   }
   return {
-    resolveConnection: mock(async (body: Record<string, unknown>) => {
+    resolveServedConnection: mock(async (body: Record<string, unknown>) => {
       if (!body.connection && !body.connectionId) {
         throw new SeedConnectionError("Either connection or connectionId is required", 400);
       }
-      return body.connection;
+      const connection = body.connection as { type?: unknown };
+      // The catalog's record of the type, read as the real resolve reads it: a type that names no engine is refused there.
+      return { connection, engine: servedEngineRecord(connection.type) };
     }),
     SeedConnectionError,
   };
@@ -490,10 +493,11 @@ describe("POST /api/db/test-connection", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; error: string }>(res);
+    const data = await parseResponseJSON<{ code: string; error: string }>(res);
 
+    // The resolve refuses a connection whose type names no engine, by name, before anything is tested.
     expect(res.status).toBe(400);
-    expect(data.success).toBe(false);
+    expect(data.code).toBe("PROVIDER_UNKNOWN");
   });
 
   test("returns 400 when body is empty object", async () => {
@@ -503,10 +507,11 @@ describe("POST /api/db/test-connection", () => {
     });
 
     const res = await POST(req as never);
-    const data = await parseResponseJSON<{ success: boolean; error: string }>(res);
+    const data = await parseResponseJSON<{ code: string; error: string }>(res);
 
+    // The resolve refuses a connection whose type names no engine, by name, before anything is tested.
     expect(res.status).toBe(400);
-    expect(data.success).toBe(false);
+    expect(data.code).toBe("PROVIDER_UNKNOWN");
   });
 
   test("returns 400 when DatabaseConfigError is thrown", async () => {

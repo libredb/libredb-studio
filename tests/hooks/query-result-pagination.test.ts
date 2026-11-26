@@ -10,6 +10,7 @@ import { admittedFileConnection } from "@/lib/db/provider-files";
 import type { DatabaseConnection, QueryTab } from "@/lib/types";
 import { createHostCore } from "@/lib/provider-host/core/host-core";
 import { forgetHostCore, installHostCore } from "@/lib/provider-host/instance";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 // The editor query reads the process's host core (src/lib/provider-host/instance.ts), so this file composes its own.
 beforeAll(() => installHostCore(createHostCore(), "test"));
@@ -65,7 +66,14 @@ mock.module("@/lib/seed/resolve-connection", () => {
       this.name = "SeedConnectionError";
     }
   }
-  return { resolveConnection: mock(async (body: Record<string, unknown>) => body.connection), SeedConnectionError };
+  return {
+    resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+    resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+      connection: body.connection,
+      engine: servedEngineRecord(body.connection.type),
+    })),
+    SeedConnectionError,
+  };
 });
 
 // Only `getOrCreateProvider` is replaced, and it hands back the REAL provider: the route's

@@ -60,7 +60,13 @@ import { assertStatementsReviewed } from "./statement-review";
 import { clientCapabilities } from "./client-capabilities";
 import { IDLE_TIMEOUT_MS, SWEEP_INTERVAL_MS } from "./idle-sweep";
 import { type ProviderTextScrub, providerTextScrub, withholdProviderError } from "./operations/provider-text";
-import { type EngineConnection, type EngineRecord, legacyProviderEngine, servedPackage } from "./server-catalog";
+import {
+  type EngineConnection,
+  type EngineRecord,
+  legacyProviderEngine,
+  offersLegacyProvider,
+  servedPackage,
+} from "./server-catalog";
 import {
   assertClaimsGranted,
   assertOpenable,
@@ -1605,15 +1611,6 @@ export function findCachedProvider(key: string): DatabaseProvider | null {
 // ============================================================================
 // The editor's session of every record, and the one-shot open
 // ============================================================================
-
-/**
- * Whether `engine`'s record offers a legacy provider, so `connection`, of its engine, is a connection the legacy entry
- * points take: a record offers one exactly when the legacy adapter serves its id (`installServerCatalog` in
- * ./server-catalog), whose type is a `DatabaseType`.
- */
-function offersLegacyProvider(engine: EngineRecord, connection: EngineConnection): connection is DatabaseConnection {
-  return engine.offers.legacyProvider;
-}
 
 /**
  * The editor's session of `engine` for `connection`, the cache's entry, for any record the server serves: the cached one

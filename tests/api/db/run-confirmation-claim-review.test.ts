@@ -12,6 +12,7 @@
  * the session, the connection resolution, the provider cache and the query event insert.
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 
 const { BUNDLED_SQL_TEXT } = await import("@/lib/db/engine-catalog/sql-text.generated");
 mock.module("@/lib/db/engine-catalog/sql-text.generated", () => ({
@@ -47,6 +48,10 @@ const realResolveConnection = await import("@/lib/seed/resolve-connection");
 mock.module("@/lib/seed/resolve-connection", () => ({
   ...realResolveConnection,
   resolveConnection: mock(async (body: Record<string, unknown>) => body.connection),
+  resolveServedConnection: mock(async (body: { connection: { type: string } }) => ({
+    connection: body.connection,
+    engine: servedEngineRecord(body.connection.type),
+  })),
 }));
 
 const realDb = await import("@/lib/db");
