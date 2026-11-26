@@ -167,8 +167,8 @@ const SHARED_ENTRIES = new Set(
  * - persisted ids: the `sql-catalog` and `sql-composers` requirements, whose engines are derived from the overlays,
  *   and the operation ids of the SQL arm runtime, which stays in the core. The one in `describePriorProgress` is
  *   temporary: it marks B127, and the B127 fix removes it;
- * - the execution gate, whose review record is `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`, outside the
- *   agent core, so it holds no entry here;
+ * - the execution gate, whose review record is each engine record's `agentExecution` grant (the list
+ *   `GRANTED_AGENT_EXECUTION_ENGINES` in `src/lib/db/claim-grants.ts`), outside the agent core, so it holds no entry here;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
  * - `libredb` as the MCP server's name in each client's configuration snippet, and as the first word of the MCP server's
  *   name, its token type and its VS Code input id, each of which names the product, not the engine.

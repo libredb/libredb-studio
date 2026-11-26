@@ -4,7 +4,7 @@
  * `CORE_GRANT_RECORDS`, a closed list, each entry with the change that removes it: an item of M3 (issue #2557 and its
  * siblings), or, for a projection a browser module reads, milestone M7 and those readers.
  *
- * A record is found two ways:
+ * The list is `CORE_GRANT_RECORDS` (tests/helpers/core-grant-records.ts). A record is found two ways:
  * - every entry of the engine table inventory (tests/unit/db/engine-declarations/inventory.ts) whose destination is a
  *   claim table, `REVIEW_RECORD_PHRASE`, or a granted table, `GRANTED_DESTINATION`;
  * - by name, `UNINVENTORIED_GRANT_RECORDS`, the records the inventory cannot see or classifies otherwise: a list of
@@ -20,71 +20,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import ts from "typescript";
+import { CLAIM_GRANTS, CORE_GRANT_RECORDS, type GrantRecordEntry } from "../../helpers/core-grant-records";
 import { ENGINE_TABLE_INVENTORY, GRANTED_DESTINATION, REVIEW_RECORD_PHRASE } from "./engine-declarations/inventory";
 
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
-/** What removes a record: an item of M3, or milestone M7 with the browser modules that read the projection. */
-type RemovedBy = { readonly item: 3 | 4 } | { readonly milestone: "M7"; readonly readers: readonly string[] };
-
-interface GrantRecordEntry {
-  readonly module: string;
-  readonly name: string;
-  readonly removedBy: RemovedBy;
-}
-
 const COMPATIBILITY = "src/lib/db/compatibility.ts";
-const CLAIM_GRANTS = "src/lib/db/claim-grants.ts";
-
-const ITEM_3 = { item: 3 } as const;
-
-/** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
-const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  ...[
-    "GRANTED_DENIED_FILE_ACCESS_REFUSAL",
-    "GRANTED_MCP_AGENT_CREDENTIAL_REQUIRED",
-    "GRANTED_MCP_EXPOSABLE",
-    "GRANTED_MCP_METADATA_READ_CHANGES_STATE",
-    "GRANTED_MCP_STATEMENT_READ",
-    "GRANTED_READ_ROOTS_REQUIRED",
-  ].map((name) => ({ module: CLAIM_GRANTS, name, removedBy: ITEM_3 })),
-  { module: "src/lib/db/sql-grammar/redaction.ts", name: "SQL_TEXT_REDACTION", removedBy: { item: 4 } },
-  { module: "src/lib/db/confirmation-claim-review.ts", name: "CONFIRMATION_CLAIM_REVIEW", removedBy: { item: 4 } },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_WRITE_REACH",
-    removedBy: {
-      milestone: "M7",
-      readers: ["src/components/read-only-marker.tsx", "src/hooks/use-connection-form.ts"],
-    },
-  },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_SSH_TUNNEL_REFUSAL",
-    removedBy: { milestone: "M7", readers: ["src/lib/db-ui-config.ts"] },
-  },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_AGENT_STATEMENT_LANGUAGE",
-    removedBy: {
-      milestone: "M7",
-      readers: ["src/components/agent/AgentRail.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
-    },
-  },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_AGENT_READINGS",
-    removedBy: { milestone: "M7", readers: ["src/lib/agent/agent-manifest.ts"] },
-  },
-  {
-    module: CLAIM_GRANTS,
-    name: "GRANTED_AGENT_EXECUTION_ENGINES",
-    removedBy: {
-      milestone: "M7",
-      readers: ["src/components/login/hero-proof.tsx", "src/lib/agent/agent-manifest.ts", "src/lib/agent/posture.ts"],
-    },
-  },
-];
 
 /** The grant records the engine table inventory cannot see or classifies otherwise, each with why. */
 const UNINVENTORIED_GRANT_RECORDS: readonly (Pick<GrantRecordEntry, "module" | "name"> & { readonly why: string })[] = [
@@ -170,8 +111,7 @@ describe("the exit of M3", () => {
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
     expect(claimTables).toHaveLength(1);
-    expect(grantedTables).toHaveLength(10);
-    expect(count('{"item":3}')).toBe(6);
+    expect(grantedTables).toHaveLength(4);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"milestone":"M7"')).toBe(5);
   });
