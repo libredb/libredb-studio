@@ -42,6 +42,7 @@ import {
 import { toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "@/lib/types";
 import { howItFailed } from "../../../helpers/spawn-outcome";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -1251,4 +1252,48 @@ describe("under Node, the production runtime (spec E5, 5.6)", () => {
       facts: { ...inBun, runtimeReportsTlsCause: true },
     });
   }, 60_000);
+});
+
+/** A connection with no credential and no TLS, which etcd's connection rules take as it is (#1089 E1, E2). */
+const ETCD: DatabaseConnection = {
+  id: "etcd-doc",
+  name: "etcd",
+  type: "etcd",
+  host: "etcd.internal",
+  port: 2379,
+  createdAt: new Date(0),
+};
+
+describe("the read-only source, the dialog's fields and the host refusal", () => {
+  test("where a connection's own mode and a profile's both hold, the connection's sentence is the one given", () => {
+    const context = { executionReadOnly: true, queryTimeout: 30_000 };
+    expect(buildEtcdConnectionOptions({ ...ETCD, readOnly: true }, context).readOnly).toBe("connection");
+    expect(buildEtcdConnectionOptions({ ...ETCD, readOnly: true, seedId: "cluster" }, context).readOnly).toBe("seed");
+    expect(buildEtcdConnectionOptions(ETCD, context).readOnly).toBe("execution-profile");
+  });
+
+  const etcd = DB_UI_CONFIG.etcd;
+  test("the dialog's default port is ETCD_DEFAULT_PORT", () => {
+    expect(etcd.defaultPort).toBe(String(ETCD_DEFAULT_PORT));
+  });
+
+  test("the dialog offers no Database field and no connection string", () => {
+    expect(etcd.connectionFields).not.toContain("database");
+    expect(etcd.showConnectionStringToggle).toBe(false);
+  });
+
+  test("a host written as a URL is refused before any client exists", () => {
+    const refusal = (() => {
+      try {
+        buildEtcdConnectionOptions(
+          { ...ETCD, host: "https://10.0.0.5" },
+          { executionReadOnly: false, queryTimeout: 30_000 },
+        );
+        return undefined;
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+    expect(refusal).toBeDefined();
+  });
 });

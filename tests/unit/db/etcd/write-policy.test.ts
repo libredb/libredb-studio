@@ -18,6 +18,9 @@ import {
   refuseReadOnly,
   refuseStoredValues,
 } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import path from "node:path";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { readFileSync } from "node:fs";
 
 const LIMITS = { maxLimit: 500, txnRangeLimit: 50, maxCommandTimeoutMs: 60_000, maxWatchWindowMs: 55_000 };
 const utf8 = (text: string): EtcdBytes => new TextEncoder().encode(text);
@@ -262,5 +265,24 @@ describe("refuseLeaseRevoke: E8's lease half (spec 3.6 E8)", () => {
   test("a lease holding no protected key, or no key at all, passes", () => {
     expect(refuseLeaseRevoke([utf8("/leases/session-1")])).toBeUndefined();
     expect(refuseLeaseRevoke([])).toBeUndefined();
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+
+describe("the read-only marker and the providers that keep the mode", () => {
+  test("the marker's title and the Operations tab's line are the ones the components draw", () => {
+    const marker = "Writes, value edits and maintenance are refused on this connection";
+    const operations = "This connection is read-only: use a read-write connection for maintenance";
+    expect(read("src/components/read-only-marker.tsx")).toContain(`title="${marker}"`);
+    // One constant since #1418, beside the dialog the Operations and Tables tabs share, so both say the same line.
+    expect(read("src/components/maintenance-entity-dialog.tsx")).toContain(operations);
+    expect(read("src/components/admin/tabs/OperationsTab.tsx")).toContain("READ_ONLY_MAINTENANCE");
+  });
+
+  test("etcd's provider is one that keeps the mode, and an engine whose provider does not is refused it", () => {
+    expect(READ_ONLY_ENFORCED.etcd).toBe(true);
+    expect(READ_ONLY_ENFORCED.postgres).toBe(false);
   });
 });

@@ -455,3 +455,12 @@ describe("runEtcdMaintenance: a PermissionDenied from any of the three reads 7.2
     );
   });
 });
+
+describe("the maintenance cards", () => {
+  test("compact, defragment and disarm each have a card title", () => {
+    for (const type of ["compact", "defragment", "disarm"] as const) {
+      const spec = ETCD_MAINTENANCE_SPECS[type];
+      expect(spec?.title).toBeDefined();
+    }
+  });
+});

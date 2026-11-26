@@ -19,6 +19,7 @@ import { ETCD_PROOF_SENTENCES, proveEtcdReadOnly } from "@/lib/db/providers/keyv
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import { type CapturedAnswer, capturedError, capturedMembers, capturedPermissions } from "../../../helpers/etcd-agent";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 
 const SCOPE = posix.join(
   import.meta.dir.replaceAll("\\", "/"),
@@ -118,5 +119,13 @@ describe("Studio's side", () => {
     ["READ on one key of /app/", "role-read-app-key", "proved"],
   ])("the proof over the server's RoleGet answer for %s", async (_what, name, expected) => {
     expect(await verdict(name)).toBe(expected);
+  });
+});
+
+describe("the machine access records", () => {
+  test("etcd is run by the agent, exposed over MCP and offers the MCP statement read", () => {
+    expect(AGENT_EXECUTION_ENGINES).toContain("etcd");
+    expect(MCP_EXPOSABLE.etcd).toBe(true);
+    expect(MCP_STATEMENT_READ.etcd).toBe(true);
   });
 });
