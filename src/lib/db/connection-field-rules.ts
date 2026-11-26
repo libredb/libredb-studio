@@ -55,15 +55,18 @@ function blankForRequired(field: ConnectionField, value: unknown): boolean {
 }
 
 /**
- * The first refusal of the engine's `fieldRules` for a connection, or `undefined` when every declared check passes.
+ * The first refusal of the engine's `fieldRules` for `values`, a connection's fields, or `undefined` when every declared
+ * check passes.
  * `config` is a bundled engine's form entry, or the field rules of a provider package's engine (`packageFieldRules`
  * in ./connection-form). The fields are checked in `connectionFields` order, so the dialog names the first box to fix. A `required` field is
  * refused when it is blank (`ConnectionFieldRule.required`); any other check skips a field that holds no value,
  * absent, null or empty. A field `connectionFieldShown` hides is not checked, since the dialog neither draws nor
  * writes it.
  */
-export function connectionFieldRefusal(config: FieldRuleSpec, connection: DatabaseConnection): string | undefined {
-  const values = connection as Partial<Record<ConnectionField, unknown>>;
+export function connectionFieldRefusal(
+  config: FieldRuleSpec,
+  values: Readonly<Partial<Record<ConnectionField, unknown>>>,
+): string | undefined {
   for (const field of config.connectionFields) {
     const rule = config.fieldRules?.[field];
     if (rule === undefined || !connectionFieldShown(config, field, values)) continue;

@@ -15,8 +15,8 @@
  * the package's `open` is called.
  *
  * Nothing here wraps an error: the provider factory (src/lib/db/factory.ts) runs it inside `buildPhase` for a build and
- * inside `connectPhase` for an open that connects (`getOrCreateEditorSession`, `openEngineOnce`), which mark its errors
- * not-sent.
+ * for Test Connection's one open (`openEngineOnce`), and inside `connectPhase` for the editor's cached open that
+ * connects (`getOrCreateEditorSession`), which mark its errors not-sent.
  */
 import { callRefusalSentence, type EnvReader } from "@libredb/provider-sdk/calls";
 import { errorCode, errorKind } from "@/lib/db/error-record";

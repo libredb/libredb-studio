@@ -233,13 +233,13 @@ describe("the factory's editor cache and a provider package's engine", () => {
   test("openEngineOnce answers a legacy record's provider built and not connected, and a package's connected session, never cached", async () => {
     await clearProviderCache();
     const within = () => ({ deadline: Date.now() + 1_000, signal: new AbortController().signal });
-    const legacy = openedProvider(await openEngineOnce(sqliteConnection(), engineOf("sqlite"), ADMIN, within()));
+    const legacy = openedProvider(await openEngineOnce(sqliteConnection(), engineOf("sqlite"), ADMIN, within(), {}));
     expect(legacy.isConnected()).toBe(false);
 
     hooks = packageHooks();
     seen.length = 0;
     const { session } = openedSession(
-      await openEngineOnce(packageConnection(), engineOf("acmecached"), ADMIN, within()),
+      await openEngineOnce(packageConnection(), engineOf("acmecached"), ADMIN, within(), {}),
     );
     expect(typeof session.health).toBe("function");
     expect(seen).toEqual(["open"]);

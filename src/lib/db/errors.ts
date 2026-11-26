@@ -29,9 +29,9 @@ export class DatabaseError extends Error {
    * constructor of `RefusedBeforeSendError`, so every refusal before send carries it; the constructor of
    * `TransactionLostError`, when the provider raising it says it found the held session ended before sending;
    * `connectPhase`, on what a provider's connect raised, the `ConnectionError` of an open a removal or a cache close overtook included (the
-   * factory raises it inside the connect it runs there); `buildPhase`, which the factory's `createDatabaseProvider` and
-   * `readProviderDeclarations` run around the one open function (src/lib/provider-host/open-engine.ts), on what
-   * building a provider raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the
+   * factory raises it inside the connect it runs there); `buildPhase`, which the factory's `createDatabaseProvider`,
+   * `readProviderDeclarations` and `openEngineOnce` run around the one open function
+   * (src/lib/provider-host/open-engine.ts), on what building a provider or opening Test Connection's one session raised; `withheldProviderError` in ./operations/provider-text, which copies `not-sent` onto the
    * error it answers in place of one; and the provider host's accessor (src/lib/provider-host/access.ts), through
    * `markNotSent`, on the class it builds for a console call the host refused before making it; and `checkoutPhase`,
    * which a provider's execute runs around taking a connection or session from its pool or client before it sends, on
@@ -659,7 +659,8 @@ export class StudioProfileRefusal extends ExecutionProfileError {
  * (src/lib/db/operations/provider-text.ts).
  */
 export class ProviderTextWithheldError extends DatabaseError {
-  constructor(message: string, provider: DatabaseType) {
+  /** `provider` names the connection's engine when its record offers a legacy provider, and is absent otherwise. */
+  constructor(message: string, provider?: DatabaseType) {
     super(message, provider);
     this.name = "ProviderTextWithheldError";
     Object.setPrototypeOf(this, ProviderTextWithheldError.prototype);

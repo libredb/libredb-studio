@@ -156,7 +156,7 @@ export async function testPackageConnection(
   let opened: OpenedPackageSession;
   try {
     opened = openedSession(
-      await within(openEngineOnce(connection, engine, execution, { deadline: now + budget, signal: deadline })),
+      await within(openEngineOnce(connection, engine, execution, { deadline: now + budget, signal: deadline }, {})),
     );
   } catch (error) {
     if (error instanceof DatabaseError) throw error;

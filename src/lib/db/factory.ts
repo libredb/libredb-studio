@@ -787,7 +787,7 @@ function entryName(entry: CachedSession): string {
  */
 const ANONYMOUS_IN_MEMORY_DATABASE = ":memory:";
 
-function fileIdentity(connection: DatabaseConnection): string | null {
+function fileIdentity(connection: EngineConnection): string | null {
   if (!connection.database) return null;
   if (connection.database === ANONYMOUS_IN_MEMORY_DATABASE) return null;
   return `${connection.type}::${path.resolve(connection.database)}`;
@@ -831,7 +831,7 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  * its read-only file adapter, beside the writer and before it.
  */
 export function findOpenSingleWriterProvider(
-  connection: DatabaseConnection,
+  connection: EngineConnection,
   allowExternalFileAccess?: boolean,
 ): DatabaseProvider | null {
   const identity = fileIdentity(connection);
@@ -869,7 +869,7 @@ export function findOpenSingleWriterProvider(
  * and macOS and is refused outright on Windows. Test Connection opens a read-only handle instead,
  * which leaves the writer's file and write-ahead log alone (`src/lib/api/test-connection.ts`).
  */
-export function isSingleWriterFileOpen(connection: DatabaseConnection): boolean {
+export function isSingleWriterFileOpen(connection: EngineConnection): boolean {
   const identity = fileIdentity(connection);
   if (identity === null) return false;
   return Array.from(providerCache.values()).some(
@@ -1728,12 +1728,12 @@ async function openCachedSession(
 }
 
 /**
- * Opens `engine` for `connection` once, never cached, for Test Connection: the one open function with the open's
- * deadline and the signal that stops it, `within`, the test's own. A legacy record answers its provider built and not
- * connected, which the caller connects under its own deadline; a provider package's record answers its connected
- * session, and a session the package answers after the stop is closed by the host core. Every failure is marked
- * not-sent (`connectPhase`). The caller runs the open check (`assertOpenable` in ./open-check) first, before its budget
- * starts, and `openEngine` runs it again.
+ * Opens `engine` for `connection` once, never cached, for Test Connection: the one open function, which runs the one
+ * ordered open check first, with the open's deadline and the signal that stops it, `within`, the test's own. A legacy
+ * record answers its provider built with `options` and `execution` and not connected, which the caller connects under
+ * its own deadline; a provider package's record answers its connected session, and a session the package answers after
+ * the stop is closed by the host core. Every failure is marked not-sent (`buildPhase`), as `createDatabaseProvider`
+ * marks a build's: nothing was sent.
  *
  * @throws {DatabaseConfigError} Not-sent, when the open check refuses the connection.
  * @throws A provider constructor's or the package's error by reference, marked not-sent; a stop answers the signal's
@@ -1742,14 +1742,11 @@ async function openCachedSession(
 export async function openEngineOnce(
   connection: EngineConnection,
   engine: EngineRecord,
-  execution: EditorExecutionContext,
+  execution: ProviderExecutionContext,
   within: { readonly deadline: number; readonly signal: AbortSignal },
+  options: ProviderOptions,
 ): Promise<OpenedEngine> {
-  let opened: OpenedEngine | undefined;
-  await connectPhase(async () => {
-    opened = await openEngine(engine, { connection, execution, purpose: "connect", options: {}, within });
-  });
-  return opened as OpenedEngine;
+  return await buildPhase(() => openEngine(engine, { connection, execution, purpose: "connect", options, within }));
 }
 
 // ============================================================================
