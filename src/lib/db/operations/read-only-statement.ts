@@ -45,8 +45,8 @@
  * reading that already refuses past its rows or bytes in sentences of its own (the cluster readings' advice to
  * narrow) hands them in, and core raises those.
  *
- * Before anything else, an engine Studio's review record does not list (`GRANTED_AGENT_EXECUTION_ENGINES` in
- * src/lib/db/claim-grants.ts) is refused by name with `PROFILE_ENGINE_NOT_REVIEWED` (`assertStatementsReviewed`), for
+ * Before anything else, an engine Studio's review record does not list (the `agentExecution` grant of its engine
+ * record) is refused by name with `PROFILE_ENGINE_NOT_REVIEWED` (`assertStatementsReviewed`), for
  * every budgeted reading, whatever the provider implements, so no budget is read, no provider call is made and nothing
  * is held. The gate keys on the connection type the caller declares (`type`), not on the provider handed over, so it
  * holds whatever acquirer handed the provider over only while every caller declares the type of the connection that

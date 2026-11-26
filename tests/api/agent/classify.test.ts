@@ -20,6 +20,8 @@ import * as realAuth from "@/lib/auth";
 import * as realClassifier from "@/lib/agent/workflow-classifier";
 import * as realSeed from "@/lib/seed/resolve-connection";
 import { openWorkflows } from "@/lib/agent/agent-manifest";
+import { serverCatalogInstalled } from "@/lib/db/server-catalog";
+import { craftedCatalog, withCatalog } from "../../helpers/package-catalog";
 
 const mockGetSession = mock(
   async (): Promise<{ role: string; username: string } | null> => ({ role: "user", username: "ada" }),
@@ -190,6 +192,24 @@ describe("POST /api/agent/classify", () => {
       statementLanguage: "kubectl",
       workflows: openWorkflows("agent", "kubernetes"),
     });
+  });
+
+  test("classifies in the statement language the connection's engine record grants", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:cluster", name: "Cluster", type: "kubernetes" });
+
+    const res = await withCatalog(craftedCatalog({ kubernetes: { statementLanguage: "sql" } }), () =>
+      POST(
+        classifyRequest({ objective: "which pods are over-provisioned", connectionId: "seed:cluster", mode: "agent" }),
+      ),
+    );
+
+    expect(res.status).toBe(200);
+    // The workflows are still read by the browser-safe agent manifest from Studio's projection (M7).
+    expect(mockClassify).toHaveBeenCalledWith("which pods are over-provisioned", {
+      statementLanguage: "sql",
+      workflows: openWorkflows("agent", "kubernetes"),
+    });
+    expect(serverCatalogInstalled()).toBe(false);
   });
 
   test("an SQL connection is classified in SQL's terms", async () => {

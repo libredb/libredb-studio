@@ -112,7 +112,7 @@ import {
   isStatementReadOperation,
 } from "@/lib/db/operations/descriptors";
 import { CONNECTION_FORM } from "@/lib/db/connection-form";
-import { GRANTED_AGENT_READINGS } from "@/lib/db/claim-grants";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { typeIdRow } from "@/lib/db/type-id";
 import {
   type AuditedInvocation,
@@ -429,8 +429,9 @@ export type AgentToolUnavailableCode =
   | "MODE_HAS_NO_TOOLS"
   | "INVALID_TOOL_INPUT"
   /**
-   * A curated reading the run's recorded engine does not offer agent mode (Studio's grant of its agent readings,
-   * `GRANTED_AGENT_READINGS`), refused before any provider is acquired, any budget charged or any repair entry made.
+   * A curated reading the run's recorded engine does not offer agent mode (Studio's grant of its agent readings, its
+   * engine record's `grants.agentReadings`), refused before any provider is acquired, any budget charged or any repair
+   * entry made.
    */
   | "READING_NOT_OFFERED"
   | "UNVERIFIABLE_EVIDENCE"
@@ -940,12 +941,15 @@ function isAnswerShapeFailure(problems: string): boolean {
 }
 
 /**
- * The curated readings a run is offered: Studio's grant of its recorded engine's `facets.agentReadings`,
- * `GRANTED_AGENT_READINGS`, read through `typeIdRow`, so an engine that is not a type id is refused by name, or all six
- * kinds for a run recorded before the engine field, which was told those six in its earlier turns.
+ * The curated readings a run is offered: Studio's grant of its recorded engine's `facets.agentReadings`, read from the
+ * engine's record (`servedEngineRecord(engine).grants.agentReadings`), or all six kinds for a run recorded before the
+ * engine field, which was told those six in its earlier turns.
+ *
+ * @throws {UnknownProviderError} When `engine` names no engine the server knows.
+ * @throws {ProviderUnavailableError} When every package naming the engine was refused at boot.
  */
 export function agentReadingsOf(engine: DatabaseType | undefined): readonly CuratedOperationKind[] {
-  return engine === undefined ? CURATED_OPERATION_KINDS : typeIdRow(GRANTED_AGENT_READINGS, engine);
+  return engine === undefined ? CURATED_OPERATION_KINDS : servedEngineRecord(engine).grants.agentReadings;
 }
 
 /** Each curated reading as `inspect_operations` describes it to the model. */

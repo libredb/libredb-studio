@@ -15,9 +15,11 @@
  *
  * Studio's review of the agent readings is the register's legacy rows' `agentReadings`, which only the grant reader
  * loads. The member is still held by member rather than by name, a request's or a grant table's alike: no module but
- * the grant reader and the claim projection, which reads each declaration's request and never Studio's row, reads a
- * member named `agentReadings`, by a property access, a string element access or a binding pattern key, whatever the
- * object. An object literal key and a type member key of that name are no read, so the generated requests and their
+ * the grant reader, the claim projection, which reads each declaration's request and never Studio's row, and the agent
+ * readers of an engine record's grant, which read the grant the grant reader answers, reads a member named
+ * `agentReadings`, by a property access, a string element access or a binding pattern key, whatever the object. Each
+ * reader of the record's grant is listed by path rather than passed over by the shape of its read, so a new module that
+ * reads the grant is refused until it is reviewed and listed. An object literal key and a type member key of that name are no read, so the generated requests and their
  * types are passed over. A file whose text does not hold the name is not parsed. The capabilities member of the same
  * name, `ProviderCapabilities.agentReadings`, which no module reads, is refused by the same rule, until the closed list
  * of that claim's readers decides it.
@@ -95,6 +97,10 @@ const AGENT_READINGS_READERS: Readonly<Record<string, string>> = {
   [GRANT_READER]: "the grant reader, which grants each engine's request against its legacy row in the grant register",
   "src/lib/db/engine-catalog/projection.ts":
     "the claim projection, which reads each declaration's request and never Studio's row, a CLAIM_READERS entry of tests/unit/db/engine-declaration-readers.test.ts",
+  "src/lib/agent/run-ledger-ids.ts":
+    "reads the engine record's grant, `servedEngineRecord(...).grants.agentReadings`, which the grant reader answers",
+  "src/lib/agent/tools.ts":
+    "reads the engine record's grant, `servedEngineRecord(...).grants.agentReadings`, which the grant reader answers",
 };
 
 /** Each read `file` makes of a member named `agentReadings`, as `<file> reads agentReadings`, once per file. */
@@ -318,7 +324,7 @@ describe("the claim record readers", () => {
     ).toBe(true);
   });
 
-  test("the agent readings member is read only by the grant reader and the claim projection, and the scan finds each way a module could read it", () => {
+  test("the agent readings member is read only by the grant reader, the claim projection and the readers of an engine record's grant, and the scan finds each way a module could read it", () => {
     const files = [...sourceFiles("src"), ...sourceFiles("vscode-extension/src")];
 
     expect(agentReadingsReaders(files)).toEqual([]);
@@ -339,6 +345,8 @@ describe("the claim record readers", () => {
     // A property access, optional or not, a string element access and a binding pattern key are reads.
     expect(planted(`ENGINE_FACETS.postgres.${AGENT_READINGS}.length;`)).toEqual(read);
     expect(planted(`engineFacetsFor(type)?.${AGENT_READINGS};`)).toEqual(read);
+    // A read of the engine record's grant outside the listed readers is refused like any other.
+    expect(planted(`servedEngineRecord(type).grants.${AGENT_READINGS};`)).toEqual(read);
     expect(planted(`row["${AGENT_READINGS}"];`)).toEqual(read);
     expect(planted(`row[\`${AGENT_READINGS}\`];`)).toEqual(read);
     expect(planted(`const { ${AGENT_READINGS} } = row;`)).toEqual(read);

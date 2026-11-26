@@ -740,6 +740,9 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
       "tests/unit/lib/db/record-grant-readers.test.ts": [
         "an admitted package's engine is read at its register row's grant on every db and open reader, and at each claim's restrictive value where no row exists",
       ],
+      "tests/unit/lib/agent/record-grant-readers.test.ts": [
+        "an admitted package's engine is read at its register row's grant by the statement review and the agent readings readers, and at each claim's restrictive value where no row or another digest's row exists; the engine pack resolver refuses it",
+      ],
       "tests/unit/seed/types.test.ts": [
         "the seed schema reads each refusal's grant from the engine record its type names, not Studio's table",
       ],

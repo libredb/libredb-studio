@@ -30,7 +30,7 @@ import {
 import { createErrorResponse } from "@/lib/api/errors";
 import { getOrCreateProvider, readProviderDeclarations } from "@/lib/db";
 import { catalogChoice, catalogChoiceBound, catalogSessionConnection } from "@/lib/db/catalog-scope";
-import { GRANTED_READ_ROOTS_REQUIRED } from "@/lib/db/claim-grants";
+import { servedEngineRecord } from "@/lib/db/server-catalog";
 import { READ_ROOTS_REQUIRED_SENTENCE } from "@/lib/db/compatibility";
 import { editorProvider } from "@/lib/api/editor-provider";
 import { openWithinCall } from "@/lib/api/editor-query";
@@ -408,18 +408,18 @@ export async function POST(req: Request) {
       );
     }
     /*
-      An engine agent mode reads only beneath read roots its seed declares (GRANTED_READ_ROOTS_REQUIRED), on a
-      connection that declares none: refused here, before a run exists, for the reason the engine refusal above is. The
-      provider would refuse the profile at its first acquisition, but an engine that declares no object kinds is
-      grounded without one, so without this the run would open, take its first model turn and fail at its first read.
-      Only a workflow that sends statements in agent mode: plan mode and the operations workflow read nothing beneath
-      roots, and the roots decide neither (the operations workflow opens where the engine offers agent mode a curated
-      reading).
+      An engine agent mode reads only beneath read roots its seed declares (its engine record's `readRootsRequired`
+      grant, read through `servedEngineRecord`), on a connection that declares none: refused here, before a run exists,
+      for the reason the engine refusal above is. The provider would refuse the profile at its first acquisition, but
+      an engine that declares no object kinds is grounded without one, so without this the run would open, take its
+      first model turn and fail at its first read. Only a workflow that sends statements in agent mode: plan mode and
+      the operations workflow read nothing beneath roots, and the roots decide neither (the operations workflow opens
+      where the engine offers agent mode a curated reading).
     */
     if (
       mode === "agent" &&
       AGENT_WORKFLOW_SENDS_STATEMENTS[requestedWorkflow] &&
-      GRANTED_READ_ROOTS_REQUIRED[connection.type] &&
+      servedEngineRecord(connection.type).grants.readRootsRequired &&
       connection.agentReadRoots === undefined
     ) {
       return badRequest(READ_ROOTS_REQUIRED_SENTENCE, "read-roots-required");

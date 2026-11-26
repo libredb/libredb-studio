@@ -1554,7 +1554,7 @@ Over the legacy bridge each panel is still read through the provider's own membe
 
 **A run is offered only the kinds its engine offers agent mode.**
 Each engine's declaration requests them at `facets.agentReadings`: the kind of each monitoring panel its `ENGINE_FACETS` row offers whose read the agent handle answers, and `health` unless the agent handle withholds it.
-Studio's review of that claim is the engine's legacy row in the grant register, `packages/grant-register/src/register.json`, and a run is offered Studio's grant of it, `GRANTED_AGENT_READINGS` in `src/lib/db/claim-grants.ts`, the intersection of the two in the row's order.
+Studio's review of that claim is the engine's legacy row in the grant register, `packages/grant-register/src/register.json`, and a run is offered Studio's grant of it, the `grants.agentReadings` of the engine's record, the intersection of the two in the row's order.
 `selectAgentTools` builds `inspect_operations` from the run's recorded engine (`AgentRunRecord.engine`), so its `kind` enum and its description list exactly those kinds, and its description names `schema` only where a table or index reading is offered.
 A call naming any other kind is refused by name, `unavailable` with `READING_NOT_OFFERED`, before a provider is acquired, the budget is charged or the repair ledger records anything, and the step settles as a `not-sent` refusal whose detail names the kind and the readings the engine offers.
 The handler parses with the six-kind contract on purpose: a native call whose kind fails the per-engine enum still reaches it, so the model hears that refusal rather than a generic `INVALID_TOOL_INPUT`.
@@ -3133,7 +3133,7 @@ An engine in `GRANTED_AGENT_EXECUTION_ENGINES` must open at least one workflow t
 
 **How to add an engine to a statement-language family.**
 
-1. Author the type-id's statement language as `agent.statementLanguage` in its engine declaration, and review the same language as `statementLanguage` in the engine's legacy row of the grant register (`packages/grant-register/src/register.json`); every agent mode gate reads Studio's grant of it, `GRANTED_AGENT_STATEMENT_LANGUAGE`.
+1. Author the type-id's statement language as `agent.statementLanguage` in its engine declaration, and review the same language as `statementLanguage` in the engine's legacy row of the grant register (`packages/grant-register/src/register.json`); the server's agent mode gates read Studio's grant of it as the engine record's `grants.statementLanguage`, and the start of a run, the posture and the rail read it as `GRANTED_AGENT_STATEMENT_LANGUAGE`.
 2. Set `agentExecution` true in the engine's legacy row of the grant register (`packages/grant-register/src/register.json`), with its `reasons.agentExecution` note stating the boundary, once its read-only statement path is reviewed; every agent and MCP statement gate reads Studio's grant of it, `GRANTED_AGENT_EXECUTION_ENGINES`, and `agent-manifest.test.ts` fails while an engine has a language the record does not list.
 3. Write `languages/<statement-language>/engines/<type-id>.ts`, its server overlay declared `satisfies AgentEngineServerOverlay<...>`, with every dialect-bound member supplied or `"unsupported"`.
 4. Add its client row to `languages/<statement-language>/engines/client.ts`, and register both overlays in `languages/engines/server.ts` and `languages/engines/client.ts`; both registries are total, so the build fails until they hold the engine.

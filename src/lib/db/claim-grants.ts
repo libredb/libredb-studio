@@ -63,7 +63,8 @@
  * session and whether agent mode executes statements on it, is the same legacy rows' `servesOneSession` and
  * `agentExecution`, which each engine's grants carry, and the second is also answered as a list,
  * `GRANTED_AGENT_EXECUTION_ENGINES`; no claim is granted from them. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's source
- * loads the register, and that none but the claim projection reads a member named `agentReadings`, and
+ * loads the register, and that none but the claim projection and the listed readers of an engine record's grant reads
+ * a member named `agentReadings`, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
  *
@@ -792,10 +793,10 @@ export const GRANTED_DENIED_FILE_ACCESS_REFUSAL: Readonly<Record<DatabaseType, s
   BUNDLED_GRANTS.deniedFileAccessRefusal;
 
 /**
- * Studio's grant of `policy.readRootsRequired`, which MCP and agent runs read: the runs route refuses an agent-mode
- * Start whose workflow sends statements on a connection without read roots, and the MCP context refuses such a
- * connection at open with `READ_ROOTS_REQUIRED`. The seed schema refuses `mcp: true` without them, and governance never
- * opts a governed record, which carries no roots, in to MCP, each from the engine record's `grants.readRootsRequired`.
+ * Studio's grant of `policy.readRootsRequired`, which the MCP context reads: it refuses a connection without read roots
+ * at open with `READ_ROOTS_REQUIRED`. The runs route refuses an agent-mode Start whose workflow sends statements on such
+ * a connection, the seed schema refuses `mcp: true` without them, and governance never opts a governed record, which
+ * carries no roots, in to MCP, each from the engine record's `grants.readRootsRequired`.
  */
 export const GRANTED_READ_ROOTS_REQUIRED: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.readRootsRequired;
 
@@ -844,16 +845,17 @@ export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | 
 
 /**
  * Studio's grant of `agent.statementLanguage`: the language agent mode sends the engine, or null where it sends none.
- * The agent posture, workflow availability, the classify route, the engine pack resolver, the agent rail and the MCP
- * served set and arms read it.
+ * The agent posture, workflow availability, the agent rail and the MCP served set and arms read it; the classify route
+ * and the engine pack resolver read the engine record's `grants.statementLanguage`.
  */
 export const GRANTED_AGENT_STATEMENT_LANGUAGE: Readonly<Record<DatabaseType, StatementLanguage>> =
   BUNDLED_GRANTS.statementLanguage;
 
 /**
  * Studio's grant of `facets.agentReadings`: the curated readings agent mode is offered on the engine, in its legacy
- * row's order. Whether the operations workflow opens in agent mode, the readings `inspect_operations` offers and
- * accepts, and the run ledger's reading check read it.
+ * row's order. Whether the operations workflow opens in agent mode (the agent manifest) reads it; the readings
+ * `inspect_operations` offers and accepts, and the run ledger's reading check, read the engine record's
+ * `grants.agentReadings`.
  */
 export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly AgentReading[]>> =
   BUNDLED_GRANTS.agentReadings;
@@ -864,14 +866,15 @@ export const GRANTED_AGENT_READINGS: Readonly<Record<DatabaseType, readonly Agen
  * the grant register, a host fact no declaration requests, so no claim is granted from it and an engine with no
  * legacy row is not on it.
  *
- * Every agent and MCP statement gate reads it at run time, and an engine it does not list is refused by name, whatever
- * its provider implements: the start of a statement-sending agent run (`workflowAvailability`,
- * `src/lib/agent/agent-manifest.ts`), the factory's `agent-read-only` and `agent-handover` acquisition and the core read
- * path every agent, hand-over and MCP read-only statement passes (`runReadOnlyReading`; plan mode's statistics read
- * under `agent-operations` does not), both through `assertStatementsReviewed` (`src/lib/db/statement-review.ts`,
- * `PROFILE_ENGINE_NOT_REVIEWED`), and MCP's served set (`src/lib/mcp/tools/served-engines.ts`). A provider's read-only
- * statement path is a second precondition, required and never enough: an engine on the list whose provider has no
- * `queryReadOnly` is still refused `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
+ * Every agent and MCP statement gate reads the same grant at run time, and an engine it does not grant is refused by
+ * name, whatever its provider implements: the start of a statement-sending agent run (`workflowAvailability`,
+ * `src/lib/agent/agent-manifest.ts`) and MCP's served set (`src/lib/mcp/tools/served-engines.ts`) read this list; the
+ * factory's `agent-read-only` and `agent-handover` acquisition and the core read path every agent, hand-over and MCP
+ * read-only statement passes (`runReadOnlyReading`; plan mode's statistics read under `agent-operations` does not)
+ * read the engine record's `grants.agentExecution`, both through `assertStatementsReviewed`
+ * (`src/lib/db/statement-review.ts`, `PROFILE_ENGINE_NOT_REVIEWED`). A provider's read-only statement path is a second
+ * precondition, required and never enough: an engine on the list whose provider has no `queryReadOnly` is still refused
+ * `PROFILE_UNSUPPORTED_BY_PROVIDER`, never served `query()`.
  *
  * The engines do not draw the boundary the same way, and the list deliberately says nothing about that: each listed
  * engine's boundary is its legacy row's `reasons.agentExecution` note, where one is written, and each provider's own

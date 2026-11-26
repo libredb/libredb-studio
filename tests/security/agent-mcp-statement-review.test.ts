@@ -32,6 +32,15 @@ mock.module("@/lib/db/claim-grants", () => ({
   GRANTED_AGENT_EXECUTION_ENGINES: Object.freeze(shipped.filter((type) => type !== "sqlite")),
 }));
 
+// The server's gates read SQLite's engine record, so Studio's own catalog with that record's grant changed is installed
+// before any of them loads, and forgotten when the file ends.
+const { craftedCatalog } = await import("../helpers/package-catalog");
+const { forgetServerCatalog, installServerCatalog, serverCatalogInstalled, servedEngineRecord } = await import(
+  "@/lib/db/server-catalog"
+);
+installServerCatalog(craftedCatalog({ sqlite: { agentExecution: false } }));
+afterAll(forgetServerCatalog);
+
 const { workflowAvailability } = await import("@/lib/agent/agent-manifest");
 const { acquireExecutionProfileProvider, clearProviderCache, getExecutionProfileCacheStats } = await import(
   "@/lib/db/factory"
@@ -104,6 +113,10 @@ describe("an engine the review record does not list, though its provider impleme
     expect(shipped).toContain("sqlite");
     expect(GRANTED_AGENT_EXECUTION_ENGINES).not.toContain("sqlite");
     expect(GRANTED_AGENT_EXECUTION_ENGINES).toContain("postgres");
+    // The server's gates read the installed engine record's grant, the browser-safe manifest the list above.
+    expect(serverCatalogInstalled()).toBe(true);
+    expect(servedEngineRecord("sqlite").grants.agentExecution).toBe(false);
+    expect(servedEngineRecord("postgres").grants.agentExecution).toBe(true);
     expect(typeof SQLiteProvider.prototype.queryReadOnly).toBe("function");
   });
 
