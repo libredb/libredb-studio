@@ -42,7 +42,7 @@ const ITEM_3 = { item: 3 } as const;
 
 /** Every grant record and projection keyed by engine id that core still exports, with what removes it. */
 const CORE_GRANT_RECORDS: readonly GrantRecordEntry[] = [
-  ...["AGENT_STATEMENT_LANGUAGE", "SERVES_ONE_SESSION", "AGENT_EXECUTION_ENGINES"].map((name) => ({
+  ...["SERVES_ONE_SESSION", "AGENT_EXECUTION_ENGINES"].map((name) => ({
     module: COMPATIBILITY,
     name,
     removedBy: ITEM_2,
@@ -179,9 +179,9 @@ describe("the exit of M3", () => {
     const count = (removedBy: string) =>
       CORE_GRANT_RECORDS.filter((entry) => JSON.stringify(entry.removedBy).startsWith(removedBy)).length;
 
-    expect(claimTables).toHaveLength(3);
+    expect(claimTables).toHaveLength(2);
     expect(grantedTables).toHaveLength(21);
-    expect(count('{"item":2}')).toBe(4);
+    expect(count('{"item":2}')).toBe(3);
     expect(count('{"item":3}')).toBe(17);
     expect(count('{"item":4}')).toBe(2);
     expect(count('{"item":6}')).toBe(1);

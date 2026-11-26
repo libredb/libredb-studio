@@ -39,7 +39,7 @@ export type AgentPlanEstimate =
 export type AgentComposedSqlDenyCode =
   /**
    * This dialect has no verified composition. The engines whose server overlay supplies `catalogRead`
-   * (`languages/sql/engines/<id>.ts`) are the list, and they are the engines whose `AGENT_STATEMENT_LANGUAGE`
+   * (`languages/sql/engines/<id>.ts`) are the list, and they are the engines whose granted statement language
    * is SQL: PostgreSQL, SQLite, DuckDB, SQL Server and MySQL. Anything else is refused rather than served a statement nobody
    * ran against that engine's catalog.
    */

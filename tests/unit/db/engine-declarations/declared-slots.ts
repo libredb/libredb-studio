@@ -13,8 +13,9 @@
  * `SQL_ENGINE_GENERATORS`, each row of which Studio composes from the engine's declaration, and the census holds the
  * function there to the one Studio's SQL writing, migration DDL or SQL generator function table binds at that slot. An
  * engine's agent server overlay module is found by the agent leg's triad path,
- * `src/lib/agent/languages/<family>/engines/<type-id>.ts`, the family being the engine's `AGENT_STATEMENT_LANGUAGE`
- * row, and its slots sit at the same dotted path in the module's overlay and in the declaration's `agent.overlay`.
+ * `src/lib/agent/languages/<family>/engines/<type-id>.ts`, the family being the `statementLanguage` member of the
+ * engine's legacy row in the grant register, and its slots sit at the same dotted path in the module's overlay and in
+ * the declaration's `agent.overlay`.
  */
 
 /** The registries whose rows the table names slots of. */

@@ -12,9 +12,9 @@
  *
  * The statement language each engine speaks is Studio's grant of the claim its declaration requests,
  * `GRANTED_AGENT_STATEMENT_LANGUAGE` (docs/providers/CONTRACT.md, clause M-83), keyed by type-id so no dialect
- * comparison is written anywhere; Studio's review record of it, `AGENT_STATEMENT_LANGUAGE`, lives in
- * `@/lib/db/compatibility.ts`, and `tests/unit/lib/agent/agent-manifest.test.ts` holds it to every provider: an engine
- * has a language exactly when its provider has `queryReadOnly`.
+ * comparison is written anywhere; Studio's review of it is the `statementLanguage` member of the engine's legacy row in
+ * the grant register, and `tests/unit/lib/agent/agent-manifest.test.ts` holds that row to every provider: an engine has
+ * a language exactly when its provider has `queryReadOnly`.
  */
 import { GRANTED_AGENT_READINGS, GRANTED_AGENT_STATEMENT_LANGUAGE } from "@/lib/db/claim-grants";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/db/compatibility";

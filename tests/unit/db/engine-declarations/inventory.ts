@@ -108,7 +108,7 @@ export const ENGINE_TABLE_INVENTORY: readonly InventoryEntry[] = [
     name: "CONNECTION_STRING_ACCEPTED",
     destination: "engine declaration: connection.connectionString.accepted",
   },
-  { module: COMPATIBILITY, name: "AGENT_STATEMENT_LANGUAGE", destination: claim("agent.statementLanguage") },
+
   { module: CONNECTION_FIELDS_MODULE, name: "CONNECTION_FIELDS", destination: "engine declaration: connection.fields" },
   {
     module: CONNECTION_FIELDS_MODULE,

@@ -86,7 +86,7 @@ export function composeStatisticsAvailabilityProbe(dialect: DatabaseType): strin
  *
  * The composers are the engine's `catalogRead` (`languages/sql/engines/<id>.ts`), one per
  * kind, and every SQL engine's overlay has to supply them or declare the member
- * `"unsupported"`: the registry is total over the engines whose `AGENT_STATEMENT_LANGUAGE`
+ * `"unsupported"`: the registry is total over the engines whose granted statement language
  * is SQL, so a fifth one does not compile until it says which. An engine that reaches the
  * factory's read-only gate but no composer is an engine on which `inspect_schema`,
  * `profile_table` and `inspect_plan` can only ever refuse — which is how DuckDB shipped

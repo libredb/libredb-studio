@@ -3,7 +3,7 @@
  *
  * Client tier. It reads the family client facets (`languages/client.ts`) and the engine client overlays, never
  * `agent-manifest.ts` at run time, which reads this module: an engine's family is held beside its overlay instead, and
- * `AgentEngineClientOverlays` types it as the family `AGENT_STATEMENT_LANGUAGE` maps the engine onto. The registry is
+ * `AgentEngineClientOverlays` types it as the family the engine's generated claim request names. The registry is
  * total over `AgentEngineType` and declared in the order postgres, sqlite, duckdb, mssql, mysql, mongodb, kubernetes,
  * and like the server registry it copies only `dialect` out of each engine module.
  */

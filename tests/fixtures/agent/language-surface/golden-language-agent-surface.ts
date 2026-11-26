@@ -83,12 +83,12 @@ const WORKFLOWS: readonly AgentRunWorkflowType[] = [
 ];
 
 /**
- * The two engines whose statement language is not SQL on the base commit, frozen here rather than read from
- * `AGENT_STATEMENT_LANGUAGE`, which gains engines: the oracle has to keep reading exactly these two.
+ * The two engines whose statement language is not SQL on the base commit, frozen here rather than read from the
+ * engines' granted statement language, which gains engines: the oracle has to keep reading exactly these two.
  */
 const ENGINES: readonly DatabaseType[] = ["mongodb", "kubernetes"];
 
-/** Each engine's statement language, as the base commit's `AGENT_STATEMENT_LANGUAGE` maps it. */
+/** Each engine's statement language, as the base commit's review record mapped it. */
 const LANGUAGE = { mongodb: "mongo", kubernetes: "kubectl" } as const;
 
 /** The SQL engine the pack values compare against where a value is per language. */
