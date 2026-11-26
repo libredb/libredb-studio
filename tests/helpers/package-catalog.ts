@@ -117,6 +117,7 @@ const RESTRICTIVE_ROW: RegisterGrants = Object.freeze({
   sshTunnel: UNGRANTED_SSH_TUNNEL_SENTENCE,
   agentCredential: null,
   statementLanguage: null,
+  agentReadings: Object.freeze([]),
   servesOneSession: null,
   agentExecution: false,
   ownWords: "code-only",

@@ -824,6 +824,7 @@ describe("a package engine's register row", () => {
     sshTunnel: null,
     agentCredential: { form: "pair", supersededBy: [] },
     statementLanguage: "sql",
+    agentReadings: ["health", "storage", "sessions"],
     servesOneSession: "The engine serves its object tree from the editor's session in this test.",
     agentExecution: true,
     ownWords: "scrubbed",
@@ -856,8 +857,8 @@ describe("a package engine's register row", () => {
       sshTunnel: null,
       agentCredential: { form: "pair", supersededBy: [] },
       statementLanguage: "sql",
-      // Studio's agent readings review is still its facet rows, which hold no row for a package's engine.
-      agentReadings: [],
+      // The request's readings the row holds, in the row's order.
+      agentReadings: ["health", "sessions"],
       ownWords: "scrubbed",
       servesOneSession: LOOSEST_ROW.servesOneSession,
       agentExecution: true,
