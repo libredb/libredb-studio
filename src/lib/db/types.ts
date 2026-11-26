@@ -2366,7 +2366,7 @@ export interface DatabaseProvider {
    *
    * Implementing it is required and never sufficient: the acquisition and the core read path
    * (`runReadOnlyReading`) also require the engine on Studio's review record
-   * (`AGENT_EXECUTION_ENGINES` in compatibility.ts), and refuse one off it by name with
+   * (`GRANTED_AGENT_EXECUTION_ENGINES` in claim-grants.ts), and refuse one off it by name with
    * `PROFILE_ENGINE_NOT_REVIEWED` before this method is reached.
    */
   queryReadOnly?(

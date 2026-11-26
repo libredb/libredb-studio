@@ -557,8 +557,8 @@ export type ExecutionProfileDenyCode =
   | "UNSUPPORTED_PROFILE"
   | "PROFILE_UNSUPPORTED_BY_PROVIDER"
   /**
-   * The engine is not on Studio's review record of the engines agent and MCP statements run on (`AGENT_EXECUTION_ENGINES`
-   * in src/lib/db/compatibility.ts), so no statement profile is granted and no statement or budgeted read is made on it,
+   * The engine is not on Studio's review record of the engines agent and MCP statements run on
+   * (`GRANTED_AGENT_EXECUTION_ENGINES` in src/lib/db/claim-grants.ts), so no statement profile is granted and no statement or budgeted read is made on it,
    * even when its provider implements `queryReadOnly`.
    *
    * Its own code, apart from `PROFILE_UNSUPPORTED_BY_PROVIDER`, which says the provider has no such path and would be

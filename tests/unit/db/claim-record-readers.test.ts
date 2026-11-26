@@ -20,8 +20,8 @@
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
  * module reads the records through it either.
  *
- * Studio's review of each policy, MCP and connection claim and of the statement language claim is the grant
- * register's legacy rows, `@libredb/grant-register`, and no longer a record of core: no module but the grant reader
+ * Studio's review of each policy, MCP and connection claim and of the statement language claim, and the two host review
+ * records, is the grant register's legacy rows, `@libredb/grant-register`, and no longer a record of core: no module but the grant reader
  * loads the register, by an import declaration, a side-effect import, a re-export, an `export *`, a dynamic `import()`
  * or a `require()` of its package name, a subpath of it or a relative path into packages/grant-register/, while a
  * type-only import or export, which loads nothing, passes. The grant reader imports none of the records whose rows
@@ -75,6 +75,8 @@ const MOVED_TO_REGISTER: readonly string[] = [
   "SSH_TUNNEL_REFUSAL",
   "SEED_AGENT_CREDENTIAL",
   "AGENT_STATEMENT_LANGUAGE",
+  "SERVES_ONE_SESSION",
+  "AGENT_EXECUTION_ENGINES",
 ];
 
 /**

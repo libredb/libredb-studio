@@ -55,7 +55,7 @@ export interface SampleSpec {
  *
  * The SQLite sample leads, and the order is the point: a client with no saved active connection opens the first one
  * listed, so the first sample is what a new administrator lands on. Agent mode executes statements on SQLite
- * (`AGENT_EXECUTION_ENGINES`, src/lib/db/compatibility.ts), and the SQLite sample offers every agent workflow, where
+ * (`GRANTED_AGENT_EXECUTION_ENGINES`, src/lib/db/claim-grants.ts), and the SQLite sample offers every agent workflow, where
  * the LibreDB one offers no plan or profile workflow. An operator's own seed connections still lead both.
  *
  * Each asset is the output of a committed script, held by a test that reruns it: scripts/generate-sqlite-sample.mjs

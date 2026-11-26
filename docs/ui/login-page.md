@@ -230,7 +230,7 @@ The login page follows the app's premium dark aesthetic:
 Edit the `features` array and hero text in `login-form.tsx`. Every count and every
 product name in those cards is **derived**, not written: the engine count is
 `listShowcaseDatabases().length`, the channel count is `LIVE_CHANNELS.length`, and the
-agent card's sentence names the engines in `AGENT_EXECUTION_ENGINES`. Issue #425 exists
+agent card's sentence counts the engines in `GRANTED_AGENT_EXECUTION_ENGINES`. Issue #425 exists
 because the previous copy typed those answers by hand and stopped tracking the product
 three providers and two dozen channels later, so re-introducing a literal here is the one
 edit this page asks you not to make. Change the wording around the values freely.

@@ -35,7 +35,7 @@ const AGENT_EXECUTION = legacyRegisterEngines("agentExecution");
 const statementLanguage = legacyRegisterTable("statementLanguage");
 
 /**
- * The manifest against what each provider declares, as `engine-support.test.ts` holds `AGENT_EXECUTION_ENGINES` to
+ * The manifest against what each provider declares, as `engine-support.test.ts` holds `GRANTED_AGENT_EXECUTION_ENGINES` to
  * the drivers: the record is the list, so it must answer exactly where a provider has a read-only statement path.
  */
 describe("the statement language review rows", () => {

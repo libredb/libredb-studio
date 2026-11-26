@@ -76,9 +76,12 @@ const OXIA_PROGRAM = "the program name `oxia` an `oxia client` command begins wi
 
 /** The registries of spec 5.6, which stay. */
 export const REGISTRIES: readonly Listed[] = [
-  ...["READS_TRUST_MATERIAL", "SERVES_ONE_SESSION", "CONNECTION_FORM_URI_MODE", "CONNECTION_STRING_ACCEPTED"].map(
-    (declaration) => ({ path: "src/lib/db/compatibility.ts", declaration, count: 1, reason: COMPATIBILITY }),
-  ),
+  ...["READS_TRUST_MATERIAL", "CONNECTION_FORM_URI_MODE", "CONNECTION_STRING_ACCEPTED"].map((declaration) => ({
+    path: "src/lib/db/compatibility.ts",
+    declaration,
+    count: 1,
+    reason: COMPATIBILITY,
+  })),
   ...["CONNECTION_FIELDS", "SEED_ONLY_FIELDS", "REFUSED_CONNECTION_FIELDS"].map((declaration) => ({
     path: "src/lib/db/connection-fields.ts",
     declaration,
@@ -363,12 +366,6 @@ export const REGISTRIES: readonly Listed[] = [
     declaration: "AgentAvailabilityTables",
     count: 1,
     reason: "the type of the agent-leg tables availability is decided from, the granted statement language among them",
-  },
-  {
-    path: "src/lib/db/compatibility.ts",
-    declaration: "AGENT_EXECUTION_ENGINES",
-    count: 1,
-    reason: "the review record of the engines agent and MCP statements run on, read by every statement gate",
   },
   {
     path: "src/lib/governance/config.ts",

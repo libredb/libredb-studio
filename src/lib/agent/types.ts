@@ -343,7 +343,7 @@ export type AgentRunFailureReason =
   /**
    * The connection's engine has no read-only statement path under a declared boundary,
    * or is not on Studio's review record of the engines agent statements run on
-   * (`AGENT_EXECUTION_ENGINES`, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
+   * (`GRANTED_AGENT_EXECUTION_ENGINES`, `PROFILE_ENGINE_NOT_REVIEWED`), so this run could never
    * have been permitted on it. A property of the connection the
    * user chose, not a fault of the server — which is why it is not `internal`.
    *

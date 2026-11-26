@@ -4150,7 +4150,7 @@ export async function runInvestigation(
           // rather than relied on.
           // `operations` is the one agent set built on a different four, because the
           // read-class tools send statements, which only the engines
-          // `AGENT_EXECUTION_ENGINES` (`src/lib/db/compatibility.ts`) names may do -
+          // `GRANTED_AGENT_EXECUTION_ENGINES` (`src/lib/db/claim-grants.ts`) names may do -
           // named rather than counted here, because the count is what went stale: the rule
           // that decides is the review record that the factory and the core read path read
           // (`assertStatementsReviewed`), with the provider's `queryReadOnly` a second

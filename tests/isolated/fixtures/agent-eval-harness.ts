@@ -106,7 +106,7 @@ export interface EvalEnginePreset {
    * Whether the stub provider carries `queryReadOnly` at all.
    *
    * The engine property that decides which workflows may run: the providers of
-   * `AGENT_EXECUTION_ENGINES` implement it, and `acquireExecutionProfileProvider` refuses the
+   * `GRANTED_AGENT_EXECUTION_ENGINES` implement it, and `acquireExecutionProfileProvider` refuses the
    * `agent-read-only` profile without it. A preset that does not serve it therefore
    * cannot answer a statement AT ALL — which is what makes "this run sent none" a
    * property the fixture enforces rather than one the assertions merely observe.
@@ -279,7 +279,7 @@ export const EVAL_ENGINES: Readonly<Record<EvalEngine, EvalEnginePreset>> = Obje
    * preset the harness could not express one.
    *
    * It carries NO `queryReadOnly`, so it stands for an engine outside
-   * `AGENT_EXECUTION_ENGINES` under MySQL's name and capabilities: the real MySQL
+   * `GRANTED_AGENT_EXECUTION_ENGINES` under MySQL's name and capabilities: the real MySQL
    * provider has implemented `queryReadOnly` since #1629. It can answer neither a
    * catalog read nor a statement: a run that sent one dies visibly here instead of
    * being quietly answered by PostgreSQL's default fixture row. That is the difference

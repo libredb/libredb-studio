@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
  * It renders `src/lib/agent/posture.ts` and decides nothing. That split is the point — the
  * posture module owns every claim and every derived figure, this component owns the palette
  * and the popover — so a restyle here cannot change what the rail asserts, and a change to
- * `AGENT_EXECUTION_ENGINES` or to a policy row reaches this surface without a class being
+ * `GRANTED_AGENT_EXECUTION_ENGINES` or to a policy row reaches this surface without a class being
  * touched. Nothing below writes a sentence of its own; grep this file for a full stop
  * outside a comment and you will not find one.
  *
@@ -22,7 +22,7 @@ import { cn } from "@/lib/utils";
  *
  *  - **The qualifier sits BESIDE the pill, never behind the ⓘ.** A bare "Executes nothing
  *    it drafts" overclaims: on the dialects that supply a `catalogCapture`, plan mode's grounding
- *    capture IS a catalog read, and the review record's docblock in `src/lib/db/compatibility.ts` says that copy
+ *    capture IS a catalog read, and the review record's docblock in `src/lib/db/claim-grants.ts` says that copy
  *    compressing these facts overclaims. Both halves are on one line, and the row
  *    flex-WRAPS rather than truncating, because a qualifier cut off mid-clause is the same
  *    overclaim with an ellipsis on the end.
