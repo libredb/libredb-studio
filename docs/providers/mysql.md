@@ -121,11 +121,11 @@ that matter most here:
 
 ### Registration
 
-Loaded on demand by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)):
+Loaded on demand by the legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case 'mysql': {
-  const { MySQLProvider } = await import('./providers/sql/mysql');
+  const { MySQLProvider } = await import('@/lib/db/providers/sql/mysql');
   return new MySQLProvider(connection, options, context);
 }
 ```

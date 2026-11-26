@@ -24,6 +24,7 @@ describe("control 0.6 names the egress decision", () => {
     "src/lib/config/egress-preflight.ts",
     "src/instrumentation.ts",
     "src/lib/db/factory.ts",
+    "src/lib/provider-host/legacy-adapter/open.ts",
     "src/lib/db/providers/network/snmp/client.ts",
     "src/lib/db/providers/industrial/modbus/client.ts",
     "src/lib/db/providers/network/netconf/dial.ts",

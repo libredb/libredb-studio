@@ -207,7 +207,7 @@ Nothing PromQL-specific lives in the base class.
 
 ### 2.4 Registration & lifecycle
 
-The factory builds it through `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) with a dynamic import, so no other engine loads this module.
+The legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), builds it with a dynamic import when `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens a Prometheus connection, so no other engine loads this module.
 Its `DB_UI_CONFIG` entry draws it in `text-hue-fuchsia`, because the flame orange of its mark is Couchbase's identity hue already, and `SHOWCASE_RANK` places it on the login showcase behind Trino and ahead of libSQL.
 `connect()` builds the endpoint from `host` and `port` through the shared endpoint validation (#1085 S1, sections 3.6 and 13), validates the credentials, and builds the request function from the TLS panel, so an invalid value is refused before any request leaves the process.
 It then reads `/api/v1/status/buildinfo` once, which proves the server answers the API envelope at that address with that credential.

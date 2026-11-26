@@ -97,13 +97,11 @@ rather than reimplementing them:
 
 ### 2.3 Registration & lifecycle
 
-The factory loads the provider via dynamic import so the `pg` driver is only pulled in when a
-PostgreSQL connection is opened by `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open loads the provider via dynamic import, so the `pg` driver is only pulled in when a PostgreSQL connection is opened by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)), through `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)):
 
 ```ts
 case 'postgres': {
-  const { PostgresProvider } = await import('./providers/sql/postgres');
+  const { PostgresProvider } = await import('@/lib/db/providers/sql/postgres');
   return new PostgresProvider(connection, options, context);
 }
 ```

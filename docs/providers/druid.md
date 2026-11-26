@@ -136,15 +136,14 @@ Positional `?` still binds via `query(sql, params)`
 
 ### 2.4 Registration & lifecycle
 
-The factory wires Druid in via a dynamic import inside `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open wires Druid in via a dynamic import inside `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case "druid": {
   // The explicit /index specifier keeps this dynamic import statically
   // analysable: a bare directory resolves only at runtime, which the bundler
   // cannot trace into a chunk.
-  const { DruidProvider } = await import("./providers/sql/druid/index");
+  const { DruidProvider } = await import("@/lib/db/providers/sql/druid/index");
   return new DruidProvider(connection, options, context);
 }
 ```

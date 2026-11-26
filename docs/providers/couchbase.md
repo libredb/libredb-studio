@@ -123,14 +123,13 @@ a SQL dialect is expressed through `queryLanguage: "sql"`, not through the class
 
 ### 2.4 Registration & lifecycle
 
-The factory wires Couchbase in via a dynamic import inside `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open wires Couchbase in via a dynamic import inside `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case 'couchbase': {
   // The explicit /index specifier keeps this dynamic import statically analysable:
   // a bare directory resolves only at runtime, which the bundler cannot trace into a chunk.
-  const { CouchbaseProvider } = await import('./providers/document/couchbase/index');
+  const { CouchbaseProvider } = await import('@/lib/db/providers/document/couchbase/index');
   return new CouchbaseProvider(connection, options, context);
 }
 ```

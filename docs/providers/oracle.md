@@ -77,11 +77,11 @@ them: `getCapabilities()`, `getLabels()`, and `prepareQuery()` (Oracle paginatio
 
 ### Registration
 
-Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
+Loaded on demand by the legacy adapter's open, `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case 'oracle': {
-  const { OracleProvider } = await import('./providers/sql/oracle/index');
+  const { OracleProvider } = await import('@/lib/db/providers/sql/oracle/index');
   return new OracleProvider(connection, options, context);
 }
 ```

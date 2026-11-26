@@ -114,7 +114,7 @@ can correct it.
 | Surface | Entry |
 |---|---|
 | `src/lib/types.ts` | `"cassandra"` in `DatabaseType`, plus the `localDataCenter` field |
-| `src/lib/db/factory.ts` | `case "cassandra"`, dynamic `import("./providers/sql/cassandra/index")` |
+| `src/lib/provider-host/legacy-adapter/open.ts` | `case "cassandra"`, dynamic `import("@/lib/db/providers/sql/cassandra/index")` |
 | `src/lib/db/engine-declarations/cassandra.json` | `displayName` "Apache Cassandra", `connection.defaults` port 9042, the `localDataCenter` field, which `CONNECTION_FORM` in `src/lib/db/connection-form.ts` composes |
 | `src/lib/db-ui-config.ts` | Icon, `text-sky-300` |
 | `src/lib/db/engine-declarations/cassandra.json` | `sqlText.grammar`: all four facts probed ([§5.4](#54-dialect-traps-a-user-will-hit)) |

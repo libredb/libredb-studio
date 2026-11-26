@@ -141,12 +141,11 @@ Positional parameters are refused outright
 
 ### 2.4 Registration & lifecycle
 
-The factory wires the type-id in via a dynamic import inside `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open wires the type-id in via a dynamic import inside `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case "opensearch": {
-  const { OpenSearchProvider } = await import("./providers/sql/search/index");
+  const { OpenSearchProvider } = await import("@/lib/db/providers/sql/search/index");
   return new OpenSearchProvider(connection, options, context);
 }
 ```

@@ -131,7 +131,7 @@ src/lib/db/
 ├── types.ts                  # DatabaseProvider interface + all DTOs
 ├── errors.ts                 # DatabaseError hierarchy
 ├── map-database-error.ts     # mapDatabaseError(): a native driver error onto that hierarchy
-├── factory.ts                # createDatabaseProvider() — dynamic import per type + provider cache
+├── factory.ts                # createDatabaseProvider() and the provider cache
 └── providers/
     ├── sql/                  # postgres, mysql, sqlite, oracle, mssql (extend SQLBaseProvider)
     ├── document/             # mongodb
@@ -169,13 +169,11 @@ out in parallel.
 
 ### 2.4 Registration & lifecycle
 
-The factory wires Redis in via a dynamic import so the `ioredis` driver is only loaded when a Redis
-connection is actually opened by `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open wires Redis in via a dynamic import, so the `ioredis` driver is only loaded when a Redis connection is actually opened by `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)), through `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)):
 
 ```ts
 case 'redis': {
-  const { RedisProvider } = await import('./providers/keyvalue/redis');
+  const { RedisProvider } = await import('@/lib/db/providers/keyvalue/redis');
   return new RedisProvider(connection, options, context);
 }
 ```
@@ -2348,7 +2346,7 @@ This Redis provider is a good template for a non-relational backend. To add anot
    `runMaintenance`, and the seven monitoring methods). Return `[]` from the ones that don't apply.
 3. **Override** `getCapabilities()`, `getLabels()`, and `prepareQuery()` so the shared UI renders
    the right wording and feature flags.
-4. **Register** the type in the `factory.ts` switch (dynamic import) and add it to the
+4. **Register** the type in the `src/lib/provider-host/legacy-adapter/open.ts` switch (dynamic import) and add it to the
    `DatabaseType` union in `src/lib/types.ts`.
 5. **Add** the driver dependency to `package.json`.
 6. **Map** native driver errors onto the `errors.ts` classes (`ConnectionError`, `QueryError`, …).

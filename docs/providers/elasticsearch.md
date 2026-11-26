@@ -116,7 +116,7 @@ ElasticsearchProvider (search/index.ts)         OpenSearchProvider (search/index
 `SearchProvider` extends `SQLBaseProvider` because the query language really is SQL — measured, the
 endpoint answers a `POST`ed statement with declared columns and positional rows on the basic tier —
 and because the shared limiter's `LIMIT n` is correct here. The abstract base is **not exported**: the
-factory constructs a type-id, and a type-id is one of the two concrete classes, which is what keeps
+legacy adapter's open constructs a type-id, and a type-id is one of the two concrete classes, which is what keeps
 both exports honestly thin (each one names its product and nothing else).
 
 ### 2.3 What `SQLBaseProvider` gives for free
@@ -135,12 +135,11 @@ Positional parameters are refused outright
 
 ### 2.4 Registration & lifecycle
 
-The factory wires the type-id in via a dynamic import inside `createDatabaseProvider()`
-([`factory.ts`](../../src/lib/db/factory.ts)):
+The legacy adapter's open wires the type-id in via a dynamic import inside `openLegacyEngine()` ([`open.ts`](../../src/lib/provider-host/legacy-adapter/open.ts)), which `createDatabaseProvider()` ([`factory.ts`](../../src/lib/db/factory.ts)) opens through:
 
 ```ts
 case "elasticsearch": {
-  const { ElasticsearchProvider } = await import("./providers/sql/search/index");
+  const { ElasticsearchProvider } = await import("@/lib/db/providers/sql/search/index");
   return new ElasticsearchProvider(connection, options, context);
 }
 ```
