@@ -36,6 +36,12 @@ import {
   type WireHandler,
   wire,
 } from "../../../helpers/firestore-provider";
+import {
+  jsonAnswer as replayedJsonAnswer,
+  scriptedTransport,
+  UNRECORDED_ANSWER,
+} from "../../../helpers/firestore-replay";
+import { ENV } from "@/lib/db/providers/document/firestore/constants";
 
 const EMULATOR = { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" };
 const TIME = "2026-10-12T00:00:00.000000Z";
@@ -367,5 +373,29 @@ describe("the credential's forms reach every context (S7)", () => {
     )) as Error;
     expect(failure.message).not.toContain(PASTED_TOKEN);
     expect(failure.message).toContain(ERROR_SENTENCES.withheld);
+  });
+});
+
+const EMULATOR_ADDRESS = "127.0.0.1:8080";
+async function emulatorProvider(): Promise<FirestoreProvider> {
+  const script = scriptedTransport((_lane, request) =>
+    request.url.endsWith(":listCollectionIds") ? replayedJsonAnswer({}) : UNRECORDED_ANSWER,
+  );
+  const provider = new FirestoreProvider(
+    { id: "doc", name: "doc", type: "firestore", database: "demo-libredb", createdAt: new Date(0) },
+    { queryTimeout: 30_000 },
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    { createTransport: script.createTransport, env: { [ENV.emulatorHost]: EMULATOR_ADDRESS } },
+  );
+  await provider.connect();
+  return provider;
+}
+
+describe("the emulator warnings over a replayed transport", () => {
+  test("an emulator connect warns that it is the emulator and that the project is empty", async () => {
+    const provider = await emulatorProvider();
+    const messages = provider.connectWarnings().map((warning) => warning.message);
+    expect(messages).toEqual([S.emulator(EMULATOR_ADDRESS), S.emptyEmulator]);
+    await provider.disconnect();
   });
 });
