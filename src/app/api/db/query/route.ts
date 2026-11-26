@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { INVALID_REQUEST_BODY, readJsonObject } from "@/lib/api/json-object-body";
 import { readProviderDeclarations } from "@/lib/db";
 import { createErrorResponse } from "@/lib/api/errors";
-import { type ProviderTextScrub, providerTextScrub } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, type ProviderTextScrub } from "@/lib/db/operations/provider-text";
 import { resolveServedConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { guardRoute } from "@/lib/api/require-session";
 import { requestCatalog } from "@/lib/db/catalog-scope";
@@ -12,7 +12,13 @@ import { readBoundParams } from "@/lib/api/bound-params";
 import { checkEditorQuery, openWithinBudget, runEditorQuery } from "@/lib/api/editor-query";
 import { packageCallError } from "@/lib/api/package-errors";
 import { PackageEngineUnsupportedError } from "@/lib/db/errors";
-import type { EngineOffers, EngineRecord } from "@/lib/db/server-catalog";
+import {
+  type EngineConnection,
+  type EngineOffers,
+  type EngineRecord,
+  legacyConnection,
+  legacyProviderType,
+} from "@/lib/db/server-catalog";
 import { packageConnectBudget } from "@/lib/provider-host/open-context";
 import { openedProvider } from "@/lib/provider-host/open-engine";
 import { ObjectRouteError, objectRouteErrorBody, optionalDatabase } from "@/lib/api/object-route";
@@ -22,7 +28,6 @@ import { countCodeStatements } from "@/lib/sql/statement-splitter";
 import { hasLoneCarriageReturnInLineComment, hasUnterminatedSpan } from "@/lib/sql/spans";
 import { readsSqlText, resolveSqlGrammar } from "@/lib/sql/grammar";
 import type { ExplainFormat, QueryPrepareOptions } from "@/lib/db/types";
-import type { DatabaseConnection } from "@/lib/types";
 import { admitQueryExecution } from "@/lib/query-events/admission";
 import { gateRun } from "@/lib/api/run-confirmation";
 import { runConfirmationIssuerForSession } from "@/lib/api/run-confirmation-token";
@@ -105,7 +110,10 @@ export async function POST(req: NextRequest) {
   const started = queryEventStart();
   const events = queryEventRequest("editor", guard.session, req);
   let requestedId: string | undefined;
-  let connection: DatabaseConnection | undefined;
+  let connection: EngineConnection | undefined;
+  // Core's scrub of the resolved connection, for the run and the `catch` below: before the connection resolves no
+  // provider ran.
+  let scrub: ProviderTextScrub | undefined;
   let submitted: string | null = null;
   let explainMode: ExplainMode | undefined;
   let stage: "request" | "admission" | "execution" = "request";
@@ -125,9 +133,13 @@ export async function POST(req: NextRequest) {
     // with the server catalog's record of its engine, whose offers decide each step below that differs between engines,
     // and every engine opens through one open and runs through one run (`editorTarget`, `runEditorQuery`).
     const { connection: named, engine } = await resolveServedConnection(body, guard.session);
-    // The connection as the engine-neutral readers of its fields take it (the scrub, the events): they read no row keyed
-    // by its type, so a package's connection is read as any other.
-    connection = named as DatabaseConnection;
+    // The connection as the engine-neutral readers of its fields take it (the scrub, the gate, the events), which read
+    // no row keyed by its type, so a package's connection is read as any other; a step only a legacy provider serves
+    // reads it through `legacyConnection` after the record's offer for that step. The scrub is core's scrub of any
+    // record's connection, as Test Connection's is: a `database` the route applies below is no secret, so it is the
+    // scrub of the connection that runs.
+    connection = named;
+    scrub = connectionTextScrub(named, legacyProviderType(engine), "any");
 
     // A `sql` that is present but not a string, a falsy one (0, false) included, is refused in words: a truthy one
     // reached the provider and answered 500 with its own TypeError. A missing (null) or empty one keeps its answer.
@@ -147,7 +159,7 @@ export async function POST(req: NextRequest) {
     // one, before any open (`src/lib/api/editor-query.ts`).
     const refusal = checkEditorQuery({
       statement: sql,
-      type: engine.offers.consoleTextBound ? connection.type : undefined,
+      type: engine.offers.consoleTextBound ? legacyConnection(engine, connection).type : undefined,
       options,
       queryTimeout: connection.queryTimeout,
     });
@@ -187,10 +199,11 @@ export async function POST(req: NextRequest) {
     // would read a `;` in its comment as a boundary. Read only where the engine's record offers a plan: any other
     // engine's explain is refused by name below.
     if (explain.explain && engine.offers.explain) {
-      const explainGrammar = resolveSqlGrammar(connection.type);
+      const { type } = legacyConnection(engine, connection);
+      const explainGrammar = resolveSqlGrammar(type);
       if (
         typeof sql === "string" &&
-        readsSqlText(connection.type) &&
+        readsSqlText(type) &&
         (countCodeStatements(sql, explainGrammar) > 1 ||
           hasUnterminatedSpan(sql, explainGrammar) ||
           hasLoneCarriageReturnInLineComment(sql, explainGrammar))
@@ -257,15 +270,13 @@ export async function POST(req: NextRequest) {
        * Built under the session's editor posture, as provider-meta builds it, so a connection the
        * posture denies file access is refused here before Studio reads the path it names.
        */
-      const { capabilities } = await readProviderDeclarations(
-        connection,
-        editorExecutionContext(guard.session, connection),
-      );
+      const legacy = legacyConnection(engine, connection);
+      const { capabilities } = await readProviderDeclarations(legacy, editorExecutionContext(guard.session, legacy));
       if (capabilities.keyScan === undefined) {
         return NextResponse.json(
           {
             error:
-              `${connection.type} declares no key-space walk: "database" names the database a ` +
+              `${legacy.type} declares no key-space walk: "database" names the database a ` +
               `key was walked in, and only an engine that needs such a name accepts it`,
           },
           { status: 400 },
@@ -282,13 +293,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json(
           {
             error:
-              `${connection.type} walks one key space and declares no database level: "database" names the ` +
+              `${legacy.type} walks one key space and declares no database level: "database" names the ` +
               `numbered database a key was walked in, and this engine has none to name`,
           },
           { status: 400 },
         );
       }
-      connection = { ...connection, database: String(database) };
+      connection = { ...legacy, database: String(database) };
     }
 
     // The server's confirmation gate, one for every engine, reading the statement with the reader the engine's record
@@ -323,7 +334,6 @@ export async function POST(req: NextRequest) {
     // offers (`answeredFailure`). `opening` holds the connection narrowed for the callback, which TypeScript does not
     // narrow `connection` in.
     const opening = connection;
-    const scrub = providerTextScrub(connection, "any");
     const target = await openWithinBudget(req.signal, packageConnectBudget(engine), (wait) =>
       editorTarget(guard.session, opening, engine, requestCatalog(body), wait),
     ).catch(answeredFailure(engine, "open", scrub));
@@ -386,7 +396,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     if (stage === "execution") {
       recordExecutedUnit(events, {
-        connection: connection as DatabaseConnection,
+        connection: connection as EngineConnection,
         statement: submitted,
         started,
         explain: explainMode,
@@ -396,10 +406,7 @@ export async function POST(req: NextRequest) {
       recordRefusedRequest(events, { requestedId, connection, statement: submitted, started, error });
     }
     // Once the connection resolved, a provider may have run: its error answers with the connection's scrub.
-    return createErrorResponse(error, {
-      route: ROUTE,
-      scrub: connection === undefined ? undefined : providerTextScrub(connection, "any"),
-    });
+    return createErrorResponse(error, { route: ROUTE, scrub });
   }
 }
 

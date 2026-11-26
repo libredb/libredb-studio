@@ -11,9 +11,9 @@ import { clientAddress } from "@/lib/api/client-address";
 import type { Role } from "@/lib/auth";
 import { errorCode as recordCode } from "@/lib/db/error-record";
 import { isDatabaseError, isQueryCancelledError } from "@/lib/db/errors";
-import { providerTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import { connectionTextScrub, withheldProviderError } from "@/lib/db/operations/provider-text";
+import type { EngineConnection } from "@/lib/db/server-catalog";
 import type { GovernedConnection } from "@/lib/governance/visible";
-import type { DatabaseConnection } from "@/lib/types";
 import { contractConnectionId } from "./build";
 import { recordQueryEvent } from "./sink";
 import type { QueryEventConnection, QueryEventPrincipal, QueryEventSource, QueryEventStart } from "./types";
@@ -52,8 +52,11 @@ export function requestedConnectionId(body: unknown): string | undefined {
   return typeof claimed === "string" ? claimed : undefined;
 }
 
-/** A resolved connection as its events name it: a governed record carries the level of its credential. */
-function resolvedConnection(connection: DatabaseConnection): QueryEventConnection {
+/**
+ * A resolved connection of any engine the server serves as its events name it, its engine by its id: a governed record
+ * carries the level of its credential.
+ */
+function resolvedConnection(connection: EngineConnection): QueryEventConnection {
   const { grantLevel } = connection as Partial<Pick<GovernedConnection, "grantLevel">>;
   return { id: connection.id, name: connection.name, engine: connection.type, accessLevel: grantLevel ?? null };
 }
@@ -72,7 +75,7 @@ function rowCount(count: number | undefined): number | undefined {
 
 /** One unit that ran: the connection it ran on, the text the user submitted for it and how it ended. */
 export interface ExecutedUnit {
-  readonly connection: DatabaseConnection;
+  readonly connection: EngineConnection;
   /** The text the user submitted, never the statement Studio built around it. */
   readonly statement: string | null;
   readonly started: QueryEventStart;
@@ -85,11 +88,12 @@ export interface ExecutedUnit {
 
 /**
  * The code and message a failed unit's event records. An error whose text holds a credential of the unit's connection
- * (core's scrub, `providerTextScrub(connection, "any")`) records the withheld sentence and the error's own API code,
- * never its SQLSTATE, which is one of the texts the scrub reads.
+ * (core's scrub of a connection of any engine, `connectionTextScrub(connection, undefined, "any")`) records the withheld
+ * sentence and the error's own API code, never its SQLSTATE, which is one of the texts the scrub reads. The event keeps
+ * only that sentence and that code, never the provider a withheld error names, so the scrub names none.
  */
-function failure(connection: DatabaseConnection, error: unknown): { errorCode?: string; errorMessage: string } {
-  const withheld = withheldProviderError(providerTextScrub(connection, "any"), error);
+function failure(connection: EngineConnection, error: unknown): { errorCode?: string; errorMessage: string } {
+  const withheld = withheldProviderError(connectionTextScrub(connection, undefined, "any"), error);
   if (withheld !== null) return { errorCode: recordCode(error), errorMessage: withheld.message };
   return { errorCode: errorCode(error), errorMessage: error instanceof Error ? error.message : String(error) };
 }
@@ -123,7 +127,7 @@ export interface RefusedRequest {
   /** The id the request named, for a request refused before its connection resolved. */
   readonly requestedId: string | undefined;
   /** The resolved connection, for a request the admission gate refused. */
-  readonly connection: DatabaseConnection | undefined;
+  readonly connection: EngineConnection | undefined;
   readonly statement: string | null;
   readonly started: QueryEventStart;
   /** The refusal, whose code the event records. */

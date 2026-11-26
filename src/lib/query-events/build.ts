@@ -14,9 +14,11 @@
  *
  * A stored statement is cut at `queryLog.maxStatementBytes` UTF-8 bytes on a character boundary, with
  * `statement_truncated` set. A refused request whose connection did not resolve keeps no statement and no error text
- * in any mode, because the engine that would read them is unknown. Nor does a unit of an engine only a provider package
- * serves: Studio's review record holds no redaction for such an engine (docs/providers/CONTRACT.md, S-7), so the
- * restrictive reading keeps none of its text, and its statement is read as `OTHER`.
+ * in any mode, because the engine that would read them is unknown. Nor does a unit of an engine whose record in the
+ * server's catalog does not offer query event text (`EngineOffers.queryEventText` in src/lib/db/server-catalog.ts): an
+ * engine only a provider package serves offers none, since Studio's review record holds no redaction for it
+ * (docs/providers/CONTRACT.md, S-7), so the restrictive reading keeps none of its text, and its statement is read as
+ * `OTHER`. An event naming an engine the server serves no record of is the caller's defect and throws.
  *
  * Every row has exactly the columns of the manifest and keeps their rules, so the governance source never refuses a
  * row for its shape: a bounded text column is cut to its limit by character, the unit PostgreSQL's `char_length`
@@ -29,7 +31,8 @@ import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import type { ExplainMode } from "@/lib/explain";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { readsSqlText } from "@/lib/sql/grammar";
-import { isDatabaseType } from "@/lib/db/type-id";
+import { legacyProviderType, servedEngineRecord } from "@/lib/db/server-catalog";
+import { quoteTypeId } from "@/lib/db/type-id";
 import type { DatabaseType } from "@/lib/types";
 import { maskCredentials, redactStatement } from "./redact";
 import type {
@@ -184,19 +187,33 @@ function clientIp(address: string | undefined): string | null {
 }
 
 /**
- * The engine a row's statement and error text are read under: the connection's own for an engine Studio ships, null
- * for a request whose connection did not resolve, and `undefined` for an engine only a provider package serves, whose
- * text Studio holds no reading row for, so none of it is kept.
+ * The engine a row's statement and error text are read under, read from the record of `engine` in the server's
+ * catalog: the engine's own id where its record offers query event text (`EngineOffers.queryEventText`), null for a
+ * request whose connection did not resolve, and `undefined` for an engine whose record does not offer it, such as one
+ * only a provider package serves, whose text Studio holds no reading row for, so none of it is kept.
+ *
+ * @throws {UnknownProviderError} When `engine` names no engine the server serves: the caller's defect.
+ * @throws {ProviderUnavailableError} When every package naming `engine` was refused at boot: the caller's defect.
+ * @throws {Error} A host defect: when the record offers query event text and no legacy provider, since Studio's
+ * redaction rows are read by a legacy engine's id.
  */
 function readingEngine(engine: string | null): DatabaseType | null | undefined {
   if (engine === null) return null;
-  return isDatabaseType(engine) ? engine : undefined;
+  const record = servedEngineRecord(engine);
+  if (!record.offers.queryEventText) return undefined;
+  const type = legacyProviderType(record);
+  if (type === undefined) {
+    throw new Error(
+      `The engine ${quoteTypeId(engine)} offers query event text, which only Studio's redaction rows read by a legacy engine's id hold, and its record offers no legacy provider: a host defect.`,
+    );
+  }
+  return type;
 }
 
 /**
  * What the statement is as `analyzeQuery()` reads it under the engine's grammar, and OTHER for a unit without text, for
- * an engine whose statements are not SQL and for an engine only a provider package serves. A refused request whose
- * connection did not resolve is read under the compatibility grammar, because its engine is unknown.
+ * an engine whose statements are not SQL and for an engine whose record does not offer query event text. A refused
+ * request whose connection did not resolve is read under the compatibility grammar, because its engine is unknown.
  */
 function statementType(text: string | null, engine: DatabaseType | null | undefined): StatementType {
   if (text === null || engine === undefined || (engine !== null && !readsSqlText(engine))) return "OTHER";

@@ -160,7 +160,11 @@ export interface EngineOffers {
    * `statementGrammar`, with every claim that loosens the gate uncounted (`packageConfirmationVerdict`).
    */
   readonly statementVocabulary: boolean;
-  /** A query event that keeps the statement's and the error's text (src/lib/query-events). */
+  /**
+   * A query event that keeps the statement's and the error's text, read under Studio's redaction rows by the engine's
+   * id: the query event builder reads it (`buildQueryEvent` in src/lib/query-events/build.ts). An engine without it
+   * keeps no statement and no error text in any capture mode, and its statement is read as `OTHER`.
+   */
   readonly queryEventText: boolean;
   /** An SSH tunnel core opens for the connection. */
   readonly sshTunnel: boolean;
