@@ -303,8 +303,10 @@ import { PASTE_FORMATS_TEXT } from "@/lib/connection-paste-formats";
 // The account module is pure and not mocked: the Snowflake entry's derived-host hint is the real one.
 import { snowflakeHostHint } from "@/lib/db/providers/sql/snowflake/account-host";
 import { CONNECTION_FIELD_DESCRIPTORS, CONNECTION_FIELDS } from "@/lib/db/connection-fields";
-import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 import type { DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const sshTunnel = legacyRegisterTable("sshTunnel");
 
 // ── Mock @/lib/db-ui-config ─────────────────────────────────────────────────
 // Mirrors the real table for the engines that diverge from the networked default. A mock
@@ -366,7 +368,8 @@ const mockFields = (type: string): string[] =>
 /**
  * What a `DatabaseUIConfig` may declare about its connection fields: labels and hints keyed by
  * field (#1085), the choices of a field drawn as a select, and whether the SSL panel is offered. Whether the SSH
- * panel is offered is core's SSH_TUNNEL_REFUSAL row, read below as the real offersSshTunnel reads it (FND-2 slice 5).
+ * panel is offered is the engine's legacy register row of the tunnel claim, read below as the real offersSshTunnel reads
+ * Studio's grant of it (FND-2 slice 5).
  */
 interface MockFieldCopy {
   readonly fieldLabels?: Readonly<Record<string, string>>;
@@ -696,8 +699,8 @@ mock.module("@/lib/db-ui-config", () => ({
     ...mockDeclaredCopy,
   }),
   takesConnectionField: (type: string, field: string) => mockFields(type).includes(field),
-  // The real rule: core's SSH_TUNNEL_REFUSAL row.
-  offersSshTunnel: (type: string) => SSH_TUNNEL_REFUSAL[type as DatabaseType] === null,
+  // The real rule: the engine's legacy register row of the tunnel claim.
+  offersSshTunnel: (type: string) => sshTunnel[type as DatabaseType] === null,
   offersSslPanel: (type: string) => ({ ...MOCK_FIELD_COPY[type], ...mockDeclaredCopy }).showSslPanel !== false,
   // The real pair's rule, mirrored the way `isFileBased` below mirrors its own: the modal reads
   // its field copy through these two, and the real ones run in tests/unit/lib/db-ui-config.test.ts.
@@ -917,7 +920,7 @@ describe("ConnectionModal", () => {
   });
 
   test("an engine that hides both the SSL/TLS and SSH panels still draws its consent to a cleartext password", () => {
-    // RabbitMQ, whose SSH_TUNNEL_REFUSAL row refuses a tunnel, with the SSL panel withheld on top.
+    // RabbitMQ, whose legacy register row refuses a tunnel, with the SSL panel withheld on top.
     mockFormOverrides = { type: "rabbitmq", sslMode: "disable" };
     mockDeclaredFields = { rabbitmq: ["host", "port", "user", "password", "allowInsecureAuth"] };
     mockDeclaredCopy = { showSslPanel: false };

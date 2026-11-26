@@ -460,7 +460,7 @@ Every agent execution profile on the connection, the read-only one, the operatio
 A connection without one runs its agent and MCP calls under its own login, as before.
 So the agent can run as a least-privileged principal while the connection keeps a wider one, which is what an engine's read-only proof asks for (each provider doc says what its proof admits).
 
-Which fields a seed of each engine takes is Studio's grant `GRANTED_SEED_AGENT_CREDENTIAL` in `src/lib/db/claim-grants.ts`, for every engine Studio ships its row of `SEED_AGENT_CREDENTIAL` in `src/lib/db/connection-fields.ts`, which follows each provider's declared form (`AgentCredentialForm` in `src/lib/db/types.ts`):
+Which fields a seed of each engine takes is Studio's grant `GRANTED_SEED_AGENT_CREDENTIAL` in `src/lib/db/claim-grants.ts`, for every engine Studio ships its legacy row of the grant register in `packages/grant-register/src/register.json`, which follows each provider's declared form (`AgentCredentialForm` in `src/lib/db/types.ts`):
 
 - `agentUser` and `agentPassword` together: `postgres`, `mysql`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `couchbase`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `cassandra`, `prometheus`, `kafka`, `etcd`, `neo4j`, `milvus`, `influxdb`, `databend`, `mqtt`, `rabbitmq`, `opcua`, `netconf`.
 - `agentUser` and `agentPassword` together, with an `agentUser` other than `user`: `s3`, whose agent key is an access key ID and secret of its own, since an agent key ID equal to the connection's names the same key.

@@ -4,7 +4,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { setEgressFlag } from "../../../helpers/egress-flag";
-import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -114,8 +114,8 @@ describe("kafkaConnectionOptions", () => {
     }
   });
 
-  // Core refuses a Kafka connection whose tunnel is on before any provider is built (Kafka's row of SSH_TUNNEL_REFUSAL,
-  // tests/unit/lib/db/tunnel-decision.test.ts), so the options read no tunnel at all.
+  // Core refuses a Kafka connection whose tunnel is on before any provider is built (Kafka's legacy register row of the
+  // tunnel claim, tests/unit/lib/db/tunnel-decision.test.ts), so the options read no tunnel at all.
   test("reads no sshTunnel: core refuses a Kafka tunnel before the provider exists (FND-2 slice 5)", () => {
     for (const sshTunnel of [
       { enabled: true, host: "bastion", port: 22, username: "u" },
@@ -451,7 +451,7 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
 
 describe("the SSH tunnel refusal", () => {
   test("core's SSH tunnel refusal row for Kafka says it does not run through a tunnel (FND-2 slice 5)", () => {
-    const sentence = SSH_TUNNEL_REFUSAL.kafka;
+    const sentence = legacyRegisterTable("sshTunnel").kafka;
     expect(sentence).toStartWith("Kafka does not run through an SSH tunnel");
   });
 });

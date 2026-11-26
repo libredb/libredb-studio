@@ -109,7 +109,7 @@ test.describe("SNMP in the connection dialog", () => {
     await dialog.getByRole("button", { name: "SNMP", exact: true }).click();
 
     /*
-     * ABSENCE tied to SNMP's row of `SSH_TUNNEL_REFUSAL`, and NOT the same reason as the panel above:
+     * ABSENCE tied to Studio's grant of SNMP's tunnel claim, and NOT the same reason as the panel above:
      * a tunnel forwards TCP and this provider sends datagrams, so core refuses an SNMP connection whose
      * tunnel is on, and the dialog, which reads the same row, offers no panel for one.
      */

@@ -46,18 +46,20 @@
  *   each `ENGINE_FACETS` row, handed over whole.
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
- * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine, and
- * every other row is Studio's own typed table, read as it stands.
+ * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine; an
+ * agent credential row naming a superseding field that is not a text field a connection form draws is refused by
+ * `legacyAgentCredentials` when this module loads, naming the engine and the field; and every other row is Studio's own
+ * typed table, read as it stands.
  *
- * Studio's review of each policy and MCP claim for an engine the legacy adapter serves is the engine's legacy row of the
- * grant register, `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id: the register is
- * read once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set, and
- * `legacyGrantRows` refuses by name a served engine the register holds no legacy row for, so no served engine is read at
- * a restrictive value by omission. A row's review notes say why it holds its value. A register its schema or its code
- * rules refuse fails this module's load, in the browser as on the server.
- * Studio's review of every other claim stays a hand-written record, in src/lib/db/compatibility.ts, the statement
- * language record among them, src/lib/db/connection-fields.ts and the facet rows of src/lib/db/engine-facets, which
- * import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
+ * Studio's review of each policy, MCP and connection claim for an engine the legacy adapter serves is the engine's
+ * legacy row of the grant register, `@libredb/grant-register` (clause M-54), keyed by `LEGACY_KEY` and the engine id:
+ * the register is read once, when this module loads, with `SHIPPED_DATABASE_TYPES`, the legacy adapter's served set,
+ * and `legacyGrantRows` refuses by name a served engine the register holds no legacy row for, so no served engine is
+ * read at a restrictive value by omission. A row's review notes say why it holds its value. The rows are hand-reviewed
+ * data, never a projection of the declarations (clauses M-52, M-53 and M-83). A register its schema or its code rules
+ * refuse fails this module's load, in the browser as on the server.
+ * Studio's review of every other claim stays a hand-written record, the statement language record of
+ * src/lib/db/compatibility.ts and the facet rows of src/lib/db/engine-facets, which import nothing of this module. tests/unit/db/claim-record-readers.test.ts holds that no other module of Studio's
  * source reads those records, the facet rows' `agentReadings` by member, or loads the register, and
  * tests/unit/db/engine-declaration-readers.test.ts that no other module reads a request. For every engine Studio ships
  * each request is its review row, so each granted table equals that row there.
@@ -75,16 +77,9 @@ import type {
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
 import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
-import type { DatabaseType, HostPathField } from "@/lib/types";
-import {
-  AGENT_STATEMENT_LANGUAGE,
-  HOST_PATH_FIELDS,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  SHIPPED_DATABASE_TYPES,
-  SSH_TUNNEL_REFUSAL,
-} from "./compatibility";
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
+import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
+import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "./compatibility";
+import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
@@ -190,6 +185,42 @@ function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterG
   );
 }
 
+/**
+ * The agent credential of each engine of `rows`, in `rows`' order, its superseding fields narrowed to `fields`: a null
+ * grant stays null, and every other is a fresh frozen form and list. The register holds a superseding field as plain
+ * text, so each is found by name in `fields` and taken from there, never cast. Studio hands it
+ * `BODY_CONNECTION_FIELDS`, the text fields a connection form draws, and never an engine's own row of
+ * `CONNECTION_FIELDS`, so this module's load reads no engine's connection row; that each legacy row's superseding
+ * fields are among its engine's own connection fields is held by the agent credential census,
+ * tests/unit/db/agent-credential-capability.test.ts.
+ *
+ * @throws {Error} Naming the engine and the field, for a superseding field `fields` does not hold: a misspelt field
+ * would otherwise never equal a request, closing the engine to an agent credential silently.
+ */
+export function legacyAgentCredentials(
+  rows: Readonly<Record<string, RegisterGrants>>,
+  fields: readonly (keyof DatabaseConnection)[],
+): Rows<SeedAgentCredential | null> {
+  return Object.freeze(
+    Object.fromEntries(
+      Object.entries(rows).map(([engine, grants]) => {
+        const credential = grants.agentCredential;
+        if (credential === null) return [engine, null];
+        const supersededBy = credential.supersededBy.map((name) => {
+          const field = fields.find((candidate) => candidate === name);
+          if (field === undefined) {
+            throw new Error(
+              `the grant register's legacy row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a text field a connection form draws`,
+            );
+          }
+          return field;
+        });
+        return [engine, Object.freeze({ form: credential.form, supersededBy: Object.freeze(supersededBy) })];
+      }),
+    ),
+  );
+}
+
 /** Studio's records, as `grantClaims` reads them for the bundled declarations. */
 export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   writeReach: legacyMember("writeReach"),
@@ -203,11 +234,11 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   statementRead: legacyMember("statementRead"),
   metadataReadChangesState: legacyMember("metadataReadChangesState"),
   agentCredentialRequired: legacyMember("agentCredentialRequired"),
-  opensLocalFile: OPENS_LOCAL_FILE,
-  hostPathFields: HOST_PATH_FIELDS,
-  serverLevelWithoutDatabase: OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
-  sshTunnel: SSH_TUNNEL_REFUSAL,
-  agentCredential: SEED_AGENT_CREDENTIAL,
+  opensLocalFile: legacyMember("opensLocalFile"),
+  hostPathFields: legacyMember("hostPathFields"),
+  serverLevelWithoutDatabase: legacyMember("serverLevelWithoutDatabase"),
+  sshTunnel: legacyMember("sshTunnel"),
+  agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, BODY_CONNECTION_FIELDS),
   statementLanguage: AGENT_STATEMENT_LANGUAGE,
   agentReadings: ENGINE_FACETS,
 });
@@ -769,27 +800,41 @@ export const UNGRANTED_CLAIM_REFUSALS: Readonly<Record<DatabaseType, string | nu
 
 /**
  * Studio's grant of `connection.opensLocalFile`, which the file admission of the legacy adapter's open
- * (`admittedFileConnection` in ./provider-files), governance and the VS Code backend read.
+ * (`admittedFileConnection` in ./provider-files), governance and the VS Code backend read. A governance source never
+ * grants such an engine (docs/GOVERNANCE.md#row-admission-and-skip-codes): row admission skips it as
+ * ENGINE_UNSUPPORTED whatever `GOVERNANCE_ALLOWED_ENGINES` says, since a grant would hand its users a file of the host
+ * Studio runs on. Static because admission decides from a row before any provider exists. The factory admits the file
+ * such a connection names before the provider is built, refusing Studio's own storage files there, and hands the
+ * provider the absolute path it admitted.
  */
 export const GRANTED_OPENS_LOCAL_FILE: Readonly<Record<DatabaseType, boolean>> = BUNDLED_GRANTS.opensLocalFile;
 
 /**
  * Studio's grant of `connection.hostPathFields`, the fields the legacy adapter's open admits before a provider reads
- * one (`admittedHostPathConnection` in ./provider-files).
+ * one (`admittedHostPathConnection` in ./provider-files): each resolved against the working directory, refused by name
+ * when it names one of Studio's own storage files, and handed to the provider as an absolute path under
+ * `ADMITTED_HOST_PATHS` (`@/lib/types`). Kept apart from the local-file claim because that claim also decides
+ * governance row admission, and an engine that reads a certificate from the host is still a server a governance source
+ * may grant.
  */
 export const GRANTED_HOST_PATH_FIELDS: Readonly<Record<DatabaseType, readonly HostPathField[]>> =
   BUNDLED_GRANTS.hostPathFields;
 
 /**
  * Studio's grant of `connection.serverLevelWithoutDatabase` as governance admission reads it, restrictive when true:
- * a definition with no database of an engine it holds true for is never granted.
+ * a definition with no database of an engine it holds true for is never granted. Such an engine's provider declares
+ * `catalogSessions` and opens a session of its own to each database the caller picks, so one credential reaches every
+ * database it can sign in to, while a governance source grants one database per connection: row admission skips such a
+ * definition as SERVER_LEVEL_NOT_ALLOWED (docs/GOVERNANCE.md#row-admission-and-skip-codes).
  */
 export const GRANTED_OPENS_SERVER_LEVEL_AT_ADMISSION: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.serverLevelAtAdmission;
 
 /**
  * Studio's grant of `connection.serverLevelWithoutDatabase` as the choice of database reads it, restrictive when
- * false: `catalogChoice` honours a caller's choice of database only on an engine it holds true for (clause M-57).
+ * false: `catalogChoice` honours a caller's choice of database only on an engine it holds true for (clause M-57), and
+ * only where the connection names no database and no connection string, so it bounds the catalog sessions a provider
+ * declares.
  */
 export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<DatabaseType, boolean>> =
   BUNDLED_GRANTS.serverLevelAtCatalogChoice;
@@ -797,11 +842,18 @@ export const GRANTED_OPENS_SERVER_LEVEL_AT_CATALOG_CHOICE: Readonly<Record<Datab
 /**
  * Studio's grant of `connection.sshTunnel`, in the record's vocabulary: the sentence a tunnel that is on is refused
  * with, or null where the engine takes one. The provider's fields and the connection dialog read it; core's tunnel
- * decision reads a legacy engine's row as its record's `grants.sshTunnel`.
+ * decision reads a legacy engine's row as its record's `grants.sshTunnel`. Core decides a tunnel in `decideTunnel`
+ * (./tunnel-decision) on every entry point before any cache lookup, bastion dial or provider build, so no provider
+ * refuses a tunnel itself, and the dialog offers the SSH panel, and writes `sshTunnel`, exactly where the grant is null,
+ * so the dialog and core cannot disagree. No review row's sentence quotes a value of the connection.
  */
 export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | null>> = BUNDLED_GRANTS.sshTunnel;
 
-/** Studio's grant of `connection.agentCredential`, which the seed schema and the seed projection's gate read. */
+/**
+ * Studio's grant of `connection.agentCredential`: which agent credential a seed of each engine may carry, read by the
+ * seed schema at load and by the seed projection's gates. Each superseding field of a review row is narrowed to the
+ * text fields a connection form draws when this module loads, by `legacyAgentCredentials`.
+ */
 export const GRANTED_SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> =
   BUNDLED_GRANTS.agentCredential;
 

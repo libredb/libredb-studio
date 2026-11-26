@@ -35,7 +35,7 @@ import {
   type ConnectionField,
   type DatabaseUIConfig,
 } from "@/lib/db-ui-config";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { requiredSecretOf } from "@/lib/db/connection-field-rules";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
@@ -87,7 +87,9 @@ import {
   SYNTHETIC_PAIR,
 } from "../../helpers/synthetic-credential-warnings";
 import { ALLOWS_PRIVATE_HOSTS } from "../../helpers/egress-decisions";
+import { legacyRegisterTable } from "../../helpers/legacy-register";
 
+const sshTunnel = legacyRegisterTable("sshTunnel");
 const ROOT = path.resolve(import.meta.dir, "../../..");
 
 /** The legacy adapter's record of `type`, whose field rules the open check reads a required secret from. */
@@ -361,17 +363,17 @@ describe("db-ui-config", () => {
       ]);
       expect(kafka.fieldLabels?.saslMechanism).toBe("SASL mechanism");
       expect(kafka.fieldHints?.saslMechanism).toBe("PLAIN and SCRAM require TLS");
-      // The one rule the modal and buildConnection read: core's SSH_TUNNEL_REFUSAL row.
+      // The one rule the modal and buildConnection read: Studio's grant of the engine's tunnel claim.
       expect(offersSshTunnel("kafka")).toBe(false);
       expect(offersSshTunnel("postgres")).toBe(true);
     });
 
     test("offersSshTunnel answers the core row for every engine, so the dialog offers a tunnel exactly where core takes one", () => {
       // One fact, two readers (FND-2 slice 5): core refuses a connection whose tunnel is on for an engine whose
-      // SSH_TUNNEL_REFUSAL row names a reason, and the dialog offers the panel, and writes `sshTunnel`, exactly where
-      // that row is null. The refused set is written out by hand, so a change to either reader fails here by name.
+      // legacy register row of the tunnel claim names a reason, and the dialog offers the panel, and writes
+      // `sshTunnel`, exactly where that row is null. The refused set is written out by hand, so a change to either reader fails here by name.
       for (const type of ALL_TYPES) {
-        expect({ type, offered: offersSshTunnel(type) }).toEqual({ type, offered: SSH_TUNNEL_REFUSAL[type] === null });
+        expect({ type, offered: offersSshTunnel(type) }).toEqual({ type, offered: sshTunnel[type] === null });
       }
       const refusing = ALL_TYPES.filter((type) => !offersSshTunnel(type));
       expect(refusing.sort()).toEqual([
@@ -2085,7 +2087,7 @@ describe("the Apache Spark entry", () => {
       defaultPort: "15002",
       showConnectionStringToggle: false,
     });
-    // No `showSslPanel` key, and a null SSH_TUNNEL_REFUSAL row: the SSH tunnel and the SSL / TLS panel are both offered.
+    // No `showSslPanel` key, and a null tunnel row: the SSH tunnel and the SSL / TLS panel are both offered.
     expect(offersSshTunnel("spark")).toBe(true);
     expect(spark.showSslPanel).toBeUndefined();
     // No User box: every request uses one fixed Spark Connect user id, and Token is the credential.

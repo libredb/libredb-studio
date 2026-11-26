@@ -19,12 +19,12 @@
  * `STUDIO_CLAIM_RECORDS`, the records as the grant reader hands them to `grantClaims`, is held the same way, so no
  * module reads the records through it either.
  *
- * Studio's review of each policy and MCP claim is the grant register's legacy rows, `@libredb/grant-register`, and no
- * longer a record of core: no module but the grant reader loads the register, by an import declaration, a side-effect
- * import, a re-export, an `export *`, a dynamic `import()` or a `require()` of its package name, a subpath of it or a
- * relative path into packages/grant-register/, while a type-only import or export, which loads nothing, passes. The
- * grant reader imports none of the records whose rows moved there, `MOVED_TO_REGISTER`, and no module of
- * `CLAIM_RECORD_MODULES` exports one.
+ * Studio's review of each policy, MCP and connection claim is the grant register's legacy rows,
+ * `@libredb/grant-register`, and no longer a record of core: no module but the grant reader loads the register, by an
+ * import declaration, a side-effect import, a re-export, an `export *`, a dynamic `import()` or a `require()` of its
+ * package name, a subpath of it or a relative path into packages/grant-register/, while a type-only import or export,
+ * which loads nothing, passes. The grant reader imports none of the records whose rows moved there,
+ * `MOVED_TO_REGISTER`, and no module of `MOVED_FROM_MODULES` exports one.
  *
  * Studio's record of the agent readings is a member of each `ENGINE_FACETS` row, `agentReadings`, beside members other
  * gates read, so it is held by member rather than by name: no module but the grant reader and the claim projection,
@@ -49,20 +49,13 @@ const GRANT_READER = "src/lib/db/claim-grants.ts";
  * holds.
  */
 const CLAIM_RECORD_MODULES: Readonly<Record<string, readonly string[]>> = {
-  "src/lib/db/compatibility": [
-    "OPENS_LOCAL_FILE",
-    "HOST_PATH_FIELDS",
-    "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
-    "SSH_TUNNEL_REFUSAL",
-    "AGENT_STATEMENT_LANGUAGE",
-  ],
-  "src/lib/db/connection-fields": ["SEED_AGENT_CREDENTIAL"],
+  "src/lib/db/compatibility": ["AGENT_STATEMENT_LANGUAGE"],
   "src/lib/db/claim-grants": ["STUDIO_CLAIM_RECORDS"],
 };
 
 /**
- * The policy and MCP claim records whose rows are now the grant register's legacy rows: none of them may be imported
- * by the grant reader or exported by a module of `CLAIM_RECORD_MODULES`.
+ * The policy, MCP and connection claim records whose rows are now the grant register's legacy rows: none of them may
+ * be imported by the grant reader or exported by a module of `MOVED_FROM_MODULES`.
  */
 const MOVED_TO_REGISTER: readonly string[] = [
   "WRITE_REACH",
@@ -76,6 +69,22 @@ const MOVED_TO_REGISTER: readonly string[] = [
   "MCP_STATEMENT_READ",
   "MCP_METADATA_READ_CHANGES_STATE",
   "MCP_AGENT_CREDENTIAL_REQUIRED",
+  "OPENS_LOCAL_FILE",
+  "HOST_PATH_FIELDS",
+  "OPENS_SERVER_LEVEL_WITHOUT_DATABASE",
+  "SSH_TUNNEL_REFUSAL",
+  "SEED_AGENT_CREDENTIAL",
+];
+
+/**
+ * The modules, without their extension, a record of `MOVED_TO_REGISTER` was or could be exported from: the two that
+ * held them and the grant reader. A closed list rather than `CLAIM_RECORD_MODULES`, which names only the modules that
+ * still hold a record, so a moved record exported again from a module that holds none is still refused by name.
+ */
+const MOVED_FROM_MODULES: readonly string[] = [
+  "src/lib/db/compatibility",
+  "src/lib/db/connection-fields",
+  "src/lib/db/claim-grants",
 ];
 
 /** The grant register's package name, and its directory in this repository. */
@@ -385,11 +394,7 @@ describe("the claim record readers", () => {
     const grantReader = files.find((file) => file.path === GRANT_READER);
     if (grantReader === undefined) throw new Error(`${GRANT_READER} is not in the source read`);
     expect(recordReferences(grantReader).sort()).toEqual(
-      [
-        ...(CLAIM_RECORD_MODULES["src/lib/db/compatibility"] ?? []),
-        ...(CLAIM_RECORD_MODULES["src/lib/db/connection-fields"] ?? []),
-        "STUDIO_CLAIM_RECORDS",
-      ]
+      [...(CLAIM_RECORD_MODULES["src/lib/db/compatibility"] ?? []), "STUDIO_CLAIM_RECORDS"]
         .map((record) => `${GRANT_READER} reads ${record}`)
         .sort(),
     );
@@ -397,78 +402,73 @@ describe("the claim record readers", () => {
 
   test("the scan finds each way a module could reference a claim record, an alias of a namespace binding included, and passes over an error code, an object key of the same name and a type-only import", () => {
     const planted = (file: string, text: string) => recordReaders([{ path: file, text }]);
+    const language = "AGENT_STATEMENT_LANGUAGE";
 
+    expect(planted("src/lib/a.ts", `import { ${language} } from "@/lib/db/compatibility";`)).toEqual([
+      `src/lib/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/db/a.ts", `import { ${language} as statements } from "./compatibility";`)).toEqual([
+      `src/lib/db/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/mcp/a.ts", `export { ${language} } from "../db/compatibility.ts";`)).toEqual([
+      `src/lib/mcp/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/a.ts", 'export * from "@/lib/db/compatibility";')).toEqual([
+      `src/lib/a.ts reads ${language}`,
+    ]);
+    expect(planted("src/lib/db/a.ts", `import { ${language} } from "./compatibility";`)).toEqual([
+      `src/lib/db/a.ts reads ${language}`,
+    ]);
     expect(
-      planted("src/lib/a.ts", 'import { OPENS_SERVER_LEVEL_WITHOUT_DATABASE } from "@/lib/db/compatibility";'),
-    ).toEqual(["src/lib/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
-    expect(planted("src/lib/db/a.ts", 'import { HOST_PATH_FIELDS as fields } from "./compatibility";')).toEqual([
-      "src/lib/db/a.ts reads HOST_PATH_FIELDS",
-    ]);
-    expect(planted("src/lib/mcp/a.ts", 'export { SSH_TUNNEL_REFUSAL } from "../db/compatibility.ts";')).toEqual([
-      "src/lib/mcp/a.ts reads SSH_TUNNEL_REFUSAL",
-    ]);
-    expect(planted("src/lib/a.ts", 'export * from "@/lib/db/connection-fields";')).toEqual([
-      "src/lib/a.ts reads SEED_AGENT_CREDENTIAL",
-    ]);
-    expect(planted("src/lib/db/a.ts", 'import { SSH_TUNNEL_REFUSAL } from "./compatibility";')).toEqual([
-      "src/lib/db/a.ts reads SSH_TUNNEL_REFUSAL",
-    ]);
-    expect(
-      planted("vscode-extension/src/backend/a.ts", 'import { OPENS_LOCAL_FILE } from "@/lib/db/compatibility";'),
-    ).toEqual(["vscode-extension/src/backend/a.ts reads OPENS_LOCAL_FILE"]);
+      planted("vscode-extension/src/backend/a.ts", `import { ${language} } from "@/lib/db/compatibility";`),
+    ).toEqual([`vscode-extension/src/backend/a.ts reads ${language}`]);
     // An alias of a namespace or loaded module binding is followed, however many times it is renamed.
     expect(
       planted(
         "src/lib/a.ts",
-        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst n = (m);\nn.OPENS_LOCAL_FILE;',
+        `import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst n = (m);\nn.${language};`,
       ),
-    ).toEqual(["src/lib/a.ts reads OPENS_LOCAL_FILE"]);
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
       planted(
         "src/lib/a.ts",
-        'const loaded = await import("@/lib/db/connection-fields");\nconst m = loaded;\nm["SEED_AGENT_CREDENTIAL"];',
+        `const loaded = await import("@/lib/db/compatibility");\nconst m = loaded;\nm["${language}"];`,
       ),
-    ).toEqual(["src/lib/a.ts reads SEED_AGENT_CREDENTIAL"]);
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
       planted(
         "src/lib/a.ts",
-        'import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst { HOST_PATH_FIELDS: h } = m;',
+        `import * as records from "@/lib/db/compatibility";\nconst m = records;\nconst { ${language}: l } = m;`,
       ),
-    ).toEqual(["src/lib/a.ts reads HOST_PATH_FIELDS"]);
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
-      planted(
-        "src/lib/a.ts",
-        'import * as records from "@/lib/db/compatibility";\nrecords.OPENS_SERVER_LEVEL_WITHOUT_DATABASE.opcua;',
-      ),
-    ).toEqual(["src/lib/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
+      planted("src/lib/a.ts", `import * as records from "@/lib/db/compatibility";\nrecords.${language}.opcua;`),
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
-      planted("src/lib/a.tsx", 'import * as records from "@/lib/db/compatibility";\nrecords["SSH_TUNNEL_REFUSAL"];'),
-    ).toEqual(["src/lib/a.tsx reads SSH_TUNNEL_REFUSAL"]);
-    expect(planted("src/lib/a.ts", 'const reach = (await import("@/lib/db/compatibility")).OPENS_LOCAL_FILE;')).toEqual(
-      ["src/lib/a.ts reads OPENS_LOCAL_FILE"],
-    );
+      planted("src/lib/a.tsx", `import * as records from "@/lib/db/compatibility";\nrecords["${language}"];`),
+    ).toEqual([`src/lib/a.tsx reads ${language}`]);
+    expect(planted("src/lib/a.ts", `const reach = (await import("@/lib/db/compatibility")).${language};`)).toEqual([
+      `src/lib/a.ts reads ${language}`,
+    ]);
     expect(
-      planted("src/lib/a.ts", 'const records = await import("@/lib/db/compatibility");\nrecords.HOST_PATH_FIELDS;'),
-    ).toEqual(["src/lib/a.ts reads HOST_PATH_FIELDS"]);
-    expect(
-      planted("src/lib/db/a.ts", 'const { OPENS_SERVER_LEVEL_WITHOUT_DATABASE: m } = require("./compatibility");'),
-    ).toEqual(["src/lib/db/a.ts reads OPENS_SERVER_LEVEL_WITHOUT_DATABASE"]);
-    expect(
-      planted("vscode-extension/src/backend/a.ts", 'import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";'),
-    ).toEqual(["vscode-extension/src/backend/a.ts reads SSH_TUNNEL_REFUSAL"]);
+      planted("src/lib/a.ts", `const records = await import("@/lib/db/compatibility");\nrecords.${language};`),
+    ).toEqual([`src/lib/a.ts reads ${language}`]);
+    expect(planted("src/lib/db/a.ts", `const { ${language}: m } = require("./compatibility");`)).toEqual([
+      `src/lib/db/a.ts reads ${language}`,
+    ]);
     expect(planted("src/lib/a.ts", 'import { STUDIO_CLAIM_RECORDS } from "@/lib/db/claim-grants";')).toEqual([
       "src/lib/a.ts reads STUDIO_CLAIM_RECORDS",
     ]);
     expect(
       planted(
         "src/lib/db/compatibility.ts",
-        "export const OPENS_LOCAL_FILE = Object.freeze({});\nexport const OPEN = Object.keys(OPENS_LOCAL_FILE);",
+        `export const ${language} = Object.freeze({});\nexport const LANGUAGES = Object.keys(${language});`,
       ),
-    ).toEqual(["src/lib/db/compatibility.ts reads OPENS_LOCAL_FILE"]);
+    ).toEqual([`src/lib/db/compatibility.ts reads ${language}`]);
 
     // Not references: the record's own declaration, an error code, an object key, a type member key, a property of
     // another object, a comment, another name of the record module, and the grant reader itself.
-    expect(planted("src/lib/db/compatibility.ts", "export const OPENS_LOCAL_FILE = Object.freeze({});")).toEqual([]);
+    expect(planted("src/lib/db/compatibility.ts", `export const ${language} = Object.freeze({});`)).toEqual([]);
     expect(
       planted(
         "src/lib/db/error-record.ts",
@@ -477,17 +477,16 @@ describe("the claim record readers", () => {
           "const codes = { READ_ROOTS_REQUIRED: true };",
           "type Codes = { READ_ROOTS_REQUIRED: boolean };",
           "codes.READ_ROOTS_REQUIRED;",
-          "// OPENS_LOCAL_FILE, read from compatibility.ts",
+          `// ${language}, read from compatibility.ts`,
           'import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";',
-          "const other = { OPENS_LOCAL_FILE: 1 };\nconst alias = other;\nalias.OPENS_LOCAL_FILE;",
-          'import { OPENS_LOCAL_FILE } from "@/lib/db/local-file-elsewhere";',
+          `const other = { ${language}: 1 };\nconst alias = other;\nalias.${language};`,
+          `import { ${language} } from "@/lib/db/statement-language-elsewhere";`,
         ].join("\n"),
       ),
     ).toEqual([]);
-    expect(planted(GRANT_READER, 'import { OPENS_LOCAL_FILE } from "./compatibility";')).toEqual([]);
+    expect(planted(GRANT_READER, `import { ${language} } from "./compatibility";`)).toEqual([]);
 
     // A type-only import or re-export carries no value to a gate, so it is passed over in every form.
-    const language = "AGENT_STATEMENT_LANGUAGE";
     expect(
       planted(
         "src/lib/agent/languages/a.ts",
@@ -510,7 +509,7 @@ describe("the claim record readers", () => {
       ),
     ).toEqual([`src/lib/agent/languages/a.ts reads ${language}`]);
     expect(
-      planted("src/lib/a.ts", `import { type OPENS_LOCAL_FILE, ${language} as L } from "@/lib/db/compatibility";`),
+      planted("src/lib/a.ts", `import { type ${language} as T, ${language} as L } from "@/lib/db/compatibility";`),
     ).toEqual([`src/lib/a.ts reads ${language}`]);
     expect(
       planted("src/lib/a.ts", `import * as records from "@/lib/db/compatibility";\nconst m = records;\nm.${language};`),
@@ -592,12 +591,12 @@ describe("the claim record readers", () => {
     expect(planted(GRANT_READER, 'import { readGrantRegister } from "@libredb/grant-register";')).toEqual([]);
   }, 60_000);
 
-  test("the grant reader imports no policy or MCP claim record", () => {
+  test("the grant reader imports no policy, MCP or connection claim record", () => {
     const grantReader = { path: GRANT_READER, text: readFileSync(path.join(ROOT, GRANT_READER), "utf8") };
     const imported = importedNames(grantReader);
 
     expect(imported.filter((name) => MOVED_TO_REGISTER.includes(name))).toEqual([]);
-    const modules = Object.keys(CLAIM_RECORD_MODULES).map((recordModule) => {
+    const modules = MOVED_FROM_MODULES.map((recordModule) => {
       const file = `${recordModule}.ts`;
       return { path: file, text: readFileSync(path.join(ROOT, file), "utf8") };
     });
@@ -608,7 +607,7 @@ describe("the claim record readers", () => {
     ).toEqual([]);
     // Vacuity: the parse reads the grant reader's named imports, a record it still imports among them, and each
     // module's exported records.
-    expect(imported).toContain("SEED_AGENT_CREDENTIAL");
+    expect(imported).toContain("AGENT_STATEMENT_LANGUAGE");
     expect(
       importedNames({ path: "src/lib/a.ts", text: 'import { WRITE_REACH as reach } from "./compatibility";' }),
     ).toEqual(["WRITE_REACH"]);

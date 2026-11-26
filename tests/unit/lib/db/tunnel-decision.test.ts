@@ -1,6 +1,6 @@
 /**
  * `decideTunnel`, the one decision core takes about a connection's SSH tunnel (FND-2 slice 5), and the engine record's
- * `grants.sshTunnel` it reads, which for a shipped engine is its `SSH_TUNNEL_REFUSAL` row.
+ * `grants.sshTunnel` it reads, which for a shipped engine is its legacy row of the grant register.
  *
  * Every expected sentence and every refused engine below is written out by hand, never derived from the module under
  * test, so a change to what core refuses, or to the words it refuses with, fails here by name.
@@ -8,12 +8,15 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import type { EngineRecord } from "@/lib/db/server-catalog";
 import { decideTunnel as decideWithRecord } from "@/lib/db/tunnel-decision";
 import { LEGACY_ENGINES } from "@/lib/provider-host/legacy-adapter/records";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
+import { legacyRegisterTable } from "../../../helpers/legacy-register";
+
+const sshTunnel = legacyRegisterTable("sshTunnel");
 
 const REFUSED_ENGINES: readonly DatabaseType[] = [
   "kafka",
@@ -203,7 +206,7 @@ describe("decideTunnel, the one decision core takes about a record's SSH tunnel 
     (type) => {
       if (REFUSED_ENGINES.includes(type)) {
         const refusal = refusalOf(tunnelled(type));
-        expect(refusal.message).toBe(SSH_TUNNEL_REFUSAL[type] as string);
+        expect(refusal.message).toBe(sshTunnel[type] as string);
         expect(refusal.provider).toBe(type);
       } else {
         expect(decideTunnel(tunnelled(type))).toBe("open");
@@ -212,14 +215,12 @@ describe("decideTunnel, the one decision core takes about a record's SSH tunnel 
   );
 
   test("the row refuses kafka, rabbitmq, bigquery, snowflake, firestore, snmp, cassandra, couchbase, sqlite, duckdb and libredb", () => {
-    const refused = SHIPPED_DATABASE_TYPES.filter((type) => SSH_TUNNEL_REFUSAL[type] !== null);
+    const refused = SHIPPED_DATABASE_TYPES.filter((type) => sshTunnel[type] !== null);
     expect([...refused].sort()).toEqual([...REFUSED_ENGINES].sort());
-    expect(Object.keys(SSH_TUNNEL_REFUSAL).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-    expect(Object.isFrozen(SSH_TUNNEL_REFUSAL)).toBe(true);
   });
 
   test("each refused engine's sentence is written out here as users read it", () => {
-    expect(SSH_TUNNEL_REFUSAL).toMatchObject({
+    expect(sshTunnel).toMatchObject({
       kafka:
         "Kafka does not run through an SSH tunnel: the tunnel forwards one address, and a Kafka client reads from every broker the cluster advertises, at the address the broker advertises. Connect to the brokers directly.",
       rabbitmq:

@@ -19,13 +19,10 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   isExternalDatabaseType,
-  HOST_PATH_FIELDS,
-  OPENS_LOCAL_FILE,
-  OPENS_SERVER_LEVEL_WITHOUT_DATABASE,
   SERVES_ONE_SESSION,
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
-import { SEED_AGENT_CREDENTIAL, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { catalogChoice } from "@/lib/db/catalog-scope";
 import { DatabaseConfigError } from "@/lib/db/errors";
@@ -34,7 +31,7 @@ import type { DatabaseType } from "@/lib/types";
 import { isQueryFenceTag } from "@/lib/sql/fence-tags";
 import { parse as parseYaml } from "yaml";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
-import { legacyRegisterTable } from "../../helpers/legacy-register";
+import { legacyAgentCredentialTable, legacyRegisterTable } from "../../helpers/legacy-register";
 
 const agentCredentialRequired = legacyRegisterTable("agentCredentialRequired");
 const exposable = legacyRegisterTable("exposable");
@@ -42,6 +39,10 @@ const statementRead = legacyRegisterTable("statementRead");
 const readRootsRequired = legacyRegisterTable("readRootsRequired");
 const readsFileAccessPosture = legacyRegisterTable("readsFileAccessPosture");
 const singleWriterFile = legacyRegisterTable("singleWriterFile");
+const opensLocalFile = legacyRegisterTable("opensLocalFile");
+const hostPathFields = legacyRegisterTable("hostPathFields");
+const serverLevelWithoutDatabase = legacyRegisterTable("serverLevelWithoutDatabase");
+const agentCredential = legacyAgentCredentialTable();
 
 /**
  * The compose service that reproduces each registry entry.
@@ -692,7 +693,7 @@ describe("the legacy rows' MCP statement read", () => {
 describe("the legacy rows' MCP agent credential requirement", () => {
   test("is true only where exposure offers the engine and a seed of it may carry an agent credential", () => {
     for (const type of SHIPPED_DATABASE_TYPES.filter((candidate) => agentCredentialRequired[candidate])) {
-      expect([type, exposable[type], SEED_AGENT_CREDENTIAL[type] !== null]).toEqual([type, true, true]);
+      expect([type, exposable[type], agentCredential[type] !== null]).toEqual([type, true, true]);
     }
   });
 });
@@ -708,54 +709,38 @@ describe("the legacy rows' read roots requirement", () => {
 });
 
 /**
- * `OPENS_LOCAL_FILE` (governance row admission, docs/GOVERNANCE.md#row-admission-and-skip-codes): the engines whose
- * connection is a file on Studio's own host. Admission never governs one, whatever `GOVERNANCE_ALLOWED_ENGINES` says,
- * and reads this record rather than a type id. The governance layer must not load `src/lib/db-ui-config.ts`, which
- * value-imports the React icon components, so the record is held equal here to that file's own answer: `isFileBased()`,
- * the connection form's file path in place of a server address.
+ * `connection.opensLocalFile`, as the legacy rows of the grant register review it (governance row admission,
+ * docs/GOVERNANCE.md#row-admission-and-skip-codes): the engines whose connection is a file on Studio's own host.
+ * Admission never governs one, whatever `GOVERNANCE_ALLOWED_ENGINES` says, and reads Studio's grant of the claim rather
+ * than a type id. The governance layer must not load `src/lib/db-ui-config.ts`, which value-imports the React icon
+ * components, so the rows are held equal here to that file's own answer: `isFileBased()`, the connection form's file
+ * path in place of a server address.
  */
-describe("OPENS_LOCAL_FILE", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(OPENS_LOCAL_FILE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can change an answer at run time", () => {
-    expect(Object.isFrozen(OPENS_LOCAL_FILE)).toBe(true);
-  });
-
+describe("the legacy rows' local-file engines", () => {
   test.each([...SHIPPED_DATABASE_TYPES])(
-    "%s: the record answers what the connection form's file path declares",
+    "%s: the legacy row answers what the connection form's file path declares",
     (type) => {
-      expect(OPENS_LOCAL_FILE[type]).toBe(isFileBased(type));
+      expect(opensLocalFile[type]).toBe(isFileBased(type));
     },
   );
 
   test("sqlite, duckdb and libredb open a local file, and no other engine does", () => {
-    // Vacuity, by name: a record that answered false everywhere would pass the census above against a form that
-    // also drew no file path.
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_LOCAL_FILE[type])).toEqual(["duckdb", "libredb", "sqlite"]);
+    // Vacuity, by name: rows that answered false everywhere would pass the census above against a form that also drew
+    // no file path.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => opensLocalFile[type])).toEqual(["duckdb", "libredb", "sqlite"]);
   });
 });
 
 /**
- * `HOST_PATH_FIELDS`: the connection fields that name a file on Studio's own host which the provider reads, admitted by
- * the provider factory beside the file an `OPENS_LOCAL_FILE` engine opens (`admittedHostPathConnection` in
- * `src/lib/db/provider-files.ts`, held by `tests/unit/lib/db/provider-files.test.ts`).
+ * `connection.hostPathFields`, as the legacy rows of the grant register review it: the connection fields that name a
+ * file on Studio's own host which the provider reads, admitted by the provider factory beside the file a local-file
+ * engine opens (`admittedHostPathConnection` in `src/lib/db/provider-files.ts`, held by
+ * `tests/unit/lib/db/provider-files.test.ts`).
  */
-describe("HOST_PATH_FIELDS", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(HOST_PATH_FIELDS).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, row and record, so no reader can change an answer at run time", () => {
-    expect(Object.isFrozen(HOST_PATH_FIELDS)).toBe(true);
-    for (const type of SHIPPED_DATABASE_TYPES)
-      expect([type, Object.isFrozen(HOST_PATH_FIELDS[type])]).toEqual([type, true]);
-  });
-
+describe("the legacy rows' host path fields", () => {
   test("OPC UA names its client certificate and private key, and no other engine names a field", () => {
-    expect(HOST_PATH_FIELDS.opcua).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => HOST_PATH_FIELDS[type].length > 0)).toEqual(["opcua"]);
+    expect(hostPathFields.opcua).toEqual(["clientCertificatePath", "clientPrivateKeyPath"]);
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => hostPathFields[type].length > 0)).toEqual(["opcua"]);
   });
 });
 
@@ -777,25 +762,17 @@ async function reportsCatalogSessionsWithoutDatabase(type: DatabaseType): Promis
 }
 
 /**
- * `OPENS_SERVER_LEVEL_WITHOUT_DATABASE` (governance row admission, docs/GOVERNANCE.md#row-admission-and-skip-codes):
- * the engines whose provider reaches the whole server when a connection names no database. Admission skips such a
- * definition as SERVER_LEVEL_NOT_ALLOWED and reads this record rather than a type id, so it is held equal to what every
- * shipped provider declares.
+ * `connection.serverLevelWithoutDatabase`, as the legacy rows of the grant register review it (governance row
+ * admission, docs/GOVERNANCE.md#row-admission-and-skip-codes): the engines whose provider reaches the whole server when
+ * a connection names no database. Admission skips such a definition as SERVER_LEVEL_NOT_ALLOWED and reads Studio's grant
+ * of the claim rather than a type id, so the rows are held equal to what every shipped provider declares.
  */
-describe("OPENS_SERVER_LEVEL_WITHOUT_DATABASE", () => {
-  test("answers for every shipped type-id and for nothing else", () => {
-    expect(Object.keys(OPENS_SERVER_LEVEL_WITHOUT_DATABASE).sort()).toEqual([...SHIPPED_DATABASE_TYPES].sort());
-  });
-
-  test("is frozen, so no reader can change an answer at run time", () => {
-    expect(Object.isFrozen(OPENS_SERVER_LEVEL_WITHOUT_DATABASE)).toBe(true);
-  });
-
-  test("OPENS_SERVER_LEVEL_WITHOUT_DATABASE matches the engines whose provider reports catalogSessions without a database", async () => {
+describe("the legacy rows' server level without a database", () => {
+  test("the legacy rows' server level matches the engines whose provider reports catalogSessions without a database", async () => {
     const reports = await Promise.all(SHIPPED_DATABASE_TYPES.map(reportsCatalogSessionsWithoutDatabase));
     const measured = SHIPPED_DATABASE_TYPES.filter((_, index) => reports[index]);
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => OPENS_SERVER_LEVEL_WITHOUT_DATABASE[type])).toEqual(measured);
-    // Vacuity, by name: a record and a census that both found nothing would agree above.
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => serverLevelWithoutDatabase[type])).toEqual(measured);
+    // Vacuity, by name: rows and a census that both found nothing would agree above.
     expect(measured).toEqual(["postgres"]);
   });
 

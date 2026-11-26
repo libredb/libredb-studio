@@ -13,7 +13,8 @@
  * `connection.refused` in src/lib/db/engine-declarations/<type-id>.json) and projected into
  * `./engine-catalog/connection.generated.ts` by scripts/generate-engine-catalog.ts (docs/providers/CONTRACT.md, clause
  * M-71), which this module reads; the reason a row holds what it does is in the engine's provider doc. None of them is
- * a claim, so the agent credential records below, which are, stay written here by hand.
+ * a claim, and `SeedAgentCredential` below is the shape of Studio's grant of the agent credential claim, which
+ * src/lib/db/claim-grants.ts reads from the grant register.
  *
  * `CONNECTION_FIELD_DESCRIPTORS` says how the dialog draws each field, as data its one renderer reads.
  *
@@ -550,81 +551,10 @@ export const REFUSED_CONNECTION_FIELDS: Readonly<Record<DatabaseType, RefusedFie
  * `policy.agentCredentialForm` (src/lib/db/claim-grants.ts), which the factory checks again at open: "pair" is a user
  * and a password together, the form a null granted agent credential form takes; "dedicated-pair" is the same with a
  * user other than the connection's own; and "secret" is `agentPassword` alone, a bearer token or a service-account
- * key. A null row takes none.
+ * key. An engine whose grant is null takes none.
  */
 export interface SeedAgentCredential {
   readonly form: "pair" | "dedicated-pair" | "secret";
   /** Fields the provider signs in with in preference to user and password; an agent credential beside one is refused. */
   readonly supersededBy: readonly (keyof DatabaseConnection)[];
 }
-
-const PAIR: SeedAgentCredential = Object.freeze({ form: "pair", supersededBy: Object.freeze([]) });
-const SECRET: SeedAgentCredential = Object.freeze({ form: "secret", supersededBy: Object.freeze([]) });
-const DEDICATED_PAIR: SeedAgentCredential = Object.freeze({ form: "dedicated-pair", supersededBy: Object.freeze([]) });
-
-/**
- * Which agent credential a seed of each engine may carry, which the seed schema at load and the projection's gates read
- * through Studio's grant of it, `GRANTED_SEED_AGENT_CREDENTIAL` in ./claim-grants. A hand-written literal and never
- * computed from the providers, because this module imports none; `tests/unit/db/agent-credential-capability.test.ts`
- * holds each row to its provider's declared form and to the engine's `CONNECTION_FIELDS` row, so a provider that
- * changes its form fails there until its row here follows.
- *
- * A null row where the engine's granted `policy.agentCredentialForm` is null too is a row the factory would ask for a
- * user and a password, on an engine that has no field to put one in (SQLite, DuckDB, MTConnect, Modbus and Sparkplug B have no
- * password field), signs in with a secret and no user (Spark, Oxia, Firestore, SNMP), or would not be narrowed by one
- * (Snowflake, whose key-pair sign-in ignores the password and whose statements all run as the connection's role).
- *
- * This table is Studio's review record of the claim an engine declaration requests at `connection.agentCredential`, and
- * only Studio's grant reader, src/lib/db/claim-grants.ts, reads it: the seed schema and the projection's gates read
- * `GRANTED_SEED_AGENT_CREDENTIAL`, this table's row where the request equals it and null otherwise, which is the row
- * for every engine Studio ships. The table is never a projection of declarations (docs/providers/CONTRACT.md, clauses
- * M-52, M-53 and M-83).
- */
-export const SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> = Object.freeze({
-  postgres: PAIR,
-  mysql: PAIR,
-  sqlite: null,
-  duckdb: null,
-  libsql: SECRET,
-  mongodb: PAIR,
-  redis: PAIR,
-  oracle: PAIR,
-  db2: PAIR,
-  mssql: PAIR,
-  couchbase: PAIR,
-  clickhouse: PAIR,
-  druid: PAIR,
-  // The transport sends the API key pair in preference to user and password
-  // (src/lib/db/providers/sql/search/http-transport.ts), so an agent pair beside it would run under the key.
-  elasticsearch: Object.freeze({ form: "pair", supersededBy: Object.freeze(["apiKeyId", "apiKeySecret"] as const) }),
-  opensearch: PAIR,
-  trino: PAIR,
-  cassandra: PAIR,
-  prometheus: PAIR,
-  kafka: PAIR,
-  etcd: PAIR,
-  neo4j: PAIR,
-  milvus: PAIR,
-  qdrant: SECRET,
-  weaviate: SECRET,
-  influxdb: PAIR,
-  influxdb3: SECRET,
-  oxia: null,
-  databend: PAIR,
-  bigquery: SECRET,
-  snowflake: null,
-  spark: null,
-  // An access key ID and secret of its own: an agent key ID equal to the connection's names the same key.
-  s3: DEDICATED_PAIR,
-  kubernetes: SECRET,
-  mqtt: PAIR,
-  firestore: null,
-  rabbitmq: PAIR,
-  opcua: PAIR,
-  mtconnect: null,
-  modbus: null,
-  netconf: PAIR,
-  snmp: null,
-  sparkplug: null,
-  libredb: null,
-});

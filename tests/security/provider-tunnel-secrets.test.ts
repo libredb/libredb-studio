@@ -14,7 +14,7 @@
  * dynamic import and a constructor (`tests/helpers/census-connection.ts`).
  */
 import { describe, expect, test } from "bun:test";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { providerConnection } from "@/lib/db/provider-connection";
@@ -32,6 +32,9 @@ import {
 } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
 import { markersReachableFrom } from "../helpers/reachable-markers";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const sshTunnel = legacyRegisterTable("sshTunnel");
 
 const TUNNEL_MARKER_ONE = "not-a-real-tunnel-marker-7f3a";
 const TUNNEL_MARKER_TWO = "not-a-real-tunnel-marker-91c2";
@@ -39,7 +42,7 @@ const TUNNEL_MARKER_THREE = "not-a-real-tunnel-marker-5d0e";
 const MARKERS = [TUNNEL_MARKER_ONE, TUNNEL_MARKER_TWO, TUNNEL_MARKER_THREE];
 const BASTION_FINGERPRINT = "SHA256:bm90LWEtcmVhbC1iYXN0aW9uLWZpbmdlcnByaW50";
 const FAR_END = { host: "db.internal", port: 5432 };
-const TAKES_A_TUNNEL = SHIPPED_DATABASE_TYPES.filter((type) => SSH_TUNNEL_REFUSAL[type] === null);
+const TAKES_A_TUNNEL = SHIPPED_DATABASE_TYPES.filter((type) => sshTunnel[type] === null);
 
 /** A tunnel with every field filled, a marker in each field the classification calls secret, and one unclassified key. */
 function tunnelWithMarkers(enabled: boolean): SSHTunnelConfig & { unclassified: string } {
@@ -117,7 +120,7 @@ describe("no provider receives the SSH tunnel: it gets the route under core's ma
   );
 
   // Only the engines that take a tunnel: core refuses a tunnel that is on for the others before any build
-  // (SSH_TUNNEL_REFUSAL, tests/security/provider-tunnel-decisions.test.ts), so no provider of theirs is ever built
+  // (the engine's legacy register row, tests/security/provider-tunnel-decisions.test.ts), so no provider of theirs is ever built
   // from a tunnelled connection.
   test.each(TAKES_A_TUNNEL)(
     "%s built as the factory builds a tunnelled connection holds no sshTunnel, and the route under core's marker",

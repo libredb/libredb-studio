@@ -13,12 +13,15 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createServer, type Server } from "node:net";
-import { SHIPPED_DATABASE_TYPES, SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
+import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { TUNNEL_FAR_END, type DatabaseType, type SSHTunnelConfig, type WithTunnelFarEnd } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../helpers/census-connection";
+import { legacyRegisterTable } from "../helpers/legacy-register";
+
+const sshTunnel = legacyRegisterTable("sshTunnel");
 
 const NOT_OPENED =
   "This connection's SSH tunnel is on and no tunnel was opened for it, so no provider was built and nothing was sent: build the provider inside withOneShotTunnel, or get it from getOrCreateProvider, which open the tunnel first.";
@@ -100,7 +103,7 @@ describe("no provider dials past an SSH tunnel it was not given (FND-2 slice 5)"
     "%s: createDatabaseProvider refuses a tunnel that is on and was not opened, and nothing reaches the database",
     async (type) => {
       const refusal = await buildRefusal(unopened(type));
-      expect(refusal.message).toBe(REFUSED_ENGINES.includes(type) ? (SSH_TUNNEL_REFUSAL[type] as string) : NOT_OPENED);
+      expect(refusal.message).toBe(REFUSED_ENGINES.includes(type) ? (sshTunnel[type] as string) : NOT_OPENED);
       expect(refusal.provider).toBe(type);
       expect(connectionsSeen).toBe(0);
     },
@@ -108,7 +111,7 @@ describe("no provider dials past an SSH tunnel it was not given (FND-2 slice 5)"
 
   test.each([...SHIPPED_DATABASE_TYPES])("%s: a provider is built when core opened the tunnel", async (type) => {
     if (REFUSED_ENGINES.includes(type)) {
-      expect((await buildRefusal(opened(type))).message).toBe(SSH_TUNNEL_REFUSAL[type] as string);
+      expect((await buildRefusal(opened(type))).message).toBe(sshTunnel[type] as string);
       return;
     }
     const provider = await createDatabaseProvider(opened(type));
@@ -128,7 +131,7 @@ describe("no provider dials past an SSH tunnel it was not given (FND-2 slice 5)"
   });
 
   test("the census refuses the engines the row refuses, written out here", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => SSH_TUNNEL_REFUSAL[type] !== null).sort()).toEqual(
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => sshTunnel[type] !== null).sort()).toEqual(
       [...REFUSED_ENGINES].sort(),
     );
     expect(connectionsSeen).toBe(0);

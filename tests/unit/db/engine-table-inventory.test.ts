@@ -85,9 +85,9 @@ function compareInventory(tables: readonly Table[], inventory: readonly Inventor
 describe("the per-engine table inventory", () => {
   const tables = perEngineTables(sourceFiles());
 
-  test("the scan finds ENGINE_FACETS and SSH_TUNNEL_REFUSAL", () => {
+  test("the scan finds ENGINE_FACETS and READS_TRUST_MATERIAL", () => {
     expect(tables.map(key)).toContain("src/lib/db/engine-facets/index.ts ENGINE_FACETS");
-    expect(tables.map(key)).toContain("src/lib/db/compatibility.ts SSH_TUNNEL_REFUSAL");
+    expect(tables.map(key)).toContain("src/lib/db/compatibility.ts READS_TRUST_MATERIAL");
   });
 
   test("every per-engine table in src is in the inventory", () => {

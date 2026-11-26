@@ -60,7 +60,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one SELECT of that keyspace or of system_schema (docs/providers/cassandra.md section 14)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a role proven before every statement to hold only SELECT on the connection's keyspace, on a server that enforces it, and a provider check that sends one SELECT of that keyspace or of system_schema (docs/providers/cassandra.md section 14).",
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
     }
   },
   {
@@ -124,7 +125,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user whose only roles are query_select on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it, and a fence that sends one SELECT (docs/providers/couchbase.md section 15)."
+      "statementRead": "Opened on its own: run_read_query runs under the boundary agent mode uses, a user whose only roles are query_select on named scopes of the bucket, checked at open and again before every statement on a server proven to enforce it, and a fence that sends one SELECT (docs/providers/couchbase.md section 15).",
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
     }
   },
   {
@@ -254,7 +256,9 @@
       "readsFileAccessPosture": "The engine whose editor handle opens under the posture: external access off for every role but admin, and for every role on a seed a non-admin role can use. SQLite refuses a denied handle instead.",
       "deniedFileAccessRefusal": "It reads the posture too, and confines a denied handle instead of refusing it.",
       "singleWriterFile": "This engine keeps its own copy of the catalog in a second read-write handle and checkpoints it over the file when it closes, so every user of a connection is served the one open handle.",
-      "opensLocalFile": "A database file (or `:memory:`) opened by the native DuckDB addon in Studio's own process."
+      "opensLocalFile": "A database file (or `:memory:`) opened by the native DuckDB addon in Studio's own process.",
+      "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none.",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
     }
   },
   {
@@ -356,7 +360,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client builds only the read requests of its closed table, before any socket, and the provider offers no object edit and no maintenance operation.",
       "exposable": "Closed: every read is billed to the user's project, an MCP call has an allowance of its own and nothing bounds billed reads across calls, `inspect_schema` carries no allowance, so no collection listing reaches it, and a production viewer role is not measured (backlog B107).",
-      "statementRead": "Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it: every read is billed and nothing bounds billed reads across MCP calls (backlog B107)."
+      "statementRead": "Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it: every read is billed and nothing bounds billed reads across MCP calls (backlog B107).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine signs in with a secret and no user, so a user and a password cannot open it."
     }
   },
   {
@@ -457,7 +462,8 @@
     },
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the client sends only the read APIs of `KAFKA_READ_APIS`, and a live run left the topic list, every end offset and every group's committed offsets unchanged after every provider surface.",
-      "statementRead": "Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and ListOffsets reads alone, answered metadata-only with a platform's own topics withheld (docs/providers/kafka.md section 16)."
+      "statementRead": "Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and ListOffsets reads alone, answered metadata-only with a platform's own topics withheld (docs/providers/kafka.md section 16).",
+      "sshTunnel": "A route per node the server advertises is a later contract minor; until then the engine takes no tunnel, and no direct dial is made in its place."
     }
   },
   {
@@ -525,7 +531,8 @@
       "agentCredentialForm": "An embedded store has no principal to sign an agent in as.",
       "statementRead": "Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved internal namespace is left out of every answer (docs/providers/libredb.md section 15).",
       "metadataReadChangesState": "The operations open holds the file's exclusive lock until the handle has been idle for 30 minutes.",
-      "opensLocalFile": "The embedded store this app creates, a file on Studio's own volume."
+      "opensLocalFile": "The embedded store this app creates, a file on Studio's own volume.",
+      "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none."
     }
   },
   {
@@ -626,7 +633,8 @@
     "reasons": {
       "writeReach": "Structural rather than configured: the encoder names four read function codes and device identification, and there is no code in the provider that can build a write (#1723 MB-S1, `src/lib/db/providers/industrial/modbus/valve.ts` re-checks every outbound byte).",
       "exposable": "Closed: agent mode reads the device paced per device and counted per run, and MCP has no run, so nothing would bound a client's device requests across calls; a cancelled call keeps the device's lane until its read's own deadline; and no MCP surface lists the register map's points, so a client could form only a block read whose decoding it guesses (backlog B160).",
-      "statementRead": "Agent mode executes paced reads on Modbus, and MCP read stays closed on it: no bound on device requests across calls, no lane release on cancel and no register-map surface exist for MCP yet (backlog B160)."
+      "statementRead": "Agent mode executes paced reads on Modbus, and MCP read stays closed on it: no bound on device requests across calls, no lane release on cancel and no register-map surface exist for MCP yet (backlog B160).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
     }
   },
   {
@@ -749,7 +757,8 @@
     "reasons": {
       "writeReach": "Structural rather than a mode: the request table holds nine routes and every one of them is a GET, so there is no write to enforce against (`src/lib/db/providers/industrial/mtconnect/routes.ts`).",
       "exposable": "Offered for the metadata tools and run_mtconnect_read, which acquire an agent-mode handle and so read the device model with the agent's adapter connections withheld.",
-      "statementRead": "Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14)."
+      "statementRead": "Opened on its own: run_mtconnect_read runs under the boundary agent mode uses, the provider's closed table of nine GET routes, with the agent's adapter connections withheld from every answer (docs/providers/mtconnect.md section 14).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
     }
   },
   {
@@ -980,7 +989,8 @@
     "reasons": {
       "writeReach": "Read-only whatever the flag says: the adapter's stub holds only `GetShardAssignments`, `Read`, `List`, `RangeScan` and `Health/Check` (O8), and the parser refuses every write verb by name, naming the read-only mode while it holds (O1).",
       "exposable": "Closed: the 0.18.0 server authorizes nothing, so a token reads, writes and deletes every key of every namespace and the provider's closed table would be the only layer between an MCP client and the cluster; Oxia key paths name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (backlog B100).",
-      "statementRead": "Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it: the server authorizes nothing, so the closed table would be the only layer between an MCP client and every key (backlog B100)."
+      "statementRead": "Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it: the server authorizes nothing, so the closed table would be the only layer between an MCP client and every key (backlog B100).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine signs in with a secret and no user, so a user and a password cannot open it."
     }
   },
   {
@@ -1214,7 +1224,8 @@
     "reasons": {
       "writeReach": "Structural rather than a mode: the statement grammar holds four read commands (get, next, walk, table), and the valve refuses a Set PDU on every datagram it can read (`src/lib/db/providers/network/snmp/valve.ts`).",
       "exposable": "Offered as agent mode reads it: values are the device's own readings, and the withheld subtrees (the security and target modules, the running processes, the commands the agent runs and the vendor copy tables) are decided on every answer, so `inspect_schema` lists the bundled catalog's tables and scalar groups, none inside a withheld subtree, and `run_snmp_read` steps over or answers withheld every one a read reaches.",
-      "statementRead": "Opened on its own: run_snmp_read runs under the boundary agent mode uses, the agent's client of Get, GetNext and GetBulk alone behind the valve, with every withheld subtree decided by the prefix of every identifier an answer carries, and its reasons carried as notes; a v2c community is no principal, so the agent's own view and Studio's withheld set are the data scope (docs/providers/snmp.md section 14)."
+      "statementRead": "Opened on its own: run_snmp_read runs under the boundary agent mode uses, the agent's client of Get, GetNext and GetBulk alone behind the valve, with every withheld subtree decided by the prefix of every identifier an answer carries, and its reasons carried as notes; a v2c community is no principal, so the agent's own view and Studio's withheld set are the data scope (docs/providers/snmp.md section 14).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine signs in with a secret and no user, so a user and a password cannot open it."
     }
   },
   {
@@ -1243,7 +1254,8 @@
       "ownWords": "scrubbed"
     },
     "reasons": {
-      "metadataReadChangesState": "Not marked though its provider declares `resumesBilledCompute`: this engine lists its catalog with `SHOW` statements that need no running warehouse."
+      "metadataReadChangesState": "Not marked though its provider declares `resumesBilledCompute`: this engine lists its catalog with `SHOW` statements that need no running warehouse.",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's key-pair sign-in ignores the password and every statement runs as the connection's role, so an agent pair would narrow nothing."
     }
   },
   {
@@ -1270,6 +1282,9 @@
       "servesOneSession": null,
       "agentExecution": false,
       "ownWords": "scrubbed"
+    },
+    "reasons": {
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine signs in with a secret and no user, so a user and a password cannot open it."
     }
   },
   {
@@ -1300,7 +1315,8 @@
     "reasons": {
       "writeReach": "Structural rather than a mode, and the structure is an absence: `encoder.ts` encodes CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and has no function that writes a PUBLISH, while the CONNECT takes no will parameter at all, so no later edit can register a death certificate by passing a value (5.4).",
       "exposable": "Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read` answers one window's totals or one named object's counts, with its window and the completeness sentence.",
-      "statementRead": "Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a metric name or a value, and carrying its window and the completeness sentence as notes (docs/providers/sparkplug.md section 15)."
+      "statementRead": "Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a metric name or a value, and carrying its window and the completeness sentence as notes (docs/providers/sparkplug.md section 15).",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in."
     }
   },
   {
@@ -1331,6 +1347,8 @@
     "reasons": {
       "deniedFileAccessRefusal": "Its open refuses a denied handle before it opens anything, and the provider factory before it is built.",
       "opensLocalFile": "A database file opened through `bun:sqlite` or `node:sqlite` in Studio's own process.",
+      "sshTunnel": "The sentence says how to clear the tunnel because a stored connection may still carry one switched on, written by the dialog before it stopped writing a tunnel for this engine; the dialog's save writes none.",
+      "agentCredential": "Null although the granted agent credential form is the pair: this engine's connection has no password field to carry an agent password in.",
       "servesOneSession": "A file serves a second session; an in-memory database is another database per handle, which the class reads from the connection."
     }
   },

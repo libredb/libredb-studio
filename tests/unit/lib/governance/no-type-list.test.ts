@@ -56,7 +56,7 @@ describe("governance keeps no type-id list of its own", () => {
 
   test("the scan sees the shapes it refuses", () => {
     const shapes = [
-      'import {\n  OPENS_LOCAL_FILE,\n  SHIPPED_DATABASE_TYPES,\n} from "@/lib/db/compatibility";',
+      'import {\n  READS_TRUST_MATERIAL,\n  SHIPPED_DATABASE_TYPES,\n} from "@/lib/db/compatibility";',
       "const KNOWN_ENGINES: ReadonlySet<string> = new Set(EXTERNAL_DATABASE_TYPES);",
       "const isDatabaseType = (engine: string): engine is DatabaseType => KNOWN_ENGINES.has(engine);",
       "function isDatabaseType(value: unknown) {}",

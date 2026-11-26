@@ -214,7 +214,7 @@ A connection may reach its database through an SSH tunnel (`sshTunnel` on the co
 This is the only layer that can verify who terminated the SSH hop: past it the database driver is handed `127.0.0.1` and a local port, so the connection's own SSL settings say nothing about the bastion.
 
 **Which engines take a tunnel.**
-Studio refuses a connection whose SSH tunnel is on, before it dials anything, for each engine below; the reason is the engine's row of `SSH_TUNNEL_REFUSAL` in [`src/lib/db/compatibility.ts`](../../src/lib/db/compatibility.ts), and the refusal says it:
+Studio refuses a connection whose SSH tunnel is on, before it dials anything, for each engine below; the reason is the engine's legacy row of the grant register in [`packages/grant-register/src/register.json`](../../packages/grant-register/src/register.json), and the refusal says it:
 - `kafka`: a Kafka client reaches every broker at the address that broker advertises, which a tunnel forwarding one address does not carry ([kafka.md §4.5](./kafka.md#45-no-ssh-tunnel)).
 - `cassandra`: the driver reaches every other node of the ring at the address that node advertises ([cassandra.md §4.4](./cassandra.md#44-no-ssh-tunnel)).
 - `couchbase`: queries go to the query service, on another port, at the address the cluster's node map advertises ([couchbase.md §4.6](./couchbase.md#46-no-ssh-tunnel)).
