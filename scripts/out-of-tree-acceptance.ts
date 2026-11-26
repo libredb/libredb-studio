@@ -25,7 +25,8 @@
  *    `bun run providers:lock -- --dir <tmp>/providers`; assert the lock line of the one package.
  * 5. Start the standalone server with LIBREDB_PROVIDERS_DIR set, sign in through the API, save a connection of the
  *    fixture engine (`POST /api/db/test-connection`, what the connection dialog's Save posts), run each statement of
- *    acceptance.json (`POST /api/db/query`) and assert its rows, in order.
+ *    acceptance.json (`POST /api/db/query`) and assert its rows, in order, and that an explain request is refused by
+ *    name, 501.
  * 6. Change the bundle's final byte, its newline, to a space (the module stays valid, so only the digest check can
  *    refuse it), restart, and assert that Studio boots, logs PROVIDER_DIGEST_MISMATCH for the package, and answers
  *    PROVIDER_UNAVAILABLE for the save and the statement.
@@ -104,7 +105,7 @@ const USAGE = "Usage: heavy bun scripts/out-of-tree-acceptance.ts [--standalone 
  * Studio's side of the run, every interface the run relies on in one place: the lock command and its file, the
  * manifest file a package carries, the providers directory's variable, the refusal and answer codes, the session
  * cookie, the admin's sign-in and the routes. The predicates beside it (`refusalLines`, `unavailableProblems`,
- * `rowsProblems`, `saveProblems`) read the answers.
+ * `unsupportedProblems`, `rowsProblems`, `saveProblems`) read the answers.
  */
 export const STUDIO = Object.freeze({
   lockScript: "providers:lock",
@@ -113,6 +114,7 @@ export const STUDIO = Object.freeze({
   providersDirVariable: "LIBREDB_PROVIDERS_DIR",
   digestMismatch: "PROVIDER_DIGEST_MISMATCH",
   unavailable: "PROVIDER_UNAVAILABLE",
+  unsupported: "PACKAGE_ENGINE_UNSUPPORTED",
   sessionCookie: SESSION_COOKIE,
   adminEmail: "admin@libredb.org",
   coreRoots: Object.freeze(["src", "bin", "scripts", "vscode-extension/src"]),
@@ -629,6 +631,23 @@ export function unavailableProblems(answer: Answer, refusalCode: string): string
   }
   if (!JSON.stringify(answer.body).includes(refusalCode)) problems.push(`answered a body naming no ${refusalCode}`);
   return problems.length === 0 ? [] : [...problems, `body: ${body}`];
+}
+
+/**
+ * The problems with an answer to a request field the engine's record does not offer: the status 501, the code
+ * PACKAGE_ENGINE_UNSUPPORTED exactly, and a sentence naming `field` as a whole word, so the refusal is the one read
+ * from the record and no other.
+ */
+export function unsupportedProblems(answer: Answer, field: string): string[] {
+  const problems: string[] = [];
+  if (answer.status !== 501) problems.push(`answered ${answer.status}, not 501`);
+  if (answer.body.code !== STUDIO.unsupported) {
+    problems.push(`answered code ${JSON.stringify(answer.body.code)}, not ${STUDIO.unsupported}`);
+  }
+  if (!new RegExp(`\\b${escapeRegExp(field)}\\b`).test(String(answer.body.error))) {
+    problems.push(`answered a sentence naming no ${field}`);
+  }
+  return problems.length === 0 ? [] : [...problems, `body: ${JSON.stringify(answer.body).slice(0, 500)}`];
 }
 
 /** The lines of `output` refusing package `name` `version` with `code`, or with any PROVIDER_ code when null. */
@@ -1327,6 +1346,12 @@ async function queryEngine(ctx: Context): Promise<string> {
       assertNone(rowsProblems(answer, expected));
       answered.push(`${expected.statement} -> ${JSON.stringify(answer.body.rows)}`);
     }
+    // A field the engine's record does not offer is refused by name, read from the record.
+    const first = (fixture.acceptance.statements[0] as Expectation).statement;
+    const explain = { connection, sql: first, explain: { mode: "estimate" } };
+    const explained = await postJson(server, STUDIO.routes.query, explain, cookie);
+    assertNone(unsupportedProblems(explained, "explain").map((problem) => `the explain request ${problem}`));
+    answered.push(`an explain request -> ${explained.status} ${JSON.stringify(explained.body)}`);
     return `engine ${connection.type} on 127.0.0.1:${port}, saved (${save.status} ${JSON.stringify(save.body)}) and answered: ${answered.join("; ")}`;
   });
 }
