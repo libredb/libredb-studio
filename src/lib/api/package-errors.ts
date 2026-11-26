@@ -11,7 +11,8 @@
  * the accessor's message names Studio; a `HostDefectError` whose refusals are each about Studio's own request is Studio's
  * defect, and is answered as Studio's own internal error. A package's warnings, where no row grants its own words,
  * reach the client only as Studio's sentence naming their count, each logged once through the same scrub, or as the
- * package's defect where it is not the contract's `Warning` (`packageWarnings`).
+ * package's defect where it is not the contract's `Warning` (`packageWarnings`); warnings that are not a list are the
+ * package's defect on either path (`packageWarningList`).
  */
 import { type CallRefusalRule, callRefusalSentence } from "@libredb/provider-sdk/calls";
 import { errorCode } from "@/lib/db/error-record";
@@ -109,6 +110,19 @@ export function logPackageFailure(call: string, error: unknown, scrub: ProviderT
 export const PACKAGE_WARNING_DEFECT =
   "The provider package answered a warning that is not a message with an optional code and severity; this is its defect.";
 
+/** Studio's sentence for a provider package's warnings that are not a list, the contract's `readonly Warning[]`. */
+const PACKAGE_WARNINGS_DEFECT = "The provider package answered warnings that are not a list; this is its defect.";
+
+/**
+ * `warnings`, the warnings a provider package answered, where they are a list (`Array.isArray`).
+ *
+ * @throws {Error} `PACKAGE_WARNINGS_DEFECT`, for warnings that are not a list: none of them is walked.
+ */
+export function packageWarningList(warnings: unknown): readonly unknown[] {
+  if (!Array.isArray(warnings)) throw new Error(PACKAGE_WARNINGS_DEFECT);
+  return warnings;
+}
+
 /** The members a warning of the contract's `Warning` has: its message, and its optional code and severity. */
 const WARNING_MEMBERS: ReadonlySet<string> = new Set(["message", "code", "severity"]);
 
@@ -138,18 +152,22 @@ export function packageWarning(warning: unknown): QueryWarning | null {
 
 /**
  * The warnings a client receives for `warnings`, the ones a provider package's `call` answered: none for none, and
- * otherwise Studio's one sentence naming their count. Each warning is logged once under `route`: rebuilt from the
- * contract's members by `packageWarning` and its words through core's scrub of the connection, or, where it is not the
- * contract's `Warning`, as the package's defect in Studio's own words, none of its members read.
+ * otherwise Studio's one sentence naming their count, the number of warnings Studio walked, never a length the package
+ * answers. Each warning is logged once under `route`: rebuilt from the contract's members by `packageWarning` and its
+ * words through core's scrub of the connection, or, where it is not the contract's `Warning`, as the package's defect
+ * in Studio's own words, none of its members read.
+ *
+ * @throws {Error} `PACKAGE_WARNINGS_DEFECT`, for warnings that are not a list (`packageWarningList`).
  */
 export function packageWarnings(
   call: string,
-  warnings: readonly unknown[],
+  warnings: unknown,
   scrub: ProviderTextScrub,
   route: string,
 ): QueryWarning[] {
-  if (warnings.length === 0) return [];
-  for (const answered of warnings) {
+  let walked = 0;
+  for (const answered of packageWarningList(warnings)) {
+    walked += 1;
     const rebuilt = packageWarning(answered);
     if (rebuilt === null) {
       logger.warn(
@@ -161,7 +179,8 @@ export function packageWarnings(
     const [warning] = scrubProviderWarnings(scrub, [rebuilt]);
     logger.warn(`A provider package's ${call} returned a warning`, { route, warning });
   }
-  const count = warnings.length === 1 ? "1 warning" : `${warnings.length} warnings`;
+  if (walked === 0) return [];
+  const count = walked === 1 ? "1 warning" : `${walked} warnings`;
   return [{ message: `The provider package returned ${count}; the server's log holds their words.` }];
 }
 

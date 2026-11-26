@@ -2868,6 +2868,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "a package's warning is logged from the contract's members only, and a warning of another shape as the package's defect, its members never read",
         "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
         "a package engine whose register row grants its own words answers its warnings through core's scrub",
+        "warnings that are not a list are refused as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths",
+        "an execution time or a row count outside the contract's types is refused as the package's defect, on both paths",
       ],
       "tests/api/db/test-connection-package-engine.test.ts": [
         "a package engine whose register row grants its own words answers its error through core's scrub, and one without a row answers Studio's sentence naming its code",
@@ -2880,6 +2882,8 @@ export const CLAUSE_ENFORCERS: Readonly<Record<string, ClauseEnforcers>> = {
         "the log line of a refusal of what the package answered names the package as its author, never Studio",
         "a value the package rejects with is the package's failure, whatever its message says",
         "answers nothing for no warning, and Studio's sentence naming the count for one, logged once",
+        "refuses warnings that are not a list as the package's defect, none of them walked",
+        "names the count of the warnings it walked, never the length the package answers",
       ],
     },
   },

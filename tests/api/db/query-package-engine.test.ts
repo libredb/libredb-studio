@@ -800,6 +800,115 @@ describe("POST /api/db/query on an engine a provider package serves", () => {
     }
   });
 
+  test("warnings that are not a list are refused as the package's defect, and the warnings a client is told of are the ones Studio walked, on both paths", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const engine of [MAIN, WORDS]) {
+        const connection = connectionOf(engine);
+        const secret = connection.password as string;
+        let walked = 0;
+        // An iterable that is not an array, whose length is text.
+        const iterable = {
+          length: `pw ${secret}`,
+          *[Symbol.iterator]() {
+            walked += 1;
+            yield { message: secret };
+          },
+        };
+        // An array whose length trap answers text: Array.isArray holds for it.
+        const proxied = new Proxy([], {
+          get: (target, key) => (key === "length" ? `pw ${secret}` : Reflect.get(target, key)),
+        });
+        const answering = (warnings: unknown) =>
+          hooksFor(engine, {
+            execute: () =>
+              Promise.resolve({ results: [source([["alpha", 1]])], warnings, executionTimeMs: 1, pageApplied: false }),
+          });
+
+        answering(iterable);
+        const refused = await post({ connection, sql: "SELECT 1" });
+        expect([refused.status, refused.body.code, refused.body.error]).toEqual([
+          500,
+          "INTERNAL_ERROR",
+          engine === WORDS
+            ? "The provider package answered warnings that are not a list; this is its defect."
+            : "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+        ]);
+        expect(walked).toBe(0);
+        expect(JSON.stringify(refused.body)).not.toContain(secret);
+
+        answering(proxied);
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect(answered.status).toBe(200);
+        // Studio walked no warning, so the client is told of none.
+        expect(answered.body.warnings).toBeUndefined();
+        expect(JSON.stringify(answered.body)).not.toContain(secret);
+        expect(JSON.stringify([warn.mock.calls, error.mock.calls])).not.toContain(secret);
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      hooksFor(MAIN);
+      hooksFor(WORDS);
+    }
+  });
+
+  test("an execution time or a row count outside the contract's types is refused as the package's defect, on both paths", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => undefined);
+    const error = spyOn(logger, "error").mockImplementation(() => undefined);
+    try {
+      for (const engine of [MAIN, WORDS]) {
+        const connection = connectionOf(engine);
+        const secret = connection.password as string;
+        const answering = (executionTimeMs: unknown, rowCount?: unknown) =>
+          hooksFor(engine, {
+            execute: () =>
+              Promise.resolve({
+                results: [{ ...source([["alpha", 1]]), ...(rowCount === undefined ? {} : { rowCount }) }],
+                warnings: [],
+                executionTimeMs,
+                pageApplied: false,
+              }),
+          });
+        const refusedWith = async (sentence: string) => {
+          const refused = await post({ connection, sql: "SELECT 1" });
+          expect([refused.status, refused.body.code, refused.body.error]).toEqual([
+            500,
+            "INTERNAL_ERROR",
+            engine === WORDS
+              ? sentence
+              : "The provider package's execute failed (INTERNAL_ERROR); the server's log holds its words.",
+          ]);
+          expect(JSON.stringify(refused.body)).not.toContain(secret);
+        };
+
+        for (const executionTimeMs of [`pw ${secret}`, Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+          answering(executionTimeMs);
+          await refusedWith(
+            "The provider package answered an execution time that is not a finite non-negative number; this is its defect.",
+          );
+        }
+        for (const rowCount of [`pw ${secret}`, 1.5, -1, Number.NaN]) {
+          answering(1, rowCount);
+          await refusedWith(
+            "The provider package answered a row count that is not a non-negative whole number; this is its defect.",
+          );
+        }
+        // Vacuity: a zero execution time and a row count of the package's own are answered as they are.
+        answering(0, 7);
+        const answered = await post({ connection, sql: "SELECT 1" });
+        expect([answered.status, answered.body.executionTime, answered.body.rowCount]).toEqual([200, 0, 7]);
+        expect(JSON.stringify([warn.mock.calls, error.mock.calls])).not.toContain(secret);
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      hooksFor(MAIN);
+      hooksFor(WORDS);
+    }
+  });
+
   test("the session is opened once per key and reused by the next query", async () => {
     const seen = hooksFor(BARE);
     const connection = connectionOf(BARE);
