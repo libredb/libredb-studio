@@ -29,7 +29,7 @@ import {
   STUDIO_CLAIM_RECORDS,
 } from "@/lib/db/claim-grants";
 import { AGENT_EXECUTION_ENGINES, AGENT_STATEMENT_LANGUAGE, SERVES_ONE_SESSION } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { ENGINE_FACETS } from "@/lib/db/engine-facets";
 import {
@@ -228,7 +228,7 @@ describe("the legacy rows", () => {
       sshTunnel: record("sshTunnel"),
       agentCredential: legacyAgentCredentials(
         Object.fromEntries(rows.map((row) => [row.engine, row.grants])),
-        CONNECTION_FIELDS,
+        BODY_CONNECTION_FIELDS,
       ),
       statementLanguage: record("statementLanguage"),
       agentReadings: ENGINE_FACETS,

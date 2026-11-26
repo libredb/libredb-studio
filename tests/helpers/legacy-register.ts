@@ -8,7 +8,7 @@
 import { type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
 import { legacyAgentCredentials, legacyGrantRows } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, type SeedAgentCredential } from "@/lib/db/connection-fields";
+import { BODY_CONNECTION_FIELDS, type SeedAgentCredential } from "@/lib/db/connection-fields";
 import type { DatabaseType } from "@/lib/types";
 
 /** Every shipped engine's legacy row's grants, keyed by engine. */
@@ -30,9 +30,9 @@ export function legacyRegisterTable<M extends keyof RegisterGrants>(member: M): 
 }
 
 /**
- * Every shipped engine's legacy agent credential, each superseding field narrowed to the engine's connection fields,
- * keyed by engine in the shipped order, frozen: the table the grant reader composes for `grantClaims`.
+ * Every shipped engine's legacy agent credential, each superseding field narrowed to the text fields a connection form
+ * draws, keyed by engine in the shipped order, frozen: the table the grant reader composes for `grantClaims`.
  */
 export function legacyAgentCredentialTable(): Readonly<Record<DatabaseType, SeedAgentCredential | null>> {
-  return byEngine(legacyAgentCredentials(LEGACY_ROWS, CONNECTION_FIELDS));
+  return byEngine(legacyAgentCredentials(LEGACY_ROWS, BODY_CONNECTION_FIELDS));
 }

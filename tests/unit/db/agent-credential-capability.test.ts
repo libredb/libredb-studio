@@ -103,6 +103,19 @@ describe("the legacy rows' agent credential against each provider's form and fie
     }
   });
 
+  // The grant reader narrows a superseding field at load against the text fields a connection form draws, never against
+  // an engine's own row, so a row naming another engine's field is held here.
+  test("every superseding field of a legacy row is one of its engine's connection fields", () => {
+    const foreign = SHIPPED_DATABASE_TYPES.flatMap((type) =>
+      (agentCredential[type]?.supersededBy ?? [])
+        .filter((field) => !CONNECTION_FIELDS[type].some((own) => own === field))
+        .map((field) => `${type}: ${field}`),
+    );
+    expect(foreign).toEqual([]);
+    // Vacuity: a superseding field is read.
+    expect(agentCredential.elasticsearch?.supersededBy.length).toBeGreaterThan(0);
+  });
+
   test("only Elasticsearch names a field that supersedes the agent's user and password", () => {
     const superseding = Object.fromEntries(
       SHIPPED_DATABASE_TYPES.flatMap((type) => {

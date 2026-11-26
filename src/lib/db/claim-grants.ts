@@ -47,7 +47,7 @@
  * A record's row is looked up as an own property, so a key on the prototype chain is no row. A request value outside
  * its claim's vocabulary is refused by name, naming the claim and the engine, never read at a default; a write reach
  * or host path fields row of Studio's record outside it is refused naming the record, the claim and the engine; an
- * agent credential row naming a superseding field that is not one of the engine's connection fields is refused by
+ * agent credential row naming a superseding field that is not a text field a connection form draws is refused by
  * `legacyAgentCredentials` when this module loads, naming the engine and the field; and every other row is Studio's own
  * typed table, read as it stands.
  *
@@ -77,14 +77,9 @@ import type {
   StatementLanguage,
 } from "@libredb/provider-sdk/manifest";
 import { type GrantRegister, LEGACY_KEY, type RegisterGrants, readGrantRegister } from "@libredb/grant-register";
-import type { DatabaseType, HostPathField } from "@/lib/types";
+import type { DatabaseConnection, DatabaseType, HostPathField } from "@/lib/types";
 import { AGENT_STATEMENT_LANGUAGE, SHIPPED_DATABASE_TYPES } from "./compatibility";
-import {
-  CONNECTION_FIELDS,
-  type ConnectionField,
-  SEED_ONLY_FIELDS,
-  type SeedAgentCredential,
-} from "./connection-fields";
+import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS, type SeedAgentCredential } from "./connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "./engine-catalog/claims.generated";
 import type { AgentClaims, ClaimRequestEntry, ConnectionClaims, FacetClaims } from "./engine-catalog/projection";
 import { ENGINE_FACETS } from "./engine-facets";
@@ -191,29 +186,31 @@ function legacyMember<M extends keyof RegisterGrants>(member: M): Rows<RegisterG
 }
 
 /**
- * The agent credential of each engine of `rows`, in `rows`' order, its superseding fields narrowed to the engine's own
- * connection fields of `fields`: a null grant stays null, and every other is a fresh frozen form and list. The register
- * holds a superseding field as plain text, so each is found by name in the engine's row of `fields` and taken from
- * there, never cast; an engine `fields` holds no row for has no field to find.
+ * The agent credential of each engine of `rows`, in `rows`' order, its superseding fields narrowed to `fields`: a null
+ * grant stays null, and every other is a fresh frozen form and list. The register holds a superseding field as plain
+ * text, so each is found by name in `fields` and taken from there, never cast. Studio hands it
+ * `BODY_CONNECTION_FIELDS`, the text fields a connection form draws, and never an engine's own row of
+ * `CONNECTION_FIELDS`, so this module's load reads no engine's connection row; that each legacy row's superseding
+ * fields are among its engine's own connection fields is held by the agent credential census,
+ * tests/unit/db/agent-credential-capability.test.ts.
  *
- * @throws {Error} Naming the engine and the field, for a superseding field that is not one of the engine's connection
- * fields: a misspelt field would otherwise never equal a request, closing the engine to an agent credential silently.
+ * @throws {Error} Naming the engine and the field, for a superseding field `fields` does not hold: a misspelt field
+ * would otherwise never equal a request, closing the engine to an agent credential silently.
  */
 export function legacyAgentCredentials(
   rows: Readonly<Record<string, RegisterGrants>>,
-  fields: Rows<readonly ConnectionField[]>,
+  fields: readonly (keyof DatabaseConnection)[],
 ): Rows<SeedAgentCredential | null> {
   return Object.freeze(
     Object.fromEntries(
       Object.entries(rows).map(([engine, grants]) => {
         const credential = grants.agentCredential;
         if (credential === null) return [engine, null];
-        const own = rowOf<readonly ConnectionField[], readonly ConnectionField[]>(fields, engine, []);
         const supersededBy = credential.supersededBy.map((name) => {
-          const field = own.find((candidate) => candidate === name);
+          const field = fields.find((candidate) => candidate === name);
           if (field === undefined) {
             throw new Error(
-              `the grant register's legacy row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a connection field of the engine`,
+              `the grant register's legacy row for ${engine} names ${JSON.stringify(name)} among the fields superseding its agent credential, which is not a text field a connection form draws`,
             );
           }
           return field;
@@ -241,7 +238,7 @@ export const STUDIO_CLAIM_RECORDS: ClaimRecords = Object.freeze({
   hostPathFields: legacyMember("hostPathFields"),
   serverLevelWithoutDatabase: legacyMember("serverLevelWithoutDatabase"),
   sshTunnel: legacyMember("sshTunnel"),
-  agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, CONNECTION_FIELDS),
+  agentCredential: legacyAgentCredentials(LEGACY_GRANT_ROWS, BODY_CONNECTION_FIELDS),
   statementLanguage: AGENT_STATEMENT_LANGUAGE,
   agentReadings: ENGINE_FACETS,
 });
@@ -855,7 +852,7 @@ export const GRANTED_SSH_TUNNEL_REFUSAL: Readonly<Record<DatabaseType, string | 
 /**
  * Studio's grant of `connection.agentCredential`: which agent credential a seed of each engine may carry, read by the
  * seed schema at load and by the seed projection's gates. Each superseding field of a review row is narrowed to the
- * engine's connection fields when this module loads, by `legacyAgentCredentials`.
+ * text fields a connection form draws when this module loads, by `legacyAgentCredentials`.
  */
 export const GRANTED_SEED_AGENT_CREDENTIAL: Readonly<Record<DatabaseType, SeedAgentCredential | null>> =
   BUNDLED_GRANTS.agentCredential;

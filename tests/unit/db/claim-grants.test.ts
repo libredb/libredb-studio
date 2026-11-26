@@ -6,8 +6,8 @@
  * engine changed or for an id no shipped engine uses, and the bundled grant tables are read against Studio's records
  * for every shipped engine. `legacyGrantRows`, which reads the grant register's legacy rows the policy, MCP and
  * connection records are composed from, is read against a register of two rows of the committed one, and `legacyAgentCredentials`, which
- * narrows each row's agent credential to the engine's connection fields, against committed rows and rows changed by
- * hand.
+ * narrows each row's agent credential to the text fields a connection form draws, against committed rows and rows
+ * changed by hand.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -49,7 +49,7 @@ import {
   UNGRANTED_SSH_TUNNEL_SENTENCE,
 } from "@/lib/db/claim-grants";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
-import { CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
+import { BODY_CONNECTION_FIELDS, SEED_ONLY_FIELDS } from "@/lib/db/connection-fields";
 import { BUNDLED_CLAIM_REQUESTS } from "@/lib/db/engine-catalog/claims.generated";
 import { CURATED_OPERATION_KINDS } from "@/lib/db/operations/descriptors";
 import { forgetServerCatalog, installServerCatalog, serverEngine } from "@/lib/db/server-catalog";
@@ -797,9 +797,9 @@ describe("the register's legacy rows the grant reader reads", () => {
     );
   });
 
-  test("legacyAgentCredentials answers each engine's agent credential of its legacy row, each superseding field found among the engine's connection fields, frozen", () => {
+  test("legacyAgentCredentials answers each engine's agent credential of its legacy row, each superseding field found among the fields it is handed, frozen", () => {
     const rows = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), ["elasticsearch", "postgres", "sqlite"]);
-    const credentials = legacyAgentCredentials(rows, CONNECTION_FIELDS);
+    const credentials = legacyAgentCredentials(rows, BODY_CONNECTION_FIELDS);
 
     expect(Object.keys(credentials)).toEqual(["elasticsearch", "postgres", "sqlite"]);
     expect(credentials.elasticsearch).toEqual({ form: "pair", supersededBy: ["apiKeyId", "apiKeySecret"] });
@@ -811,21 +811,31 @@ describe("the register's legacy rows the grant reader reads", () => {
     expect(Object.isFrozen(credentials.postgres?.supersededBy)).toBe(true);
   });
 
-  test("legacyAgentCredentials refuses by name a superseding field the engine's connection fields do not hold", () => {
+  /** `engine`'s committed grants with its agent credential superseded by `field`. */
+  function supersededBy(engine: "elasticsearch" | "postgres", field: string): RegisterGrants {
     const committed = legacyGrantRows(readGrantRegister(SHIPPED_DATABASE_TYPES), ["elasticsearch", "postgres"]);
-    /** `engine`'s committed grants with its agent credential superseded by `field`. */
-    const supersededBy = (engine: "elasticsearch" | "postgres", field: string): RegisterGrants => ({
-      ...(committed[engine] as RegisterGrants),
-      agentCredential: { form: "pair", supersededBy: [field] },
-    });
+    return { ...(committed[engine] as RegisterGrants), agentCredential: { form: "pair", supersededBy: [field] } };
+  }
 
+  test("legacyAgentCredentials reads no engine's connection row: a drawn text field of another engine narrows, which the agent credential census refuses", () => {
+    // The census in tests/unit/db/agent-credential-capability.test.ts holds every legacy row's superseding fields
+    // among its engine's own connection fields; the load narrows against the vocabulary alone.
+    expect(legacyAgentCredentials({ postgres: supersededBy("postgres", "apiKeyId") }, BODY_CONNECTION_FIELDS)).toEqual({
+      postgres: { form: "pair", supersededBy: ["apiKeyId"] },
+    });
+  });
+
+  test("legacyAgentCredentials refuses by name a superseding field the fields it is handed do not hold", () => {
     expect(() =>
-      legacyAgentCredentials({ elasticsearch: supersededBy("elasticsearch", "notAField") }, CONNECTION_FIELDS),
+      legacyAgentCredentials({ elasticsearch: supersededBy("elasticsearch", "notAField") }, BODY_CONNECTION_FIELDS),
     ).toThrow(
-      'the grant register\'s legacy row for elasticsearch names "notAField" among the fields superseding its agent credential, which is not a connection field of the engine',
+      'the grant register\'s legacy row for elasticsearch names "notAField" among the fields superseding its agent credential, which is not a text field a connection form draws',
     );
-    expect(() => legacyAgentCredentials({ postgres: supersededBy("postgres", "apiKeyId") }, CONNECTION_FIELDS)).toThrow(
-      'the grant register\'s legacy row for postgres names "apiKeyId" among the fields superseding its agent credential, which is not a connection field of the engine',
+    // A connection field the dialog's own layout draws, never a text field the renderer saves.
+    expect(() =>
+      legacyAgentCredentials({ elasticsearch: supersededBy("elasticsearch", "host") }, BODY_CONNECTION_FIELDS),
+    ).toThrow(
+      'the grant register\'s legacy row for elasticsearch names "host" among the fields superseding its agent credential, which is not a text field a connection form draws',
     );
   });
 });
