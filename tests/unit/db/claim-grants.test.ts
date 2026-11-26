@@ -427,8 +427,12 @@ describe("Studio's grant of each connection claim", () => {
     ] as const;
 
     expect(tables.flatMap(([granted, record]) => differing(granted, record))).toEqual([]);
-    // Each legacy engine's grants are granted once: the seed agent credential read twice is one object.
-    expect(legacyEngineGrants("elasticsearch").agentCredential).toBe(legacyGrantTable("agentCredential").elasticsearch);
+    // Against an oracle the grant reader builds no part of: elasticsearch's register row, whose superseding fields are
+    // both text fields a connection form draws, so narrowing keeps them.
+    expect(legacyEngineGrants("elasticsearch").agentCredential).toEqual({
+      form: "pair",
+      supersededBy: ["apiKeyId", "apiKeySecret"],
+    });
     // Vacuity: each record holds rows that differ from its claim's restrictive value.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => legacyEngineGrants(type).opensLocalFile)).toEqual([
       "duckdb",

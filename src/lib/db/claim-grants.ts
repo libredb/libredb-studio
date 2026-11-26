@@ -775,9 +775,10 @@ function grantTables<K extends string>(engines: readonly K[], grantsOf: (engine:
 const BUNDLED_GRANTS = grantTables(SHIPPED_DATABASE_TYPES, legacyEngineGrants);
 
 /**
- * Studio's grant of `policy.writeReach`, which the connection form reads before a provider exists; the seed schema reads
- * the engine record's `grants.writeReach`. It is no MCP criterion and no MCP code reads it (tests/unit/mcp/no-write-reach.test.ts): whether a machine
- * client may read an engine is the grant of `mcp.exposable`, whatever the engine's write reach.
+ * Studio's grant of `policy.writeReach`, which the connection form reads before a provider exists; the seed schema
+ * reads the engine record's `grants.writeReach`. It is no MCP criterion and no MCP code reads it
+ * (tests/unit/mcp/no-write-reach.test.ts): whether a machine client may read an engine is the grant of `mcp.exposable`,
+ * whatever the engine's write reach.
  */
 export const GRANTED_WRITE_REACH: Readonly<Record<DatabaseType, WriteReach>> = BUNDLED_GRANTS.writeReach;
 

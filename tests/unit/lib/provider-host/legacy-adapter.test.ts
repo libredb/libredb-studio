@@ -185,11 +185,14 @@ describe("the legacy adapter's records", () => {
   test("each legacy record's grants equal the grant reader's rows for its id", () => {
     for (const id of SHIPPED_DATABASE_TYPES) {
       const engine = legacyRecord(id);
+      // The record holds the grant reader's own grants, so a copied member below is the reader's object, not a copy.
+      expect(engine.grants).toBe(grants.legacyEngineGrants(id));
       expect(Object.keys(engine.grants).sort()).toEqual(Object.keys(GRANT_TABLES).sort());
       for (const [member, table] of Object.entries(GRANT_TABLES)) {
         const granted = engine.grants[member as keyof EngineRecord["grants"]];
-        // Equal rather than identical only where the grant reader builds a new value: a masking exemption, a host path
-        // field list the request adds to, and an agent credential, whose superseding fields it narrows.
+        // Equal rather than identical to the oracle only where the grant reader builds a new value: a masking
+        // exemption, a host path field list the request adds to, and an agent credential, whose superseding fields it
+        // narrows.
         if (COPIED_GRANT_MEMBERS.has(member)) expect([member, granted]).toEqual([member, table[id] as never]);
         else expect(granted).toBe(table[id] as never);
       }
