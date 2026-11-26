@@ -1,7 +1,6 @@
 /**
  * `docs/AGENT.md` states what agent mode does on a MongoDB connection, and each claim it makes is read back here from
- * the code that decides it, the shape of `tests/unit/db/kubernetes/provider-doc.test.ts`: a claim copied into prose
- * is true only until the code moves. The section's tool table is the manifest's mongo variants, its command argument
+ * the code that decides it: a claim copied into prose is true only until the code moves. The section's tool table is the manifest's mongo variants, its command argument
  * is the language's, the tools and the setting it says are not offered are not, each with the backlog id it
  * cites, its refusals end in the run reasons the runtime records for their codes, and the posture table carries
  * the row the safety strip renders.

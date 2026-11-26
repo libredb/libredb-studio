@@ -4,6 +4,7 @@ import { DatabaseConfigError } from "@/lib/db/errors";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -445,5 +446,12 @@ describe("kafkaConnectionOptions, each field as a caller may write it: another t
     expect(refusalOf({ ...base, ssl: { mode: "disable", rejectUnauthorized: "no" } })).toBe(
       "The connection's ssl.rejectUnauthorized must be true or false; nothing was sent",
     );
+  });
+});
+
+describe("the SSH tunnel refusal", () => {
+  test("core's SSH tunnel refusal row for Kafka says it does not run through a tunnel (FND-2 slice 5)", () => {
+    const sentence = SSH_TUNNEL_REFUSAL.kafka;
+    expect(sentence).toStartWith("Kafka does not run through an SSH tunnel");
   });
 });

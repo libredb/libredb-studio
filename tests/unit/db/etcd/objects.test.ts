@@ -1583,3 +1583,10 @@ describe("the member, lease, user and role sources (spec 4.4)", () => {
     );
   });
 });
+
+describe("the order of the walk's bounds", () => {
+  test("the walk's bounds keep the order spec 4.3 requires: P below S, G below INVENTORY_LIMIT", () => {
+    expect(ETCD_WALK_SEGMENT_BUDGET).toBeLessThan(ETCD_WALK_KEY_CAP);
+    expect(ETCD_GROUP_CAP).toBeLessThan(5000);
+  });
+});

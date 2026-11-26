@@ -35,6 +35,8 @@ import {
   type PrometheusTsdbStatus,
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 import { captureVmBody } from "../../../helpers/prometheus-fixtures";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 
 /**
  * A head block holding series, as the TSDB status reads once decoded: series and chunk counts, the
@@ -562,5 +564,25 @@ describe("the readers", () => {
     expect(await readTableStats(transport)).toEqual(tableStatsFrom(headlessTsdb()));
     // The control: the table read has rows, so answering it is not answering nothing.
     expect(await readTableStats(transport)).not.toEqual([]);
+  });
+});
+
+describe("the Tables caption and the storage refusal", () => {
+  test("the provider declares a table stats caption", () => {
+    const caption = new PrometheusProvider(CENSUS_CONNECTION.prometheus).getLabels().tableStatsCaption;
+    expect(caption).toBeDefined();
+  });
+
+  test("a TSDB status with no head statistics is refused", () => {
+    let refusal: unknown;
+    try {
+      storageStatsFrom(
+        { seriesByMetric: [], valuesByLabel: [] },
+        { startTime: "2026-09-23T10:00:00Z", serverTime: "2026-09-23T12:00:00Z", storageRetention: "15d" },
+      );
+    } catch (error) {
+      refusal = error;
+    }
+    expect(refusal).toBeInstanceOf(Error);
   });
 });

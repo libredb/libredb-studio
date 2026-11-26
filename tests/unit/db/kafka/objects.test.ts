@@ -19,6 +19,8 @@ import {
 } from "@/lib/db/providers/stream/kafka/objects";
 import { shapeRecord } from "@/lib/db/providers/stream/kafka/results";
 import { kafkaFixture } from "../../../helpers/kafka-fixtures";
+import path from "node:path";
+import { readFileSync } from "node:fs";
 
 const big = (value: number) => BigInt(value);
 const CAPS = {
@@ -1115,5 +1117,25 @@ describe("a part the broker refuses is that part's refusal, and the parts it rea
       ).catch((e) => e === groupDenied),
     ]);
     expect(outcomes).toEqual([true, true, true]);
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const ADAPTER = read("src/lib/db/providers/stream/kafka/platformatic-client.ts");
+const OBJECTS = read("src/lib/db/providers/stream/kafka/objects.ts");
+
+describe("the nullable columns, the redacted value and the internal-topic refusal", () => {
+  test("the topic declares more than one nullable column", () => {
+    const nullable = KAFKA_TOPIC_COLUMNS.filter((c) => c.nullable).map((c) => `\`${c.name}\``);
+    expect(nullable.length).toBeGreaterThan(1);
+  });
+
+  test("objects.ts writes the redacted value and the adapter the internal-topic refusal", () => {
+    const redacted = "redacted by the broker";
+    expect(OBJECTS).toContain(`"${redacted}"`);
+    const internal =
+      "is internal to Kafka, and the client this provider uses drops internal topics from its metadata, so it is not readable here";
+    expect(ADAPTER).toContain(internal);
   });
 });

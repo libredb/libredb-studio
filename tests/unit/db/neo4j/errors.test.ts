@@ -105,3 +105,14 @@ describe("mapNeo4jError", () => {
     expect(mapped.detail).toBeUndefined();
   });
 });
+
+const SERVER_WORDS = "<the server's words>";
+
+describe("the privileges refusal", () => {
+  test("a statement the server refused for the user's privileges, never worded as a write", () => {
+    const sentence = mapNeo4jError(
+      new GraphClientError("forbidden", SERVER_WORDS, "Neo.ClientError.Security.Forbidden"),
+    ).message;
+    expect(sentence).not.toContain("write");
+  });
+});

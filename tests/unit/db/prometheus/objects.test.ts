@@ -26,6 +26,7 @@ import {
   type ObjectPathShapeEngine,
   SOURCE_PART_LIMIT,
   sourceBoundTruncationReason,
+  isCountSampled,
 } from "@/lib/db/object-kinds";
 import { pathKey } from "@/lib/db/object-path";
 import type { DatabaseObject, ObjectSourcePart, ProviderCapabilities } from "@/lib/db/types";
@@ -63,6 +64,8 @@ import {
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 import { assertObjectSurface } from "../../../helpers/object-surface-conformance";
 import { capture, captureBody, captureVm, captureVmBody } from "../../../helpers/prometheus-fixtures";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 
 const ENGINE: ObjectPathShapeEngine = { code: "prometheus", label: "A Prometheus", attachedSegment: "required" };
 
@@ -1663,5 +1666,80 @@ describe("the shared object surface contract", () => {
       sampleObject: { path: ["up"], kind: "metric" },
       absentSource: { path: ["no_such_metric"], kind: "metric" },
     });
+  });
+});
+
+/**
+ * The object surface over a transport that answers only the reads each case names. Any other read
+ * fails the case by name, so a sentence below is the one that exact answer produces.
+ */
+function objectsOver(answers: Partial<ObjectsTransport>): PrometheusObjects {
+  const unexpected = (read: string) => () => Promise.reject(new Error(`the object surface also read ${read}`));
+  const transport: ObjectsTransport = {
+    query: unexpected("query"),
+    metricNames: unexpected("metricNames"),
+    labelNames: unexpected("labelNames"),
+    seriesLabels: unexpected("seriesLabels"),
+    metadata: unexpected("metadata"),
+    rules: unexpected("rules"),
+    scrapePools: unexpected("scrapePools"),
+    targets: unexpected("targets"),
+    ...answers,
+  };
+  return new PrometheusObjects({
+    transport,
+    now: () => Date.parse("2026-09-23T12:00:00.000Z"),
+    // The declaration the provider hands its object surface in connect().
+    capabilities: new PrometheusProvider(CENSUS_CONNECTION.prometheus).getCapabilities(),
+    engine: { code: "prometheus", label: "A Prometheus", attachedSegment: "required" },
+    queryOptions: () => ({ timeoutMs: 30_000, seriesLimit: 500 }),
+  });
+}
+/** `count` metric names, each distinct, the way the label-values read answers them. */
+const metricNames = (count: number): string[] => Array.from({ length: count }, (_, index) => `metric_${index}`);
+
+describe("the capped count, the describe bound, the missing metadata and the value column", () => {
+  test("a metric list cut at the cap is counted as a sample of the cap", async () => {
+    const counts = await objectsOver({
+      // One name more than the cap, with no notice from the server: the cut the listing detects itself.
+      metricNames: async () => ({ items: metricNames(METRIC_LIST_CAP + 1), truncatedByServer: false }),
+      rules: async () => [],
+      scrapePools: async () => [],
+      targets: async () => [],
+    }).countObjects([]);
+    const metric = counts.metric;
+
+    expect(isCountSampled(metric)).toBe(true);
+    if (!isCountSampled(metric)) return;
+    expect(metric.count).toBe(METRIC_LIST_CAP);
+  });
+
+  test("a whole-folder describe past the series bound is marked truncated", async () => {
+    const batch = await objectsOver({
+      seriesLabels: async () => ({
+        items: Array.from({ length: DESCRIBE_SERIES_CAP + 1 }, () => ({ __name__: "up", job: "prometheus" })),
+        truncatedByServer: false,
+      }),
+    }).describeObjects([], "metric");
+
+    expect(batch.truncated).toBeDefined();
+  });
+
+  test("a metric with no metadata answers one unavailable source part", async () => {
+    const document = await objectsOver({
+      metricNames: async () => ({ items: ["up"], truncatedByServer: false }),
+      metadata: async () => [],
+    }).readObjectSource(["up"], "metric");
+    const [part] = document.parts;
+
+    expect(document.parts).toHaveLength(1);
+    expect("unavailable" in part).toBe(true);
+  });
+
+  test("a metric's description has a value column", async () => {
+    const detail = await objectsOver({ labelNames: async () => ["__name__", "job"] }).describeObject(["up"], "metric");
+    const value = detail.columns.find((column) => column.name === "value");
+
+    expect(value).toBeDefined();
   });
 });

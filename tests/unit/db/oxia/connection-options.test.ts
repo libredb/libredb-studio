@@ -24,6 +24,10 @@ import { type DatabaseConnection, TUNNEL_FAR_END, type WithTunnelFarEnd } from "
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { declareCredentialWarnings, SYNTHETIC_NO_SECRET } from "../../../helpers/synthetic-credential-warnings";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
+import { connectionFieldHint, DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
+import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
+import { OXIA_DEFAULT_PORT } from "@/lib/languages/oxiacli/constants";
 
 /** A placeholder bearer token, header {"alg":"none"}, payload {"exp":1791590400}, an empty signature; never a real one. */
 const TEST_TOKEN = `${Buffer.from('{"alg":"none"}').toString("base64url")}.${Buffer.from('{"exp":1791590400}').toString("base64url")}.`;
@@ -660,5 +664,49 @@ describe("the exported sentences and views", () => {
     for (const overrides of [{}, { ssl: TLS }, TUNNEL, { dataServers: "a.example:1" }]) {
       expect(build(overrides).receiveCapBytes).toBe(OXIA_RECEIVE_CAP_BYTES);
     }
+  });
+});
+
+/** The options the builder makes of an Oxia connection with `overrides`. */
+function options(overrides: Overrides = {}): OxiaConnectionOptions {
+  const config = oxiaConnection(overrides as Partial<DatabaseConnection>) as DatabaseConnection & WithTunnelFarEnd;
+  return buildOxiaConnectionOptions(config, { executionReadOnly: false, queryTimeout: DEFAULT_QUERY_TIMEOUT });
+}
+/** The builder's refusal of a connection with `overrides`. */
+function builderRefusal(overrides: Overrides): string {
+  try {
+    options(overrides);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected the builder to refuse");
+}
+/** A token with a payload that declares no expiry and a signature generated per call (no signature is checked). */
+function noExpiryToken(): string {
+  const b64url = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${b64url({ alg: "HS256", typ: "JWT" })}.${b64url({ sub: "studio" })}.${b64url(crypto.randomUUID())}`;
+}
+
+describe("the Data servers position, the dialog's hints and labels, and the credential warning", () => {
+  test("a Data servers entry the builder refuses is named by its position", () => {
+    const position = builderRefusal({ dataServers: "oxia-1.internal" });
+    expect(position).toContain("the 1st entry");
+  });
+
+  test("the dialog hints five fields, labels three and defaults to OXIA_DEFAULT_PORT", () => {
+    const config = DB_UI_CONFIG.oxia;
+    for (const field of ["host", "password", "database", "dataServers", "allowInsecureAuth"] as const) {
+      const hint = connectionFieldHint(config, field);
+      expect(hint, field).toBeDefined();
+    }
+    expect(config.fieldLabels).toEqual({ password: "Token", database: "Namespace", dataServers: "Data servers" });
+    expect(config.defaultPort).toBe(String(OXIA_DEFAULT_PORT));
+  });
+
+  test("a token with no expiry gets the record's credential warning, and a seed without a token is not refused", () => {
+    const message = CREDENTIAL_WARNINGS.oxia?.[0]?.message ?? "";
+    expect(message).not.toBe("");
+    expect(credentialWarningFor("oxia", { password: noExpiryToken() })).toBe(`Credential warning: ${message}`);
+    expect(readOnlySeedRefusal("oxia", { password: "" })).toBeUndefined();
   });
 });

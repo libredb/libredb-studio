@@ -26,6 +26,7 @@ import {
   renderOxiaDescriptor,
   wroteLine,
 } from "../../../../scripts/generate-oxia-descriptor.mjs";
+import { statementLanguageFamilyDirectory } from "../../../helpers/statement-language-family";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const GENERATOR = path.join(ROOT, "scripts", "generate-oxia-descriptor.mjs");
@@ -317,5 +318,33 @@ describe("the vendored proto directory", () => {
     expect(readme).toContain(OXIA_TAG_OBJECT);
     expect(readme).toContain(OXIA_COMMIT);
     expect(readme).toContain(GRPC_PROTO_COMMIT);
+  });
+});
+
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const PROVIDER_DIRECTORY = "src/lib/db/providers/keyvalue/oxia";
+/** The oxiacli statement language's core family module. */
+const FAMILY_DIRECTORY = statementLanguageFamilyDirectory("oxiacli");
+/** Every `.ts` file under `directory`, as a path relative to it. */
+function typescriptFiles(directory: string, prefix = ""): string[] {
+  return readdirSync(path.join(ROOT, directory), { withFileTypes: true }).flatMap((entry) => {
+    if (entry.isDirectory()) return typescriptFiles(path.join(directory, entry.name), `${prefix}${entry.name}/`);
+    return entry.name.endsWith(".ts") ? [`${prefix}${entry.name}`] : [];
+  });
+}
+
+describe("the provider's modules and the vendored proto's README", () => {
+  test("the provider directory holds the generated proto descriptor", () => {
+    const files = [
+      ...typescriptFiles(PROVIDER_DIRECTORY),
+      ...typescriptFiles(FAMILY_DIRECTORY).map((file) => `${FAMILY_DIRECTORY}/${file}`),
+    ];
+    expect(files).toContain("proto/descriptor.ts");
+  });
+
+  test("the proto README records the vendored client.proto's digest", () => {
+    const readme = read(`${PROVIDER_DIRECTORY}/proto/README.md`);
+    const digest = /^\| `client\.proto` \| [^|]+ \| `([0-9a-f]{64})` \|$/m.exec(readme)?.[1];
+    expect(digest).toBeDefined();
   });
 });

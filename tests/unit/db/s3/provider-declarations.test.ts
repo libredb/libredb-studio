@@ -12,6 +12,14 @@ import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { s3Connection } from "../../../helpers/s3-connection";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import {
+  AGENT_EXECUTION_ENGINES,
+  MCP_AGENT_CREDENTIAL_REQUIRED,
+  MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
+} from "@/lib/db/compatibility";
+import { type DatabaseConnection } from "@/lib/types";
 
 /** A provider whose transport factory would fail the test if anything asked it for a transport. */
 function declaredOnly(): { readonly provider: S3Provider; readonly asked: () => number } {
@@ -97,4 +105,52 @@ test("READ_ONLY_ENFORCED.s3 equals the summary of the declared write reach", () 
   expect(READ_ONLY_ENFORCED.s3).toBe(
     summarizeWriteReach(declaredOnly().provider.getCapabilities().writeReach) !== "open",
   );
+});
+
+/** An unsigned connection to a loopback endpoint: every builder check passes, so an override isolates one rule. */
+const CONNECTION = {
+  id: "s3-doc",
+  name: "S3 test",
+  type: "s3",
+  host: "localhost",
+  port: 9000,
+  user: "",
+  password: "",
+} as DatabaseConnection;
+/** The provider every declaration case reads; it has no transport, so a call that would send fails loudly. */
+const provider = new S3Provider(
+  CONNECTION,
+  {},
+  { egress: ALLOWS_PRIVATE_HOSTS },
+  {
+    createTransport: () => {
+      throw new Error("this test never connects");
+    },
+  },
+);
+
+describe("the records, the Keys panel, the labels and the maintenance refusal", () => {
+  test("S3 is enforced read-only, exposed over MCP under an agent key, and run by the agent", () => {
+    expect(READ_ONLY_ENFORCED.s3).toBe(true);
+    expect(MCP_EXPOSABLE.s3).toBe(true);
+    expect(MCP_STATEMENT_READ.s3).toBe(true);
+    expect(MCP_AGENT_CREDENTIAL_REQUIRED.s3).toBe(true);
+    expect(AGENT_EXECUTION_ENGINES).toContain("s3");
+  });
+
+  test("the Keys panel declares no result pagination, no container levels and the bucket as its root", () => {
+    const capabilities = provider.getCapabilities();
+    expect(capabilities.supportsResultPagination).toBe(false);
+    expect(capabilities.containerLevels).toEqual([]);
+    const keyScan = capabilities.keyScan;
+    expect(keyScan?.levels?.rootKind).toBe("bucket");
+  });
+
+  test("the built provider's labels are S3_LABELS", () => {
+    expect(provider.getLabels()).toEqual(S3_LABELS);
+  });
+
+  test("runMaintenance() is refused with the vacuum label's sentence", async () => {
+    await expect(provider.runMaintenance()).rejects.toThrow(S3_LABELS.vacuumGlobalDesc);
+  });
 });

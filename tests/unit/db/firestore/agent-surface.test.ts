@@ -16,6 +16,8 @@ import { LIMITS } from "@/lib/db/providers/document/firestore/constants";
 import { FIRESTORE_OBJECT_SENTENCES as O } from "@/lib/db/providers/document/firestore/objects";
 import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { FAKE_BASE, type FakeHandler, fakeFirestore } from "../../../helpers/firestore-fake-client";
+import { READ_ONLY_ENFORCED } from "@/lib/db/claim-grants";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
 
 /** A null allowance stands for a read that carries none. */
 function surface(handler: FakeHandler, allowance: RunReadAllowance | null = new RunReadAllowance(100)) {
@@ -88,5 +90,12 @@ describe("the agent-mode object surface", () => {
       expect(sentence.startsWith("Agent mode on Firestore reads metadata only")).toBe(true);
       expect(sentence).not.toMatch(/users\/|alice/);
     }
+  });
+});
+
+describe("the read-only and MCP records", () => {
+  test("Firestore is enforced read-only and is not exposed over MCP", () => {
+    expect(READ_ONLY_ENFORCED.firestore).toBe(true);
+    expect(MCP_EXPOSABLE.firestore).toBe(false);
   });
 });

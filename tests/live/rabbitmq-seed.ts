@@ -19,9 +19,7 @@
  * removing the broker container. Each benign message is published with its own confirm and each poison message
  * alone, so the chunk a message sits in is the same on every run.
  *
- * `RABBITMQ_SEED_TABLE` is the seed's content; `docs/providers/rabbitmq.md` prints it in its fixture section and
- * `tests/unit/db/rabbitmq/provider-doc.test.ts` holds the two equal. It is not in `bun run test`: the runner
- * excludes `tests/live/`.
+ * `RABBITMQ_SEED_TABLE` is the seed's content. It is not in `bun run test`: the runner excludes `tests/live/`.
  */
 import { createHash } from "node:crypto";
 import { patternBytes, patternSha256 } from "../helpers/rabbitmq-body-pattern";
@@ -719,32 +717,6 @@ export function seedHash(): string {
     },
   );
   return createHash("sha256").update(canonical).digest("hex");
-}
-
-/** A message's note in the seed table: AMQP 1.0 publishes are marked, so a reader knows which path made them. */
-const noteOf = (message: SeedMessage): string =>
-  message.via === "amqp10" ? `${message.note} (AMQP 1.0)` : message.note;
-
-/**
- * The seed table as `docs/providers/rabbitmq.md` prints it between its seed-table markers, one row per queue:
- * consecutive messages whose notes differ only by a trailing number are one run, "0 to 999: JSON event".
- */
-export function renderSeedTable(): string {
-  const rows = RABBITMQ_SEED_TABLE.map((queue) => {
-    const runs: string[] = [];
-    let start = 0;
-    const stem = (index: number) => noteOf(queue.messages[index]).replace(/ \d+$/, "");
-    for (let index = 1; index <= queue.messages.length; index++) {
-      if (index < queue.messages.length && stem(index) === stem(start)) continue;
-      const range = index - 1 === start ? `${start}` : `${start} to ${index - 1}`;
-      const notes = new Set(queue.messages.slice(start, index).map(noteOf));
-      runs.push(`${range}: ${notes.size === 1 ? noteOf(queue.messages[start]) : stem(start)}`);
-      start = index;
-    }
-    const content = queue.messages.length === 0 ? "empty" : runs.join("; ");
-    return `| \`${queue.vhost}\` | \`${queue.name}\` | ${queue.type} | ${content} | ${queue.readBy} |`;
-  });
-  return ["| Vhost | Name | Type | Messages, by offset | Read by |", "|---|---|---|---|---|", ...rows].join("\n");
 }
 
 /** The stream and its vhost when one fixture stream already exists, else null. */

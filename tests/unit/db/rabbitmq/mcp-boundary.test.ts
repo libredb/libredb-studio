@@ -24,6 +24,7 @@ import { readRabbitMQAgentStatement } from "@/lib/db/providers/stream/rabbitmq/a
 import { notAStream } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 
 type Counts = Readonly<Record<string, number>>;
 
@@ -235,5 +236,11 @@ describe("the wait", () => {
     expect(capture.cancel.after.answer.isError).toBe(false);
     expect(capture.cancel.after.answer.rows).toHaveLength(1);
     expect(capture.cancel.after.dials).toBe(2);
+  });
+});
+
+describe("the MCP statement read record", () => {
+  test("RabbitMQ offers the MCP statement read", () => {
+    expect(MCP_STATEMENT_READ.rabbitmq).toBe(true);
   });
 });

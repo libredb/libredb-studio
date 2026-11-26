@@ -100,7 +100,7 @@ const FAULT_SENTENCES: Readonly<Record<InfluxqlLexFault, (at: string) => string>
     `The backslash at ${at} starts an escape InfluxQL does not have; it reads only \\n, \\\\, \\" and \\'.`,
 };
 
-/** Every sentence the policy answers with, so the provider doc's test reads the same text. */
+/** Every sentence the policy answers with. */
 export const INFLUXQL_POLICY_SENTENCES = {
   empty: "There is no statement to run.",
   flux: "This is Flux, which Studio does not run: Flux can make the server open network connections even with a read-only token. Write it in InfluxQL; docs/providers/influxdb.md, section Coming from InfluxDB 2.x and Flux, has a translation table.",

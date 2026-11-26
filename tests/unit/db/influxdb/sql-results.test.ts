@@ -369,3 +369,17 @@ describe("shapeJsonlBody over hostile text (R40)", () => {
     expect(shapeError(`{"ok":1}\n${text}`).fault).toBe("not-json");
   });
 });
+
+describe("the JSON lines bounds", () => {
+  test("a row nested 64 levels deep is read, and one deeper is refused", () => {
+    const nested = (depth: number) => `${'{"a":'.repeat(depth - 1)}{"b":1}${"}".repeat(depth - 1)}\n`;
+    const limits = { rowCut: INFLUX_ROW_CUT, cellBudget: INFLUX_CELL_BUDGET };
+    expect(shapeJsonlBody(nested(64), limits).rows).toHaveLength(1);
+    expect(() => shapeJsonlBody(nested(65), limits)).toThrow();
+  });
+
+  test("a line naming a column twice is refused", () => {
+    const limits = { rowCut: INFLUX_ROW_CUT, cellBudget: INFLUX_CELL_BUDGET };
+    expect(() => shapeJsonlBody('{"usage":1.5,"usage":1.5}\n', limits)).toThrow();
+  });
+});

@@ -10,8 +10,17 @@
  * export can see it.
  */
 import { describe, expect, test } from "bun:test";
-import { MAX_WALK_DEPTH, buildResultGraph, captionOf, hasGraphValues, paletteColor } from "@/lib/db/graph/result-graph";
+import {
+  MAX_WALK_DEPTH,
+  buildResultGraph,
+  captionOf,
+  hasGraphValues,
+  paletteColor,
+  type ResultGraph,
+} from "@/lib/db/graph/result-graph";
 import type { GraphNodeJson, GraphPathJson, GraphRelationshipJson } from "@/lib/db/graph/values";
+import { capNotice, droppedNotice, MAX_GRAPH_NODES } from "@/components/results-graph/graph-canvas";
+import { GRAPH_TAG } from "@/lib/db/graph/values";
 
 function node(id: string, labels: string[] = ["Person"], properties: Record<string, unknown> = {}): GraphNodeJson {
   return { "~graph": "node", elementId: id, labels, properties };
@@ -451,5 +460,40 @@ describe("without Intl.Segmenter", () => {
     } finally {
       Object.defineProperty(Intl, "Segmenter", segmenter);
     }
+  });
+});
+
+describe("the node cap notice, the dropped-relationship notice and the caption order", () => {
+  const resultGraph = (count: number, orphans: number, maxNodes = MAX_GRAPH_NODES): ResultGraph => {
+    const node = (id: string) => ({ [GRAPH_TAG]: "node", elementId: id, labels: ["Person"], properties: {} });
+    const rows = Array.from({ length: count }, (_, at) => ({ n: node(`n${at}`) }));
+    const relationships = Array.from({ length: orphans }, (_, at) => ({
+      [GRAPH_TAG]: "relationship",
+      elementId: `r${at}`,
+      type: "KNOWS",
+      startNodeElementId: "n0",
+      endNodeElementId: "missing",
+      properties: {},
+    }));
+    return buildResultGraph([...rows, { n: relationships }], ["n"], { maxNodes });
+  };
+  test("a graph past MAX_GRAPH_NODES carries a cap notice", () => {
+    const notice = capNotice(resultGraph(412, 0));
+    expect(notice).not.toBeNull();
+  });
+
+  test("a relationship to a missing node carries a dropped notice", () => {
+    const notice = droppedNotice(resultGraph(2, 2));
+    expect(notice).not.toBeNull();
+  });
+
+  test("the caption order is the model's, key by key", () => {
+    const caption = (properties: Record<string, unknown>) => captionOf({ elementId: "e", labels: ["L"], properties });
+    expect(caption({ s: "x", id: "i", description: "d", firstName: "f", label: "l" })).toBe("l");
+    expect(caption({ s: "x", id: "i", description: "d", firstName: "f" })).toBe("f");
+    expect(caption({ s: "x", id: "i", description: "d" })).toBe("d");
+    expect(caption({ s: "x", id: "i" })).toBe("i");
+    expect(caption({ f: "NaN", s: "x" })).toBe("x");
+    expect(caption({ f: "NaN" })).toBe("L");
   });
 });

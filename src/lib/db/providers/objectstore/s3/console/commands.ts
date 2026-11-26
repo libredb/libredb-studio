@@ -101,7 +101,7 @@ function command(
   return Object.freeze({ service, operation, arguments: args, flags: Object.freeze([...flags]) });
 }
 
-/** The table as data, for the labels, completion, the generators and the provider-doc test. */
+/** The table as data, for the labels, completion and the generators. */
 export const S3_COMMAND_TABLE: ReadonlyArray<S3CommandSpec> = Object.freeze([
   command("s3", "ls", "[PATH]", [
     flag({ name: "--recursive", takes: "boolean" }),

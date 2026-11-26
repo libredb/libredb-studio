@@ -10,8 +10,10 @@ import {
   cypherUnicodeEscapeIn,
   quoteCypherName,
   quoteCypherString,
+  CYPHER_UNICODE_ESCAPE,
 } from "@/lib/db/graph/cypher/quote";
 import { CYPHER_CORPUS } from "../../../fixtures/graph/cypher-corpus";
+import { cypherSelectLabel } from "@/lib/db/graph/cypher/generators";
 
 function nameErrorOf(name: string): CypherNameError {
   try {
@@ -179,5 +181,14 @@ describe("quoteCypherString", () => {
       const tokens = lexCypher(quoteCypherString(value));
       expect(tokens.map((token) => [token.kind, token.value])).toEqual([["string", value]]);
     }
+  });
+});
+
+describe("a name holding a unicode escape", () => {
+  test("an object whose name holds a unicode escape is listed but cannot be opened (#1295)", () => {
+    const example = String.raw`Caf\u00e9`;
+    expect(CYPHER_UNICODE_ESCAPE.test(example)).toBe(true);
+    expect(() => cypherSelectLabel(example)).toThrow(CypherNameError);
+    expect(() => cypherSelectLabel(example)).toThrow("cannot be written as a Cypher identifier");
   });
 });

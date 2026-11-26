@@ -123,7 +123,7 @@ export const INFLUX_LIST_CAP = 2000;
 /** The label the dialog gives each field a sentence names. */
 type CredentialField = "User" | "Password or token" | "Token";
 
-/** Every fixed sentence this module throws, so the provider-doc tests read them back. */
+/** Every fixed sentence this module throws. */
 export const INFLUX_CONNECTION_SENTENCES = Object.freeze({
   plaintext:
     "This connection would send its password or token to InfluxDB without TLS, to a host that is not this machine, where anyone on the path can read it. Choose an SSL mode under SSL / TLS (docs/providers/influxdb.md has a TLS recipe for each version), connect through an SSH tunnel, or tick Send the password without TLS to accept that risk for this connection. Inside a container, localhost is the container itself, not the host. Nothing was sent.",

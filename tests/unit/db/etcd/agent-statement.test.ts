@@ -10,6 +10,7 @@ import {
   type EtcdAgentReading,
   readEtcdAgentStatement,
 } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
+import { admitEtcdctlStatement, ETCDCTL_AGENT_MAX_STATEMENT_CHARS } from "@/lib/db/operations/etcdctl-admission";
 
 const encode = (text: string) => new TextEncoder().encode(text);
 
@@ -185,5 +186,14 @@ describe("every request outside the table is refused before anything is sent", (
     expect(ETCD_AGENT_SENTENCES.request("Refused.")).toMatch(
       /^Refused\. Agent mode on etcd reads metadata only: .* Nothing was sent\.$/,
     );
+  });
+});
+
+describe("the longest key an agent command reaches", () => {
+  const reached = ETCDCTL_AGENT_MAX_STATEMENT_CHARS - "get ".length;
+  test("it is the command cap less the get, below the reader's own key cap", () => {
+    expect(reached).toBeLessThan(ETCD_AGENT_MAX_KEY_BYTES);
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached - 1)}`)).toBeNull();
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached)}`)?.code).toBe("agent-too-large");
   });
 });

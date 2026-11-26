@@ -65,3 +65,10 @@ describe("neo4jLabels", () => {
     expect(neo4jLabels()).toEqual(labels);
   });
 });
+
+describe("the Queries panel label", () => {
+  test("the not-offered Queries panel has no empty state", () => {
+    const labels = neo4jLabels();
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+  });
+});

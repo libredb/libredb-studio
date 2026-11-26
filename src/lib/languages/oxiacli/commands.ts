@@ -178,7 +178,7 @@ const VERBS: readonly VerbSpec[] = [
 const usageSpelling = (spec: FlagSpec): string =>
   spec.shorthand === undefined ? `--${spec.name}` : `-${spec.shorthand}|--${spec.name}`;
 
-/** The table as data, for labels.ts, the provider doc test and statementLanguage. */
+/** The table as data, for labels.ts and statementLanguage. */
 export const OXIA_COMMAND_TABLE: ReadonlyArray<{
   readonly verb: OxiaCommandKind;
   readonly aliases: readonly string[];

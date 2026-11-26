@@ -48,6 +48,8 @@ import {
   testDeps,
 } from "../../../helpers/snowflake-node-transport";
 import { CANCEL, roleAnswer, STATUS, SUBMIT, tick } from "../../../helpers/snowflake-statements";
+import { MCP_EXPOSABLE } from "@/lib/db/compatibility";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 const KEY = rsaKey();
 const PEM = pkcs8Pem(KEY);
@@ -1101,5 +1103,55 @@ describe("the declarations", () => {
     const entry = build({ host: "", user: "", role: "" });
     expect(entry.provider.isConnected()).toBe(false);
     expect(entry.transports.lanesBuilt()).toBe(0);
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "snowflake-doc",
+  name: "Snowflake",
+  type: "snowflake",
+  host: "myorg-myaccount",
+  user: "STUDIO_SVC",
+  role: "STUDIO_RO",
+  createdAt: new Date(0),
+};
+const provider = new SnowflakeProvider(CONNECTION);
+const capabilities = provider.getCapabilities();
+
+describe("the capabilities and the grammar", () => {
+  test("Explain is snowflake-json, a run resumes billed compute, MCP is exposed and no foreign keys are declared", () => {
+    expect(capabilities.explainFormat).toBe("snowflake-json");
+    expect(capabilities.resumesBilledCompute).toBe(true);
+    expect(MCP_EXPOSABLE.snowflake).toBe(true);
+    expect(capabilities.declaresForeignKeys).toBe(false);
+  });
+
+  test("Format uses the snowflake language, and completion adds Snowflake's words but no SYSTEM$ function", () => {
+    expect(resolveSqlGrammar("snowflake").formatterLanguage).toBe("snowflake");
+    const words = resolveSqlGrammar("snowflake").completionWords;
+    for (const word of ["QUALIFY", "ARRAY_AGG", "PARSE_JSON", "FLATTEN", "CURRENT_ROLE", "CURRENT_WAREHOUSE"]) {
+      expect([...(words?.keywords ?? []), ...(words?.functions ?? [])]).toContain(word);
+    }
+    expect(words?.functions.some((name) => name.startsWith("SYSTEM$"))).toBe(false);
+  });
+
+  test("the grammar declares confirmation forms, code forms, word-gated forms and exempt forms", () => {
+    const grammar = resolveSqlGrammar("snowflake");
+    const forms = grammar.confirmForms ?? [];
+    const codeForms = grammar.confirmCodeForms ?? [];
+    expect(forms.length).toBeGreaterThan(0);
+    expect(codeForms.length).toBeGreaterThan(0);
+    // A form that asks only with a word after it (SF-013).
+    const whenForms = grammar.confirmFormsWhen ?? [];
+    expect(whenForms.length).toBeGreaterThan(0);
+    // Forms exempt from the shared keywords, beside the session policy form that still asks (SF-030).
+    const exempt = (grammar.confirmExemptForms ?? []).map((form) => `\`${form.join(" ")}\``);
+    expect(exempt.length).toBeGreaterThan(0);
+  });
+
+  test("the editor reads `$` as no tag and a backslash inside a quoted name as no escape", () => {
+    const grammar = resolveSqlGrammar("snowflake");
+    expect(grammar.dollarTags).toBe(false);
+    expect(grammar.doubleQuoteBackslashEscapes).toBe(false);
   });
 });

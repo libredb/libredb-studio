@@ -402,3 +402,9 @@ describe("readIndexStats", () => {
     );
   });
 });
+
+describe("the transactions read", () => {
+  test("the transactions read names no parameters column (E10)", () => {
+    expect(NEO4J_MONITORING_STATEMENTS.transactions).not.toContain("parameters");
+  });
+});

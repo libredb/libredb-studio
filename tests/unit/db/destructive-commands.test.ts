@@ -734,7 +734,8 @@ describe("the etcd row", () => {
  * refusal alone; every other rule here is driven by the stand-in row, so it is pinned apart from any shipped vocabulary
  * row, and the readers tested here hand the text to the row as written, so no grammar reads it.
  * An engine's own row is pinned in its describe block below, Weaviate's in tests/unit/db/weaviate/routes.test.ts,
- * S3's in tests/unit/db/s3/provider-doc.test.ts and Redis's beside its reader in describe("isDestructiveNonSqlQuery").
+ * S3's text bound in tests/unit/db/s3/console-constants.test.ts and Redis's beside its reader in
+ * describe("isDestructiveNonSqlQuery").
  */
 describe("statementRefusal and the console text bound", () => {
   const REFUSAL = "The stand-in dialect refuses FORBIDDEN.";

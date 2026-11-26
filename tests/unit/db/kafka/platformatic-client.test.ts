@@ -15,6 +15,8 @@ import {
   translateError,
 } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { kafkaFixture, recordedLib } from "../../../helpers/kafka-fixtures";
+import path from "node:path";
+import { readFileSync } from "node:fs";
 
 const OPTIONS = { clientId: "libredb-studio", broker: { host: "localhost", port: 9092 }, timeoutMs: 5000 };
 const big = (value: number) => BigInt(value);
@@ -3549,5 +3551,30 @@ describe("the installed client against a local broker (spec 3.6 K8)", () => {
     const error = result as KafkaError;
     expect([error.category, error.detail]).toEqual(["protocol", {}]);
     expect(error.message).toContain("Z_DATA_ERROR");
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const ADAPTER = read("src/lib/db/providers/stream/kafka/platformatic-client.ts");
+
+describe("the adapter's fetch wait, internal topics and sentinel group", () => {
+  test("the adapter declares its fetch wait as a whole-number constant", () => {
+    // The adapter is read as text; the declaration is matched whole, so a renamed or recomputed
+    // constant fails here instead of reading back nothing.
+    const wait = /^const KAFKA_FETCH_MAX_WAIT_MS = (\d+);$/m.exec(ADAPTER)?.[1];
+    expect(wait).toBeDefined();
+  });
+
+  test("the adapter refuses the three internal topics by name", () => {
+    // Matched whole, so a renamed or recomputed set fails here instead of reading back nothing.
+    const declared = /^const INTERNAL_TOPICS: ReadonlySet<string> = new Set\(\[([^\]]*)\]\);$/m.exec(ADAPTER)?.[1];
+    expect(declared).toBeDefined();
+    const names = [...(declared ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    expect(names).toEqual(["__consumer_offsets", "__transaction_state", "__share_group_state"]);
+  });
+
+  test("the adapter exports the never-joined group id", () => {
+    expect(ADAPTER).toContain('export const KAFKA_SENTINEL_GROUP_ID = "libredb-studio-never-joined";');
   });
 });

@@ -22,6 +22,9 @@ import {
 } from "@/lib/db/providers/sql/databend/errors";
 import { DatabendError } from "@/lib/db/providers/sql/databend/transport";
 import { secretForms, serverText } from "@/lib/db/utils/server-text";
+import path from "node:path";
+import { loadDatabendManifest } from "../../../helpers/databend-fixtures";
+import { readFileSync } from "node:fs";
 
 function response(status: number, contentType: string | null, text: string): NodeResponse {
   return { status, contentType, retryAfter: null, text };
@@ -782,5 +785,41 @@ describe("the Databend Cloud gateway's envelope (I19, C4)", () => {
       const error = refusalError(cloudRefusal(name), ctx);
       expect([name, error.category, error.message]).toEqual([name, category, message]);
     }
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const FIXTURE_README = read("docker/databend/README.md");
+/** The Cloud acceptance's capture run (plan section 7), which the replay does not read. */
+const CLOUD_CAPTURE_RUN = "cloud-2026-10-08-v1.2.951-nightly";
+interface CloudManifest {
+  readonly target: string;
+  readonly uncommitted: readonly string[];
+  readonly serverVersion: string;
+  readonly capturedAt: string;
+  readonly scenarios: readonly { readonly name: string; readonly result: string }[];
+}
+function loadCloudManifest(): CloudManifest {
+  return JSON.parse(
+    readFileSync(path.join(ROOT, "tests/fixtures/databend", CLOUD_CAPTURE_RUN, "manifest.json"), "utf8"),
+  ) as CloudManifest;
+}
+
+describe("the pinned build, the floor build and the Cloud acceptance", () => {
+  test("the manifest pins the build, the fixture README the floor, and the committed Cloud run passed", () => {
+    const pin = loadDatabendManifest().image;
+    expect(pin).toMatch(/^datafuselabs\/databend:v1\.2\.951-nightly@sha256:[0-9a-f]{64}$/);
+    const floor = /datafuselabs\/databend:(v1\.2\.881@sha256:[0-9a-f]{64})/.exec(FIXTURE_README)?.[1];
+    expect(floor).toBeDefined();
+    // The Cloud acceptance of plan section 7 ran through the provider on a test tenant of the pinned build; its
+    // evidence is the committed capture run, so the date, the build and the scenario count are read from its manifest.
+    const cloud = loadCloudManifest();
+    expect(cloud.target).toBe("cloud");
+    expect(cloud.uncommitted).toEqual([]);
+    expect(cloud.scenarios.every((scenario) => scenario.result === "pass")).toBe(true);
+    const build = /^Databend Query v(\d+\.\d+\.\d+-nightly-[0-9a-f]+)\(/.exec(cloud.serverVersion)?.[1];
+    expect(build).toBe("1.2.951-nightly-9b7eeff9a8");
+    expect(RESULT_MODE_FLOOR).toBe("v1.2.881");
   });
 });

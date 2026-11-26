@@ -19,8 +19,11 @@ import {
 } from "@/components/results-graph/graph-canvas";
 import { chartTheme } from "@/lib/charts/palette";
 import { DEFAULT_MASKING_CONFIG, detectSensitiveColumnsFromConfig, maskValueByPattern } from "@/lib/data-masking";
-import { buildResultGraph, paletteColor } from "@/lib/db/graph/result-graph";
+import { buildResultGraph, paletteColor, type ResultGraph } from "@/lib/db/graph/result-graph";
 import type { GraphNodeJson, GraphRelationshipJson } from "@/lib/db/graph/values";
+import path from "node:path";
+import { GRAPH_TAG } from "@/lib/db/graph/values";
+import { readFileSync } from "node:fs";
 
 function node(id: string, labels: string[], properties: Record<string, unknown> = {}): GraphNodeJson {
   return { "~graph": "node", elementId: id, labels, properties };
@@ -225,5 +228,36 @@ describe("graphJson and propertyText", () => {
     expect(propertyText(42)).toBe("42");
     expect(propertyText(null)).toBe("null");
     expect(propertyText({ "~type": "date", value: "2026-10-03" })).toBe('{"~type":"date","value":"2026-10-03"}');
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+
+describe("the canvas name and the toolbar", () => {
+  const resultGraph = (count: number, orphans: number, maxNodes = MAX_GRAPH_NODES): ResultGraph => {
+    const node = (id: string) => ({ [GRAPH_TAG]: "node", elementId: id, labels: ["Person"], properties: {} });
+    const rows = Array.from({ length: count }, (_, at) => ({ n: node(`n${at}`) }));
+    const relationships = Array.from({ length: orphans }, (_, at) => ({
+      [GRAPH_TAG]: "relationship",
+      elementId: `r${at}`,
+      type: "KNOWS",
+      startNodeElementId: "n0",
+      endNodeElementId: "missing",
+      properties: {},
+    }));
+    return buildResultGraph([...rows, { n: relationships }], ["n"], { maxNodes });
+  };
+  test("graphAriaLabel names the node and relationship counts", () => {
+    const label = graphAriaLabel(resultGraph(2, 0));
+    expect(label).toBe("Graph of 2 nodes and 0 relationships");
+  });
+
+  test("the toolbar and the export buttons have six accessible names", () => {
+    const view = read("src/components/results-graph/GraphView.tsx");
+    const tools = [...(/const TOOLS[^=]*= \[([^\]]*)\]/.exec(view)?.[1] ?? "").matchAll(/label: "([^"]+)"/g)];
+    const exports = [...view.matchAll(/aria-label="(Export [^"]+)"/g)];
+    const names = [...tools, ...exports].map((match) => match[1]);
+    expect(names).toHaveLength(6);
   });
 });

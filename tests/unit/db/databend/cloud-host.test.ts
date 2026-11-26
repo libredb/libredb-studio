@@ -13,6 +13,9 @@ import {
   transportDeps,
 } from "../../../helpers/databend-node-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { parseConnectionString } from "@/lib/connection-string-parser";
+import { DATABEND_DEFAULT_PORT } from "@/lib/db/providers/sql/databend/connection-options";
+import { type DatabaseConnection } from "@/lib/types";
 
 /**
  * Which hosts are Databend Cloud's, and the warehouse an older one names (section 4.4 of the provider doc).
@@ -118,5 +121,26 @@ describe("a Databend Cloud host through the provider", () => {
       { method: "GET", path: paths.kill, reply: { status: 200 } },
     ]);
     expect(message).toBe(DATABEND_ERROR_SENTENCES.resuming("eric", "60"));
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "databend-doc",
+  name: "Databend",
+  type: "databend",
+  host: "localhost",
+  port: DATABEND_DEFAULT_PORT,
+  user: "root",
+  createdAt: new Date(0),
+};
+
+describe("the billed Cloud hosts", () => {
+  test("both Cloud host forms resume billed compute, and only the older one names its warehouse", () => {
+    const older = "tn3ftqihs--eric.gw.aws-us-east-2.default.databend.com";
+    expect(new DatabendProvider({ ...CONNECTION, host: older }).getCapabilities().resumesBilledCompute).toBe(true);
+    expect(parseConnectionString(`databend://cloudapp@${older}:443/default`)?.warehouse).toBe("eric");
+    const lake = "tn3ftqihs--eric.gw.aws-us-east-2.default.tidbcloud.com";
+    expect(new DatabendProvider({ ...CONNECTION, host: lake }).getCapabilities().resumesBilledCompute).toBe(true);
+    expect(parseConnectionString(`databend://cloudapp@${lake}:443/default`)?.warehouse).toBeUndefined();
   });
 });

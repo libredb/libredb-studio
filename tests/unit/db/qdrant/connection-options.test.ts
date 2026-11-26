@@ -3,7 +3,7 @@
  * TLS mapping of QE6, the seed stage of 3.12 (QE22), the read-only source, the query timeout and the secret forms.
  * Every refusal is a DatabaseConfigError raised before any client exists, and none repeats the value it refuses.
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test, mock } from "bun:test";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { BLOCKED_HOST } from "@/lib/db/http/egress-policy";
 import {
@@ -20,6 +20,10 @@ import {
   SYNTHETIC_NO_SECRET,
 } from "../../../helpers/synthetic-credential-warnings";
 import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import path from "node:path";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { type QdrantClientFactory, QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
+import { readFileSync } from "node:fs";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -320,5 +324,54 @@ describe("QE22: the seed stage of 3.12, after resolution, before any socket", ()
       "Credential warning: A Qdrant server without an API key, its default, accepts any key or none, so a read-only seed without a key promises a boundary the server does not keep. This read-only seed connection is refused with this credential, because the mode would promise a boundary the server does not keep; nothing was sent.",
     );
     expect(build({ readOnly: true, seedId: "s1", host: "127.0.0.1", password: TEST_PASSWORD }).readOnly).toBe("seed");
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const SEEDS = read("docs/SEED_CONNECTIONS.md");
+const QDRANT: DatabaseConnection = {
+  id: "qdrant-doc",
+  name: "Qdrant",
+  type: "qdrant",
+  host: "qdrant.internal",
+  port: 6333,
+  createdAt: new Date(0),
+};
+async function plaintextRefusal(): Promise<string> {
+  const createClient = mock(() => {
+    throw new Error("no client may be built");
+  });
+  const provider = new QdrantProvider(
+    { ...QDRANT, host: "qdrant.example.com", password: crypto.randomUUID() },
+    {},
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    createClient as unknown as QdrantClientFactory,
+  );
+  try {
+    await provider.connect();
+  } catch (error) {
+    expect(createClient).toHaveBeenCalledTimes(0);
+    return (error as Error).message;
+  }
+  throw new Error("expected the plaintext refusal");
+}
+
+describe("the dialog's key label, the plaintext refusal and the seed file's Qdrant rule", () => {
+  test("the dialog labels the password field as an API key or JWT", () => {
+    expect(DB_UI_CONFIG.qdrant.fieldLabels?.password).toBe("API key or JWT");
+  });
+
+  test("a key over plaintext to a remote host is refused before a client is built, naming its three ways out", async () => {
+    const sentence = await plaintextRefusal();
+    for (const exit of ["SSL / TLS", "SSH tunnel", "clear the"]) expect(sentence).toContain(exit);
+  });
+
+  test("SEED_CONNECTIONS.md takes the qdrant type and gives its no-key refusal", () => {
+    expect(SEEDS).toContain("`neo4j`, `milvus`, `qdrant`");
+    expect(SEEDS).toContain(
+      "Qdrant declares the second: a read-only Qdrant seed with no key is refused, because a Qdrant server without a key accepts any key or none ([providers/qdrant.md](providers/qdrant.md), section 4.2).",
+    );
+    expect(SEEDS).toContain("load refuses what the file shows; resolution refuses the rest");
   });
 });

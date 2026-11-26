@@ -100,9 +100,8 @@ export function administratorStatement(fp8: string, body: string): string {
 }
 
 /**
- * Every fixed sentence of the error table, templates as functions, so the provider doc can quote them and a test
- * read them back. `keyMissing` is this module's own: a key-pair connection always has its key by the time Snowflake
- * answers, so reaching it is a defect.
+ * Every fixed sentence of the error table, templates as functions. `keyMissing` is this module's own: a key-pair
+ * connection always has its key by the time Snowflake answers, so reaching it is a defect.
  */
 export const SNOWFLAKE_ERROR_SENTENCES = Object.freeze({
   keyPairRefused: (values: {

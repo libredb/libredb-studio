@@ -13,7 +13,7 @@ import {
   pingNeedsHealth,
   readPing,
 } from "@/lib/db/providers/timeseries/influxdb/versions";
-import { type InfluxFixtureVersion, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
+import { type InfluxFixtureVersion, loadInfluxCapture, loadInfluxManifest } from "../../../helpers/influxdb-fixtures";
 
 const UNKNOWN = { generation: "unknown", reported: null, build: null } as const;
 const NO_CONTENT = { status: 204, text: "" };
@@ -317,5 +317,21 @@ describe("GENERATION_TRAITS", () => {
     const browsing = Object.entries(GENERATION_TRAITS).filter(([, traits]) => traits.internalDatabase === "browse");
     expect(browsing.map(([generation]) => generation)).toEqual(["v1"]);
     expect(GENERATION_TRAITS.unknown.internalDatabase).toBe("hide");
+  });
+});
+
+describe("the capture manifest's versions", () => {
+  test("the InfluxDB manifest lists three versions", () => {
+    const manifest = loadInfluxManifest();
+    expect(manifest.versions.length).toBe(3);
+  });
+});
+
+const CORE = "3.12.0-core";
+
+describe("the InfluxDB 3 Core version", () => {
+  test("the capture manifest lists 3.12.0 Core", () => {
+    const core = loadInfluxManifest().versions.find((entry) => entry.version === CORE);
+    expect(core).toBeDefined();
   });
 });

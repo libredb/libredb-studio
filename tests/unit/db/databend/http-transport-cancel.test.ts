@@ -16,7 +16,16 @@ import {
   statement,
   TEST_NODE,
   transportHarness,
+  transportDeps,
+  scriptedNodeTransport,
 } from "../../../helpers/databend-node-transport";
+import path from "node:path";
+import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { DATABEND_CLOSE_TIMEOUT_MS, DATABEND_DEFAULT_PORT } from "@/lib/db/providers/sql/databend/connection-options";
+import { DatabendProvider } from "@/lib/db/providers/sql/databend/index";
+import { LOGOUT_PATH, QUERY_PATH } from "@/lib/db/providers/sql/databend/routes";
+import { type DatabaseConnection } from "@/lib/types";
+import { readFileSync } from "node:fs";
 
 const FIRST = idsOf(1);
 const P = pathsOf(FIRST.queryId);
@@ -340,5 +349,93 @@ describe("close() (X31)", () => {
     await transport.close();
     expect((await failure(transport.run(statement("SELECT 1")))).category).toBe("cancelled");
     expect(script.requests).toHaveLength(0);
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const CONNECTION: DatabaseConnection = {
+  id: "databend-doc",
+  name: "Databend",
+  type: "databend",
+  host: "localhost",
+  port: DATABEND_DEFAULT_PORT,
+  user: "root",
+  createdAt: new Date(0),
+};
+/** Thousands grouped by commas, the same in every locale. */
+const n = (value: number): string => String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+describe("the kill resends, a refused kill and Stop's wait", () => {
+  test("a kill that keeps answering 404 is sent four times, three waits apart", async () => {
+    const ids = idsOf(1);
+    const kill = { method: "GET" as const, path: pathsOf(ids.queryId).kill, reply: { status: 404 } };
+    const { script, time, transport } = transportHarness([
+      { method: "POST", path: QUERY_PATH, reply: { hang: true } },
+      kill,
+      kill,
+      kill,
+      kill,
+      { method: "POST", path: LOGOUT_PATH, reply: { status: 200 } },
+    ]);
+    const run = runSignal();
+    const running = transport.run(statement("SELECT 1", { signal: run.signal })).catch((error: unknown) => error);
+    await script.received(1);
+    run.cancel();
+    expect(await running).toBeInstanceOf(DatabendError);
+    script.expectDone();
+    const waits = time.sleeps.map(n);
+    expect(waits).toHaveLength(3);
+  });
+
+  test("a kill a gateway refuses over HTTP 200 is no acknowledged cancel (REV-T-2)", async () => {
+    const ids = idsOf(1);
+    const refused = { status: 200, body: { error: { kind: "AuthorizationFailed", message: "Authorization failed" } } };
+    const { script, transport } = transportHarness([
+      { method: "POST", path: QUERY_PATH, reply: { hang: true } },
+      { method: "GET", path: pathsOf(ids.queryId).kill, reply: refused },
+    ]);
+    const run = runSignal();
+    const running = transport.run(statement("SELECT 1", { signal: run.signal })).catch((error: unknown) => error);
+    await script.received(1);
+    run.cancel();
+    expect(((await running) as DatabendError).category).toBe("outcome-unknown");
+    script.expectDone();
+  });
+
+  test("Stop reports a cancel only for a run that ended cancelled, waiting at most three close timeouts (GAP-SH-C8-1)", async () => {
+    // The editor's titles for the cancel route's two answers.
+    const editor = read("src/hooks/use-query-execution.ts");
+    for (const title of ["Query Cancelled", "Cancel Not Confirmed"]) {
+      expect(editor).toContain(`title: "${title}"`);
+    }
+    // A run stopped before its first answer whose kill never answers: the cancel asks for one deadline, its wait.
+    const script = scriptedNodeTransport([
+      {
+        method: "POST",
+        path: QUERY_PATH,
+        reply: ok(idsOf(1), { schema: [{ name: "server_version", type: "String" }] }),
+      },
+      { method: "POST", path: QUERY_PATH, reply: ok(idsOf(2), { schema: [{ name: "auth_type", type: "String" }] }) },
+      { method: "POST", path: QUERY_PATH, reply: { hang: true } },
+      { method: "GET", path: pathsOf(idsOf(3).queryId).kill, reply: { hang: true } },
+      { method: "POST", path: LOGOUT_PATH, reply: { status: 200 } },
+    ]);
+    const time = transportDeps(script);
+    const subject = new DatabendProvider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, time.deps);
+    await subject.connect();
+    const running = subject.query("SELECT 1", undefined, "doc-cancel").catch((error: unknown) => error);
+    await script.received(3);
+    const asked = time.deadlines.length;
+    const cancelling = subject.cancelQuery("doc-cancel");
+    const wait = time.deadlines[asked].ms;
+    await script.received(4);
+    expect(wait).toBe(3 * DATABEND_CLOSE_TIMEOUT_MS);
+    time.fire(wait);
+    expect(await cancelling).toBe(false);
+    time.fire(DATABEND_CLOSE_TIMEOUT_MS);
+    expect(await running).toBeInstanceOf(Error);
+    await subject.disconnect();
+    script.expectDone();
   });
 });

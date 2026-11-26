@@ -1187,3 +1187,11 @@ describe("every sentence, word for word", () => {
     expect(Object.isFrozen(SPARK_ERROR_SENTENCES)).toBe(true);
   });
 });
+
+describe("the cell refusal's article", () => {
+  test("the cell refusal writes `an` before int and array", () => {
+    for (const type of ["int", "array"]) {
+      expect(SPARK_ERROR_SENTENCES.cellUnreadable(type, "<column>")).toContain(` an ${type} value `);
+    }
+  });
+});

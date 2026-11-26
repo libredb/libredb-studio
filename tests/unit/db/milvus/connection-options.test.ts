@@ -25,6 +25,8 @@ import {
   SYNTHETIC_PASSWORD,
 } from "../../../helpers/synthetic-credential-warnings";
 import { makeMilvusTlsMaterial, type MilvusTlsMaterial } from "../../../helpers/milvus-tls-material";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 
 // A named placeholder, never a realistic value: a credential in a test fixture is a stand-in.
 const TEST_PASSWORD = "password";
@@ -448,5 +450,53 @@ describe("E6: the TLS material is refused in words before any channel (R42 M12)"
       }).message,
     ).toContain("not issued for client authentication");
     expect(build({ ssl: { mode: "disable", caCert: "no certificate" } }).tls).toBeUndefined();
+  });
+});
+
+const MILVUS: DatabaseConnection = {
+  id: "milvus-doc",
+  name: "Milvus",
+  type: "milvus",
+  host: "milvus.internal",
+  port: 19530,
+  createdAt: new Date(0),
+};
+function thrown(run: () => unknown): string {
+  try {
+    run();
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected a refusal");
+}
+
+describe("the dialog's password label, the refusals, the credential warning and the audited principal", () => {
+  test("thrown refuses a callback that throws nothing", () => {
+    expect(thrown(() => thrown(() => undefined))).toBe("expected a refusal");
+  });
+
+  test("the dialog labels the password field as a password or token", () => {
+    expect(DB_UI_CONFIG.milvus.fieldLabels?.password).toBe("Password or token");
+  });
+
+  test("a password over plaintext to a remote host is refused, naming its three ways out", () => {
+    const plaintext = thrown(() =>
+      buildMilvusConnectionOptions({ ...MILVUS, host: "milvus.example.com", password: crypto.randomUUID() }, CONTEXT),
+    );
+    for (const exit of ["SSL / TLS", "SSH tunnel", "clear the password"]) expect(plaintext).toContain(exit);
+  });
+
+  test("the record's default pair yields a credential warning", () => {
+    const pair = CREDENTIAL_WARNINGS.milvus?.find((entry) => entry.kind === "pair");
+    if (pair?.kind !== "pair") throw new Error("the milvus record declares no pair");
+    const sentence = credentialWarningFor("milvus", { user: pair.user, password: pair.password });
+    expect(sentence).toBeDefined();
+  });
+
+  const principalOf = (password: string) =>
+    buildMilvusConnectionOptions({ ...MILVUS, host: "localhost", password }, CONTEXT).principal;
+  test("a user:password token is audited as its user, a token with no colon as the word token", () => {
+    expect(principalOf(`reader:${crypto.randomUUID()}`)).toBe("reader");
+    expect(principalOf(crypto.randomUUID())).toBe("token");
   });
 });

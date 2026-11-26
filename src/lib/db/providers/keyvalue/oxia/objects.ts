@@ -223,7 +223,7 @@ function metadataPart(key: string, record: OxiaRecordView, limit: number | undef
 }
 
 /** Ruling R33: a key stored on more than one shard under different partition keys, which the Source tab cannot tell apart. */
-export function oxiaKeyOnShardsSentence(key: string, shards: number): string {
+function oxiaKeyOnShardsSentence(key: string, shards: number): string {
   return `The key ${shownKey(key)} is stored on ${shards} shards under different partition keys: read it in the editor with get -p and its partition key.`;
 }
 

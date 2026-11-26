@@ -26,6 +26,9 @@ import { secretForms } from "@/lib/db/utils/server-text";
 import { type DatabaseConnection, TUNNEL_FAR_END } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS, BLOCKS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
 import { setEgressFlag } from "../../../helpers/egress-flag";
+import { DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
+import { InfluxDBProvider, InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/index";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -549,5 +552,81 @@ describe("the bounds of 5.5 and the timeouts", () => {
     expect(build("influxdb", {}, 10_000).surfaceTimeoutMs).toBe(10_000);
     expect(build("influxdb3", {}, 4000).surfaceTimeoutMs).toBe(4000);
     expect(build("influxdb3", {}, 1).surfaceTimeoutMs).toBe(1);
+  });
+});
+
+const UI = DB_UI_CONFIG.influxdb;
+const INFLUXDB: DatabaseConnection = {
+  id: "influxdb-doc",
+  name: "InfluxDB",
+  type: "influxdb",
+  host: "127.0.0.1",
+  port: INFLUXDB_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+async function rejection(run: () => unknown): Promise<string> {
+  try {
+    await run();
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected a refusal");
+}
+
+describe("the InfluxDB 1.x dialog and the plaintext refusal", () => {
+  test("the dialog's default port and fields are the provider's, and the plaintext refusal names the send-without-TLS box", () => {
+    expect(UI.defaultPort).toBe(String(INFLUXDB_DEFAULT_PORT));
+    expect(INFLUX_CONNECTION_SENTENCES.plaintext).toContain("tick Send the password without TLS");
+    expect(UI.connectionFields).toEqual(["host", "port", "user", "password", "database", "allowInsecureAuth"]);
+  });
+
+  test("a password over plaintext to a remote host is refused before any client is built", async () => {
+    let built = 0;
+    const factory = (() => {
+      built += 1;
+      throw new Error("no client may be built");
+    }) as unknown as InfluxClientFactory;
+    const remote = new InfluxDBProvider(
+      { ...INFLUXDB, host: "influx.example.com", password: crypto.randomUUID() },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      factory,
+    );
+    const sentence = await rejection(() => remote.connect());
+    expect(built).toBe(0);
+    expect(sentence).toBe(INFLUX_CONNECTION_SENTENCES.plaintext);
+  });
+});
+
+const CONNECTION: DatabaseConnection = {
+  id: "influxdb3-doc",
+  name: "InfluxDB 3",
+  type: "influxdb3",
+  host: "localhost",
+  port: INFLUXDB3_DEFAULT_PORT,
+  createdAt: new Date(0),
+};
+const provider = new InfluxDB3Provider(CONNECTION);
+const capabilities = provider.getCapabilities();
+const INFLUXDB3_UI = DB_UI_CONFIG.influxdb3;
+
+describe("the InfluxDB 3 dialog, the plaintext refusal and the in-flight bound", () => {
+  test("the dialog's label is InfluxDB 3 (SQL)", () => {
+    expect(INFLUXDB3_UI.label).toBe("InfluxDB 3 (SQL)");
+  });
+
+  test("the dialog asks for a token and no user, on the provider's default port", () => {
+    expect(INFLUXDB3_UI.fieldLabels?.password).toBe("Token");
+    expect(INFLUXDB3_UI.defaultPort).toBe(String(INFLUXDB3_DEFAULT_PORT));
+    expect(capabilities.defaultPort).toBe(INFLUXDB3_DEFAULT_PORT);
+    expect(INFLUXDB3_UI.connectionFields).not.toContain("user");
+  });
+
+  test("the plaintext refusal names the send-without-TLS box", () => {
+    expect(INFLUX_CONNECTION_SENTENCES.plaintext).toContain("Send the password without TLS");
+  });
+
+  test("the in-flight bound is the limiter's per-provider bound", () => {
+    expect(INFLUX_MAX_IN_FLIGHT).toBe(INFLUX_LIMITER_OPTIONS.perProvider);
   });
 });

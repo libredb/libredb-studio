@@ -21,8 +21,11 @@ import {
   mapGoogleError,
   mapTransportFailure,
   readGoogleError,
+  ERROR_SENTENCES,
 } from "@/lib/db/providers/document/firestore/errors";
 import { secretForms } from "@/lib/db/utils/server-text";
+import { FIRESTORE_CURSOR_SENTENCES } from "@/lib/db/providers/document/firestore/cursor";
+import { FIRESTORE_KEY_SCAN_SENTENCES } from "@/lib/db/providers/document/firestore/key-scan";
 
 const T: FirestoreTarget = { projectId: "demo-libredb", databaseId: "(default)" };
 const STATEMENT: ErrorContext = { phase: "statement", credential: "service_account", target: T };
@@ -525,5 +528,29 @@ describe("databaseResourceRefusal (the probe rows)", () => {
   test("a probe body that is not an object is an explicit error", () => {
     expect(databaseResourceRefusal([])?.message).toBe(`${E.probeUnreadable}.`);
     expect(databaseResourceRefusal(null)).toBeInstanceOf(DatabaseConfigError);
+  });
+});
+
+const TARGET = { projectId: "demo-libredb", databaseId: "(default)" };
+
+describe("the refusal sentences", () => {
+  test("a 401 on a pasted access token says the token expired and how to get a new one", () => {
+    const sentence =
+      "The pasted access token was refused; tokens from gcloud auth print-access-token last about an hour: paste a new one, or use a service-account key";
+    const error = mapGoogleError(
+      { httpStatus: 401, status: "UNAUTHENTICATED", message: "Request had invalid authentication credentials." },
+      { phase: "connect", credential: "access_token", target: TARGET },
+    );
+    expect(error.message).toContain(sentence);
+  });
+
+  test.each([
+    ["ERROR_SENTENCES.datastoreMode", ERROR_SENTENCES.datastoreMode],
+    ["ERROR_SENTENCES.dataAccessDisabled", ERROR_SENTENCES.dataAccessDisabled],
+    ["SENTENCES.keysTooLarge", SENTENCES.keysTooLarge],
+    ["FIRESTORE_CURSOR_SENTENCES.expired", FIRESTORE_CURSOR_SENTENCES.expired],
+    ["FIRESTORE_KEY_SCAN_SENTENCES.partialUnknown", FIRESTORE_KEY_SCAN_SENTENCES.partialUnknown],
+  ])("the exported sentence %s is a string", (_name, sentence) => {
+    expect(typeof sentence).toBe("string");
   });
 });

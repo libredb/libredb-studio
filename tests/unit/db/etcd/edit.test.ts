@@ -20,6 +20,7 @@ import {
   type EtcdResponseHeader,
   type EtcdTxnRequest,
   type EtcdTxnResponse,
+  type EtcdClient,
 } from "@/lib/db/providers/keyvalue/etcd/client";
 import { type EtcdParseLimits, parseEtcdCommand } from "@/lib/db/providers/keyvalue/etcd/commands";
 import { applyEtcdValueEdit, buildEtcdValueEdit, type EtcdEditPlanStamp } from "@/lib/db/providers/keyvalue/etcd/edit";
@@ -32,6 +33,10 @@ import { viewValue, withheldLabel } from "@/lib/db/providers/keyvalue/etcd/value
 import { readOnlySentence, refuseBeforeSend, refuseReadOnly } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import type { ObjectEditBuild, ObjectEditPlan, ObjectEditRequest, ObjectEditUnit } from "@/lib/db/types";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
+import { KEY_SPACE_HEADER } from "../../../helpers/etcd-key-space";
+import { EXPECTED_EDITABLE_KINDS } from "../../../helpers/object-edit-expectation";
+import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
+import { type DatabaseConnection } from "@/lib/types";
 
 const encoder = new TextEncoder();
 const b = (text: string): Uint8Array => encoder.encode(text);
@@ -1386,4 +1391,76 @@ describe("plan Review Focus 1: keys and values that strain the path model, both 
       });
     });
   }
+});
+
+/** A connection with no credential and no TLS, which etcd's connection rules take as it is (#1089 E1, E2). */
+const ETCD: DatabaseConnection = {
+  id: "etcd-doc",
+  name: "etcd",
+  type: "etcd",
+  host: "etcd.internal",
+  port: 2379,
+  createdAt: new Date(0),
+};
+
+describe("the value edit the provider builds", () => {
+  const clientHolding = (stored: Uint8Array): EtcdClient =>
+    createFakeEtcdClient({
+      authStatus: async () => ({ enabled: false, authRevision: "1" }),
+      status: async () => ({
+        header: KEY_SPACE_HEADER,
+        version: "3.7.2",
+        dbSize: "20480",
+        dbSizeInUse: "16384",
+        dbSizeQuota: "0",
+        leader: "10276657743932975437",
+        raftIndex: "40",
+        raftTerm: "2",
+        raftAppliedIndex: "40",
+        errors: [],
+        isLearner: false,
+        storageVersion: "3.7.0",
+      }),
+      range: async () => ({
+        header: KEY_SPACE_HEADER,
+        kvs: [
+          {
+            key: new TextEncoder().encode("/app/cfg"),
+            value: stored,
+            createRevision: "7",
+            modRevision: "7",
+            version: "1",
+            lease: "0",
+          },
+        ],
+        more: false,
+        count: "1",
+      }),
+      close: async () => {},
+    });
+  async function build(stored: Uint8Array, request: { partId: string; text: string }): Promise<ObjectEditBuild> {
+    const provider = new EtcdProvider(ETCD, {}, {}, async () => clientHolding(stored));
+    await provider.connect();
+    try {
+      return await provider.buildObjectEdit({ path: ["/app/cfg"], kind: "key", ...request });
+    } finally {
+      await provider.disconnect();
+    }
+  }
+  const text = (value: string): Uint8Array => new TextEncoder().encode(value);
+  test("a value edit is a guarded txn that puts the key if its revision is unchanged and reads it back", async () => {
+    const edited = "hello world!";
+    const built = await build(text("hello"), { partId: "value", text: edited });
+    if (!built.built) throw new Error(`the build refused: ${built.refusal.sentence}`);
+    const unit = built.plan.unit;
+    if (unit.medium !== "command") throw new Error("the unit is not a command");
+    expect(unit.name).toBe("txn");
+    expect(unit.arguments).toEqual(['mod("/app/cfg") = "7"', "put", "--ignore-lease", "/app/cfg"]);
+    expect(unit.trailing).toEqual(["get", "/app/cfg"]);
+    expect(built.plan.strategy).toBe("guarded-atomic-batch");
+  });
+
+  test("the census lists etcd keys as editable", () => {
+    expect(EXPECTED_EDITABLE_KINDS).toContainEqual(["etcd", "key"]);
+  });
 });

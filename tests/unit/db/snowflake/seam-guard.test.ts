@@ -28,10 +28,10 @@
  *    `endpointUrl` and `rejectForeignLink`, which act on an origin already built; and `account-host.ts`, which the
  *    browser bundles, imports nothing.
  * 9. No file reads `process.env`.
- * 10. Every value export has an importer other than its own file: a module under `src/`, or
- *     `tests/unit/db/snowflake/provider-doc.test.ts`, which reads back what `docs/providers/snowflake.md` quotes; no
- *     other test file counts. The doc test reaches only the names it imports, so a namespace import of it reaches
- *     none. A type is part of the contract of the values that use it, so only values are held.
+ * 10. Every value export has an importer other than its own file: a module under `src/`; no test file counts. A
+ *     value no `src/` module imports passes only when `TEST_READ_EXPORTS` lists it, and that list only shrinks: an
+ *     entry its file no longer exports, or that a `src/` module imports, is refused as stale. A type is part of the
+ *     contract of the values that use it, so only values are held.
  *
  * Rules 1 and 2 count a type-only import too: they keep modules apart, not values. Module names are resolved as
  * TypeScript resolves them, so an alias counts; a planted module that does not exist yet resolves by its spelling.
@@ -373,8 +373,55 @@ function exportsOf(file: string, text: string): Exported[] {
   return found;
 }
 
-/** The one test file whose imports count for rule 10: it reads back what the provider doc quotes. */
-const DOC_TEST = "tests/unit/db/snowflake/provider-doc.test.ts";
+/**
+ * The value exports a test reads and no module under `src/` imports (rule 10), by file of this directory. A name
+ * here passes rule 10; an entry its file no longer exports, or that a `src/` module imports, is refused as stale, so
+ * the list only shrinks.
+ */
+const TEST_READ_EXPORTS: Readonly<Record<string, readonly string[]>> = {
+  "introspect.ts": ["SNOWFLAKE_TREE_PAGE_LIMIT", "SNOWFLAKE_KIND_IDS"],
+  "errors.ts": ["SNOWFLAKE_SERVER_TEXT_MAX_CHARS", "administratorStatement", "keyPairName"],
+  "statements.ts": [
+    "SNOWFLAKE_POLL_FIRST_MS",
+    "SNOWFLAKE_POLL_MAX_MS",
+    "SNOWFLAKE_MAX_TIMEOUT_S",
+    "SNOWFLAKE_SURFACE_TIMEOUT_S",
+    "SNOWFLAKE_DEADLINE_GRACE_MS",
+    "SNOWFLAKE_CANCEL_TIMEOUT_MS",
+    "SNOWFLAKE_CHUNK_SIZE_MB",
+    "SNOWFLAKE_ROWS_PER_RESULTSET",
+    "SNOWFLAKE_LIMITER_OPTIONS",
+    "SNOWFLAKE_STATEMENT_SENTENCES",
+    "SNOWFLAKE_ROLE_CHECK_SQL",
+    "clampedTimeoutS",
+    "surfaceTimeoutS",
+  ],
+  "decode.ts": ["SNOWFLAKE_DECODE_SENTENCES", "decodeCell"],
+  "monitoring.ts": ["SNOWFLAKE_MONITORING_TTL_MS", "SNOWFLAKE_MONITORING_SENTENCES"],
+  "account-host.ts": ["SNOWFLAKE_MAX_HOST_LABELS"],
+  "transport.ts": [
+    "SNOWFLAKE_RETRY_BASE_MS",
+    "SNOWFLAKE_RETRY_MAX_MS",
+    "SNOWFLAKE_RETRY_ATTEMPTS",
+    "SNOWFLAKE_USER_AGENT",
+    "snowflakeBackoffMs",
+  ],
+  "auth.ts": [
+    "SNOWFLAKE_KEY_MAX_BYTES",
+    "SNOWFLAKE_RSA_MIN_BITS",
+    "SNOWFLAKE_RSA_MAX_BITS",
+    "SNOWFLAKE_MAX_PBKDF2_ITERATIONS",
+    "SNOWFLAKE_MAX_SCRYPT_N",
+    "SNOWFLAKE_MAX_SCRYPT_R",
+    "SNOWFLAKE_MAX_SCRYPT_P",
+    "SNOWFLAKE_JWT_LIFETIME_S",
+    "SNOWFLAKE_JWT_RENEW_AFTER_S",
+    "SNOWFLAKE_TOKEN_MAX_CHARS",
+    "SNOWFLAKE_TOKEN_SENTENCES",
+    "SNOWFLAKE_KEY_SENTENCES",
+  ],
+  "rows.ts": ["SNOWFLAKE_RESULT_BYTE_BUDGET"],
+};
 
 interface Importer {
   readonly file: string;
@@ -383,7 +430,7 @@ interface Importer {
 
 /**
  * The importers rule 10 counts: every `.ts` and `.tsx` file of this directory, every other one under `src/` whose
- * text names `snowflake` (the only ones that can import from here), and the provider doc test.
+ * text names `snowflake` (the only ones that can import from here).
  */
 function importers(): Importer[] {
   const walk = (dir: string): string[] =>
@@ -392,32 +439,85 @@ function importers(): Importer[] {
       if (entry.isDirectory()) return walk(path);
       return /\.tsx?$/.test(entry.name) ? [path] : [];
     });
-  return [...walk("src"), DOC_TEST]
+  return walk("src")
     .map((file) => ({ file, text: readFileSync(join(ROOT, file), "utf8") }))
     .filter(({ file, text }) => inDirectory(file) || text.includes("snowflake"));
 }
 
-/** Every value export of this directory that no reader under `src/`, and not the doc test, imports (rule 10). */
-function unimportedExports(sources: readonly Importer[], readers: readonly Importer[] = importers()): string[] {
+/** The names each file of this directory has reached by a reader under `src/`; `"*"` for a namespace import. */
+function reachedNames(readers: readonly Importer[]): Map<string, Set<string>> {
   const reached = new Map<string, Set<string>>();
   for (const { file, text } of readers) {
-    if (!file.startsWith("src/") && file !== DOC_TEST) continue;
+    if (!file.startsWith("src/")) continue;
     for (const reference of references(file, text)) {
       if (reference.specifier === undefined) continue;
       const target = resolved(reference.specifier, file);
       if (!inDirectory(target) || target === file) continue;
       const set = reached.get(target) ?? new Set<string>();
-      // The doc test is held to the names it reads: a namespace import of it would admit every export unread.
-      for (const reachedName of reference.reaches) if (file !== DOC_TEST || reachedName !== "*") set.add(reachedName);
+      for (const reachedName of reference.reaches) set.add(reachedName);
       reached.set(target, set);
     }
   }
+  return reached;
+}
+
+/** Every value export of this directory that no reader under `src/` imports and `listed` does not name (rule 10). */
+function unimportedExports(
+  sources: readonly Importer[],
+  readers: readonly Importer[] = importers(),
+  listed: Readonly<Record<string, readonly string[]>> = TEST_READ_EXPORTS,
+): string[] {
+  const reached = reachedNames(readers);
   return sources.flatMap(({ file, text }) => {
     const set = reached.get(file) ?? new Set<string>();
     if (set.has("*")) return [];
+    const test = listed[posix.basename(file)] ?? [];
     return exportsOf(file, text)
-      .filter((entry) => !entry.type && !set.has(entry.name))
-      .map((entry) => `rule 10: ${file} exports ${entry.name}, which nothing under src/ or the doc test imports`);
+      .filter((entry) => !entry.type && !set.has(entry.name) && !test.includes(entry.name))
+      .map(
+        (entry) =>
+          `rule 10: ${file} exports ${entry.name}, which nothing under src/ imports and TEST_READ_EXPORTS does not list`,
+      );
+  });
+}
+
+/**
+ * Every entry of `listed` that its file does not export as a value, or that a reader under `src/` imports (rule 10),
+ * in the list's order.
+ */
+function staleTestReadExports(
+  sources: readonly Importer[],
+  readers: readonly Importer[] = importers(),
+  listed: Readonly<Record<string, readonly string[]>> = TEST_READ_EXPORTS,
+): string[] {
+  const exported = new Map(
+    sources.map(({ file, text }) => [
+      file,
+      exportsOf(file, text)
+        .filter((entry) => !entry.type)
+        .map((entry) => entry.name),
+    ]),
+  );
+  const importerOf = (target: string, name: string): string | undefined =>
+    readers.find(
+      ({ file, text }) =>
+        file.startsWith("src/") &&
+        file !== target &&
+        references(file, text).some(
+          (reference) =>
+            reference.specifier !== undefined &&
+            resolved(reference.specifier, file) === target &&
+            (reference.reaches.includes(name) || reference.reaches.includes("*")),
+        ),
+    )?.file;
+  return Object.entries(listed).flatMap(([base, names]) => {
+    const file = `${DIR}/${base}`;
+    return names.flatMap((name) => {
+      const prefix = `rule 10: TEST_READ_EXPORTS lists ${name} of ${file}, which`;
+      if (!(exported.get(file) ?? []).includes(name)) return [`${prefix} it does not export`];
+      const importer = importerOf(file, name);
+      return importer === undefined ? [] : [`${prefix} ${importer} imports`];
+    });
   });
 }
 
@@ -441,9 +541,18 @@ describe("the Snowflake directory holds its seams", () => {
 
   // Reads every file under src/: 0.5s alone with coverage and 3.1s under a 15% CPU quota.
   test(
-    "every value export has an importer under src/ or the doc test (rule 10)",
+    "every value export has an importer under src/ or is listed in TEST_READ_EXPORTS (rule 10)",
     () => {
       expect(unimportedExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  // Reads every file under src/: the same cost as the case above.
+  test(
+    "no entry of TEST_READ_EXPORTS is stale (rule 10)",
+    () => {
+      expect(staleTestReadExports(SOURCES.map((file) => ({ file, text: read(file) })))).toEqual([]);
     },
     platformTimeoutMs(40_000),
   );
@@ -470,7 +579,7 @@ describe("the Snowflake directory holds its seams", () => {
     const errors = literals(`${DIR}/errors.ts`, read(`${DIR}/errors.ts`));
     expect(errors.some((literal) => PRINTED_STATEMENT.test(literal))).toBe(true);
     const readers = importers().map((importer) => importer.file);
-    expect(readers).toContain(DOC_TEST);
+    expect(readers.every((file) => file.startsWith("src/"))).toBe(true);
     expect(readers).toContain(`${DIR}/rows.ts`);
   });
 });
@@ -697,7 +806,7 @@ describe("planted violations fail by name", () => {
 describe("rule 10 fails by name", () => {
   const sources = (file: string, extra: string) => [{ file: `${DIR}/${file}`, text: read(`${DIR}/${file}`) + extra }];
   const finding = (file: string, name: string) =>
-    `rule 10: ${DIR}/${file} exports ${name}, which nothing under src/ or the doc test imports`;
+    `rule 10: ${DIR}/${file} exports ${name}, which nothing under src/ imports and TEST_READ_EXPORTS does not list`;
   const ONLY_FOR_A_TEST = "\nexport function onlyForATest(): number {\n  return 1;\n}\n";
   const readerOf = (file: string) => ({
     file,
@@ -727,20 +836,45 @@ describe("rule 10 fails by name", () => {
     expect(unimportedExports(sources("decode.ts", extra))).toEqual([]);
   });
 
-  test("a namespace import of the doc test reaches no name", () => {
-    const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-    const namespace = { file: DOC_TEST, text: 'import * as decode from "@/lib/db/providers/sql/snowflake/decode";\n' };
-    expect(unimportedExports(planted, [...importers(), namespace])).toEqual([finding("decode.ts", "onlyForATest")]);
-  });
-
-  // Reads every file under src/ twice: 0.5s alone with coverage and 2.8s under a 15% CPU quota.
+  // Reads every file under src/ once, like the cases above.
   test(
-    "the doc test counts as an importer, and no other test file does",
+    "no test file counts as an importer",
     () => {
       const planted = sources("decode.ts", ONLY_FOR_A_TEST);
-      expect(unimportedExports(planted, [...importers(), readerOf(DOC_TEST)])).toEqual([]);
       expect(unimportedExports(planted, [...importers(), readerOf("tests/unit/db/snowflake/decode.test.ts")])).toEqual([
         finding("decode.ts", "onlyForATest"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  // Reads every file under src/ twice, like the cases above.
+  test(
+    "a listed bound passes, and fails once the list no longer names it",
+    () => {
+      const real = sources("rows.ts", "");
+      expect(unimportedExports(real)).toEqual([]);
+      const unlisted = { ...TEST_READ_EXPORTS, "rows.ts": [] };
+      expect(unimportedExports(real, importers(), unlisted)).toEqual([
+        finding("rows.ts", "SNOWFLAKE_RESULT_BYTE_BUDGET"),
+      ]);
+    },
+    platformTimeoutMs(40_000),
+  );
+
+  // Reads every file under src/ once, like the cases above.
+  test(
+    "an entry its file no longer exports, or that a src module imports, is refused as stale",
+    () => {
+      const real = [...sources("rows.ts", ""), ...sources("decode.ts", "")];
+      const planted = { "rows.ts": ["SNOWFLAKE_RESULT_BYTE_BUDGET"], "decode.ts": ["notExported"] };
+      const srcReader = {
+        file: "src/lib/planted-reader.ts",
+        text: 'import { SNOWFLAKE_RESULT_BYTE_BUDGET } from "@/lib/db/providers/sql/snowflake/rows";\n',
+      };
+      expect(staleTestReadExports(real, [...importers(), srcReader], planted)).toEqual([
+        `rule 10: TEST_READ_EXPORTS lists SNOWFLAKE_RESULT_BYTE_BUDGET of ${DIR}/rows.ts, which src/lib/planted-reader.ts imports`,
+        `rule 10: TEST_READ_EXPORTS lists notExported of ${DIR}/decode.ts, which it does not export`,
       ]);
     },
     platformTimeoutMs(40_000),

@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { KafkaError } from "@/lib/db/providers/stream/kafka/client";
 import { healthFrom, overviewFrom, storageFrom } from "@/lib/db/providers/stream/kafka/monitoring";
 import { formatBytes } from "@/lib/db/utils/pool-manager";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
+import { type DatabaseConnection } from "@/lib/types";
 
 const big = (value: number) => BigInt(value);
 const dirs = [
@@ -142,5 +145,21 @@ describe("healthFrom", () => {
     expect(health).toEqual({ databaseSize: ON_DISK(3072), cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] });
     expect("activeConnections" in health).toBe(false);
     expect(healthFrom(undefined).databaseSize).toBe("N/A");
+  });
+});
+
+const KAFKA: DatabaseConnection = CENSUS_CONNECTION.kafka;
+
+describe("the monitoring labels and the size label", () => {
+  const labels = new KafkaProvider(KAFKA).getLabels();
+  test("no empty state is declared for the slow queries or sessions panels, which are not offered", () => {
+    expect(labels.slowQueriesEmptyState).toBeUndefined();
+    expect(labels.sessionsEmptyState).toBeUndefined();
+  });
+
+  test("the overview's database size is on disk, all replicas, internal topics excluded", () => {
+    const size = overviewFrom({ topicCount: 0, brokerConfigs: [], logDirs: [] }).databaseSize;
+    const label = size.replace(/^\S+ \S+ /, "");
+    expect(label).toBe("on disk, all replicas, internal topics excluded");
   });
 });

@@ -540,3 +540,13 @@ describe("transport failures", () => {
     expect(transports.requests).toHaveLength(2);
   });
 });
+
+describe("the resend ladder and the User-Agent", () => {
+  test("the backoff runs from the base to the cap, and the User-Agent names LibreDB Studio", () => {
+    expect([snowflakeBackoffMs(1, 1), snowflakeBackoffMs(SNOWFLAKE_RETRY_ATTEMPTS, 1)]).toEqual([
+      SNOWFLAKE_RETRY_BASE_MS,
+      SNOWFLAKE_RETRY_MAX_MS,
+    ]);
+    expect(SNOWFLAKE_USER_AGENT).toMatch(/^LibreDB-Studio(\/.+)?$/);
+  });
+});

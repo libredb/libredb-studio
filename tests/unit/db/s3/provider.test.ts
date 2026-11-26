@@ -8,7 +8,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { ConnectionError, DatabaseConfigError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { createDatabaseProvider } from "@/lib/db/factory";
-import { createNodeByteTransport, type NodeByteRequest, type RequestSigner } from "@/lib/db/http/node-transport";
+import {
+  createNodeByteTransport,
+  type NodeByteRequest,
+  type RequestSigner,
+  type NodeByteTransport,
+  type NodeByteResponse,
+} from "@/lib/db/http/node-transport";
 import { parseS3Command } from "@/lib/db/providers/objectstore/s3/console/commands";
 import { S3_SURFACE_DEADLINE_MS } from "@/lib/db/providers/objectstore/s3/constants";
 import { encodeS3Cursor } from "@/lib/db/providers/objectstore/s3/cursor";
@@ -741,4 +747,87 @@ test("the factory passes no deps: the provider runs on its production defaults",
   const signer: RequestSigner = { headerNames: ["authorization"], sign: () => ({}) };
   expect(deps.signerWrapper(signer)).toBe(signer);
   expect(Math.abs(deps.clock().getTime() - Date.now())).toBeLessThan(1_000);
+});
+
+/** An unsigned connection to a loopback endpoint: every builder check passes, so an override isolates one rule. */
+const CONNECTION = {
+  id: "s3-doc",
+  name: "S3 test",
+  type: "s3",
+  host: "localhost",
+  port: 9000,
+  user: "",
+  password: "",
+} as DatabaseConnection;
+/** A transport that records every request and answers each with `status` and `body`. */
+function probeTransport(status: number, body: string): { sent: NodeByteRequest[]; create: () => NodeByteTransport } {
+  const sent: NodeByteRequest[] = [];
+  const answer: NodeByteResponse = {
+    status,
+    contentType: "application/xml",
+    contentEncoding: null,
+    retryAfter: null,
+    headers: [],
+    headersTruncated: false,
+    bytes: Buffer.from(body),
+    truncated: false,
+  };
+  const transport: NodeByteTransport = {
+    request: async (request) => {
+      sent.push(request);
+      return answer;
+    },
+    close: () => {},
+  };
+  return { sent, create: () => transport };
+}
+const LIST_BUCKET_RESULT =
+  '<?xml version="1.0" encoding="UTF-8"?><ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Name>studio-demo</Name><Prefix></Prefix><KeyCount>0</KeyCount><MaxKeys>1</MaxKeys><Delimiter>/</Delimiter><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated></ListBucketResult>';
+const LIST_ALL_MY_BUCKETS_RESULT =
+  '<?xml version="1.0" encoding="UTF-8"?><ListAllMyBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Owner><ID>studio</ID></Owner><Buckets></Buckets></ListAllMyBucketsResult>';
+
+describe("the connect probe", () => {
+  test("the pinned probe is one ListObjectsV2 with the three parameters, and a non-S3 body fails it", async () => {
+    const good = probeTransport(200, LIST_BUCKET_RESULT);
+    const pinned = new S3Provider(
+      { ...CONNECTION, database: "studio-demo" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: good.create },
+    );
+    await pinned.connect();
+    expect(good.sent).toHaveLength(1);
+    expect(good.sent[0].method).toBe("GET");
+    expect(good.sent[0].target.path).toBe("/studio-demo");
+    for (const parameter of ["max-keys=1", "delimiter=%2F", "encoding-type=url"]) {
+      expect(good.sent[0].target.query.split("&")).toContain(parameter);
+    }
+    await pinned.disconnect();
+    const html = probeTransport(200, "<html><body>not S3</body></html>");
+    const fake = new S3Provider(
+      { ...CONNECTION, database: "studio-demo" },
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: html.create },
+    );
+    await expect(fake.connect()).rejects.toThrow();
+    expect(html.sent).toHaveLength(1);
+  });
+
+  test("the unpinned probe is one ListBuckets, and another root element fails it", async () => {
+    const good = probeTransport(200, LIST_ALL_MY_BUCKETS_RESULT);
+    const unpinned = new S3Provider(CONNECTION, {}, { egress: ALLOWS_PRIVATE_HOSTS }, { createTransport: good.create });
+    await unpinned.connect();
+    expect(good.sent).toHaveLength(1);
+    expect(good.sent[0].target.path).toBe("/");
+    await unpinned.disconnect();
+    const wrongRoot = probeTransport(200, LIST_BUCKET_RESULT);
+    const fake = new S3Provider(
+      CONNECTION,
+      {},
+      { egress: ALLOWS_PRIVATE_HOSTS },
+      { createTransport: wrongRoot.create },
+    );
+    await expect(fake.connect()).rejects.toThrow();
+  });
 });

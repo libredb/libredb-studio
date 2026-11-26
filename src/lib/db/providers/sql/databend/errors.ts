@@ -33,9 +33,9 @@ const MAX_REFUSAL_TEXT = 300;
 const MAX_STATEMENT_TEXT = 1000;
 
 /**
- * Every fixed sentence of design 3.13 and 6.3, templates as functions, so the provider doc can quote them and a test
- * read them back. `unavailable` is the plan's own: 3.13 words the resuming sentence for a named warehouse only, and a
- * GET 503 or 429 can reach a self-hosted server through an intermediary.
+ * Every fixed sentence of design 3.13 and 6.3, templates as functions. `unavailable` is the plan's own: 3.13 words the
+ * resuming sentence for a named warehouse only, and a GET 503 or 429 can reach a self-hosted server through an
+ * intermediary.
  */
 export const DATABEND_ERROR_SENTENCES = Object.freeze({
   latched: (at: string, until: string) =>

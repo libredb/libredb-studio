@@ -285,3 +285,13 @@ describeIf(missingPosixShell("bash") ?? MISSING_POSIX_FILE_MODES, "docker/spark/
     expect(verified.trim()).toEndWith(": OK");
   });
 });
+
+describe("the capture harness's usage", () => {
+  test("the usage names the setup, capture, readme and surfaces modes in that order", () => {
+    const harness = readFileSync(path.join(ROOT, "tests/live/spark-evidence.ts"), "utf8");
+    const usage = harness.match(/const USAGE =\s*"([^"]*)"/)?.[1];
+    if (usage === undefined) throw new Error("tests/live/spark-evidence.ts declares no USAGE");
+    const modes = usage.match(/--[a-z]+/g) ?? [];
+    expect(modes).toStrictEqual(["--setup", "--capture", "--readme", "--surfaces"]);
+  });
+});

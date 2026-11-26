@@ -83,6 +83,9 @@ import {
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { DatabaseConnection } from "@/lib/types";
+import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
+import { DB_UI_CONFIG, offersSshTunnel } from "@/lib/db-ui-config";
+import { SSH_TUNNEL_REFUSAL } from "@/lib/db/compatibility";
 
 // ============================================================================
 // The domains
@@ -1397,4 +1400,19 @@ describe("the monitoring panels", () => {
       await expectOneClientAfter(provider, built, panel, mapped);
     },
   );
+});
+
+const KAFKA: DatabaseConnection = CENSUS_CONNECTION.kafka;
+
+describe("what the provider does not offer", () => {
+  test("the provider has no cancelQuery, which the routes detect by presence", () => {
+    expect("cancelQuery" in new KafkaProvider(KAFKA)).toBe(false);
+  });
+
+  test("no SSH tunnel and no connection string are offered, by core's row, the dialog and the capabilities", () => {
+    expect(SSH_TUNNEL_REFUSAL.kafka).not.toBeNull();
+    expect(offersSshTunnel("kafka")).toBe(false);
+    expect(DB_UI_CONFIG.kafka.showConnectionStringToggle).toBe(false);
+    expect(new KafkaProvider(KAFKA).getCapabilities().supportsConnectionString).toBe(false);
+  });
 });

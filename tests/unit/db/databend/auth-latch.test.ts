@@ -15,8 +15,10 @@ import {
   authLatchKey,
   createAuthLatch,
 } from "@/lib/db/providers/sql/databend/auth-latch";
-import { latchedError, type SignInAnswer } from "@/lib/db/providers/sql/databend/errors";
+import { latchedError, type SignInAnswer, DATABEND_ERROR_SENTENCES } from "@/lib/db/providers/sql/databend/errors";
 import { DatabendError } from "@/lib/db/providers/sql/databend/transport";
+import path from "node:path";
+import { readFileSync } from "node:fs";
 
 // Named placeholders, never realistic values: a credential in a test fixture is a stand-in.
 const TEST_USER = "reader";
@@ -466,5 +468,23 @@ describe("single flight [X14]", () => {
     const latch = createAuthLatch({ now: clock().now });
     await latch.acquire(authLatchKey(IDENTITY), live());
     expect(await settled(latch.acquire(authLatchKey({ ...IDENTITY, user: "writer" }), live()))).toBe("resolved");
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+
+describe("the latch's promise", () => {
+  test("the sign-in latch is promised for one Studio process, wherever it is promised", () => {
+    // The sentence a latched run reads makes the same promise, for the one server that latched (RI-6).
+    const latched = DATABEND_ERROR_SENTENCES.latched("[time]", "[until]");
+    expect(latched).toContain("so this Studio server will not send this password again");
+    expect(read("docs/DATABASE_PROVIDERS.md")).toContain(
+      "auth-latch.ts   #   A refused sign-in is not sent again by this process for 15 minutes",
+    );
+    const features = read("docs/FEATURES.md")
+      .split("\n")
+      .find((line) => line.includes("**Databend:**"));
+    expect(features).toContain("Each Studio process sends a sign-in Databend refused at most once per 15 minutes");
   });
 });

@@ -50,6 +50,8 @@ import {
   setup,
   submits,
 } from "../../../helpers/snowflake-statements";
+import { applyQueryLimit } from "@/lib/db/utils/query-limiter";
+import { resolveSqlGrammar } from "@/lib/sql/grammar";
 
 afterEach(closeOpened);
 
@@ -849,5 +851,23 @@ describe("a run by its queryId", () => {
     expect(((await running) as SnowflakeError).category).toBe("cancelled");
     expect(await harness.statements.cancel("q-run")).toBe(false);
     expect(cancels(harness)).toHaveLength(1);
+  });
+});
+
+describe("the statement timeouts and the unlimited row bounds", () => {
+  test("the statement timeout is clamped, a surface's is capped, and the deadline adds the grace", () => {
+    expect([clampedTimeoutS(1), clampedTimeoutS(2_147_483_647)]).toEqual([1, SNOWFLAKE_MAX_TIMEOUT_S]);
+    expect([surfaceTimeoutS(60_000), surfaceTimeoutS(10_000)]).toEqual([SNOWFLAKE_SURFACE_TIMEOUT_S, 10]);
+    expect(deadlineMsFor(60)).toBe(60_000 + SNOWFLAKE_DEADLINE_GRACE_MS);
+  });
+
+  test("the unlimited LIMIT and OFFSET forms the limiter keeps are the grammar's (SF-021)", () => {
+    const forms = resolveSqlGrammar("snowflake").nonNumericRowBounds ?? [];
+    expect(forms).toEqual(["NULL", "''", "$$$$"]);
+    expect(applyQueryLimit("SELECT 1 OFFSET 2", 500, 0, {}, "snowflake").sql).toBe("SELECT 1 OFFSET 2 LIMIT 500");
+    for (const form of forms) {
+      expect(applyQueryLimit(`SELECT 1 LIMIT ${form}`, 500, 0, {}, "snowflake").sql).toBe(`SELECT 1 LIMIT ${form}`);
+      expect(applyQueryLimit(`SELECT 1 OFFSET ${form}`, 500, 0, {}, "snowflake").sql).toBe(`SELECT 1 OFFSET ${form}`);
+    }
   });
 });

@@ -445,3 +445,29 @@ describe("the warehouse-state gate (SR18)", () => {
     expect(await harness.monitoring.getSlowQueries()).toHaveLength(2);
   });
 });
+
+describe("the Overview's warehouse load", () => {
+  test("the Overview's version ends with the warehouse's state, size and load, Studio's reads included (SF-036)", async () => {
+    const answers: Record<string, string[][]> = {
+      "SHOW WAREHOUSES": [["WH", "STARTED", "X-Small", "2", "0"]],
+      "SHOW DATABASES": [["DB"]],
+      "SHOW TERSE TABLES": [["T"]],
+      "SHOW INDEXES": [],
+    };
+    const monitoring = createSnowflakeMonitoring({
+      run: async (sql) => {
+        const key = Object.keys(answers).find((prefix) => sql.startsWith(prefix)) ?? "";
+        const columns = ["name", "state", "size", "running", "queued"];
+        const rows = answers[key].map((row) => Object.fromEntries(row.map((cell, index) => [columns[index], cell])));
+        return { rows, fields: columns, columnTypes: {}, warnings: [], cut: false, numRows: rows.length };
+      },
+      warehouse: "WH",
+      database: "DB",
+      schema: undefined,
+      role: "R",
+      now: () => 0,
+    });
+    const overview = await monitoring.getOverview();
+    expect(overview.version).toEndWith("STARTED, X-Small, 2 running and 0 queued, Studio's own reads included");
+  });
+});

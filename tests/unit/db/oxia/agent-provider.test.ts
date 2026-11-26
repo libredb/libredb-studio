@@ -24,6 +24,7 @@ import {
 } from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 import { errorKind } from "@/lib/db/error-record";
+import { AGENT_EXECUTION_ENGINES, MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 
 const BUDGET = { maxResultRows: 5, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -329,5 +330,13 @@ describe("an editor handle", () => {
     expect((await provider.scanKeysPage({ cursor: "0", count: 10 })).keys.length).toBeGreaterThan(0);
     const source = await provider.readObjectSource([SECRET_KEY], "key");
     expect(JSON.stringify(source)).toContain(SECRET_VALUE);
+  });
+});
+
+describe("the machine access records", () => {
+  test("Oxia is run by the agent and is not exposed over MCP", () => {
+    expect(MCP_EXPOSABLE.oxia).toBe(false);
+    expect(MCP_STATEMENT_READ.oxia).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).toContain("oxia");
   });
 });

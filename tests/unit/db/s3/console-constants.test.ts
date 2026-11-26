@@ -8,6 +8,8 @@ import { join } from "node:path";
 import * as root from "@/lib/db/providers/objectstore/s3/constants";
 import * as consoleConstants from "@/lib/db/providers/objectstore/s3/console/constants";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { consoleTextByteLimit } from "@/lib/db/destructive-commands";
+import { S3_MAX_TEXT_BYTES } from "@/lib/db/providers/objectstore/s3/console/constants";
 
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const SOURCE = readFileSync(join(ROOT, "src/lib/db/providers/objectstore/s3/console/constants.ts"), "utf8");
@@ -59,5 +61,11 @@ describe("the console's constants", () => {
       S3_MAX_BUCKET_BYTES: 255,
       S3_ECHO_WORD_CHARS: 40,
     });
+  });
+});
+
+describe("the console text bound", () => {
+  test("the editor's text bound for S3 is S3_MAX_TEXT_BYTES", () => {
+    expect(consoleTextByteLimit("s3")).toBe(S3_MAX_TEXT_BYTES);
   });
 });

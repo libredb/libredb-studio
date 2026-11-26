@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import { QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { FirestoreProvider } from "@/lib/db/providers/document/firestore";
-import { SENTENCES } from "@/lib/db/providers/document/firestore/constants";
+import { SENTENCES, ENV } from "@/lib/db/providers/document/firestore/constants";
 import { ERROR_SENTENCES } from "@/lib/db/providers/document/firestore/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
@@ -22,6 +22,11 @@ import {
   type WireHandler,
   wire,
 } from "../../../helpers/firestore-provider";
+import {
+  jsonAnswer as replayedJsonAnswer,
+  scriptedTransport,
+  UNRECORDED_ANSWER,
+} from "../../../helpers/firestore-replay";
 
 const TIME = "2026-10-12T00:00:00.000000Z";
 const STATEMENT = 'db.collection("users").limit(1)';
@@ -157,5 +162,29 @@ describe("the emulator on the console path", () => {
     await expect(explain).rejects.toThrow(SENTENCES.emulatorExplain);
     expect(requestsOf(seams)).toHaveLength(before);
     expect(requestsOf(seams).every((request) => request.lane === "emulator")).toBe(true);
+  });
+});
+
+const EMULATOR = "127.0.0.1:8080";
+async function emulatorProvider(): Promise<FirestoreProvider> {
+  const script = scriptedTransport((_lane, request) =>
+    request.url.endsWith(":listCollectionIds") ? replayedJsonAnswer({}) : UNRECORDED_ANSWER,
+  );
+  const provider = new FirestoreProvider(
+    { id: "doc", name: "doc", type: "firestore", database: "demo-libredb", createdAt: new Date(0) },
+    { queryTimeout: 30_000 },
+    { egress: ALLOWS_PRIVATE_HOSTS },
+    { createTransport: script.createTransport, env: { [ENV.emulatorHost]: EMULATOR } },
+  );
+  await provider.connect();
+  return provider;
+}
+
+describe("Explain on the emulator over a replayed transport", () => {
+  test("Explain on the emulator is refused with the sentence that sends it to a Google project", async () => {
+    const sentence = "The Firestore emulator does not run Query Explain; run Explain against a Google project";
+    const provider = await emulatorProvider();
+    await expect(provider.query('db.collection("users").explain()')).rejects.toThrow(sentence);
+    await provider.disconnect();
   });
 });

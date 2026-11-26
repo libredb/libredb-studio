@@ -31,6 +31,8 @@ import {
   transportHarness,
 } from "../../../helpers/databend-node-transport";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { QUERY_PATH } from "@/lib/db/providers/sql/databend/routes";
+import { MAX_UNLIMITED_ROWS } from "@/lib/db/utils/query-limiter";
 
 const FIRST = idsOf(1);
 const P = pathsOf(FIRST.queryId);
@@ -651,4 +653,26 @@ test("a captured answer's body is the capture's text with its placeholders repla
     error: { code: 5100, message: "Authentication failed: incorrect password" },
   });
   expect(answerBody({}).next_uri).toBeNull();
+});
+
+describe("the statement request's paging and settings", () => {
+  test("a page holds 10,000 rows or the row cut plus one, the buffer two pages, and seven settings are sent", async () => {
+    const ids = idsOf(1);
+    const harness = transportHarness([{ method: "POST", path: QUERY_PATH, reply: ok(ids) }]);
+    await harness.transport.run(statement("SELECT 1", { origin: "provider", rowCut: MAX_UNLIMITED_ROWS }));
+    const [sent] = harness.script.requests;
+    const body = JSON.parse(sent.body ?? "{}") as {
+      session: { settings: Record<string, string> };
+      pagination: { wait_time_secs: number; max_rows_per_page: number; max_rows_in_buffer: number };
+    };
+    expect(body.pagination.max_rows_per_page).toBe(10_000);
+    expect(body.pagination.max_rows_in_buffer).toBe(2 * body.pagination.max_rows_per_page);
+    const small = transportHarness([{ method: "POST", path: QUERY_PATH, reply: ok(ids) }]);
+    await small.transport.run(statement("SELECT 1", { origin: "provider", rowCut: 99 }));
+    const smallBody = JSON.parse(small.script.requests[0].body ?? "{}") as typeof body;
+    expect(smallBody.pagination.max_rows_per_page).toBe(99 + 1);
+    expect(smallBody.pagination.max_rows_in_buffer).toBe(2 * (99 + 1));
+    const settings = Object.keys(body.session.settings);
+    expect(settings).toHaveLength(7);
+  });
 });

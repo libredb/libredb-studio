@@ -104,3 +104,11 @@ describe("keyOrderWords (SB2-9.3)", () => {
     expect(keyOrderWords(verdict)).toBe(words);
   });
 });
+
+describe("the panels with no label", () => {
+  test("no empty state is set for slow queries or sessions, and no table stats caption", () => {
+    expect(OXIA_LABELS.slowQueriesEmptyState).toBeUndefined();
+    expect(OXIA_LABELS.sessionsEmptyState).toBeUndefined();
+    expect(OXIA_LABELS.tableStatsCaption).toBeUndefined();
+  });
+});

@@ -8,6 +8,8 @@ import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { CYPHER_CORPUS } from "../../../fixtures/graph/cypher-corpus";
 import { neo4jCapture } from "../../../helpers/neo4j-fixtures";
+import path from "node:path";
+import { readFileSync } from "node:fs";
 
 const policy = NEO4J_POLICY_PROFILE.readPolicy;
 
@@ -182,5 +184,36 @@ describe("NEO4J_POLICY_PROFILE", () => {
         if (corpusCase.subject !== undefined) expect(verdict.refusal.subject).toBe(corpusCase.subject);
       });
     }
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
+const SECURITY = read("docs/SECURITY.md");
+const POLICY = NEO4J_POLICY_PROFILE.readPolicy;
+
+describe("the refusals of SHOW TRANSACTIONS and LOAD CSV, and SECURITY.md note 3.10", () => {
+  test("SHOW TRANSACTIONS is refused to a user", () => {
+    expect(checkCypherRead("SHOW TRANSACTIONS", NEO4J_POLICY_PROFILE).allowed).toBe(false);
+  });
+
+  test.each(["LOAD CSV FROM 'http://10.0.0.5/x' AS row RETURN row", "LOAD /* x */ CSV FROM 'file:///x' AS r RETURN r"])(
+    "%s is refused by the policy",
+    (text) => {
+      expect(checkCypherRead(text, NEO4J_POLICY_PROFILE).allowed).toBe(false);
+    },
+  );
+
+  test("every name the note gives is a denied word or a denied namespace of NEO4J_POLICY_PROFILE", () => {
+    const sentence = SECURITY.split("\n").find((line) =>
+      line.includes("are refused by the policy before anything is sent"),
+    );
+    expect(sentence).toBeDefined();
+    const named = [...(sentence ?? "").slice((sentence ?? "").indexOf(", so ")).matchAll(/`([^`]+)`/g)].map(
+      (match) => match[1],
+    );
+    expect(named).toEqual(["LOAD", "TERMINATE", "apoc.", "gds."]);
+    const refused = [...POLICY.deniedWords.map((words) => words.join(" ")), ...POLICY.deniedNamespaces];
+    expect(named.filter((name) => !refused.includes(name))).toEqual([]);
   });
 });

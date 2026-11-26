@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:t
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { SignJWT } from "jose";
-import { SNOWFLAKE_FIELD_SENTENCES } from "@/lib/db/providers/sql/snowflake/account-host";
+import { SNOWFLAKE_FIELD_SENTENCES, SNOWFLAKE_MAX_HOST_LABELS } from "@/lib/db/providers/sql/snowflake/account-host";
 import {
   jwtClaim,
   keyPairTokenSource,
@@ -45,6 +45,7 @@ import {
   wideRsaKey,
 } from "../../../helpers/snowflake-keys";
 import { pemArmour } from "../../../helpers/pem-armour";
+import { SNOWFLAKE_TREE_PAGE_LIMIT } from "@/lib/db/providers/sql/snowflake/introspect";
 
 const S = SNOWFLAKE_KEY_SENTENCES;
 
@@ -690,4 +691,12 @@ describe("readAccessToken: a key-pair JWT is not an access token (SF-006)", () =
       expect(readAccessToken(token)).toBe(token);
     });
   }
+});
+
+describe("the key, host and tree bounds", () => {
+  test("SHA-512 and SHA-384 keys share a PBKDF2 bound, and a host and a tree page each allow five", () => {
+    expect(SNOWFLAKE_MAX_PBKDF2_ITERATIONS.sha512).toBe(SNOWFLAKE_MAX_PBKDF2_ITERATIONS.sha384);
+    expect(SNOWFLAKE_MAX_HOST_LABELS).toBe(5);
+    expect(SNOWFLAKE_TREE_PAGE_LIMIT).toBe(5);
+  });
 });

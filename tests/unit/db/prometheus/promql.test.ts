@@ -399,3 +399,11 @@ describe("escapeLabelNameForPath", () => {
     expect(serverLabelName("U__a_fffff_")).toBe("a\u{FFFFF}");
   });
 });
+
+describe("the replacement character", () => {
+  const replacement = String.fromCharCode(0xfffd);
+  test("a U+FFFD in a name is written as the six-character escape", () => {
+    const escape = labelNotation(replacement).slice(1, -1);
+    expect(escape).toBe(`${String.fromCharCode(92)}ufffd`);
+  });
+});
