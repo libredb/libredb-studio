@@ -34,6 +34,11 @@ import {
 } from "@/lib/db/providers/timeseries/prometheus/transport";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
+import path from "node:path";
+import { QUERY_CONCURRENCY_LIMIT } from "@/lib/db/providers/timeseries/prometheus/concurrency";
+import { RESPONSE_BYTE_CAP } from "@/lib/db/providers/timeseries/prometheus/http-transport";
+import { DESCRIBE_SERIES_CAP, METRIC_LIST_CAP } from "@/lib/db/providers/timeseries/prometheus/objects";
+import { readFileSync } from "node:fs";
 
 // ============================================================================
 // Cells
@@ -1198,5 +1203,55 @@ describe("shapeQueryResult's byte budget, over the rows and fields as JSON", () 
       { message: `Showing the first 3 of more than 3 series. ${NARROW}` },
       heldTo(1, 3, budget, NARROW),
     ]);
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const FIXTURES = readFileSync(path.join(ROOT, "tests/fixtures/prometheus/README.md"), "utf8");
+/** The fixture README's entry for measurement `id`, from its heading to the next one, or undefined. */
+function entryOf(id: string): string | undefined {
+  const start = FIXTURES.indexOf(`\n### ${id}. `);
+  if (start < 0) return undefined;
+  const end = FIXTURES.indexOf("\n### ", start + 1);
+  return FIXTURES.slice(start, end < 0 ? undefined : end);
+}
+/** Each measured constant: the measurement that decided it, its name, and its value. */
+const MEASURED = [
+  ["M3", "MATRIX_SAMPLE_BUDGET", MATRIX_SAMPLE_BUDGET],
+  ["M10", "METRIC_LIST_CAP", METRIC_LIST_CAP],
+  ["M11", "QUERY_CONCURRENCY_LIMIT", QUERY_CONCURRENCY_LIMIT],
+  ["M12", "RESPONSE_BYTE_CAP", RESPONSE_BYTE_CAP],
+  ["M13", "DESCRIBE_SERIES_CAP", DESCRIBE_SERIES_CAP],
+  ["M14", "RESULT_BYTE_BUDGET", RESULT_BYTE_BUDGET],
+] as const;
+
+describe("the measurements recorded in the fixture README", () => {
+  test("entryOf reads an entry up to the next one and finds none that does not exist", () => {
+    expect(entryOf("M12")).toContain("### M12. ");
+    expect(entryOf("M12")).not.toContain("### M13. ");
+    expect(entryOf("M99")).toBeUndefined();
+  });
+
+  test.each(MEASURED)("%s is recorded with the decision that set %s to its value", (id, name, value) => {
+    // A measured constant without a recorded decision is the gap #1085's review found in the result
+    // byte budget, and a decision for another value is a constant moved without one.
+    expect(entryOf(id)).toContain(`Decision: \`${name}\` = \`${value}\``);
+  });
+
+  test("M14 records the bytes of the compose subquery answer as a positive integer", () => {
+    const lines = entryOf("M14")?.split("\n") ?? [];
+    const cells = (line: string): string[] =>
+      line
+        .split("|")
+        .slice(1, -1)
+        .map((cell) => cell.trim());
+    const header = lines.find((line) => line.startsWith("| Answer |"));
+    const row = lines.find((line) => line.startsWith("| `compose-subquery` |"));
+    expect(header).toBeDefined();
+    expect(row).toBeDefined();
+    const column = cells(header ?? "").indexOf("Rows and fields as JSON");
+    expect(column).toBeGreaterThan(0);
+    const bytes = Number(cells(row ?? "")[column]);
+    expect(Number.isInteger(bytes) && bytes > 0).toBe(true);
   });
 });

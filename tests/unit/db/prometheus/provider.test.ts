@@ -89,6 +89,7 @@ import type { ColumnSchema, DatabaseConnection, SSLConfig } from "@/lib/types";
 import { capture, captureBody, captureVm } from "../../../helpers/prometheus-fixtures";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 import { ALLOWS_PRIVATE_HOSTS } from "../../../helpers/egress-decisions";
+import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
 
 // ============================================================================
 // The fake network, answering from what a live server answered
@@ -1469,5 +1470,26 @@ describe("the declarations", () => {
     );
     // The control: the same connection with its host builds.
     expect(new PrometheusProvider(connection(), {}, { egress: ALLOWS_PRIVATE_HOSTS }).type).toBe("prometheus");
+  });
+});
+
+describe("the dialog's labels, hint and default port", () => {
+  test("the password field is labelled Password or token", () => {
+    const label = connectionFieldLabel(DB_UI_CONFIG.prometheus, "password", "Password");
+    expect(label).toBe("Password or token");
+  });
+
+  test("the user field is labelled User", () => {
+    const label = connectionFieldLabel(DB_UI_CONFIG.prometheus, "user", "Username");
+    expect(label).toBe("User");
+  });
+
+  test("the password hint says an empty User sends a bearer token", () => {
+    const hint = connectionFieldHint(DB_UI_CONFIG.prometheus, "password");
+    expect(hint).toBe("Leave User empty to send this as a bearer token.");
+  });
+
+  test("the default port is 9090", () => {
+    expect(DB_UI_CONFIG.prometheus.defaultPort).toBe("9090");
   });
 });

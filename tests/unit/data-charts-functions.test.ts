@@ -10,6 +10,9 @@ import {
   chartCategory,
   NULL_CATEGORY_LABEL,
 } from "@/components/DataCharts";
+import path from "node:path";
+import { chartTheme } from "@/lib/charts/palette";
+import { readFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // analyzeField
@@ -591,5 +594,82 @@ describe("groupByDate - a date-only value west of UTC", () => {
 
   test("returns an impossible date-only value unchanged", () => {
     expect(groupByDate("2026-13-45", "day")).toBe("2026-13-45");
+  });
+});
+
+const ROOT = path.resolve(import.meta.dir, "../..");
+const CHARTS = readFileSync(path.join(ROOT, "src/components/DataCharts.tsx"), "utf8");
+
+describe("the series the chart tab draws and how it types a column of numbers and NaN", () => {
+  test("the chart opens on the first numeric series, and draws at most as many lines as the palette has colors", () => {
+    const size = chartTheme("light").series.length;
+    expect(chartTheme("dark").series.length).toBe(size);
+    expect(CHARTS).toContain("const CHART_COLORS = viz.series;");
+    expect(CHARTS).toContain("const MAX_SERIES = CHART_COLORS.length;");
+    expect(CHARTS).toContain("setYAxis([plottableNumericFields[0]]);");
+  });
+
+  const NON_FINITE = ["NaN", "+Inf", "-Inf"];
+  const column = (numbers: number, strings: number): unknown[] => [
+    ...Array.from({ length: numbers }, (_, index) => index + 0.5),
+    ...Array.from({ length: strings }, (_, index) => NON_FINITE[index % NON_FINITE.length]),
+  ];
+  const typeOf = (values: unknown[]): string => analyzeField("c", values).type;
+  test("the share of strings at which a column stops being numbers", () => {
+    // In whole percent of 100 filled cells: the first share typed as something other than numbers.
+    const share = Array.from({ length: 101 }, (_, strings) => strings).find(
+      (strings) => typeOf(column(100 - strings, strings)) !== "numeric",
+    );
+    expect(share).toBeDefined();
+    if (share === undefined) return;
+    // Control: one string fewer is still numbers, so the share found is the boundary.
+    expect(typeOf(column(101 - share, share - 1))).toBe("numeric");
+  });
+
+  const halfNaN = (values: number): unknown[] => [
+    ...column(values - 1, 0),
+    ...Array.from({ length: values - 1 }, () => "NaN"),
+  ];
+  const categoricalLimit = (): number | undefined =>
+    Array.from({ length: 200 }, (_, index) => index + 2)
+      .filter((values) => typeOf(halfNaN(values)) === "categorical")
+      .at(-1);
+  test("a half-NaN column is categorical up to a limit of distinct values, and unknown past it", () => {
+    const limit = categoricalLimit();
+    expect(limit).toBeDefined();
+    if (limit === undefined) return;
+    expect(typeOf(halfNaN(limit + 1))).toBe("unknown");
+  });
+
+  const minute = (index: number): string => new Date(Date.UTC(2026, 8, 23, 10, index)).toISOString();
+  test("only a categorical column takes the default x axis from the timestamps", () => {
+    const limit = categoricalLimit() ?? 0;
+    // One row per cell of the half-`NaN` column, a minute apart, beside a column of numbers.
+    const analysisOf = (values: number) => {
+      const rows = halfNaN(values).map((ratio, index) => ({ timestamp: minute(index), ratio, count: index + 1 }));
+      return analyzeData({ rows, fields: ["timestamp", "ratio", "count"], rowCount: rows.length, executionTime: 1 });
+    };
+    // The tab opens on the first categorical column, else the first date column.
+    expect(CHARTS).toContain("analysis.categoricalFields[0] || analysis.dateFields[0]");
+    expect(analysisOf(limit).categoricalFields).toEqual(["ratio"]);
+    expect(analysisOf(limit + 1).categoricalFields).toEqual([]);
+    expect(analysisOf(limit + 1).dateFields).toEqual(["timestamp"]);
+  });
+
+  const TIMES = Array.from({ length: 60 }, (_, index) => minute(index));
+  test("an answer with no numeric column draws no chart", () => {
+    const rows = TIMES.map((timestamp) => ({ timestamp, value: "NaN" }));
+    const analysis = analyzeData({ rows, fields: ["timestamp", "value"], rowCount: rows.length, executionTime: 1 });
+    expect(analysis.isVisualizable).toBe(false);
+    expect(analysis.reason).toBe("No numeric fields found for Y-axis");
+    // Control: the same rows with a number in every cell are drawable.
+    const numbers = TIMES.map((timestamp, index) => ({ timestamp, value: index }));
+    const drawable = analyzeData({
+      rows: numbers,
+      fields: ["timestamp", "value"],
+      rowCount: numbers.length,
+      executionTime: 1,
+    });
+    expect(drawable.isVisualizable).toBe(true);
   });
 });
